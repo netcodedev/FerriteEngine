@@ -37,9 +37,11 @@ fn main() {
     }
 
     let chunk = Chunk::new((0.0, 0.0, 0.0));
-    let mut camera: Camera = Camera::new((20.0, 20.0, 30.0), Deg(-90.0), Deg(-20.0));
+    let mut camera: Camera = Camera::new((-10.0, 20.0, -10.0), Deg(-60.0), Deg(320.0));
     let mut projection: Projection = Projection::new(800, 600, Deg(45.0), 0.1, 100.0);
     let mut camera_controller: CameraController = CameraController::new(10.0, 0.2);
+
+    window.set_cursor_pos(0.0, 0.0);
 
     while !window.should_close() {
         unsafe {
