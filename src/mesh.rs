@@ -114,7 +114,6 @@ impl Block {
 }
 
 pub struct Chunk {
-    position: (f32, f32, f32),
     blocks: Vec<Block>,
 }
 
@@ -128,7 +127,7 @@ impl Chunk {
                 }
             }
         }
-        Chunk { position, blocks }
+        Chunk { blocks }
     }
 
     pub fn render(&self, shader_program: GLuint) {
