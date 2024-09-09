@@ -36,7 +36,7 @@ fn main() {
         gl::Enable(gl::DEPTH_TEST);
     }
 
-    let chunk = Chunk::new((0.0, 0.0, 0.0));
+    let mut chunk = Chunk::new((0.0, 0.0, 0.0));
     let mut camera: Camera = Camera::new((-10.0, 20.0, -10.0), Deg(-60.0), Deg(320.0));
     let mut projection: Projection = Projection::new(800, 600, Deg(45.0), 0.1, 100.0);
     let mut camera_controller: CameraController = CameraController::new(10.0, 0.2);

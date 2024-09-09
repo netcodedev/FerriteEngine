@@ -64,8 +64,13 @@ impl Mesh {
         }
     }
 
-    pub fn render(&self) {
+    pub fn render(&self, shader_program: GLuint, position: (f32, f32, f32)) {
         unsafe {
+            gl::UseProgram(shader_program);
+            let model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(position.0, position.1, position.2));
+            let model_loc = gl::GetUniformLocation(shader_program, "model\0".as_ptr() as *const i8);
+            gl::UniformMatrix4fv(model_loc, 1, gl::FALSE, model.as_ptr());
+
             gl::BindVertexArray(self.vao);
             gl::DrawElements(gl::TRIANGLES, self.indices.len() as i32, gl::UNSIGNED_INT, std::ptr::null());
         }
@@ -74,11 +79,11 @@ impl Mesh {
 
 pub struct Block {
     pub position: (u32, u32, u32),
-    pub mesh: Mesh,
 }
 
 impl Block {
     pub fn new(position: (u32, u32, u32)) -> Self {
+        /*
         let vertices: Vec<f32> = vec![
             // Position
             -0.5, -0.5, -0.5,
@@ -101,22 +106,15 @@ impl Block {
         ];
 
         let mesh = Mesh::new(vertices, indices);
-        Block { position, mesh }
-    }
-
-    pub fn render(&self, shader_program: GLuint) {
-        unsafe {
-            gl::UseProgram(shader_program);
-            let model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(self.position.0 as f32, self.position.1 as f32, self.position.2 as f32));
-            let model_loc = gl::GetUniformLocation(shader_program, "model\0".as_ptr() as *const i8);
-            gl::UniformMatrix4fv(model_loc, 1, gl::FALSE, model.as_ptr());
-        }
-        self.mesh.render();
+        */
+        Block { position }
     }
 }
 
 pub struct Chunk {
+    position: (f32, f32, f32),
     blocks: ArrayBase<ndarray::OwnedRepr<Option<Block>>, ndarray::Dim<[usize; 3]>>,
+    mesh: Option<Mesh>,
 }
 
 impl Chunk {
@@ -130,41 +128,104 @@ impl Chunk {
             }
             Some(Block::new(((position.0 as usize + x) as u32, (position.1 as usize + y) as u32, (position.2 as usize + z) as u32)))
         });
-        Chunk { blocks }
+        Chunk { position, blocks, mesh: None }
     }
 
-    pub fn render(&self, shader_program: GLuint) {
-        let mut blocks_to_render: Vec<&Block> = Vec::new();
-        for block in self.blocks.iter() {
-            if let Some(block) = block {
-                let (x, y, z) = block.position;
-                let neighbors: [(i32, i32, i32); 6] = [
-                    (x as i32 - 1,  y as i32,       z as i32), // Left neighbor
-                    (x as i32 + 1,  y as i32,       z as i32), // Right neighbor
-                    (x as i32,      y as i32 - 1,   z as i32), // Bottom neighbor
-                    (x as i32,      y as i32 + 1,   z as i32), // Top neighbor
-                    (x as i32,      y as i32,       z as i32 - 1), // Back neighbor
-                    (x as i32,      y as i32,       z as i32 + 1), // Front neighbor
-                ];
+    pub fn render(&mut self, shader_program: GLuint) {
+        if self.mesh.is_none() {
+            self.mesh = Some(self.calculateMesh());
+        }
+        if let Some(mesh) = &self.mesh {
+            mesh.render(shader_program, self.position);
+        }
+    }
 
-                let missing_neighbors = neighbors.iter().filter(|&neighbor| {
-                    let (x, y, z) = *neighbor;
-                    let (x, y, z) = (x as usize, y as usize, z as usize);
-                    if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
-                        if let Some(block) = self.blocks.get([x, y, z]) {
-                            return block.is_none();
-                        } else if x == 0 || y == 0 || z == 0 {
-                            return true;
+    pub fn calculateMesh(&self) -> Mesh {
+        let mut vertices: Vec<f32> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    if let Some(_) = &self.blocks[[x, y, z]] {
+                        // Check if the block is visible
+                        if self.isBlockVisible(x, y, z) {
+                            // Calculate the block's vertices and indices
+                            let (block_vertices, block_indices) = self.calculateBlockMesh(x, y, z);
+                            let base_index = vertices.len() as u32 / 3;
+
+                            // Add the block's vertices and indices to the chunk's mesh
+                            vertices.extend(block_vertices);
+                            indices.extend(block_indices.iter().map(|index| index + base_index));
                         }
                     }
-                    false
-                });
-
-                if missing_neighbors.count() > 0 {
-                    blocks_to_render.push(block);
                 }
             }
         }
-        blocks_to_render.iter().for_each(|block| block.render(shader_program));
+
+        Mesh::new(vertices, indices)
     }
+    fn isBlockVisible(&self, x: usize, y: usize, z: usize) -> bool {
+        // Check if the block is at the chunk's boundaries
+        if x == 0 || x == CHUNK_SIZE - 1 || y == 0 || y == CHUNK_SIZE - 1 || z == 0 || z == CHUNK_SIZE - 1 {
+            return true;
+        }
+
+        // Check if any neighboring block is empty
+        let neighbors = [
+            (x - 1, y, z),
+            (x + 1, y, z),
+            (x, y - 1, z),
+            (x, y + 1, z),
+            (x, y, z - 1),
+            (x, y, z + 1),
+        ];
+
+        for neighbor in neighbors.iter() {
+            if let Some(block) = self.blocks.get(*neighbor) {
+                if block.is_none() {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn calculateBlockMesh(&self, x: usize, y: usize, z: usize) -> (Vec<f32>, Vec<u32>) {
+        let position = (
+            self.position.0 + x as f32,
+            self.position.1 + y as f32,
+            self.position.2 + z as f32,
+        );
+
+        let mut vertices: Vec<f32> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+
+        // Calculate the block's vertices and indices based on its position
+        let (x, y, z) = (position.0, position.1, position.2);
+        let vertices: Vec<f32> = vec![
+            // Position
+            x - 0.5, y - 0.5, z - 0.5,
+            x + 0.5, y - 0.5, z - 0.5,
+            x + 0.5, y + 0.5, z - 0.5,
+            x - 0.5, y + 0.5, z - 0.5,
+            x - 0.5, y - 0.5, z + 0.5,
+            x + 0.5, y - 0.5, z + 0.5,
+            x + 0.5, y + 0.5, z + 0.5,
+            x - 0.5, y + 0.5, z + 0.5,
+        ];
+
+        let indices: Vec<u32> = vec![
+            0, 1, 2, 2, 3, 0, // Back face
+            4, 5, 6, 6, 7, 4, // Front face
+            4, 5, 1, 1, 0, 4, // Bottom face
+            7, 6, 2, 2, 3, 7, // Top face
+            4, 7, 3, 3, 0, 4, // Left face
+            5, 6, 2, 2, 1, 5  // Right face
+        ];
+
+        (vertices, indices)
+    }
+
 }
