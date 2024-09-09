@@ -1,7 +1,9 @@
 use gl::types::{GLsizei, GLsizeiptr, GLuint, GLvoid};
 use cgmath::Matrix;
+use libnoise::prelude::*;
+use ndarray::{ArrayBase, Dim, Array3};
 
-const CHUNK_SIZE: usize = 16;
+const CHUNK_SIZE: usize = 100;
 
 pub struct Mesh {
     vertices: Vec<f32>,
@@ -71,12 +73,12 @@ impl Mesh {
 }
 
 pub struct Block {
-    pub position: (f32, f32, f32),
+    pub position: (u32, u32, u32),
     pub mesh: Mesh,
 }
 
 impl Block {
-    pub fn new(position: (f32, f32, f32)) -> Self {
+    pub fn new(position: (u32, u32, u32)) -> Self {
         let vertices: Vec<f32> = vec![
             // Position
             -0.5, -0.5, -0.5,
@@ -105,7 +107,7 @@ impl Block {
     pub fn render(&self, shader_program: GLuint) {
         unsafe {
             gl::UseProgram(shader_program);
-            let model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(self.position.0, self.position.1, self.position.2));
+            let model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(self.position.0 as f32, self.position.1 as f32, self.position.2 as f32));
             let model_loc = gl::GetUniformLocation(shader_program, "model\0".as_ptr() as *const i8);
             gl::UniformMatrix4fv(model_loc, 1, gl::FALSE, model.as_ptr());
         }
@@ -114,25 +116,55 @@ impl Block {
 }
 
 pub struct Chunk {
-    blocks: Vec<Block>,
+    blocks: ArrayBase<ndarray::OwnedRepr<Option<Block>>, ndarray::Dim<[usize; 3]>>,
 }
 
 impl Chunk {
     pub fn new(position: (f32, f32, f32)) -> Self {
-        let mut blocks = Vec::new();
-        for x in 0..CHUNK_SIZE {
-            for y in 0..CHUNK_SIZE {
-                for z in 0..CHUNK_SIZE {
-                    blocks.push(Block::new((position.0 + x as f32, position.1 + y as f32, position.2 + z as f32)));
-                }
+        let generator = Source::perlin(1).scale([0.01; 3]);
+        let blocks: ArrayBase<ndarray::OwnedRepr<Option<Block>>, Dim<[usize; 3]>> = Array3::<Option<Block>>::from_shape_fn([CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE], |(x,y,z)| {
+            let noise_value = generator.sample([x as f64, y as f64, z as f64]);
+            let threshold = 0.0; // Adjust the threshold value to control the density of blocks
+            if noise_value < threshold {
+                return None;
             }
-        }
+            Some(Block::new(((position.0 as usize + x) as u32, (position.1 as usize + y) as u32, (position.2 as usize + z) as u32)))
+        });
         Chunk { blocks }
     }
 
     pub fn render(&self, shader_program: GLuint) {
-        for block in &self.blocks {
-            block.render(shader_program);
+        let mut blocks_to_render: Vec<&Block> = Vec::new();
+        for block in self.blocks.iter() {
+            if let Some(block) = block {
+                let (x, y, z) = block.position;
+                let neighbors: [(i32, i32, i32); 6] = [
+                    (x as i32 - 1,  y as i32,       z as i32), // Left neighbor
+                    (x as i32 + 1,  y as i32,       z as i32), // Right neighbor
+                    (x as i32,      y as i32 - 1,   z as i32), // Bottom neighbor
+                    (x as i32,      y as i32 + 1,   z as i32), // Top neighbor
+                    (x as i32,      y as i32,       z as i32 - 1), // Back neighbor
+                    (x as i32,      y as i32,       z as i32 + 1), // Front neighbor
+                ];
+
+                let missing_neighbors = neighbors.iter().filter(|&neighbor| {
+                    let (x, y, z) = *neighbor;
+                    let (x, y, z) = (x as usize, y as usize, z as usize);
+                    if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
+                        if let Some(block) = self.blocks.get([x, y, z]) {
+                            return block.is_none();
+                        } else if x == 0 || y == 0 || z == 0 {
+                            return true;
+                        }
+                    }
+                    false
+                });
+
+                if missing_neighbors.count() > 0 {
+                    blocks_to_render.push(block);
+                }
+            }
         }
+        blocks_to_render.iter().for_each(|block| block.render(shader_program));
     }
 }

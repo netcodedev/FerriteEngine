@@ -17,7 +17,8 @@ void main()
     
     // Invert the intensity to light all faces
     intensity = 0.9 - intensity;
-    
+
     // Darken the color based on the intensity
-    outColor = vec4(0.3 * intensity, 0.6 * intensity, 0.4 * intensity, 0.1); // Pass the color to the fragment shader
+    // outColor = vec4(0.3 * intensity, 0.6 * intensity, 0.4 * intensity, 0.1); // Pass the color to the fragment shader
+    outColor = vec4(0.3, 0.6, 0.4, 0.1);
 }
