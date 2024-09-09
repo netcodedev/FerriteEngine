@@ -140,12 +140,13 @@ impl Chunk {
 
         Mesh::new(vertices, indices)
     }
+
     fn is_block_visible(&self, x: usize, y: usize, z: usize) -> bool {
         // Check if the block is at the chunk's boundaries
         if x == 0 || x == CHUNK_SIZE - 1 || y == 0 || y == CHUNK_SIZE - 1 || z == 0 || z == CHUNK_SIZE - 1 {
             return true;
         }
-
+    
         // Check if any neighboring block is empty
         let neighbors = [
             (x - 1, y, z),
@@ -155,7 +156,7 @@ impl Chunk {
             (x, y, z - 1),
             (x, y, z + 1),
         ];
-
+    
         for neighbor in neighbors.iter() {
             if let Some(block) = self.blocks.get(*neighbor) {
                 if block.is_none() {
@@ -163,7 +164,7 @@ impl Chunk {
                 }
             }
         }
-
+    
         false
     }
 
