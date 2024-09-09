@@ -78,36 +78,11 @@ impl Mesh {
 }
 
 pub struct Block {
-    pub position: (u32, u32, u32),
 }
 
 impl Block {
-    pub fn new(position: (u32, u32, u32)) -> Self {
-        /*
-        let vertices: Vec<f32> = vec![
-            // Position
-            -0.5, -0.5, -0.5,
-             0.5, -0.5, -0.5,
-             0.5,  0.5, -0.5,
-            -0.5,  0.5, -0.5,
-            -0.5, -0.5,  0.5,
-             0.5, -0.5,  0.5,
-             0.5,  0.5,  0.5,
-            -0.5,  0.5,  0.5,
-        ];
-
-        let indices: Vec<u32> = vec![
-            0, 1, 2, 2, 3, 0, // Back face
-            4, 5, 6, 6, 7, 4, // Front face
-            4, 5, 1, 1, 0, 4, // Bottom face
-            7, 6, 2, 2, 3, 7, // Top face
-            4, 7, 3, 3, 0, 4, // Left face
-            5, 6, 2, 2, 1, 5  // Right face
-        ];
-
-        let mesh = Mesh::new(vertices, indices);
-        */
-        Block { position }
+    pub fn new() -> Self {
+        Block { }
     }
 }
 
@@ -126,21 +101,21 @@ impl Chunk {
             if noise_value < threshold {
                 return None;
             }
-            Some(Block::new(((position.0 as usize + x) as u32, (position.1 as usize + y) as u32, (position.2 as usize + z) as u32)))
+            Some(Block::new())
         });
         Chunk { position, blocks, mesh: None }
     }
 
     pub fn render(&mut self, shader_program: GLuint) {
         if self.mesh.is_none() {
-            self.mesh = Some(self.calculateMesh());
+            self.mesh = Some(self.calculate_mesh());
         }
         if let Some(mesh) = &self.mesh {
             mesh.render(shader_program, self.position);
         }
     }
 
-    pub fn calculateMesh(&self) -> Mesh {
+    pub fn calculate_mesh(&self) -> Mesh {
         let mut vertices: Vec<f32> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
 
@@ -149,9 +124,9 @@ impl Chunk {
                 for z in 0..CHUNK_SIZE {
                     if let Some(_) = &self.blocks[[x, y, z]] {
                         // Check if the block is visible
-                        if self.isBlockVisible(x, y, z) {
+                        if self.is_block_visible(x, y, z) {
                             // Calculate the block's vertices and indices
-                            let (block_vertices, block_indices) = self.calculateBlockMesh(x, y, z);
+                            let (block_vertices, block_indices) = self.calculate_block_mesh(x, y, z);
                             let base_index = vertices.len() as u32 / 3;
 
                             // Add the block's vertices and indices to the chunk's mesh
@@ -165,7 +140,7 @@ impl Chunk {
 
         Mesh::new(vertices, indices)
     }
-    fn isBlockVisible(&self, x: usize, y: usize, z: usize) -> bool {
+    fn is_block_visible(&self, x: usize, y: usize, z: usize) -> bool {
         // Check if the block is at the chunk's boundaries
         if x == 0 || x == CHUNK_SIZE - 1 || y == 0 || y == CHUNK_SIZE - 1 || z == 0 || z == CHUNK_SIZE - 1 {
             return true;
@@ -192,15 +167,12 @@ impl Chunk {
         false
     }
 
-    fn calculateBlockMesh(&self, x: usize, y: usize, z: usize) -> (Vec<f32>, Vec<u32>) {
+    fn calculate_block_mesh(&self, x: usize, y: usize, z: usize) -> (Vec<f32>, Vec<u32>) {
         let position = (
             self.position.0 + x as f32,
             self.position.1 + y as f32,
             self.position.2 + z as f32,
         );
-
-        let mut vertices: Vec<f32> = Vec::new();
-        let mut indices: Vec<u32> = Vec::new();
 
         // Calculate the block's vertices and indices based on its position
         let (x, y, z) = (position.0, position.1, position.2);
