@@ -47,10 +47,10 @@ fn main() {
 
     window.set_cursor_pos(0.0, 0.0);
 
-    let chunkloader = thread::spawn({
+    let _chunkloader = thread::spawn({
         let shared_chunks = Arc::clone(&chunks);
         move || {
-            let radius = 5;
+            let radius = 2;
             let mut x = 0.0;
             let mut z = 0.0;
             
@@ -108,8 +108,6 @@ fn main() {
 
         // println!("frametime: {}ms FPS: {}", delta_time * 1000.0, fps);
     }
-
-    chunkloader.join().unwrap();
 }
 
 fn calculate_frametime(glfw: &glfw::Glfw) -> (f64, f64) {
