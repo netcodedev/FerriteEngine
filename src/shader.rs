@@ -23,7 +23,7 @@ pub fn create_shader_program(vertex_shader_source: &str, fragment_shader_source:
             );
             println!(
                 "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n{}",
-                std::str::from_utf8(&info_log).unwrap()
+                String::from_utf8_lossy(&info_log)
             );
         }
 
@@ -44,7 +44,7 @@ pub fn create_shader_program(vertex_shader_source: &str, fragment_shader_source:
             );
             println!(
                 "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n{}",
-                std::str::from_utf8(&info_log).unwrap()
+                String::from_utf8_lossy(&info_log)
             );
         }
 
@@ -65,7 +65,7 @@ pub fn create_shader_program(vertex_shader_source: &str, fragment_shader_source:
             );
             println!(
                 "ERROR::SHADER::PROGRAM::LINKING_FAILED\n{}",
-                std::str::from_utf8(&info_log).unwrap()
+                String::from_utf8_lossy(&info_log)
             );
         }
 
