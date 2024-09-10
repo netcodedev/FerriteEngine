@@ -1,6 +1,8 @@
 use glfw::Context;
 use cgmath::{Deg, Matrix};
 use std::fs;
+use std::sync::{Arc, RwLock};
+use std::thread;
 
 mod shader;
 mod mesh;
@@ -38,12 +40,37 @@ fn main() {
         gl::Enable(gl::DEPTH_TEST);
     }
 
-    let mut chunk = Chunk::new((0.0, 0.0, 0.0));
+    let chunks  = Arc::new(RwLock::new(Vec::<Chunk>::new()));
     let mut camera: Camera = Camera::new((-10.0, 20.0, -10.0), Deg(-60.0), Deg(320.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
     let mut camera_controller: CameraController = CameraController::new(10.0, 1.0);
 
     window.set_cursor_pos(0.0, 0.0);
+
+    let chunkloader = thread::spawn({
+        let shared_chunks = Arc::clone(&chunks);
+        move || {
+            let radius = 5;
+            let mut x = 0.0;
+            let mut z = 0.0;
+            
+            loop {
+                let new_chunk = Chunk::new((x, 0.0, z));
+                shared_chunks.write().unwrap().push(new_chunk);
+
+                // Adjust the position for each chunk
+                x += 1.0;
+                if x > radius as f32 {
+                    x = -radius as f32;
+                    z += 1.0;
+                    if z > radius as f32 {
+                        break; // Stop generating new chunks once the radius is reached
+                    }
+                }
+            }
+        }
+    });
+    
 
     while !window.should_close() {
         unsafe {
@@ -52,7 +79,10 @@ fn main() {
         }
         
         // Render the mesh
-        chunk.render(shader_program);
+        let chunks = Arc::clone(&chunks);
+        for chunk in chunks.write().unwrap().iter_mut() {
+            chunk.render(shader_program);
+        }
 
         window.swap_buffers();
         glfw.poll_events();
@@ -78,6 +108,8 @@ fn main() {
 
         // println!("frametime: {}ms FPS: {}", delta_time * 1000.0, fps);
     }
+
+    chunkloader.join().unwrap();
 }
 
 fn calculate_frametime(glfw: &glfw::Glfw) -> (f64, f64) {

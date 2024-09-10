@@ -94,9 +94,10 @@ pub struct Chunk {
 
 impl Chunk {
     pub fn new(position: (f32, f32, f32)) -> Self {
+        println!("Generating new chunk at position {:?}", position);
         let generator = Source::perlin(1).scale([0.01; 3]);
         let blocks: ArrayBase<ndarray::OwnedRepr<Option<Block>>, Dim<[usize; 3]>> = Array3::<Option<Block>>::from_shape_fn([CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE], |(x,y,z)| {
-            let noise_value = generator.sample([x as f64, y as f64, z as f64]);
+            let noise_value = generator.sample([(position.0 * CHUNK_SIZE as f32) as f64 + x as f64, (position.1 * CHUNK_SIZE as f32) as f64 + y as f64, (position.2 * CHUNK_SIZE as f32) as f64 + z as f64]);
             let threshold = 0.0; // Adjust the threshold value to control the density of blocks
             if noise_value < threshold {
                 return None;
@@ -111,7 +112,7 @@ impl Chunk {
             self.mesh = Some(self.calculate_mesh());
         }
         if let Some(mesh) = &self.mesh {
-            mesh.render(shader_program, self.position);
+            mesh.render(shader_program, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32));
         }
     }
 
