@@ -1,8 +1,11 @@
-#version 330 core // Or a compatible version for your OpenGL context
+#version 330 core
 
-layout (location = 0) in vec3 aPos; // Position attribute
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec3 normals;
 
-out vec4 outColor; // Output color to the fragment shader
+out vec4 outColor;
+out vec3 Normal;
+out vec3 toLightVector;
 
 uniform mat4 model;
 uniform mat4 view;
@@ -10,15 +13,9 @@ uniform mat4 projection;
 
 void main()
 {
-    gl_Position = projection * view * model * vec4(aPos, 1.0); // Apply transformations
-    
-    // Calculate the dot product between the vertex normal and the view direction
-    float intensity = dot(normalize(vec3(model * vec4(aPos, 1.0))), normalize(vec3(view * vec4(0.0, 0.0, -1.0, 0.0))));
-    
-    // Invert the intensity to light all faces
-    intensity = 0.9 - intensity;
-
-    // Darken the color based on the intensity
-    // outColor = vec4(0.3 * intensity, 0.6 * intensity, 0.4 * intensity, 0.1); // Pass the color to the fragment shader
+    vec4 worldPosition = model * vec4(aPos, 1.0);
+    gl_Position = projection * view * worldPosition;
     outColor = vec4(0.3, 0.6, 0.4, 0.1);
+    Normal = (model * vec4(normals, 0.0)).xyz;
+    toLightVector = vec3(0.0, 2000.0, 0.0) - worldPosition.xyz;
 }

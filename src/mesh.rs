@@ -8,16 +8,18 @@ const CHUNK_SIZE: usize = 128;
 pub struct Mesh {
     vertices: Vec<f32>,
     indices: Vec<u32>,
+    normals: Vec<f32>,
     vao: u32,
     vbo: u32,
     ebo: u32,
 }
 
 impl Mesh {
-    pub fn new(vertices: Vec<f32>, indices: Vec<u32>) -> Self {
+    pub fn new(vertices: Vec<f32>, indices: Vec<u32>, normals: Vec<f32>) -> Self {
         let mut mesh = Mesh {
             vertices,
             indices,
+            normals,
             vao: 0,
             vbo: 0,
             ebo: 0,
@@ -38,10 +40,11 @@ impl Mesh {
 
             // Bind and fill VBO
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+            let vertex_data: Vec<f32> = self.vertices.iter().cloned().chain(self.normals.iter().cloned()).collect();
             gl::BufferData(
                 gl::ARRAY_BUFFER,
-                (self.vertices.len() * std::mem::size_of::<f32>()) as GLsizeiptr,
-                self.vertices.as_ptr() as *const GLvoid,
+                (vertex_data.len() * std::mem::size_of::<f32>()) as GLsizeiptr,
+                vertex_data.as_ptr() as *const GLvoid,
                 gl::STATIC_DRAW,
             );
 
@@ -55,8 +58,11 @@ impl Mesh {
             );
 
             // Set vertex attribute pointers
-            gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, 3 * std::mem::size_of::<f32>() as GLsizei, std::ptr::null());
+            let stride = 3 * std::mem::size_of::<f32>() as GLsizei;
+            gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, stride, std::ptr::null());
             gl::EnableVertexAttribArray(0);
+            gl::VertexAttribPointer(1, 3, gl::FLOAT, gl::FALSE, stride, std::ptr::null());
+            gl::EnableVertexAttribArray(1);
 
             // Unbind VBO and VAO (optional, but good practice)
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
@@ -119,6 +125,7 @@ impl Chunk {
     pub fn calculate_mesh(&self) -> Mesh {
         let mut vertices: Vec<f32> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
+        let mut normals: Vec<f32> = Vec::new();
 
         for x in 0..CHUNK_SIZE {
             for y in 0..CHUNK_SIZE {
@@ -127,19 +134,20 @@ impl Chunk {
                         // Check if the block is visible
                         if self.is_block_visible(x, y, z) {
                             // Calculate the block's vertices and indices
-                            let (block_vertices, block_indices) = self.calculate_block_mesh(x, y, z);
+                            let (block_vertices, block_indices, block_normals) = self.calculate_block_mesh(x, y, z);
                             let base_index = vertices.len() as u32 / 3;
 
                             // Add the block's vertices and indices to the chunk's mesh
                             vertices.extend(block_vertices);
                             indices.extend(block_indices.iter().map(|index| index + base_index));
+                            normals.extend(block_normals);
                         }
                     }
                 }
             }
         }
 
-        Mesh::new(vertices, indices)
+        Mesh::new(vertices, indices, normals)
     }
 
     fn is_block_visible(&self, x: usize, y: usize, z: usize) -> bool {
@@ -169,7 +177,7 @@ impl Chunk {
         false
     }
 
-    fn calculate_block_mesh(&self, x: usize, y: usize, z: usize) -> (Vec<f32>, Vec<u32>) {
+    fn calculate_block_mesh(&self, x: usize, y: usize, z: usize) -> (Vec<f32>, Vec<u32>, Vec<f32>) {
         let position = (
             self.position.0 + x as f32,
             self.position.1 + y as f32,
@@ -199,7 +207,17 @@ impl Chunk {
             5, 6, 2, 2, 1, 5  // Right face
         ];
 
-        (vertices, indices)
+        let normals: Vec<f32> = vec![
+            // Normals
+            0.0, 0.0, -1.0, // Back face
+            0.0, 0.0, 1.0, // Front face
+            0.0, -1.0, 0.0, // Bottom face
+            0.0, 1.0, 0.0, // Top face
+            -1.0, 0.0, 0.0, // Left face
+            1.0, 0.0, 0.0, // Right face
+        ];
+
+        (vertices, indices, normals)
     }
 
 }

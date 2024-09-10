@@ -1,9 +1,16 @@
-#version 330 core // Or a compatible version for your OpenGL context
+#version 330 core
 
-in vec4 outColor; // Input color from the vertex shader
-out vec4 FragColor; // Output color of the fragment
+in vec4 outColor;
+in vec3 Normal;
+in vec3 toLightVector;
+out vec4 FragColor;
 
 void main()
 {
-    FragColor = outColor; // Set the fragment color
+    vec3 unitNormal = normalize(Normal);
+    vec3 unitToLightVector = normalize(toLightVector);
+    float intensity = dot(unitNormal, unitToLightVector);
+    float brightness = max(intensity, 0.0);
+    vec3 diffuse = brightness * vec3(1.0);
+    FragColor = outColor * vec4(diffuse, 1.0);
 }
