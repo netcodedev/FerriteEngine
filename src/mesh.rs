@@ -3,7 +3,7 @@ use cgmath::Matrix;
 use libnoise::prelude::*;
 use ndarray::{ArrayBase, Dim, Array3};
 
-const CHUNK_SIZE: usize = 100;
+const CHUNK_SIZE: usize = 128;
 
 pub struct Mesh {
     vertices: Vec<f32>,
