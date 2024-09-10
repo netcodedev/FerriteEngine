@@ -15,7 +15,9 @@ fn main() {
         std::process::exit(1);
     });
 
-    let (mut window, events) = glfw.create_window(800, 600, "Voxel engine", glfw::WindowMode::Windowed)
+    let (width, height) = (1920, 1080);
+
+    let (mut window, events) = glfw.create_window(width, height, "Voxel engine", glfw::WindowMode::Windowed)
         .expect("Fenster konnte nicht erstellt werden");
 
     window.make_current();
@@ -38,8 +40,8 @@ fn main() {
 
     let mut chunk = Chunk::new((0.0, 0.0, 0.0));
     let mut camera: Camera = Camera::new((-10.0, 20.0, -10.0), Deg(-60.0), Deg(320.0));
-    let mut projection: Projection = Projection::new(800, 600, Deg(45.0), 0.1, 100.0);
-    let mut camera_controller: CameraController = CameraController::new(10.0, 0.2);
+    let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
+    let mut camera_controller: CameraController = CameraController::new(10.0, 1.0);
 
     window.set_cursor_pos(0.0, 0.0);
 
