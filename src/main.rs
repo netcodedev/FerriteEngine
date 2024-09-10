@@ -41,18 +41,18 @@ fn main() {
     }
 
     let chunks  = Arc::new(RwLock::new(Vec::<Chunk>::new()));
-    let mut camera: Camera = Camera::new((-10.0, 20.0, -10.0), Deg(-60.0), Deg(320.0));
+    let mut camera: Camera = Camera::new((64.0, 200.0, 64.0), Deg(-60.0), Deg(320.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
-    let mut camera_controller: CameraController = CameraController::new(10.0, 1.0);
+    let mut camera_controller: CameraController = CameraController::new(50.0, 1.0);
 
     window.set_cursor_pos(0.0, 0.0);
 
     let _chunkloader = thread::spawn({
         let shared_chunks = Arc::clone(&chunks);
         move || {
-            let radius = 2;
-            let mut x = 0.0;
-            let mut z = 0.0;
+            let radius = 0;
+            let mut x = -radius as f32;
+            let mut z = -radius as f32;
             
             loop {
                 let new_chunk = Chunk::new((x, 0.0, z));

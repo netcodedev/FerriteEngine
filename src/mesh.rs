@@ -188,14 +188,14 @@ impl Chunk {
         let (x, y, z) = (position.0, position.1, position.2);
         let vertices: Vec<f32> = vec![
             // Position
-            x - 0.5, y - 0.5, z - 0.5,
-            x + 0.5, y - 0.5, z - 0.5,
-            x + 0.5, y + 0.5, z - 0.5,
-            x - 0.5, y + 0.5, z - 0.5,
-            x - 0.5, y - 0.5, z + 0.5,
-            x + 0.5, y - 0.5, z + 0.5,
-            x + 0.5, y + 0.5, z + 0.5,
-            x - 0.5, y + 0.5, z + 0.5,
+            x      , y      , z      ,
+            x + 1.0, y      , z      ,
+            x + 1.0, y + 1.0, z      ,
+            x      , y + 1.0, z      ,
+            x      , y      , z + 1.0,
+            x + 1.0, y      , z + 1.0,
+            x + 1.0, y + 1.0, z + 1.0,
+            x      , y + 1.0, z + 1.0,
         ];
 
         let indices: Vec<u32> = vec![
