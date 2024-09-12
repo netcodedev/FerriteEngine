@@ -102,7 +102,6 @@ impl Chunk {
         println!("Generating new chunk at position {:?}", position);
         let generator = Source::perlin(1).scale([0.01; 3]);
         let offset: f64 = 16777216.0;
-        println!("Offset: {}", offset);
         let blocks: ArrayBase<ndarray::OwnedRepr<Option<Block>>, Dim<[usize; 3]>> = Array3::<Option<Block>>::from_shape_fn([CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE], |(x,y,z)| {
             let sample_point = (
                 (position.0 * CHUNK_SIZE as f32) as f64 + x as f64 + offset,
