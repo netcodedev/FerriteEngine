@@ -1,7 +1,7 @@
 use glfw::Context;
 use cgmath::{Deg, Matrix};
 use std::fs;
-use std::sync::{Arc, RwLock};
+use std::sync::mpsc;
 use std::thread;
 
 mod shader;
@@ -40,47 +40,55 @@ fn main() {
         gl::Enable(gl::DEPTH_TEST);
     }
 
-    let chunks  = Arc::new(RwLock::new(Vec::<Chunk>::new()));
+    let mut chunks  = Vec::<Chunk>::new();
     let mut camera: Camera = Camera::new((64.0, 200.0, 64.0), Deg(-60.0), Deg(320.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
     let mut camera_controller: CameraController = CameraController::new(50.0, 1.0);
 
     window.set_cursor_pos(0.0, 0.0);
 
-    let _chunkloader = thread::spawn({
-        let shared_chunks = Arc::clone(&chunks);
-        move || {
-            let radius = 0;
-            let mut x = -radius as f32;
-            let mut z = -radius as f32;
-            
-            loop {
-                let new_chunk = Chunk::new((x, 0.0, z));
-                shared_chunks.write().unwrap().push(new_chunk);
+    let (tx, rx) = mpsc::channel();
 
-                // Adjust the position for each chunk
-                x += 1.0;
-                if x > radius as f32 {
-                    x = -radius as f32;
-                    z += 1.0;
-                    if z > radius as f32 {
-                        break; // Stop generating new chunks once the radius is reached
-                    }
+    let _chunkloader = thread::spawn(move || {
+        let radius = 3;
+        let mut x = -radius as f32;
+        let mut z = -radius as f32;
+
+        loop {
+            let new_chunk = Chunk::new((x, 0.0, z));
+            tx.send(new_chunk).unwrap();
+
+            // Adjust the position for each chunk
+            x += 1.0;
+            if x > radius as f32 {
+                x = -radius as f32;
+                z += 1.0;
+                if z > radius as f32 {
+                    break; // Stop generating new chunks once the radius is reached
                 }
             }
         }
     });
-    
+
+    // wireframe
+    // unsafe {
+    //     gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
+    // }
 
     while !window.should_close() {
         unsafe {
             gl::ClearColor(0.3, 0.3, 0.5, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
         }
+
+        // Load new chunks
+        let new_chunk = rx.try_recv();
+        if let Ok(chunk) = new_chunk {
+            chunks.push(chunk);
+        }
         
         // Render the mesh
-        let chunks = Arc::clone(&chunks);
-        for chunk in chunks.write().unwrap().iter_mut() {
+        for chunk in &mut chunks {
             chunk.render(shader_program);
         }
 
