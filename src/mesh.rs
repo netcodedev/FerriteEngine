@@ -1,4 +1,4 @@
-use gl::types::{GLsizei, GLsizeiptr, GLuint, GLvoid};
+use gl::types::{GLsizeiptr, GLuint, GLvoid};
 use cgmath::Matrix;
 use libnoise::prelude::*;
 use ndarray::{ArrayBase, Dim, Array3};
@@ -58,10 +58,9 @@ impl Mesh {
             );
 
             // Set vertex attribute pointers
-            let stride = 3 * std::mem::size_of::<f32>() as GLsizei;
-            gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, stride, std::ptr::null());
+            gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
             gl::EnableVertexAttribArray(0);
-            gl::VertexAttribPointer(1, 3, gl::FLOAT, gl::FALSE, stride, std::ptr::null());
+            gl::VertexAttribPointer(1, 3, gl::FLOAT, gl::FALSE, 0, (self.vertices.len() * std::mem::size_of::<f32>()) as *const GLvoid);
             gl::EnableVertexAttribArray(1);
 
             // Unbind VBO and VAO (optional, but good practice)
@@ -199,22 +198,23 @@ impl Chunk {
         ];
 
         let indices: Vec<u32> = vec![
-            0, 1, 2, 2, 3, 0, // Back face
-            4, 5, 6, 6, 7, 4, // Front face
+            0, 1, 2, 2, 3, 0, // Front face
+            4, 5, 6, 6, 7, 4, // Back face
             4, 5, 1, 1, 0, 4, // Bottom face
             7, 6, 2, 2, 3, 7, // Top face
-            4, 7, 3, 3, 0, 4, // Left face
-            5, 6, 2, 2, 1, 5  // Right face
+            4, 7, 3, 3, 0, 4, // Right face
+            5, 6, 2, 2, 1, 5  // Left face
         ];
 
         let normals: Vec<f32> = vec![
-            // Normals
-            0.0, 0.0, -1.0, // Back face
-            0.0, 0.0, 1.0, // Front face
-            0.0, -1.0, 0.0, // Bottom face
-            0.0, 1.0, 0.0, // Top face
-            -1.0, 0.0, 0.0, // Left face
-            1.0, 0.0, 0.0, // Right face
+            -1.0, -1.0, -1.0,
+             1.0, -1.0, -1.0,
+             1.0,  1.0, -1.0,
+            -1.0,  1.0, -1.0,
+            -1.0, -1.0,  1.0,
+             1.0, -1.0,  1.0,
+             1.0,  1.0,  1.0,
+            -1.0,  1.0,  1.0,
         ];
 
         (vertices, indices, normals)
