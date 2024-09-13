@@ -102,17 +102,19 @@ pub struct Chunk {
 
 impl Chunk {
     pub fn new(position: (f32, f32, f32)) -> Self {
-        let generator = Source::perlin(1).scale([0.01; 3]);
+        let generator = Source::perlin(1).scale([0.003; 2]);
+        let hills = Source::perlin(1).scale([0.01; 2]);
+        let tiny_hills = Source::perlin(1).scale([0.1; 2]);
         let offset: f64 = 16777216.0;
         let blocks: ArrayBase<ndarray::OwnedRepr<Option<Block>>, Dim<[usize; 3]>> = Array3::<Option<Block>>::from_shape_fn([CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE], |(x,y,z)| {
             let sample_point = (
                 (position.0 * CHUNK_SIZE as f32) as f64 + x as f64 + offset,
-                (position.1 * CHUNK_SIZE as f32) as f64 + y as f64 + offset,
                 (position.2 * CHUNK_SIZE as f32) as f64 + z as f64 + offset,
             );
-            let noise_value = generator.sample([sample_point.0, sample_point.1, sample_point.2]);
-            let threshold = 0.0; // Adjust the threshold value to control the density of blocks
-            if noise_value < threshold {
+            let noise_value = (1.0 + generator.sample([sample_point.0, sample_point.1]))/2.0;
+            let hills_value = (1.0 + hills.sample([sample_point.0, sample_point.1]))/2.0 * 0.2;
+            let tiny_hills_value = (1.0 + tiny_hills.sample([sample_point.0, sample_point.1]))/2.0 * 0.01;
+            if ((noise_value + hills_value + tiny_hills_value) * CHUNK_SIZE as f64) < (y as f64) {
                 return None;
             }
             Some(Block::new())
