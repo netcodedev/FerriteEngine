@@ -2,6 +2,7 @@ use gl::types::{GLsizeiptr, GLuint, GLvoid};
 use cgmath::Matrix;
 use libnoise::prelude::*;
 use ndarray::{ArrayBase, Dim, Array3};
+use std::sync::mpsc;
 
 const CHUNK_SIZE: usize = 128;
 
@@ -94,12 +95,11 @@ impl Block {
 pub struct Chunk {
     position: (f32, f32, f32),
     blocks: ArrayBase<ndarray::OwnedRepr<Option<Block>>, ndarray::Dim<[usize; 3]>>,
-    mesh: Option<Mesh>,
+    pub mesh: Option<Mesh>,
 }
 
 impl Chunk {
     pub fn new(position: (f32, f32, f32)) -> Self {
-        println!("Generating new chunk at position {:?}", position);
         let generator = Source::perlin(1).scale([0.01; 3]);
         let offset: f64 = 16777216.0;
         let blocks: ArrayBase<ndarray::OwnedRepr<Option<Block>>, Dim<[usize; 3]>> = Array3::<Option<Block>>::from_shape_fn([CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE], |(x,y,z)| {
@@ -226,4 +226,35 @@ impl Chunk {
         (vertices, indices, normals)
     }
 
+}
+
+pub fn chunkloader(radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<Chunk>) {
+    let mut x: i32 = 1;
+    let mut z: i32 = 0;
+
+    loop {
+        if x > radius {
+            break;
+        }
+        let new_chunk: Chunk;
+        if z_dir > 0 {
+            new_chunk = Chunk::new(((x * x_dir) as f32, 0.0, z as f32));
+        } else {
+            new_chunk = Chunk::new(((z * z_dir) as f32, 0.0, (x * x_dir) as f32));
+        }
+        // new_chunk.mesh = Some(new_chunk.calculate_mesh());
+        
+        let result = tx.send(new_chunk);
+        if result.is_err() {
+            break;
+        }
+
+        z = -z;
+        if z == -x*z_dir {
+            x += 1;
+            z = 0;
+        } else if z >= 0 {
+            z += 1;
+        }
+    }
 }

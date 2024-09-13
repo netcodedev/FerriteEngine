@@ -48,27 +48,17 @@ fn main() {
     window.set_cursor_pos(0.0, 0.0);
 
     let (tx, rx) = mpsc::channel();
+    let origin = Chunk::new((0.0, 0.0, 0.0));
+    tx.send(origin).unwrap();
 
-    let _chunkloader = thread::spawn(move || {
-        let radius = 3;
-        let mut x = -radius as f32;
-        let mut z = -radius as f32;
-
-        loop {
-            let new_chunk = Chunk::new((x, 0.0, z));
-            tx.send(new_chunk).unwrap();
-
-            // Adjust the position for each chunk
-            x += 1.0;
-            if x > radius as f32 {
-                x = -radius as f32;
-                z += 1.0;
-                if z > radius as f32 {
-                    break; // Stop generating new chunks once the radius is reached
-                }
-            }
-        }
-    });
+    let tx1 = tx.clone();
+    let tx2 = tx.clone();
+    let tx3 = tx.clone();
+    let tx4 = tx.clone();
+    let _ = thread::spawn(move || mesh::chunkloader(3,1,1,tx1));
+    let _ = thread::spawn(move || mesh::chunkloader(3,-1,1,tx2));
+    let _ = thread::spawn(move || mesh::chunkloader(3,1,-1,tx3));
+    let _ = thread::spawn(move || mesh::chunkloader(3,-1,-1,tx4));
 
     // wireframe
     // unsafe {
