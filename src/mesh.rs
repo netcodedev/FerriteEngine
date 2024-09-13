@@ -146,6 +146,7 @@ impl Chunk {
             let mut q = vec![0i32; 3];
 
             let mut mask = vec![false; CHUNK_SIZE * CHUNK_SIZE];
+            let mut flip = vec![false; CHUNK_SIZE * CHUNK_SIZE];
             q[d] = 1;
 
             // Check each slice of the chunk one at a time
@@ -168,6 +169,7 @@ impl Chunk {
                             true
                         };
                         mask[n] = block_current != block_compare;
+                        flip[n] = block_compare;
                         x[u] += 1;
                         n += 1;
                     }
@@ -187,7 +189,7 @@ impl Chunk {
                             // Compute the width of this quad and store it in w
                             // This is done by searching along the current axis until mask[n + w] is false
                             let mut w = 1;
-                            while i + w < CHUNK_SIZE && mask[n + w] {
+                            while i + w < CHUNK_SIZE && mask[n + w] && flip[n] == flip[n + w] {
                                 w += 1;
                             }
 
@@ -198,7 +200,7 @@ impl Chunk {
                             let mut h = 1;
                             'outer: while j + h < CHUNK_SIZE {
                                 for k in 0..w {
-                                    if !mask[n + k + h * CHUNK_SIZE] {
+                                    if !mask[n + k + h * CHUNK_SIZE] || flip[n] != flip[n + k + h * CHUNK_SIZE] {
                                         break 'outer;
                                     }
                                 }
@@ -216,12 +218,21 @@ impl Chunk {
                             dv[v] = h as i32;
 
                             // Create a quad for this face. Colour, normal or textures are not stored in this block vertex format.
-                            vertices.extend_from_slice(&[
-                                x[0] as f32,                    x[1] as f32,                    x[2] as f32,
-                                (x[0] + du[0]) as f32,          (x[1] + du[1]) as f32,          (x[2] + du[2]) as f32,
-                                (x[0] + dv[0]) as f32,          (x[1] + dv[1]) as f32,          (x[2] + dv[2]) as f32,
-                                (x[0] + du[0] + dv[0]) as f32,  (x[1] + du[1] + dv[1]) as f32,  (x[2] + du[2] + dv[2]) as f32,
-                            ]);
+                            if !flip[n] {
+                                vertices.extend_from_slice(&[
+                                    (x[0] + du[0]) as f32,          (x[1] + du[1]) as f32,          (x[2] + du[2]) as f32,
+                                    x[0] as f32,                    x[1] as f32,                    x[2] as f32,
+                                    (x[0] + du[0] + dv[0]) as f32,  (x[1] + du[1] + dv[1]) as f32,  (x[2] + du[2] + dv[2]) as f32,
+                                    (x[0] + dv[0]) as f32,          (x[1] + dv[1]) as f32,          (x[2] + dv[2]) as f32,
+                                ]);
+                            } else {
+                                vertices.extend_from_slice(&[
+                                    x[0] as f32,                    x[1] as f32,                    x[2] as f32,
+                                    (x[0] + du[0]) as f32,          (x[1] + du[1]) as f32,          (x[2] + du[2]) as f32,
+                                    (x[0] + dv[0]) as f32,          (x[1] + dv[1]) as f32,          (x[2] + dv[2]) as f32,
+                                    (x[0] + du[0] + dv[0]) as f32,  (x[1] + du[1] + dv[1]) as f32,  (x[2] + du[2] + dv[2]) as f32,
+                                ]);
+                            }
 
                             let vert_count = vertices.len() as u32 / 3;
                             indices.extend_from_slice(&[
