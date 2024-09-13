@@ -123,7 +123,7 @@ impl Chunk {
             self.mesh = Some(self.calculate_mesh());
         }
         if let Some(mesh) = &self.mesh {
-            mesh.render(shader_program, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32));
+            mesh.render(shader_program, (self.position.0 * CHUNK_SIZE as f32 - self.position.0, self.position.1 * CHUNK_SIZE as f32 - self.position.1, self.position.2 * CHUNK_SIZE as f32 - self.position.2));
         }
     }
 
