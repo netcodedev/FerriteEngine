@@ -55,7 +55,7 @@ fn main() {
     let tx2 = tx.clone();
     let tx3 = tx.clone();
     let tx4 = tx.clone();
-    const RADIUS: i32 = 10;
+    const RADIUS: i32 = 5;
     let _ = thread::spawn(move || mesh::chunkloader(RADIUS,1,1,tx1));
     let _ = thread::spawn(move || mesh::chunkloader(RADIUS,-1,1,tx2));
     let _ = thread::spawn(move || mesh::chunkloader(RADIUS,1,-1,tx3));
