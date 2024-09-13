@@ -11,6 +11,10 @@ use camera::{Camera, CameraController, Projection};
 use mesh::Chunk;
 use shader::create_shader_program;
 
+const WIREFRAME: bool = false;
+const SHOW_FPS: bool = false;
+const VSYNC: bool = true;
+
 fn main() {
     let mut glfw = glfw::init(glfw::log_errors).unwrap_or_else(|err| {
         eprintln!("Fehler bei der GLFW-Initialisierung: {}", err);
@@ -31,7 +35,9 @@ fn main() {
     let fragment_source = fs::read_to_string("src/shaders/fragment.glsl").unwrap();
     let shader_program = create_shader_program(&vertex_source, &fragment_source);
 
-    //glfw.set_swap_interval(glfw::SwapInterval::None);
+    if !VSYNC {
+        glfw.set_swap_interval(glfw::SwapInterval::None);
+    }
     window.set_cursor_mode(glfw::CursorMode::Disabled);
     window.set_cursor_pos_polling(true);
     window.set_framebuffer_size_polling(true);
@@ -63,10 +69,11 @@ fn main() {
     let _ = thread::spawn(move || mesh::chunkloader(RADIUS,-1,-1,tx4));
 
     // wireframe
-    // unsafe {
-    //     gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
-    // }
-
+    if WIREFRAME {
+        unsafe {
+            gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
+        }
+    }
     while !window.should_close() {
         unsafe {
             gl::ClearColor(0.3, 0.3, 0.5, 1.0);
@@ -92,7 +99,7 @@ fn main() {
             projection.resize(&event);
         }
 
-        let (delta_time, _fps) = calculate_frametime(&glfw);
+        let (delta_time, fps) = calculate_frametime(&glfw);
         camera_controller.update_camera(&mut camera, delta_time as f32);
 
         unsafe {
@@ -104,8 +111,9 @@ fn main() {
         }
 
         window.set_cursor_pos(0.0, 0.0);
-
-        // println!("frametime: {}ms FPS: {}", delta_time * 1000.0, fps);
+        if SHOW_FPS {
+            println!("frametime: {}ms FPS: {}", delta_time * 1000.0, fps);
+        }
     }
 }
 

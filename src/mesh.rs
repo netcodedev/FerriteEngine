@@ -129,7 +129,7 @@ impl Chunk {
             if !mesh.initialized {
                 mesh.init();
             }
-            mesh.render(shader_program, (self.position.0 * CHUNK_SIZE as f32 - self.position.0, self.position.1 * CHUNK_SIZE as f32 - self.position.1, self.position.2 * CHUNK_SIZE as f32 - self.position.2));
+            mesh.render(shader_program, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32));
         }
     }
 
@@ -138,98 +138,222 @@ impl Chunk {
         let mut indices: Vec<u32> = Vec::new();
         let mut normals: Vec<f32> = Vec::new();
 
-        for x in 0..CHUNK_SIZE {
-            for y in 0..CHUNK_SIZE {
-                for z in 0..CHUNK_SIZE {
-                    if let Some(_) = &self.blocks[[x, y, z]] {
-                        // Check if the block is visible
-                        if self.is_block_visible(x, y, z) {
-                            // Calculate the block's vertices and indices
-                            let (block_vertices, block_indices, block_normals) = self.calculate_block_mesh(x, y, z);
-                            let base_index = vertices.len() as u32 / 3;
+        // Sweep over each axis (X, Y and Z)
+        for d in 0..3 {
+            let u = (d + 1) % 3;
+            let v = (d + 2) % 3;
+            let mut x = vec![0i32; 3];
+            let mut q = vec![0i32; 3];
 
-                            // Add the block's vertices and indices to the chunk's mesh
-                            vertices.extend(block_vertices);
-                            indices.extend(block_indices.iter().map(|index| index + base_index));
-                            normals.extend(block_normals);
+            let mut mask = vec![false; CHUNK_SIZE * CHUNK_SIZE];
+            let mut flip = vec![false; CHUNK_SIZE * CHUNK_SIZE];
+            q[d] = 1;
+
+            // Check each slice of the chunk one at a time
+            x[d] = -1;
+            while x[d] < CHUNK_SIZE as i32 {
+                // Compute the mask
+                let mut n = 0;
+                x[v] = 0;
+                while x[v] < CHUNK_SIZE as i32 {
+                    x[u] = 0;
+                    while x[u] < CHUNK_SIZE as i32 {
+                        let block_current = if 0 <= x[d] {
+                            self.blocks.get(((x[0]) as usize, (x[1]) as usize, (x[2]) as usize)).unwrap().is_none()
+                        } else {
+                            true
+                        };
+                        let block_compare = if x[d] < CHUNK_SIZE as i32 - 1 {
+                            self.blocks.get(((x[0] + q[0]) as usize, (x[1] + q[1]) as usize, (x[2] + q[2]) as usize)).unwrap().is_none()
+                        } else {
+                            true
+                        };
+                        mask[n] = block_current != block_compare;
+                        flip[n] = block_compare;
+                        x[u] += 1;
+                        n += 1;
+                    }
+                    x[v] += 1;
+                }
+
+                x[d] += 1;
+
+                n = 0;
+                
+                // Generate a mesh from the mask using lexicographic ordering,
+                // by looping over each block in this slice of the chunk
+                for j in 0..CHUNK_SIZE {
+                    let mut i = 0;
+                    while i < CHUNK_SIZE {
+                        if mask[n] {
+                            // Compute the width of this quad and store it in w
+                            // This is done by searching along the current axis until mask[n + w] is false
+                            let mut w = 1;
+                            while i + w < CHUNK_SIZE && mask[n + w] && flip[n] == flip[n + w] {
+                                w += 1;
+                            }
+
+                            // Compute the height of this quad and store it in h
+                            // This is done by checking if every block next to this row (range 0 to w) is also part of the mask.
+                            // For example, if w is 5 we currently have a quad of dimensions 1 x 5. To reduce triangle count,
+                            // greedy meshing will attempt to expand this quad out to CHUNK_SIZE x 5, but will stop if it reaches a hole in the mask
+                            let mut h = 1;
+                            'outer: while j + h < CHUNK_SIZE {
+                                for k in 0..w {
+                                    if !mask[n + k + h * CHUNK_SIZE] || flip[n] != flip[n + k + h * CHUNK_SIZE] {
+                                        break 'outer;
+                                    }
+                                }
+                                h += 1;
+                            }
+
+                            x[u] = i as i32;
+                            x[v] = j as i32;
+
+                            // du and dv determine the size and orientation of this face
+                            let mut du = vec![0; 3];
+                            du[u] = w as i32;
+
+                            let mut dv = vec![0; 3];
+                            dv[v] = h as i32;
+
+                            // Create a quad for this face. Colour, normal or textures are not stored in this block vertex format.
+                            if !flip[n] {
+                                vertices.extend_from_slice(&[
+                                    (x[0] + du[0]) as f32,          (x[1] + du[1]) as f32,          (x[2] + du[2]) as f32,
+                                    x[0] as f32,                    x[1] as f32,                    x[2] as f32,
+                                    (x[0] + du[0] + dv[0]) as f32,  (x[1] + du[1] + dv[1]) as f32,  (x[2] + du[2] + dv[2]) as f32,
+                                    (x[0] + dv[0]) as f32,          (x[1] + dv[1]) as f32,          (x[2] + dv[2]) as f32,
+                                ]);
+                            } else {
+                                vertices.extend_from_slice(&[
+                                    x[0] as f32,                    x[1] as f32,                    x[2] as f32,
+                                    (x[0] + du[0]) as f32,          (x[1] + du[1]) as f32,          (x[2] + du[2]) as f32,
+                                    (x[0] + dv[0]) as f32,          (x[1] + dv[1]) as f32,          (x[2] + dv[2]) as f32,
+                                    (x[0] + du[0] + dv[0]) as f32,  (x[1] + du[1] + dv[1]) as f32,  (x[2] + du[2] + dv[2]) as f32,
+                                ]);
+                            }
+
+                            let vert_count = vertices.len() as u32 / 3;
+                            indices.extend_from_slice(&[
+                                vert_count - 4, vert_count - 3, vert_count - 2,
+                                vert_count - 2, vert_count - 3, vert_count - 1,
+                            ]);
+
+                            match d {
+                                0 => normals.extend(vec![
+                                    0.0, 1.0, 0.0,
+                                    0.0, 1.0, 0.0,
+                                    0.0, 1.0, 0.0,
+                                    0.0, 1.0, 0.0,
+                                ]),
+                                1 => normals.extend(vec![
+                                    1.0, 0.0, 0.0,
+                                    1.0, 0.0, 0.0,
+                                    1.0, 0.0, 0.0,
+                                    1.0, 0.0, 0.0,
+                                ]),
+                                2 => normals.extend(vec![
+                                    0.0, 0.0, 1.0,
+                                    0.0, 0.0, 1.0,
+                                    0.0, 0.0, 1.0,
+                                    0.0, 0.0, 1.0,
+                                ]),
+                                _ => (),
+                            }
+
+                            // Clear this part of the mask, so we don't add duplicate faces
+                            for l in 0..h {
+                                for k in 0..w {
+                                    mask[n + k + l * CHUNK_SIZE] = false;
+                                }
+                            }
+
+                            // Increment counters and continue
+                            i += w;
+                            n += w;
+                        } else {
+                            i += 1;
+                            n += 1;
                         }
                     }
                 }
             }
         }
+
         Mesh::new(vertices, indices, normals)
     }
 
-    fn is_block_visible(&self, x: usize, y: usize, z: usize) -> bool {
-        // Check if the block is at the chunk's boundaries
-        if x == 0 || x == CHUNK_SIZE - 1 || y == 0 || y == CHUNK_SIZE - 1 || z == 0 || z == CHUNK_SIZE - 1 {
-            return true;
-        }
+    // fn is_block_visible(&self, x: usize, y: usize, z: usize) -> bool {
+    //     // Check if the block is at the chunk's boundaries
+    //     if x == 0 || x == CHUNK_SIZE - 1 || y == 0 || y == CHUNK_SIZE - 1 || z == 0 || z == CHUNK_SIZE - 1 {
+    //         return true;
+    //     }
     
-        // Check if any neighboring block is empty
-        let neighbors = [
-            (x - 1, y, z),
-            (x + 1, y, z),
-            (x, y - 1, z),
-            (x, y + 1, z),
-            (x, y, z - 1),
-            (x, y, z + 1),
-        ];
-        for neighbor in neighbors.iter() {
-            let block: Option<&Option<Block>> = self.blocks.get(*neighbor);
-            if let Some(block) = block {
-                if block.is_none() {
-                    return true;
-                }
-            }
-        }
+    //     // Check if any neighboring block is empty
+    //     let neighbors = [
+    //         (x - 1, y, z),
+    //         (x + 1, y, z),
+    //         (x, y - 1, z),
+    //         (x, y + 1, z),
+    //         (x, y, z - 1),
+    //         (x, y, z + 1),
+    //     ];
+    //     for neighbor in neighbors.iter() {
+    //         let block: Option<&Option<Block>> = self.blocks.get(*neighbor);
+    //         if let Some(block) = block {
+    //             if block.is_none() {
+    //                 return true;
+    //             }
+    //         }
+    //     }
     
-        false
-    }
+    //     false
+    // }
 
-    fn calculate_block_mesh(&self, x: usize, y: usize, z: usize) -> (Vec<f32>, Vec<u32>, Vec<f32>) {
-        let position = (
-            self.position.0 + x as f32,
-            self.position.1 + y as f32,
-            self.position.2 + z as f32,
-        );
+    // fn calculate_block_mesh(&self, x: usize, y: usize, z: usize) -> (Vec<f32>, Vec<u32>, Vec<f32>) {
+    //     let position = (
+    //         self.position.0 + x as f32,
+    //         self.position.1 + y as f32,
+    //         self.position.2 + z as f32,
+    //     );
 
-        // Calculate the block's vertices and indices based on its position
-        let (x, y, z) = (position.0, position.1, position.2);
-        let vertices: Vec<f32> = vec![
-            // Position
-            x      , y      , z      ,
-            x + 1.0, y      , z      ,
-            x + 1.0, y + 1.0, z      ,
-            x      , y + 1.0, z      ,
-            x      , y      , z + 1.0,
-            x + 1.0, y      , z + 1.0,
-            x + 1.0, y + 1.0, z + 1.0,
-            x      , y + 1.0, z + 1.0,
-        ];
+    //     // Calculate the block's vertices and indices based on its position
+    //     let (x, y, z) = (position.0, position.1, position.2);
+    //     let vertices: Vec<f32> = vec![
+    //         // Position
+    //         x      , y      , z      ,
+    //         x + 1.0, y      , z      ,
+    //         x + 1.0, y + 1.0, z      ,
+    //         x      , y + 1.0, z      ,
+    //         x      , y      , z + 1.0,
+    //         x + 1.0, y      , z + 1.0,
+    //         x + 1.0, y + 1.0, z + 1.0,
+    //         x      , y + 1.0, z + 1.0,
+    //     ];
 
-        let indices: Vec<u32> = vec![
-            0, 2, 1, 2, 0, 3, // Front face
-            4, 5, 6, 6, 7, 4, // Back face
-            4, 1, 5, 1, 4, 0, // Bottom face
-            7, 6, 2, 2, 3, 7, // Top face
-            4, 7, 3, 3, 0, 4, // Right face
-            5, 2, 6, 2, 5, 1  // Left face
-        ];
+    //     let indices: Vec<u32> = vec![
+    //         0, 2, 1, 2, 0, 3, // Front face
+    //         4, 5, 6, 6, 7, 4, // Back face
+    //         4, 1, 5, 1, 4, 0, // Bottom face
+    //         7, 6, 2, 2, 3, 7, // Top face
+    //         4, 7, 3, 3, 0, 4, // Right face
+    //         5, 2, 6, 2, 5, 1  // Left face
+    //     ];
 
-        let normals: Vec<f32> = vec![
-            -1.0, -1.0, -1.0,
-             1.0, -1.0, -1.0,
-             1.0,  1.0, -1.0,
-            -1.0,  1.0, -1.0,
-            -1.0, -1.0,  1.0,
-             1.0, -1.0,  1.0,
-             1.0,  1.0,  1.0,
-            -1.0,  1.0,  1.0,
-        ];
+    //     let normals: Vec<f32> = vec![
+    //         -1.0, -1.0, -1.0,
+    //          1.0, -1.0, -1.0,
+    //          1.0,  1.0, -1.0,
+    //         -1.0,  1.0, -1.0,
+    //         -1.0, -1.0,  1.0,
+    //          1.0, -1.0,  1.0,
+    //          1.0,  1.0,  1.0,
+    //         -1.0,  1.0,  1.0,
+    //     ];
 
-        (vertices, indices, normals)
-    }
+    //     (vertices, indices, normals)
+    // }
 
 }
 
