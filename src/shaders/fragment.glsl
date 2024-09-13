@@ -11,11 +11,23 @@ void main()
     vec3 normal = vec3(0.0, 0.0, 0.0);
 
     if (abs(unitNormal.y) > abs(unitNormal.x) && abs(unitNormal.y) > abs(unitNormal.z)) {
-        normal = vec3(0.0, 1.0, 0.0);
+        if (unitNormal.y < 0.0) {
+            normal = vec3(0.0, -1.0, 0.0);
+        } else {
+            normal = vec3(0.0, 1.0, 0.0);
+        }
     } else if (abs(unitNormal.x) > abs(unitNormal.y) && abs(unitNormal.x) > abs(unitNormal.z)) {
-        normal = vec3(1.0, 0.0, 0.0);
+        if (unitNormal.x < 0.0) {
+            normal = vec3(-1.0, 0.0, 0.0);
+        } else {
+            normal = vec3(1.0, 0.0, 0.0);
+        }
     } else {
-        normal = vec3(0.0, 0.0, 1.0);
+        if (unitNormal.z < 0.0) {
+            normal = vec3(0.0, 0.0, -1.0);
+        } else {
+            normal = vec3(0.0, 0.0, 1.0);
+        }
     }
     normal = normalize(normal);
 
