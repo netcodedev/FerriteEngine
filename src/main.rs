@@ -38,6 +38,7 @@ fn main() {
 
     unsafe {
         gl::Enable(gl::DEPTH_TEST);
+        gl::Enable(gl::CULL_FACE);
     }
 
     let mut chunks  = Vec::<Chunk>::new();

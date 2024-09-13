@@ -209,12 +209,12 @@ impl Chunk {
         ];
 
         let indices: Vec<u32> = vec![
-            0, 1, 2, 2, 3, 0, // Front face
+            0, 2, 1, 2, 0, 3, // Front face
             4, 5, 6, 6, 7, 4, // Back face
-            4, 5, 1, 1, 0, 4, // Bottom face
+            4, 1, 5, 1, 4, 0, // Bottom face
             7, 6, 2, 2, 3, 7, // Top face
             4, 7, 3, 3, 0, 4, // Right face
-            5, 6, 2, 2, 1, 5  // Left face
+            5, 2, 6, 2, 5, 1  // Left face
         ];
 
         let normals: Vec<f32> = vec![
