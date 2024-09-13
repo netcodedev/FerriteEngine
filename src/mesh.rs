@@ -4,7 +4,7 @@ use libnoise::prelude::*;
 use ndarray::{ArrayBase, Dim, Array3};
 use std::sync::mpsc;
 
-const CHUNK_SIZE: usize = 32;
+const CHUNK_SIZE: usize = 128;
 
 pub struct Mesh {
     vertices: Vec<f32>,
@@ -129,7 +129,7 @@ impl Chunk {
             if !mesh.initialized {
                 mesh.init();
             }
-            mesh.render(shader_program, (self.position.0 * CHUNK_SIZE as f32 - self.position.0, self.position.1 * CHUNK_SIZE as f32 - self.position.1, self.position.2 * CHUNK_SIZE as f32 - self.position.2));
+            mesh.render(shader_program, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32));
         }
     }
 
@@ -137,10 +137,6 @@ impl Chunk {
         let mut vertices: Vec<f32> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
         let mut normals: Vec<f32> = Vec::new();
-
-        let chunk_pos_x: i32 = self.position.0 as i32 * CHUNK_SIZE as i32;
-        let chunk_pos_y: i32 = self.position.1 as i32 * CHUNK_SIZE as i32;
-        let chunk_pos_z: i32 = self.position.2 as i32 * CHUNK_SIZE as i32;
 
         // Sweep over each axis (X, Y and Z)
         for d in 0..3 {
@@ -162,12 +158,12 @@ impl Chunk {
                     x[u] = 0;
                     while x[u] < CHUNK_SIZE as i32 {
                         let block_current = if 0 <= x[d] {
-                            self.blocks.get(((x[0] + chunk_pos_x) as usize, (x[1] + chunk_pos_y) as usize, (x[2] + chunk_pos_z) as usize)).unwrap().is_none()
+                            self.blocks.get(((x[0]) as usize, (x[1]) as usize, (x[2]) as usize)).unwrap().is_none()
                         } else {
                             true
                         };
                         let block_compare = if x[d] < CHUNK_SIZE as i32 - 1 {
-                            self.blocks.get(((x[0] + q[0] + chunk_pos_x) as usize, (x[1] + q[1] + chunk_pos_y) as usize, (x[2] + q[2] + chunk_pos_z) as usize)).unwrap().is_none()
+                            self.blocks.get(((x[0] + q[0]) as usize, (x[1] + q[1]) as usize, (x[2] + q[2]) as usize)).unwrap().is_none()
                         } else {
                             true
                         };
@@ -233,16 +229,27 @@ impl Chunk {
                                 vert_count - 2, vert_count - 3, vert_count - 1,
                             ]);
 
-                            normals.extend(vec![
-                                -1.0, -1.0, -1.0,
-                                 1.0, -1.0, -1.0,
-                                 1.0,  1.0, -1.0,
-                                -1.0,  1.0, -1.0,
-                                -1.0, -1.0,  1.0,
-                                 1.0, -1.0,  1.0,
-                                 1.0,  1.0,  1.0,
-                                -1.0,  1.0,  1.0,
-                            ]);
+                            match d {
+                                0 => normals.extend(vec![
+                                    0.0, 1.0, 0.0,
+                                    0.0, 1.0, 0.0,
+                                    0.0, 1.0, 0.0,
+                                    0.0, 1.0, 0.0,
+                                ]),
+                                1 => normals.extend(vec![
+                                    1.0, 0.0, 0.0,
+                                    1.0, 0.0, 0.0,
+                                    1.0, 0.0, 0.0,
+                                    1.0, 0.0, 0.0,
+                                ]),
+                                2 => normals.extend(vec![
+                                    0.0, 0.0, 1.0,
+                                    0.0, 0.0, 1.0,
+                                    0.0, 0.0, 1.0,
+                                    0.0, 0.0, 1.0,
+                                ]),
+                                _ => (),
+                            }
 
                             // Clear this part of the mask, so we don't add duplicate faces
                             for l in 0..h {
@@ -262,6 +269,7 @@ impl Chunk {
                 }
             }
         }
+
         Mesh::new(vertices, indices, normals)
     }
 

@@ -10,20 +10,20 @@ void main()
     vec3 unitNormal = normalize(Normal);
     vec3 normal = vec3(0.0, 0.0, 0.0);
 
-    if (abs(unitNormal.y) > abs(unitNormal.x) && abs(unitNormal.y) > abs(unitNormal.z)) {
-        if (unitNormal.y < 0.0) {
+    if (abs(unitNormal.r) > abs(unitNormal.g) && abs(unitNormal.r) > abs(unitNormal.g)) {
+        if (unitNormal.r < 0.0) {
             normal = vec3(0.0, -1.0, 0.0);
         } else {
             normal = vec3(0.0, 1.0, 0.0);
         }
-    } else if (abs(unitNormal.x) > abs(unitNormal.y) && abs(unitNormal.x) > abs(unitNormal.z)) {
-        if (unitNormal.x < 0.0) {
+    } else if (abs(unitNormal.g) > abs(unitNormal.r) && abs(unitNormal.g) > abs(unitNormal.b)) {
+        if (unitNormal.g < 0.0) {
             normal = vec3(-1.0, 0.0, 0.0);
         } else {
             normal = vec3(1.0, 0.0, 0.0);
         }
     } else {
-        if (unitNormal.z < 0.0) {
+        if (unitNormal.b < 0.0) {
             normal = vec3(0.0, 0.0, -1.0);
         } else {
             normal = vec3(0.0, 0.0, 1.0);
