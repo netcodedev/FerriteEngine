@@ -72,8 +72,7 @@ fn main() {
         }
 
         // Load new chunks
-        let new_chunk = rx.try_recv();
-        if let Ok(chunk) = new_chunk {
+        if let Ok(chunk) = rx.try_recv() {
             chunks.push(chunk);
         }
         
