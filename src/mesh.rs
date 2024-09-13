@@ -13,19 +13,20 @@ pub struct Mesh {
     vao: u32,
     vbo: u32,
     ebo: u32,
+    pub initialized: bool,
 }
 
 impl Mesh {
     pub fn new(vertices: Vec<f32>, indices: Vec<u32>, normals: Vec<f32>) -> Self {
-        let mut mesh = Mesh {
+        let mesh = Mesh {
             vertices,
             indices,
             normals,
             vao: 0,
             vbo: 0,
             ebo: 0,
+            initialized: false,
         };
-        mesh.init();
         mesh
     }
 
@@ -68,6 +69,7 @@ impl Mesh {
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
         }
+        self.initialized = true;
     }
 
     pub fn render(&self, shader_program: GLuint, position: (f32, f32, f32)) {
@@ -119,10 +121,10 @@ impl Chunk {
     }
 
     pub fn render(&mut self, shader_program: GLuint) {
-        if self.mesh.is_none() {
-            self.mesh = Some(self.calculate_mesh());
-        }
-        if let Some(mesh) = &self.mesh {
+        if let Some(mesh) = &mut self.mesh {
+            if !mesh.initialized {
+                mesh.init();
+            }
             mesh.render(shader_program, (self.position.0 * CHUNK_SIZE as f32 - self.position.0, self.position.1 * CHUNK_SIZE as f32 - self.position.1, self.position.2 * CHUNK_SIZE as f32 - self.position.2));
         }
     }
@@ -151,7 +153,6 @@ impl Chunk {
                 }
             }
         }
-
         Mesh::new(vertices, indices, normals)
     }
 
@@ -170,9 +171,9 @@ impl Chunk {
             (x, y, z - 1),
             (x, y, z + 1),
         ];
-    
         for neighbor in neighbors.iter() {
-            if let Some(block) = self.blocks.get(*neighbor) {
+            let block: Option<&Option<Block>> = self.blocks.get(*neighbor);
+            if let Some(block) = block {
                 if block.is_none() {
                     return true;
                 }
@@ -236,13 +237,13 @@ pub fn chunkloader(radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<Chunk>)
         if x > radius {
             break;
         }
-        let new_chunk: Chunk;
+        let mut new_chunk: Chunk;
         if z_dir > 0 {
             new_chunk = Chunk::new(((x * x_dir) as f32, 0.0, z as f32));
         } else {
             new_chunk = Chunk::new(((z * z_dir) as f32, 0.0, (x * x_dir) as f32));
         }
-        // new_chunk.mesh = Some(new_chunk.calculate_mesh());
+        new_chunk.mesh = Some(new_chunk.calculate_mesh());
         
         let result = tx.send(new_chunk);
         if result.is_err() {

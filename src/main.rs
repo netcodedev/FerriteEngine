@@ -41,24 +41,26 @@ fn main() {
     }
 
     let mut chunks  = Vec::<Chunk>::new();
-    let mut camera: Camera = Camera::new((64.0, 200.0, 64.0), Deg(-60.0), Deg(320.0));
+    let mut camera: Camera = Camera::new((64.0, 200.0, 64.0), Deg(0.0), Deg(0.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
     let mut camera_controller: CameraController = CameraController::new(50.0, 1.0);
 
     window.set_cursor_pos(0.0, 0.0);
 
     let (tx, rx) = mpsc::channel();
-    let origin = Chunk::new((0.0, 0.0, 0.0));
+    let mut origin = Chunk::new((0.0, 0.0, 0.0));
+    origin.mesh = Some(origin.calculate_mesh());
     tx.send(origin).unwrap();
 
     let tx1 = tx.clone();
     let tx2 = tx.clone();
     let tx3 = tx.clone();
     let tx4 = tx.clone();
-    let _ = thread::spawn(move || mesh::chunkloader(3,1,1,tx1));
-    let _ = thread::spawn(move || mesh::chunkloader(3,-1,1,tx2));
-    let _ = thread::spawn(move || mesh::chunkloader(3,1,-1,tx3));
-    let _ = thread::spawn(move || mesh::chunkloader(3,-1,-1,tx4));
+    const RADIUS: i32 = 5;
+    let _ = thread::spawn(move || mesh::chunkloader(RADIUS,1,1,tx1));
+    let _ = thread::spawn(move || mesh::chunkloader(RADIUS,-1,1,tx2));
+    let _ = thread::spawn(move || mesh::chunkloader(RADIUS,1,-1,tx3));
+    let _ = thread::spawn(move || mesh::chunkloader(RADIUS,-1,-1,tx4));
 
     // wireframe
     // unsafe {
