@@ -117,7 +117,9 @@ impl Chunk {
             }
             Some(Block::new())
         });
-        Chunk { position, blocks, mesh: None }
+        let mut chunk = Chunk { position, blocks, mesh: None };
+        chunk.mesh = Some(chunk.calculate_mesh());
+        chunk
     }
 
     pub fn render(&mut self, shader_program: GLuint) {
@@ -129,7 +131,7 @@ impl Chunk {
         }
     }
 
-    pub fn calculate_mesh(&self) -> Mesh {
+    fn calculate_mesh(&self) -> Mesh {
         let mut vertices: Vec<f32> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
         let mut normals: Vec<f32> = Vec::new();
@@ -237,13 +239,12 @@ pub fn chunkloader(radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<Chunk>)
         if x > radius {
             break;
         }
-        let mut new_chunk: Chunk;
+        let new_chunk: Chunk;
         if z_dir > 0 {
             new_chunk = Chunk::new(((x * x_dir) as f32, 0.0, z as f32));
         } else {
             new_chunk = Chunk::new(((z * z_dir) as f32, 0.0, (x * x_dir) as f32));
         }
-        new_chunk.mesh = Some(new_chunk.calculate_mesh());
         
         let result = tx.send(new_chunk);
         if result.is_err() {

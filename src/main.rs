@@ -48,8 +48,7 @@ fn main() {
     window.set_cursor_pos(0.0, 0.0);
 
     let (tx, rx) = mpsc::channel();
-    let mut origin = Chunk::new((0.0, 0.0, 0.0));
-    origin.mesh = Some(origin.calculate_mesh());
+    let origin = Chunk::new((0.0, 0.0, 0.0));
     tx.send(origin).unwrap();
 
     let tx1 = tx.clone();
