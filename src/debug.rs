@@ -17,7 +17,7 @@ impl DebugController {
 
     pub fn process_keyboard(&mut self, glfw: &mut Glfw, event: &glfw::WindowEvent) {
         match event {
-            glfw::WindowEvent::Key(Key::F, _, Action::Press, _) => {
+            glfw::WindowEvent::Key(Key::F1, _, Action::Press, _) => {
                 self.wireframe = !self.wireframe;
                 unsafe {
                     if self.wireframe {
@@ -27,7 +27,7 @@ impl DebugController {
                     }
                 }
             }
-            glfw::WindowEvent::Key(Key::V, _, Action::Press, _) => {
+            glfw::WindowEvent::Key(Key::F2, _, Action::Press, _) => {
                 self.vsync = !self.vsync;
                 if self.vsync {
                     glfw.set_swap_interval(glfw::SwapInterval::Sync(1));
@@ -35,7 +35,7 @@ impl DebugController {
                     glfw.set_swap_interval(glfw::SwapInterval::None);
                 }
             }
-            glfw::WindowEvent::Key(Key::P, _, Action::Press, _) => {
+            glfw::WindowEvent::Key(Key::F3, _, Action::Press, _) => {
                 self.show_fps = !self.show_fps;
             }
             _ => {}
