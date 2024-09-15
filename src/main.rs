@@ -7,13 +7,11 @@ use std::thread;
 mod shader;
 mod mesh;
 mod camera;
+mod debug;
 use camera::{Camera, CameraController, Projection};
 use mesh::Chunk;
 use shader::create_shader_program;
-
-const WIREFRAME: bool = false;
-const SHOW_FPS: bool = false;
-const VSYNC: bool = true;
+use debug::DebugController;
 
 fn main() {
     let mut glfw = glfw::init(glfw::log_errors).unwrap_or_else(|err| {
@@ -35,9 +33,6 @@ fn main() {
     let fragment_source = fs::read_to_string("src/shaders/fragment.glsl").unwrap();
     let shader_program = create_shader_program(&vertex_source, &fragment_source);
 
-    if !VSYNC {
-        glfw.set_swap_interval(glfw::SwapInterval::None);
-    }
     window.set_cursor_mode(glfw::CursorMode::Disabled);
     window.set_cursor_pos_polling(true);
     window.set_framebuffer_size_polling(true);
@@ -51,6 +46,7 @@ fn main() {
     let mut camera: Camera = Camera::new((64.0, 200.0, 64.0), Deg(0.0), Deg(0.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
     let mut camera_controller: CameraController = CameraController::new(50.0, 1.0);
+    let mut debug_controller: DebugController = DebugController::new();
 
     window.set_cursor_pos(0.0, 0.0);
 
@@ -68,12 +64,6 @@ fn main() {
     let _ = thread::spawn(move || mesh::chunkloader(RADIUS,1,-1,tx3));
     let _ = thread::spawn(move || mesh::chunkloader(RADIUS,-1,-1,tx4));
 
-    // wireframe
-    if WIREFRAME {
-        unsafe {
-            gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
-        }
-    }
     while !window.should_close() {
         unsafe {
             gl::ClearColor(0.3, 0.3, 0.5, 1.0);
@@ -96,6 +86,7 @@ fn main() {
         for (_, event) in glfw::flush_messages(&events) {
             camera_controller.process_keyboard(&event);
             camera_controller.process_mouse(&mut window, &event);
+            debug_controller.process_keyboard(&mut glfw, &event);
             projection.resize(&event);
         }
 
@@ -111,7 +102,7 @@ fn main() {
         }
 
         window.set_cursor_pos(0.0, 0.0);
-        if SHOW_FPS {
+        if debug_controller.show_fps {
             println!("frametime: {}ms FPS: {}", delta_time * 1000.0, fps);
         }
     }
