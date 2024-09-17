@@ -1,7 +1,7 @@
 use gl::types::*;
 use std::{ffi::CString, ptr};
 
-pub fn create_shader_program(vertex_shader_source: &str, fragment_shader_source: &str) -> GLuint {
+pub fn create_shader(vertex_shader_source: &str, fragment_shader_source: &str) -> GLuint {
     unsafe {
         // 1. Compile vertex shader
         let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);

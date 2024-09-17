@@ -1,6 +1,6 @@
 use rusttype::gpu_cache::Cache;
 use rusttype::{point, Font, Rect, PositionedGlyph, Scale};
-use crate::shader::create_shader_program;
+use crate::shader::create_shader;
 use gl::types::{GLuint, GLvoid};
 use cgmath::Matrix;
 
@@ -20,9 +20,7 @@ impl TextRenderer {
 
         let cache: Cache<'static> = Cache::builder().dimensions(1024, 1024).build();
 
-        let vertex_source = include_str!("shaders/text_vertex.glsl");
-        let fragment_source = include_str!("shaders/text_fragment.glsl");
-        let shader_program = create_shader_program(&vertex_source, &fragment_source);
+        let shader_program = create_shader(include_str!("shaders/text_vertex.glsl"), include_str!("shaders/text_fragment.glsl"));
 
         TextRenderer {
             font,

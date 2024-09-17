@@ -1,17 +1,13 @@
 use glfw::Context;
 use cgmath::Deg;
-use std::fs;
-use std::sync::mpsc;
-use std::thread;
 
 mod shader;
 mod mesh;
 mod camera;
 mod debug;
 mod text;
+mod terrain;
 use camera::{Camera, CameraController, Projection};
-use mesh::Chunk;
-use shader::create_shader_program;
 use debug::DebugController;
 use text::TextRenderer;
 
@@ -31,35 +27,18 @@ fn main() {
 
     gl::load_with(|symbol| window.get_proc_address(symbol) as *const _);
 
-    let vertex_source = fs::read_to_string("src/shaders/vertex.glsl").unwrap();
-    let fragment_source = fs::read_to_string("src/shaders/fragment.glsl").unwrap();
-    let shader_program = create_shader_program(&vertex_source, &fragment_source);
-
     window.set_cursor_mode(glfw::CursorMode::Disabled);
     window.set_cursor_pos_polling(true);
     window.set_framebuffer_size_polling(true);
 
-    let mut chunks  = Vec::<Chunk>::new();
+    window.set_cursor_pos(0.0, 0.0);
+
     let mut camera: Camera = Camera::new((64.0, 200.0, 64.0), Deg(0.0), Deg(0.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
     let mut camera_controller: CameraController = CameraController::new(50.0, 1.0);
     let mut debug_controller: DebugController = DebugController::new();
 
-    window.set_cursor_pos(0.0, 0.0);
-
-    let (tx, rx) = mpsc::channel();
-    let origin = Chunk::new((0.0, 0.0, 0.0));
-    tx.send(origin).unwrap();
-
-    let tx1 = tx.clone();
-    let tx2 = tx.clone();
-    let tx3 = tx.clone();
-    let tx4 = tx.clone();
-    const RADIUS: i32 = 5;
-    let _ = thread::spawn(move || mesh::chunkloader(RADIUS,1,1,tx1));
-    let _ = thread::spawn(move || mesh::chunkloader(RADIUS,-1,1,tx2));
-    let _ = thread::spawn(move || mesh::chunkloader(RADIUS,1,-1,tx3));
-    let _ = thread::spawn(move || mesh::chunkloader(RADIUS,-1,-1,tx4));
+    let mut terrain = terrain::Terrain::new();
 
     let mut text_renderer = TextRenderer::new(width, height);
 
@@ -80,15 +59,8 @@ fn main() {
         let (delta_time, fps) = calculate_frametime(&glfw);
         camera_controller.update_camera(&mut camera, delta_time as f32);
 
-        // Load new chunks
-        if let Ok(chunk) = rx.try_recv() {
-            chunks.push(chunk);
-        }
-        
-        // Render the mesh
-        for chunk in &mut chunks {
-            chunk.render(&camera, &projection, shader_program);
-        }
+        terrain.update();
+        terrain.render(&camera, &projection);
 
         if debug_controller.show_fps {
             let fps_text = format!("{:.2} FPS, Frametime: {:.2}", fps, delta_time * 1000.0);
