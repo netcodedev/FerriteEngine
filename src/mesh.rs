@@ -4,6 +4,8 @@ use libnoise::prelude::*;
 use ndarray::{ArrayBase, Dim, Array3};
 use std::sync::mpsc;
 
+use crate::camera::{Camera, Projection};
+
 const CHUNK_SIZE: usize = 128;
 
 pub struct Mesh {
@@ -74,6 +76,8 @@ impl Mesh {
 
     pub fn render(&self, shader_program: GLuint, position: (f32, f32, f32)) {
         unsafe {
+            gl::Enable(gl::DEPTH_TEST);
+            gl::Enable(gl::CULL_FACE);
             gl::UseProgram(shader_program);
             let model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(position.0, position.1, position.2));
             let model_loc = gl::GetUniformLocation(shader_program, "model\0".as_ptr() as *const i8);
@@ -81,6 +85,9 @@ impl Mesh {
 
             gl::BindVertexArray(self.vao);
             gl::DrawElements(gl::TRIANGLES, self.indices.len() as i32, gl::UNSIGNED_INT, std::ptr::null());
+            gl::BindVertexArray(0);
+            gl::Disable(gl::CULL_FACE);
+            gl::Disable(gl::DEPTH_TEST);
         }
     }
 }
@@ -124,10 +131,18 @@ impl Chunk {
         chunk
     }
 
-    pub fn render(&mut self, shader_program: GLuint) {
+    pub fn render(&mut self, camera: &Camera, projection: &Projection, shader_program: GLuint) {
         if let Some(mesh) = &mut self.mesh {
             if !mesh.initialized {
                 mesh.init();
+            }
+            unsafe {
+                gl::UseProgram(shader_program);
+                let view_loc = gl::GetUniformLocation(shader_program, "view\0".as_ptr() as *const i8);
+                let projection_loc = gl::GetUniformLocation(shader_program, "projection\0".as_ptr() as *const i8);
+
+                gl::UniformMatrix4fv(view_loc, 1, gl::FALSE, camera.calc_matrix().as_ptr());
+                gl::UniformMatrix4fv(projection_loc, 1, gl::FALSE, projection.calc_matrix().as_ptr());
             }
             mesh.render(shader_program, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32));
         }
