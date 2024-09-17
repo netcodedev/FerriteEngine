@@ -90,11 +90,11 @@ fn main() {
             chunk.render(&camera, &projection, shader_program);
         }
 
-        text_renderer.render(5,5,100.0, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
 
         window.set_cursor_pos(0.0, 0.0);
         if debug_controller.show_fps {
-            println!("frametime: {}ms FPS: {}", delta_time * 1000.0, fps);
+            let fps_text = format!("{:.2} FPS, Frametime: {:.2}", fps, delta_time * 1000.0);
+            text_renderer.render(5,5,50.0, &fps_text);
         }
 
         window.swap_buffers();
