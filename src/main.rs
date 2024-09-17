@@ -64,9 +64,7 @@ fn main() {
             text_renderer.resize(&event);
         }
 
-        if let Some((line, button)) = line {
-            terrain.process_line(line, button);
-        }
+        terrain.process_line(line);
 
         let (delta_time, fps) = calculate_frametime(&glfw);
         camera_controller.update_camera(&mut camera, delta_time as f32);

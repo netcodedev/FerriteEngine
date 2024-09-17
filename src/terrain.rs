@@ -49,10 +49,12 @@ impl Terrain {
         }
     }
 
-    pub fn process_line(&mut self, line: Line, button: glfw::MouseButton) {
-        for chunk in &mut self.chunks {
-            if chunk.process_line(&line, &button) {
-                break;
+    pub fn process_line(&mut self, line: Option<(Line, glfw::MouseButton)>) {
+        if let Some((line, button)) = line {
+            for chunk in &mut self.chunks {
+                if chunk.process_line(&line, &button) {
+                    break;
+                }
             }
         }
     }
