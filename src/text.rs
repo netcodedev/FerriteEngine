@@ -70,6 +70,12 @@ impl TextRenderer {
         let mut vao = 0;
         let mut vbo = 0;
         unsafe {
+            let mut polygon_mode = 0;
+            gl::GetIntegerv(gl::POLYGON_MODE, &mut polygon_mode);
+            if polygon_mode != gl::FILL as i32 {
+                gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
+            }
+
             gl::GenVertexArrays(1, &mut vao);
             gl::GenBuffers(1, &mut vbo);
             gl::BindVertexArray(vao);
@@ -105,6 +111,10 @@ impl TextRenderer {
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
             gl::Disable(gl::BLEND);
+
+            if polygon_mode != gl::FILL as i32 {
+                gl::PolygonMode(gl::FRONT_AND_BACK, polygon_mode as u32);
+            }
         }
     }
 
