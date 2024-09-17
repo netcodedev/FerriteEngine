@@ -35,7 +35,7 @@ impl TextRenderer {
     }
 
     pub fn render(&mut self, x: u32, y: u32, size: f32, text: &str) {
-        let glyphs = self.layout(Scale::uniform(size), 500, &text);
+        let glyphs = self.layout(Scale::uniform(size), self.width, &text);
         for glyph in &glyphs {
             self.cache.queue_glyph(0, glyph.clone());
         }
@@ -53,8 +53,8 @@ impl TextRenderer {
         
         let vertices: Vec<f32> = glyphs.iter().filter_map(|g| self.cache.rect_for(0, g).ok().flatten()).flat_map(|(uv_rect, screen_rect)| {
             let gl_rect = Rect {
-                min: point(-0.5 + (screen_rect.min.x as f32 + x as f32) / self.width as f32, 1.0 - (screen_rect.min.y as f32 + y as f32) / self.height as f32),
-                max: point(-0.5 + (screen_rect.max.x as f32 + x as f32) / self.width as f32, 1.0 - (screen_rect.max.y as f32 + y as f32) / self.height as f32),
+                min: point(-1.0 + (screen_rect.min.x as f32 + x as f32) / self.width as f32, 1.0 - (screen_rect.min.y as f32 + y as f32) / self.height as f32),
+                max: point(-1.0 + (screen_rect.max.x as f32 + x as f32) / self.width as f32, 1.0 - (screen_rect.max.y as f32 + y as f32) / self.height as f32),
             };
             vec![
                 gl_rect.min.x, gl_rect.max.y, uv_rect.min.x, uv_rect.max.y,
