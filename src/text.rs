@@ -164,6 +164,7 @@ impl Texture {
         let mut texture_buffer = 0;
         let data = vec![0u8; width as usize * height as usize];
         unsafe {
+            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
             gl::GenTextures(1, &mut texture_buffer);
             gl::BindTexture(gl::TEXTURE_2D, texture_buffer);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
