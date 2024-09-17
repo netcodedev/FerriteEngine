@@ -2,6 +2,8 @@ use cgmath::*;
 use glfw::{Action, Key, CursorMode};
 use std::f32::consts::FRAC_PI_2;
 
+use crate::line::Line;
+
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = Matrix4::new(
     1.0, 0.0, 0.0, 0.0,
@@ -221,5 +223,38 @@ impl CameraController {
         } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
             camera.pitch = Rad(SAFE_FRAC_PI_2);
         }
+    }
+}
+
+pub struct MousePicker {
+    pub rays: Vec<Line>,
+}
+
+impl MousePicker {
+    pub fn new() -> Self {
+        Self {
+            rays: Vec::<Line>::new(),
+        }
+    }
+
+    pub fn process_mouse(&mut self, event: &glfw::WindowEvent, camera: &Camera, projection: &Projection) {
+        match event {
+            glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, action, _) => {
+                if *action == Action::Press {
+                    let ray = self.calculate_ray(camera, projection);
+                    println!("Ray: {:?}", ray);
+                    self.rays.push(Line::new(camera.position, ray, 1000.0));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn calculate_ray(&mut self, camera: &Camera, projection: &Projection) -> Vector3<f32>{
+        let ray_clip = Vector4::new(0.0, 0.0, -1.0, 1.0);
+        let ray_eye = projection.calc_matrix().invert().unwrap() * ray_clip;
+        let ray_eye = Vector4::new(ray_eye.x, ray_eye.y, -1.0, 0.0);
+
+        (camera.calc_matrix().invert().unwrap() * ray_eye).truncate().normalize()
     }
 }

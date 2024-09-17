@@ -1,5 +1,5 @@
 use glfw::Context;
-use cgmath::Deg;
+use cgmath::{Deg, Point3, Vector3};
 
 mod shader;
 mod mesh;
@@ -7,9 +7,11 @@ mod camera;
 mod debug;
 mod text;
 mod terrain;
-use camera::{Camera, CameraController, Projection};
+mod line;
+use camera::{Camera, CameraController, Projection, MousePicker};
 use debug::DebugController;
 use text::TextRenderer;
+use line::{Line, LineRenderer};
 
 fn main() {
     let mut glfw = glfw::init(glfw::log_errors).unwrap_or_else(|err| {
@@ -24,6 +26,7 @@ fn main() {
 
     window.make_current();
     window.set_key_polling(true);
+    window.set_mouse_button_polling(true);
 
     gl::load_with(|symbol| window.get_proc_address(symbol) as *const _);
 
@@ -38,9 +41,12 @@ fn main() {
     let mut camera_controller: CameraController = CameraController::new(50.0, 1.0);
     let mut debug_controller: DebugController = DebugController::new();
 
+    let mut mouse_picker = MousePicker::new();
+
     let mut terrain = terrain::Terrain::new();
 
     let mut text_renderer = TextRenderer::new(width, height);
+    let line_renderer = LineRenderer::new();
 
     while !window.should_close() {
         unsafe {
@@ -52,6 +58,7 @@ fn main() {
             camera_controller.process_keyboard(&event);
             camera_controller.process_mouse(&mut window, &event);
             debug_controller.process_keyboard(&mut glfw, &mut window, &event);
+            mouse_picker.process_mouse(&event, &camera, &projection);
             projection.resize(&event);
             text_renderer.resize(&event);
         }
@@ -59,8 +66,12 @@ fn main() {
         let (delta_time, fps) = calculate_frametime(&glfw);
         camera_controller.update_camera(&mut camera, delta_time as f32);
 
+
         terrain.update();
         terrain.render(&camera, &projection);
+
+        line_renderer.render(&camera, &projection, &mouse_picker.rays);
+
 
         if debug_controller.show_fps {
             let fps_text = format!("{:.2} FPS, Frametime: {:.2}", fps, delta_time * 1000.0);
