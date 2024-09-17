@@ -99,7 +99,6 @@ pub struct CameraController {
     amount_down: f32,
     rotate_horizontal: f32,
     rotate_vertical: f32,
-    scroll: f32,
     speed: f32,
     sensitivity: f32,
 }
@@ -115,7 +114,6 @@ impl CameraController {
             amount_down: 0.0,
             rotate_horizontal: 0.0,
             rotate_vertical: 0.0,
-            scroll: 0.0,
             speed,
             sensitivity,
         }
@@ -198,17 +196,6 @@ impl CameraController {
         }
     }
 
-    // pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
-    //     self.scroll = -match delta {
-    //         // I'm assuming a line is about 100 pixels
-    //         MouseScrollDelta::LineDelta(_, scroll) => scroll * 100.0,
-    //         MouseScrollDelta::PixelDelta(PhysicalPosition {
-    //             y: scroll,
-    //             ..
-    //         }) => *scroll as f32,
-    //     };
-    // }
-
     pub fn update_camera(&mut self, camera: &mut Camera, delta_time: f32) {
         // Move forward/backward and left/right
         let (yaw_sin, yaw_cos) = camera.yaw.0.sin_cos();
@@ -216,15 +203,6 @@ impl CameraController {
         let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
         camera.position += forward * (self.amount_forward - self.amount_backward) * self.speed * delta_time;
         camera.position += right * (self.amount_right - self.amount_left) * self.speed * delta_time;
-
-        // Move in/out (aka. "zoom")
-        // Note: this isn't an actual zoom. The camera's position
-        // changes when zooming. I've added this to make it easier
-        // to get closer to an object you want to focus on.
-        let (pitch_sin, pitch_cos) = camera.pitch.0.sin_cos();
-        let scrollward = Vector3::new(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
-        camera.position += scrollward * self.scroll * self.speed * self.sensitivity * delta_time;
-        self.scroll = 0.0;
 
         // Move up/down. Since we don't use roll, we can just
         // modify the y coordinate directly.
@@ -234,9 +212,6 @@ impl CameraController {
         camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity * delta_time;
         camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity * delta_time;
 
-        // If process_mouse isn't called every frame, these values
-        // will not get set to zero, and the camera will rotate
-        // when moving in a non-cardinal direction.
         self.rotate_horizontal = 0.0;
         self.rotate_vertical = 0.0;
 
