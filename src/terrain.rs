@@ -49,9 +49,9 @@ impl Terrain {
         }
     }
 
-    pub fn process_line(&mut self, line: Line) {
+    pub fn process_line(&mut self, line: Line, button: glfw::MouseButton) {
         for chunk in &mut self.chunks {
-            if chunk.process_line(&line) {
+            if chunk.process_line(&line, &button) {
                 break;
             }
         }

@@ -147,12 +147,13 @@ impl Chunk {
         }
     }
 
-    pub fn process_line(&mut self, line: &Line) -> bool {
+    pub fn process_line(&mut self, line: &Line, button: &glfw::MouseButton) -> bool {
         // calculate the block that the line intersects with
         let step_size = 0.1;
         let max_distance = 100.0;
 
         let mut modified = false;
+        let mut last_position = (0,0,0);
         for i in 0..(max_distance / step_size) as i32 {
             let position = line.position + line.direction * (i as f32 * step_size);
             // check if position is within the bounds of this chunk
@@ -172,13 +173,23 @@ impl Chunk {
             );
             if let Some(block) = self.blocks.get(block_position){
                 if block.is_some() {
-                    println!("(Terrain {},{},{}) Block hit at {:?}", self.position.0, self.position.1, self.position.2, block_position);
-                    self.blocks[[block_position.0, block_position.1, block_position.2]] = None;
-                    self.mesh = Some(self.calculate_mesh());
-                    modified = true;
-                    break;
+                    if button == &glfw::MouseButton::Button1 {
+                        // println!("(Terrain {},{},{}) Block hit at {:?}", self.position.0, self.position.1, self.position.2, block_position);
+                        self.blocks[[block_position.0, block_position.1, block_position.2]] = None;
+                        self.mesh = Some(self.calculate_mesh());
+                        modified = true;
+                        break;
+                    }
+                    if button == &glfw::MouseButton::Button2 {
+                        // println!("(Terrain {},{},{}) Block hit at {:?}", self.position.0, self.position.1, self.position.2, block_position);
+                        self.blocks[[last_position.0, last_position.1, last_position.2]] = Some(Block::new());
+                        self.mesh = Some(self.calculate_mesh());
+                        modified = true;
+                        break;
+                    }
                 }
             }
+            last_position = block_position;
         }
         modified
     }

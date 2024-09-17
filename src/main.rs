@@ -54,7 +54,7 @@ fn main() {
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
         }
         glfw.poll_events();
-        let mut line: Option<Line> = None;
+        let mut line: Option<(Line, glfw::MouseButton)> = None;
         for (_, event) in glfw::flush_messages(&events) {
             camera_controller.process_keyboard(&event);
             camera_controller.process_mouse(&mut window, &event);
@@ -64,8 +64,8 @@ fn main() {
             text_renderer.resize(&event);
         }
 
-        if let Some(line) = line {
-            terrain.process_line(line);
+        if let Some((line, button)) = line {
+            terrain.process_line(line, button);
         }
 
         let (delta_time, fps) = calculate_frametime(&glfw);
