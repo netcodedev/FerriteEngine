@@ -1,3 +1,4 @@
+use crate::line::Line;
 use crate::mesh::Chunk;
 use crate::camera::{Camera, Projection};
 use crate::shader::create_shader;
@@ -45,6 +46,14 @@ impl Terrain {
     pub fn render(&mut self, camera: &Camera, projection: &Projection) {
         for chunk in &mut self.chunks {
             chunk.render(camera, projection, self.shader);
+        }
+    }
+
+    pub fn process_line(&mut self, line: Line) {
+        for chunk in &mut self.chunks {
+            if chunk.process_line(&line) {
+                break;
+            }
         }
     }
 }

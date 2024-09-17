@@ -3,7 +3,7 @@ use cgmath::Matrix;
 use libnoise::prelude::*;
 use ndarray::{ArrayBase, Dim, Array3};
 
-use crate::camera::{Camera, Projection};
+use crate::{camera::{Camera, Projection}, line::Line};
 
 const CHUNK_SIZE: usize = 128;
 
@@ -145,6 +145,42 @@ impl Chunk {
             }
             mesh.render(shader_program, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32));
         }
+    }
+
+    pub fn process_line(&mut self, line: &Line) -> bool {
+        // calculate the block that the line intersects with
+        let step_size = 0.1;
+        let max_distance = 100.0;
+
+        let mut modified = false;
+        for i in 0..(max_distance / step_size) as i32 {
+            let position = line.position + line.direction * (i as f32 * step_size);
+            // check if position is within the bounds of this chunk
+            if position.x < self.position.0 * CHUNK_SIZE as f32 || position.x >= (self.position.0 + 1.0) * CHUNK_SIZE as f32 {
+                continue;
+            }
+            if position.y < self.position.1 * CHUNK_SIZE as f32 || position.y >= (self.position.1 + 1.0) * CHUNK_SIZE as f32 {
+                continue;
+            }
+            if position.z < self.position.2 * CHUNK_SIZE as f32 || position.z >= (self.position.2 + 1.0) * CHUNK_SIZE as f32 {
+                continue;
+            }
+            let block_position = (
+                (position.x - self.position.0 * CHUNK_SIZE as f32) as usize,
+                (position.y - self.position.1 * CHUNK_SIZE as f32) as usize,
+                (position.z - self.position.2 * CHUNK_SIZE as f32) as usize,
+            );
+            if let Some(block) = self.blocks.get(block_position){
+                if block.is_some() {
+                    println!("(Terrain {},{},{}) Block hit at {:?}", self.position.0, self.position.1, self.position.2, block_position);
+                    self.blocks[[block_position.0, block_position.1, block_position.2]] = None;
+                    self.mesh = Some(self.calculate_mesh());
+                    modified = true;
+                    break;
+                }
+            }
+        }
+        modified
     }
 
     fn calculate_mesh(&self) -> Mesh {

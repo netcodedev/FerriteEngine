@@ -237,17 +237,23 @@ impl MousePicker {
         }
     }
 
-    pub fn process_mouse(&mut self, event: &glfw::WindowEvent, camera: &Camera, projection: &Projection) {
-        match event {
+    pub fn process_mouse(&mut self, event: &glfw::WindowEvent, camera: &Camera, projection: &Projection) -> Option<Line> {
+        let line: Option<Line> = match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, action, _) => {
                 if *action == Action::Press {
                     let ray = self.calculate_ray(camera, projection);
-                    println!("Ray: {:?}", ray);
-                    self.rays.push(Line::new(camera.position, ray, 1000.0));
+                    let line = Line::new(camera.position, ray, 1000.0);
+                    self.rays.push(line.clone());
+                    Some(line)
+                } else {
+                    None
                 }
             }
-            _ => {}
-        }
+            _ => {
+                None
+            }
+        };
+        line
     }
 
     pub fn calculate_ray(&mut self, camera: &Camera, projection: &Projection) -> Vector3<f32>{

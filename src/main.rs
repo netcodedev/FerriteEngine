@@ -11,7 +11,7 @@ mod line;
 use camera::{Camera, CameraController, Projection, MousePicker};
 use debug::DebugController;
 use text::TextRenderer;
-use line::LineRenderer;
+use line::{Line, LineRenderer};
 
 fn main() {
     let mut glfw = glfw::init(glfw::log_errors).unwrap_or_else(|err| {
@@ -36,9 +36,9 @@ fn main() {
 
     window.set_cursor_pos(0.0, 0.0);
 
-    let mut camera: Camera = Camera::new((64.0, 200.0, 64.0), Deg(0.0), Deg(0.0));
+    let mut camera: Camera = Camera::new((64.0, 100.0, 64.0), Deg(0.0), Deg(0.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
-    let mut camera_controller: CameraController = CameraController::new(50.0, 1.0);
+    let mut camera_controller: CameraController = CameraController::new(10.0, 1.0);
     let mut debug_controller: DebugController = DebugController::new();
 
     let mut mouse_picker = MousePicker::new();
@@ -54,13 +54,18 @@ fn main() {
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
         }
         glfw.poll_events();
+        let mut line: Option<Line> = None;
         for (_, event) in glfw::flush_messages(&events) {
             camera_controller.process_keyboard(&event);
             camera_controller.process_mouse(&mut window, &event);
             debug_controller.process_keyboard(&mut glfw, &mut window, &event);
-            mouse_picker.process_mouse(&event, &camera, &projection);
+            line = mouse_picker.process_mouse(&event, &camera, &projection);
             projection.resize(&event);
             text_renderer.resize(&event);
+        }
+
+        if let Some(line) = line {
+            terrain.process_line(line);
         }
 
         let (delta_time, fps) = calculate_frametime(&glfw);

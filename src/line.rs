@@ -3,10 +3,11 @@ use gl::types::*;
 use crate::camera::{Camera, Projection};
 use crate::shader::create_shader;
 
+#[derive(Clone)]
 pub struct Line {
-    position: Point3<f32>,
-    direction: Vector3<f32>,
-    length: f32,
+    pub position: Point3<f32>,
+    pub direction: Vector3<f32>,
+    pub length: f32,
 }
 
 impl Line {
@@ -54,6 +55,7 @@ impl LineRenderer {
 
     pub fn render(&self, camera: &Camera, projection: &Projection, lines: &Vec<Line>) {
         unsafe {
+            gl::Enable(gl::DEPTH_TEST);
             gl::UseProgram(self.shader);
 
             let view = camera.calc_matrix();
@@ -82,6 +84,7 @@ impl LineRenderer {
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
             gl::UseProgram(0);
+            gl::Disable(gl::DEPTH_TEST);
         }
     }
 }
