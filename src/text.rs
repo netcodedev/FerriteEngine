@@ -39,18 +39,16 @@ impl TextRenderer {
         for glyph in &glyphs {
             self.cache.queue_glyph(0, glyph.clone());
         }
-        let _ = self.cache.cache_queued(|rect, data| {
-            unsafe {
-                gl::TexSubImage2D(
-                    gl::TEXTURE_2D,
-                    0,
-                    rect.min.x as i32,
-                    rect.min.y as i32,
-                    rect.width() as i32,
-                    rect.height() as i32,
-                    gl::RED, gl::UNSIGNED_BYTE, data.as_ptr() as *const std::ffi::c_void
-                );
-            }
+        let _ = self.cache.cache_queued(|rect, data| unsafe {
+            gl::TexSubImage2D(
+                gl::TEXTURE_2D,
+                0,
+                rect.min.x as i32,
+                rect.min.y as i32,
+                rect.width() as i32,
+                rect.height() as i32,
+                gl::RED, gl::UNSIGNED_BYTE, data.as_ptr() as *const std::ffi::c_void
+            );
         });
         
         let vertices: Vec<f32> = glyphs.iter().filter_map(|g| self.cache.rect_for(0, g).ok().flatten()).flat_map(|(uv_rect, screen_rect)| {
