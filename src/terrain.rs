@@ -1,13 +1,14 @@
 use crate::line::Line;
-use crate::mesh::Chunk;
+use crate::mesh::{Chunk, ChunkBounds};
 use crate::camera::{Camera, Projection};
 use crate::shader::create_shader;
 
 use std::sync::mpsc;
 use std::thread;
+use std::collections::HashMap;
 
 pub struct Terrain {
-    pub chunks: Vec<Chunk>,
+    pub chunks: HashMap<ChunkBounds, Chunk>,
     chunk_receiver: mpsc::Receiver<Chunk>,
     shader: u32,
 }
@@ -31,7 +32,7 @@ impl Terrain {
         let _ = thread::spawn(move || chunkloader(RADIUS,-1,-1,tx4));
 
         Self {
-            chunks: Vec::new(),
+            chunks: HashMap::<ChunkBounds, Chunk>::new(),
             chunk_receiver: rx,
             shader,
         }
@@ -39,21 +40,24 @@ impl Terrain {
 
     pub fn update(&mut self) {
         if let Ok(chunk) = self.chunk_receiver.try_recv() {
-            self.chunks.push(chunk);
+            self.chunks.insert(chunk.get_bounds(), chunk);
         }
     }
 
     pub fn render(&mut self, camera: &Camera, projection: &Projection) {
-        for chunk in &mut self.chunks {
+        for (_, chunk) in &mut self.chunks {
             chunk.render(camera, projection, self.shader);
         }
     }
 
     pub fn process_line(&mut self, line: Option<(Line, glfw::MouseButton)>) {
         if let Some((line, button)) = line {
-            for chunk in &mut self.chunks {
-                if chunk.process_line(&line, &button) {
-                    break;
+            for chunk_bounds in ChunkBounds::get_chunk_bounds_on_line(&line) {
+                if let Some(chunk) = self.chunks.get_mut(&chunk_bounds) {
+                    println!("Chunk: {:?}", chunk_bounds);
+                    if chunk.process_line(&line, &button) {
+                        break;
+                    }
                 }
             }
         }

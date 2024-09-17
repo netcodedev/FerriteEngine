@@ -1,5 +1,5 @@
 use gl::types::{GLsizeiptr, GLuint, GLvoid};
-use cgmath::Matrix;
+use cgmath::{EuclideanSpace, Matrix};
 use libnoise::prelude::*;
 use ndarray::{ArrayBase, Dim, Array3};
 
@@ -106,6 +106,45 @@ pub struct Chunk {
     pub mesh: Option<Mesh>,
 }
 
+#[derive(Eq, PartialEq, Hash, Debug)]
+pub struct ChunkBounds {
+    pub min: (i32, i32, i32),
+    pub max: (i32, i32, i32),
+}
+
+impl ChunkBounds {
+    pub fn parse(position: cgmath::Vector3<f32>) -> Self {
+        let min = (
+            (position.x / CHUNK_SIZE as f32) as i32 * CHUNK_SIZE as i32,
+            (position.y / CHUNK_SIZE as f32) as i32 * CHUNK_SIZE as i32,
+            (position.z / CHUNK_SIZE as f32) as i32 * CHUNK_SIZE as i32,
+        );
+        let max = (
+            (1.0 + (position.x / CHUNK_SIZE as f32)) as i32 * CHUNK_SIZE as i32,
+            (1.0 + (position.y / CHUNK_SIZE as f32)) as i32 * CHUNK_SIZE as i32,
+            (1.0 + (position.z / CHUNK_SIZE as f32)) as i32 * CHUNK_SIZE as i32,
+        );
+        ChunkBounds { min, max }
+    }
+
+    pub fn contains(&self, position: cgmath::Point3<f32>) -> bool {
+        position.x >= self.min.0 as f32 && position.x < self.max.0 as f32 &&
+        position.y >= self.min.1 as f32 && position.y < self.max.1 as f32 &&
+        position.z >= self.min.2 as f32 && position.z < self.max.2 as f32
+    }
+
+    pub fn get_chunk_bounds_on_line(line: &Line) -> Vec<ChunkBounds> {
+        let mut bounds = Vec::new();
+        bounds.push(ChunkBounds::parse(line.position.to_vec()));
+        let end = ChunkBounds::parse((line.position + line.direction * line.length).to_vec());
+        if !bounds.contains(&end) {
+            bounds.push(end);
+        }
+        println!("{:?}", bounds);
+        bounds
+    }
+}
+
 impl Chunk {
     pub fn new(position: (f32, f32, f32)) -> Self {
         let generator = Source::perlin(1).scale([0.003; 2]);
@@ -192,6 +231,21 @@ impl Chunk {
             last_position = block_position;
         }
         modified
+    }
+
+    pub fn get_bounds(&self) -> ChunkBounds {
+        ChunkBounds {
+            min: (
+                (self.position.0 * CHUNK_SIZE as f32) as i32,
+                (self.position.1 * CHUNK_SIZE as f32) as i32,
+                (self.position.2 * CHUNK_SIZE as f32) as i32,
+            ),
+            max: (
+                ((self.position.0 + 1.0) * CHUNK_SIZE as f32) as i32,
+                ((self.position.1 + 1.0) * CHUNK_SIZE as f32) as i32,
+                ((self.position.2 + 1.0) * CHUNK_SIZE as f32) as i32,
+            ),
+        }
     }
 
     fn calculate_mesh(&self) -> Mesh {

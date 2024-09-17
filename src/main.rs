@@ -69,7 +69,6 @@ fn main() {
         let (delta_time, fps) = calculate_frametime(&glfw);
         camera_controller.update_camera(&mut camera, delta_time as f32);
 
-
         terrain.update();
         terrain.render(&camera, &projection);
 
