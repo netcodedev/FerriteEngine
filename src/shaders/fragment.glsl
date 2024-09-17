@@ -3,6 +3,7 @@
 in vec4 outColor;
 in vec3 Normal;
 in vec3 toLightVector;
+
 out vec4 FragColor;
 
 void main()
