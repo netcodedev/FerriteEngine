@@ -1,5 +1,5 @@
 use glfw::Context;
-use cgmath::{Deg, Point3, Vector3};
+use cgmath::Deg;
 
 mod shader;
 mod mesh;
@@ -11,7 +11,7 @@ mod line;
 use camera::{Camera, CameraController, Projection, MousePicker};
 use debug::DebugController;
 use text::TextRenderer;
-use line::{Line, LineRenderer};
+use line::LineRenderer;
 
 fn main() {
     let mut glfw = glfw::init(glfw::log_errors).unwrap_or_else(|err| {
