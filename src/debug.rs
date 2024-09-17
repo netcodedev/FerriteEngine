@@ -1,4 +1,4 @@
-use glfw::{Action, Glfw, Key};
+use glfw::{Action, Glfw, Key, CursorMode};
 
 pub struct DebugController {
     wireframe: bool,
@@ -15,7 +15,7 @@ impl DebugController {
         }
     }
 
-    pub fn process_keyboard(&mut self, glfw: &mut Glfw, event: &glfw::WindowEvent) {
+    pub fn process_keyboard(&mut self, glfw: &mut Glfw, window: &mut glfw::Window, event: &glfw::WindowEvent) {
         match event {
             glfw::WindowEvent::Key(Key::F1, _, Action::Press, _) => {
                 self.wireframe = !self.wireframe;
@@ -38,6 +38,12 @@ impl DebugController {
             glfw::WindowEvent::Key(Key::F3, _, Action::Press, _) => {
                 self.show_fps = !self.show_fps;
             }
+
+            glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => match window.get_cursor_mode() {
+                CursorMode::Disabled => window.set_cursor_mode(CursorMode::Normal),
+                CursorMode::Normal => window.set_cursor_mode(CursorMode::Disabled),
+                _ => {}
+            },
             _ => {}
         }
     }

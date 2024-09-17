@@ -188,15 +188,12 @@ impl CameraController {
                     CursorMode::Disabled => {
                         self.rotate_horizontal = *xpos as f32;
                         self.rotate_vertical = *ypos as f32;
+
+                        window.set_cursor_pos(0.0, 0.0);
                     }
                     _ => {}
                 }
             }
-            glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => match window.get_cursor_mode() {
-                CursorMode::Disabled => window.set_cursor_mode(CursorMode::Normal),
-                CursorMode::Normal => window.set_cursor_mode(CursorMode::Disabled),
-                _ => {}
-            },
             _ => {}
         }
     }

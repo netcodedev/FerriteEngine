@@ -72,7 +72,7 @@ fn main() {
         for (_, event) in glfw::flush_messages(&events) {
             camera_controller.process_keyboard(&event);
             camera_controller.process_mouse(&mut window, &event);
-            debug_controller.process_keyboard(&mut glfw, &event);
+            debug_controller.process_keyboard(&mut glfw, &mut window, &event);
             projection.resize(&event);
             text_renderer.resize(&event);
         }
@@ -90,8 +90,6 @@ fn main() {
             chunk.render(&camera, &projection, shader_program);
         }
 
-
-        window.set_cursor_pos(0.0, 0.0);
         if debug_controller.show_fps {
             let fps_text = format!("{:.2} FPS, Frametime: {:.2}", fps, delta_time * 1000.0);
             text_renderer.render(5,5,50.0, &fps_text);
