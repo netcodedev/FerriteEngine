@@ -4,6 +4,7 @@ pub struct DebugController {
     wireframe: bool,
     pub show_fps: bool,
     vsync: bool,
+    pub show_rays: bool,
 }
 
 impl DebugController {
@@ -12,6 +13,7 @@ impl DebugController {
             wireframe: false,
             show_fps: false,
             vsync: true,
+            show_rays: false,
         }
     }
 
@@ -38,7 +40,9 @@ impl DebugController {
             glfw::WindowEvent::Key(Key::F3, _, Action::Press, _) => {
                 self.show_fps = !self.show_fps;
             }
-
+            glfw::WindowEvent::Key(Key::F4, _, Action::Press, _) => {
+                self.show_rays = !self.show_rays;
+            }
             glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => match window.get_cursor_mode() {
                 CursorMode::Disabled => window.set_cursor_mode(CursorMode::Normal),
                 CursorMode::Normal => window.set_cursor_mode(CursorMode::Disabled),

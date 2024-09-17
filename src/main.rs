@@ -75,8 +75,10 @@ fn main() {
         terrain.update();
         terrain.render(&camera, &projection);
 
-        if let Some(line) = &mouse_picker.ray {
-            line_renderer.render(&camera, &projection, &line);
+        if debug_controller.show_rays {
+            if let Some(line) = &mouse_picker.ray {
+                line_renderer.render(&camera, &projection, &line);
+            }
         }
 
         if debug_controller.show_fps {
