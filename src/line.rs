@@ -53,7 +53,7 @@ impl LineRenderer {
         }
     }
 
-    pub fn render(&self, camera: &Camera, projection: &Projection, lines: &Vec<Line>) {
+    pub fn render(&self, camera: &Camera, projection: &Projection, line: &Line) {
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
             gl::UseProgram(self.shader);
@@ -70,13 +70,11 @@ impl LineRenderer {
             gl::BindVertexArray(self.vao);
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
 
-            let lines = lines.iter().flat_map(|line| {
-                let end = line.position + line.direction * line.length;
-                vec![
-                    line.position.x, line.position.y, line.position.z,
-                    end.x, end.y, end.z,
-                ]
-            }).collect::<Vec<GLfloat>>();
+            let end = line.position + line.direction * line.length;
+            let lines = vec![
+                line.position.x, line.position.y, line.position.z,
+                end.x, end.y, end.z,
+            ];
 
             gl::BufferData(gl::ARRAY_BUFFER, (lines.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr, lines.as_ptr() as *const _, gl::STATIC_DRAW);
             gl::DrawArrays(gl::LINES, 0, (lines.len() / 3) as i32);

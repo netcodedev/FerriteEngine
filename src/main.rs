@@ -75,8 +75,9 @@ fn main() {
         terrain.update();
         terrain.render(&camera, &projection);
 
-        line_renderer.render(&camera, &projection, &mouse_picker.rays);
-
+        if let Some(line) = &mouse_picker.ray {
+            line_renderer.render(&camera, &projection, &line);
+        }
 
         if debug_controller.show_fps {
             let fps_text = format!("{:.2} FPS, Frametime: {:.2}", fps, delta_time * 1000.0);

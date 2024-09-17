@@ -227,13 +227,13 @@ impl CameraController {
 }
 
 pub struct MousePicker {
-    pub rays: Vec<Line>,
+    pub ray: Option<Line>,
 }
 
 impl MousePicker {
     pub fn new() -> Self {
         Self {
-            rays: Vec::<Line>::new(),
+            ray: None,
         }
     }
 
@@ -243,7 +243,7 @@ impl MousePicker {
                 if *action == Action::Press {
                     let ray = self.calculate_ray(camera, projection);
                     let line = Line::new(camera.position, ray, 1000.0);
-                    self.rays.push(line.clone());
+                    self.ray = Some(line.clone());
                     match button {
                         glfw::MouseButton::Button1 => Some((line, glfw::MouseButton::Button1)),
                         glfw::MouseButton::Button2 => Some((line, glfw::MouseButton::Button2)),
