@@ -10,3 +10,4 @@ glfw = "0.58.0"
 libnoise = "1.1.2"
 ndarray = "0.16.1"
 rand = "0.8.5"
+rusttype = { version = "0.9.3", features = ["gpu_cache"] }
