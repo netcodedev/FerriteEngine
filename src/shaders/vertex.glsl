@@ -2,6 +2,7 @@
 
 layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normals;
+layout (location = 2) in float block_type;
 
 out vec4 outColor;
 out vec3 Normal;
@@ -15,7 +16,12 @@ void main()
 {
     vec4 worldPosition = model * vec4(position, 1.0);
     gl_Position = projection * view * worldPosition;
-    outColor = vec4(0.3, 0.6, 0.4, 1.0);
+    if (block_type == 1.0)
+        outColor = vec4(0.3, 0.6, 0.4, 1.0);
+    else if (block_type == 2.0)
+        outColor = vec4(0.5, 0.5, 0.5, 1.0);
+    else
+        outColor = vec4(0.0, 0.0, 0.0, 1.0);
     Normal = normals;
     toLightVector = vec3(0.0, 2000.0, 0.0) - worldPosition.xyz;
 }

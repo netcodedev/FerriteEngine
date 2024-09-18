@@ -11,6 +11,7 @@ pub struct Mesh {
     vertices: Vec<f32>,
     indices: Vec<u32>,
     normals: Vec<f32>,
+    block_type: Vec<u32>,
     vao: u32,
     vbo: u32,
     ebo: u32,
@@ -18,11 +19,12 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    pub fn new(vertices: Vec<f32>, indices: Vec<u32>, normals: Vec<f32>) -> Self {
+    pub fn new(vertices: Vec<f32>, indices: Vec<u32>, normals: Vec<f32>, block_type: Vec<u32>) -> Self {
         let mesh = Mesh {
             vertices,
             indices,
             normals,
+            block_type,
             vao: 0,
             vbo: 0,
             ebo: 0,
@@ -43,7 +45,7 @@ impl Mesh {
 
             // Bind and fill VBO
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
-            let vertex_data: Vec<f32> = self.vertices.iter().cloned().chain(self.normals.iter().cloned()).collect();
+            let vertex_data: Vec<f32> = self.vertices.iter().cloned().chain(self.normals.iter().cloned()).chain(self.block_type.iter().map(|s| *s as f32)).collect();
             gl::BufferData(
                 gl::ARRAY_BUFFER,
                 (vertex_data.len() * std::mem::size_of::<f32>()) as GLsizeiptr,
@@ -65,6 +67,8 @@ impl Mesh {
             gl::EnableVertexAttribArray(0);
             gl::VertexAttribPointer(1, 3, gl::FLOAT, gl::FALSE, 0, (self.vertices.len() * std::mem::size_of::<f32>()) as *const GLvoid);
             gl::EnableVertexAttribArray(1);
+            gl::VertexAttribPointer(2, 1, gl::FLOAT, gl::FALSE, 0, (self.vertices.len() * std::mem::size_of::<f32>() + self.normals.len() * std::mem::size_of::<f32>()) as *const GLvoid);
+            gl::EnableVertexAttribArray(2);
 
             // Unbind VBO and VAO (optional, but good practice)
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
@@ -92,11 +96,12 @@ impl Mesh {
 }
 
 pub struct Block {
+    pub type_id: u32,
 }
 
 impl Block {
-    pub fn new() -> Self {
-        Block { }
+    pub fn new(type_id: u32) -> Self {
+        Block { type_id }
     }
 }
 
@@ -171,7 +176,7 @@ impl Chunk {
             if ((noise_value + hills_value + tiny_hills_value) * CHUNK_SIZE as f64) < (y as f64) {
                 return None;
             }
-            Some(Block::new())
+            Some(Block::new(1))
         });
         let mut chunk = Chunk { position, blocks, mesh: None };
         chunk.mesh = Some(chunk.calculate_mesh());
@@ -230,7 +235,7 @@ impl Chunk {
                     }
                     if button == &glfw::MouseButton::Button2 {
                         // println!("(Terrain {},{},{}) Block hit at {:?}", self.position.0, self.position.1, self.position.2, block_position);
-                        self.blocks[[last_position.0, last_position.1, last_position.2]] = Some(Block::new());
+                        self.blocks[[last_position.0, last_position.1, last_position.2]] = Some(Block::new(2));
                         self.mesh = Some(self.calculate_mesh());
                         modified = true;
                         break;
@@ -261,6 +266,7 @@ impl Chunk {
         let mut vertices: Vec<f32> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
         let mut normals: Vec<f32> = Vec::new();
+        let mut block_type: Vec<u32> = Vec::new();
 
         // Sweep over each axis (X, Y and Z)
         for d in 0..3 {
@@ -271,6 +277,7 @@ impl Chunk {
 
             let mut mask = vec![false; CHUNK_SIZE * CHUNK_SIZE];
             let mut flip = vec![false; CHUNK_SIZE * CHUNK_SIZE];
+            let mut b_t = vec![0; CHUNK_SIZE * CHUNK_SIZE];
             q[d] = 1;
 
             // Check each slice of the chunk one at a time
@@ -282,18 +289,44 @@ impl Chunk {
                 while x[v] < CHUNK_SIZE as i32 {
                     x[u] = 0;
                     while x[u] < CHUNK_SIZE as i32 {
+                        let current_block = self.blocks.get(((x[0]) as usize, (x[1]) as usize, (x[2]) as usize));
+                        let current_block_type = if let Some(block) = current_block {
+                            if block.is_some() {
+                                block.as_ref().unwrap().type_id
+                            } else {
+                                0
+                            }
+                        } else {
+                            0
+                        };
+                        let compare_block = self.blocks.get(((x[0] + q[0]) as usize, (x[1] + q[1]) as usize, (x[2] + q[2]) as usize));
+                        let compare_block_type = if let Some(block) = compare_block {
+                            if block.is_some() {
+                                block.as_ref().unwrap().type_id
+                            } else {
+                                0
+                            }
+                        } else {
+                            0
+                        };
+                        let block_type = if current_block_type != 0 {
+                            current_block_type
+                        } else {
+                            compare_block_type
+                        };
                         let block_current = if 0 <= x[d] {
-                            self.blocks.get(((x[0]) as usize, (x[1]) as usize, (x[2]) as usize)).unwrap().is_none()
+                            current_block.unwrap().is_none()
                         } else {
                             true
                         };
                         let block_compare = if x[d] < CHUNK_SIZE as i32 - 1 {
-                            self.blocks.get(((x[0] + q[0]) as usize, (x[1] + q[1]) as usize, (x[2] + q[2]) as usize)).unwrap().is_none()
+                            compare_block.unwrap().is_none()
                         } else {
                             true
                         };
                         mask[n] = block_current != block_compare;
                         flip[n] = block_compare;
+                        b_t[n] = block_type;
                         x[u] += 1;
                         n += 1;
                     }
@@ -313,7 +346,7 @@ impl Chunk {
                             // Compute the width of this quad and store it in w
                             // This is done by searching along the current axis until mask[n + w] is false
                             let mut w = 1;
-                            while i + w < CHUNK_SIZE && mask[n + w] && flip[n] == flip[n + w] {
+                            while i + w < CHUNK_SIZE && mask[n + w] && flip[n] == flip[n + w] && b_t[n] == b_t[n + w] {
                                 w += 1;
                             }
 
@@ -324,7 +357,7 @@ impl Chunk {
                             let mut h = 1;
                             'outer: while j + h < CHUNK_SIZE {
                                 for k in 0..w {
-                                    if !mask[n + k + h * CHUNK_SIZE] || flip[n] != flip[n + k + h * CHUNK_SIZE] {
+                                    if !mask[n + k + h * CHUNK_SIZE] || flip[n] != flip[n + k + h * CHUNK_SIZE] || b_t[n] != b_t[n + k + h * CHUNK_SIZE] {
                                         break 'outer;
                                     }
                                 }
@@ -386,6 +419,10 @@ impl Chunk {
                                 _ => (),
                             }
 
+                            block_type.extend(vec![
+                                b_t[n], b_t[n], b_t[n], b_t[n],
+                            ]);
+
                             // Clear this part of the mask, so we don't add duplicate faces
                             for l in 0..h {
                                 for k in 0..w {
@@ -405,6 +442,6 @@ impl Chunk {
             }
         }
 
-        Mesh::new(vertices, indices, normals)
+        Mesh::new(vertices, indices, normals, block_type)
     }
 }
