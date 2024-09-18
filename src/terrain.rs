@@ -54,7 +54,6 @@ impl Terrain {
         if let Some((line, button)) = line {
             for chunk_bounds in ChunkBounds::get_chunk_bounds_on_line(&line) {
                 if let Some(chunk) = self.chunks.get_mut(&chunk_bounds) {
-                    println!("Chunk: {:?}", chunk_bounds);
                     if chunk.process_line(&line, &button) {
                         break;
                     }

@@ -242,7 +242,7 @@ impl MousePicker {
             glfw::WindowEvent::MouseButton(button, action, _) => {
                 if *action == Action::Press {
                     let ray = self.calculate_ray(camera, projection);
-                    let line = Line::new(camera.position, ray, 100.0);
+                    let line = Line::new(camera.position, ray, 20.0);
                     self.ray = Some(line.clone());
                     match button {
                         glfw::MouseButton::Button1 => Some((line, glfw::MouseButton::Button1)),

@@ -135,12 +135,21 @@ impl ChunkBounds {
 
     pub fn get_chunk_bounds_on_line(line: &Line) -> Vec<ChunkBounds> {
         let mut bounds = Vec::new();
-        bounds.push(ChunkBounds::parse(line.position.to_vec()));
-        let end = ChunkBounds::parse((line.position + line.direction * line.length).to_vec());
-        if !bounds.contains(&end) {
-            bounds.push(end);
+        let current_chunk = ChunkBounds::parse(line.position.to_vec());
+        let step_size = 0.1;
+        for i in 0..(line.length / step_size) as i32 {
+            let position = line.position + line.direction * (i as f32 * step_size);
+            let chunk = ChunkBounds::parse(position.to_vec());
+            if current_chunk.contains(position) {
+                continue;
+            }
+            if !bounds.contains(&chunk) {
+                bounds.push(chunk);
+            }
         }
-        println!("{:?}", bounds);
+        if !bounds.contains(&current_chunk) {
+            bounds.push(current_chunk);
+        }
         bounds
     }
 }
@@ -189,7 +198,7 @@ impl Chunk {
     pub fn process_line(&mut self, line: &Line, button: &glfw::MouseButton) -> bool {
         // calculate the block that the line intersects with
         let step_size = 0.1;
-        let max_distance = 100.0;
+        let max_distance = line.length;
 
         let mut modified = false;
         let mut last_position = (0,0,0);
