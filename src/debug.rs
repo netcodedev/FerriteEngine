@@ -69,19 +69,20 @@ impl DebugController {
             let pos = camera.position;
             let bounds = ChunkBounds::parse(pos.to_vec());
             text_renderer.render(5, 50, 65.0, format!("x: {:.2} y: {:.2} z: {:.2}", pos.x, pos.y, pos.z).as_str());
-            text_renderer.render(5, 95, 65.0, format!("Chunk: x: {} y: {} z: {}", bounds.min.0, bounds.min.1, bounds.min.2).as_str());
-            let spacing = CHUNK_SIZE / 8;
+            text_renderer.render(5, 95, 65.0, format!("Chunk: xMin: {} yMin: {} zMin: {}", bounds.min.0, bounds.min.1, bounds.min.2).as_str());
+            text_renderer.render(5, 140, 65.0, format!("       xMax: {} yMax: {} zMax: {}", bounds.max.0, bounds.max.1, bounds.max.2).as_str());
+            let spacing = (CHUNK_SIZE / 8) as i32;
             for i in 0..9 {
                 for j in 0..9 {
                     if i != 0 && i != 8 && j != 0 && j != 8 {
                         continue;
                     }
-                    let x = bounds.min.0 as usize + i * spacing;
-                    let z = bounds.min.2 as usize + j * spacing;
+                    let x = bounds.min.0 as i32 + i * spacing;
+                    let z = bounds.min.2 as i32 + j * spacing;
                     let line = Line {
                         position: Point3::new(x as f32, bounds.min.1 as f32, z as f32),
                         direction: Vector3::new(0.0, 1.0, 0.0),
-                        length: 1000.0,
+                        length: CHUNK_SIZE as f32,
                     };
                     let color = if (i == 0 || i == 8) && (j == 0 || j == 8) {
                         Vector3::new(1.0, 0.0, 0.0)

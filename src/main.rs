@@ -36,7 +36,7 @@ fn main() {
 
     window.set_cursor_pos(0.0, 0.0);
 
-    let mut camera: Camera = Camera::new((64.0, 100.0, 64.0), Deg(0.0), Deg(0.0));
+    let mut camera: Camera = Camera::new((0.0, 100.0, 0.0), Deg(0.0), Deg(0.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
     let mut camera_controller: CameraController = CameraController::new(10.0, 1.0);
     let mut debug_controller: DebugController = DebugController::new();

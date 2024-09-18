@@ -119,15 +119,20 @@ pub struct ChunkBounds {
 
 impl ChunkBounds {
     pub fn parse(position: cgmath::Vector3<f32>) -> Self {
+        let chunk_pos = (
+            (position.x / CHUNK_SIZE as f32).floor() as i32,
+            (position.y / CHUNK_SIZE as f32).floor() as i32,
+            (position.z / CHUNK_SIZE as f32).floor() as i32,
+        );
         let min = (
-            (position.x / CHUNK_SIZE as f32) as i32 * CHUNK_SIZE as i32,
-            (position.y / CHUNK_SIZE as f32) as i32 * CHUNK_SIZE as i32,
-            (position.z / CHUNK_SIZE as f32) as i32 * CHUNK_SIZE as i32,
+            chunk_pos.0 * CHUNK_SIZE as i32,
+            chunk_pos.1 * CHUNK_SIZE as i32,
+            chunk_pos.2 * CHUNK_SIZE as i32,
         );
         let max = (
-            (1.0 + (position.x / CHUNK_SIZE as f32)) as i32 * CHUNK_SIZE as i32,
-            (1.0 + (position.y / CHUNK_SIZE as f32)) as i32 * CHUNK_SIZE as i32,
-            (1.0 + (position.z / CHUNK_SIZE as f32)) as i32 * CHUNK_SIZE as i32,
+            (chunk_pos.0 + 1) * CHUNK_SIZE as i32,
+            (chunk_pos.1 + 1) * CHUNK_SIZE as i32,
+            (chunk_pos.2 + 1) * CHUNK_SIZE as i32,
         );
         ChunkBounds { min, max }
     }
