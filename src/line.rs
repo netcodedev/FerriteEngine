@@ -1,4 +1,4 @@
-use cgmath::{Matrix, Point3, Vector3};
+use cgmath::{Matrix, Point3, Vector3, Array};
 use gl::types::*;
 use crate::camera::{Camera, Projection};
 use crate::shader::create_shader;
@@ -53,7 +53,7 @@ impl LineRenderer {
         }
     }
 
-    pub fn render(&self, camera: &Camera, projection: &Projection, line: &Line) {
+    pub fn render(&self, camera: &Camera, projection: &Projection, line: &Line, color: Vector3<f32>) {
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
             gl::UseProgram(self.shader);
@@ -66,6 +66,9 @@ impl LineRenderer {
 
             let projection_loc = gl::GetUniformLocation(self.shader, "projection\0".as_ptr() as *const i8);
             gl::UniformMatrix4fv(projection_loc, 1, gl::FALSE, projection.as_ptr());
+
+            let color_loc = gl::GetUniformLocation(self.shader, "color\0".as_ptr() as *const i8);
+            gl::Uniform3fv(color_loc, 1, color.as_ptr());
 
             gl::BindVertexArray(self.vao);
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);

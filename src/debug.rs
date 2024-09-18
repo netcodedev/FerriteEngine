@@ -58,7 +58,7 @@ impl DebugController {
     pub fn draw_debug_ui(&self, delta_time: f32, mouse_picker: &MousePicker, line_renderer: &LineRenderer, text_renderer: &mut TextRenderer, camera: &Camera, projection: &Projection) {
         if self.show_rays {
             if let Some(line) = &mouse_picker.ray {
-                line_renderer.render(&camera, &projection, &line);
+                line_renderer.render(&camera, &projection, &line, Vector3::new(1.0, 0.0, 0.0));
             }
         }
 
@@ -79,11 +79,16 @@ impl DebugController {
                     let x = bounds.min.0 as usize + i * spacing;
                     let z = bounds.min.2 as usize + j * spacing;
                     let line = Line {
-                        position: Point3::<f32>::new(x as f32, bounds.min.1 as f32, z as f32),
-                        direction: Vector3::<f32>::new(0.0, 1.0, 0.0),
+                        position: Point3::new(x as f32, bounds.min.1 as f32, z as f32),
+                        direction: Vector3::new(0.0, 1.0, 0.0),
                         length: 1000.0,
                     };
-                    line_renderer.render(camera, projection, &line);
+                    let color = if (i == 0 || i == 8) && (j == 0 || j == 8) {
+                        Vector3::new(1.0, 0.0, 0.0)
+                    } else {
+                        Vector3::new(1.0, 1.0, 0.0)
+                    };
+                    line_renderer.render(camera, projection, &line, color);
                 }
             }
         }
