@@ -5,7 +5,7 @@ use ndarray::{ArrayBase, Dim, Array3};
 
 use crate::{camera::{Camera, Projection}, line::Line};
 
-const CHUNK_SIZE: usize = 128;
+pub const CHUNK_SIZE: usize = 128;
 
 pub struct Mesh {
     vertices: Vec<f32>,

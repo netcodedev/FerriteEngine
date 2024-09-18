@@ -66,28 +66,19 @@ fn main() {
 
         terrain.process_line(line);
 
-        let (delta_time, fps) = calculate_frametime(&glfw);
+        let delta_time = calculate_frametime(&glfw);
         camera_controller.update_camera(&mut camera, delta_time as f32);
 
         terrain.update();
         terrain.render(&camera, &projection);
 
-        if debug_controller.show_rays {
-            if let Some(line) = &mouse_picker.ray {
-                line_renderer.render(&camera, &projection, &line);
-            }
-        }
-
-        if debug_controller.show_fps {
-            let fps_text = format!("{:.2} FPS, Frametime: {:.2}", fps, delta_time * 1000.0);
-            text_renderer.render(5,5,50.0, &fps_text);
-        }
+        debug_controller.draw_debug_ui(delta_time as f32, &mouse_picker, &line_renderer, &mut text_renderer, &camera, &projection);
 
         window.swap_buffers();
     }
 }
 
-fn calculate_frametime(glfw: &glfw::Glfw) -> (f64, f64) {
+fn calculate_frametime(glfw: &glfw::Glfw) -> f64 {
     static mut LAST_FRAME_TIME: f64 = 0.0;
     let current_time = glfw.get_time();
     let delta_time;
@@ -95,6 +86,5 @@ fn calculate_frametime(glfw: &glfw::Glfw) -> (f64, f64) {
         delta_time = current_time - LAST_FRAME_TIME;
         LAST_FRAME_TIME = current_time;
     }
-    let fps = 1.0 / delta_time;
-    (delta_time, fps)
+    delta_time
 }
