@@ -1,9 +1,8 @@
 use std::path::Path;
-use image::GenericImageView;
 
 use gl::types::{GLint, GLsizei, GLuint, GLsizeiptr, GLvoid};
 
-use crate::shader::create_shader;
+use crate::shader::Shader;
 
 pub struct Texture {
     pub id: GLuint
@@ -15,14 +14,14 @@ impl Texture {
         unsafe {
             gl::GenTextures(1, &mut id);
         }
-        let mut texture = Texture { id };
+        let texture = Texture { id };
         texture.bind();
         let img = image::open(path).expect("Bild konnte nicht geladen werden").flipv().to_rgba8();
         unsafe {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::REPEAT as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::REPEAT as i32);
             gl::TexImage2D(
                 gl::TEXTURE_2D,
                 0,
@@ -51,20 +50,21 @@ impl Drop for Texture {
     }
 }
 
+#[allow(dead_code)]
 pub struct TextureRenderer {
-    shader: GLuint
+    shader: Shader
 }
 
-
-
 impl TextureRenderer {
+    #[allow(dead_code)]
     pub fn new() -> Self {
-        let shader = create_shader(include_str!("shaders/texture_vertex.glsl"), include_str!("shaders/texture_fragment.glsl"));
+        let shader = Shader::new(include_str!("shaders/texture_vertex.glsl"), include_str!("shaders/texture_fragment.glsl"));
         Self {
             shader
         }
     }
 
+    #[allow(dead_code)]
     pub fn render(&self, texture: &Texture) {
         let vertices: Vec<f32> = vec![
             -0.5, -0.5, 0.0, 0.0,
@@ -95,7 +95,7 @@ impl TextureRenderer {
             gl::EnableVertexAttribArray(1);
             texture.bind();
             gl::ActiveTexture(gl::TEXTURE0);
-            gl::UseProgram(self.shader);
+            self.shader.bind();
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             gl::Enable(gl::BLEND);
             gl::DrawElements(gl::TRIANGLES, 6, gl::UNSIGNED_INT, std::ptr::null());

@@ -1,13 +1,12 @@
 use rusttype::gpu_cache::Cache;
 use rusttype::{point, Font, Rect, PositionedGlyph, Scale};
-use crate::shader::create_shader;
+use crate::shader::Shader;
 use gl::types::{GLuint, GLvoid};
-use cgmath::Matrix;
 
 pub struct TextRenderer {
     font: Font<'static>,
     cache: Cache<'static>,
-    shader_program: u32,
+    shader: Shader,
     texture_buffer: Texture,
     width: u32,
     height: u32,
@@ -20,12 +19,12 @@ impl TextRenderer {
 
         let cache: Cache<'static> = Cache::builder().dimensions(1024, 1024).build();
 
-        let shader_program = create_shader(include_str!("shaders/text_vertex.glsl"), include_str!("shaders/text_fragment.glsl"));
+        let shader = Shader::new(include_str!("shaders/text_vertex.glsl"), include_str!("shaders/text_fragment.glsl"));
 
         TextRenderer {
             font,
             cache,
-            shader_program,
+            shader,
             texture_buffer: Texture::new(1024, 1024),
             width,
             height,
@@ -36,6 +35,11 @@ impl TextRenderer {
         let glyphs = self.layout(Scale::uniform(size), self.width, &text);
         for glyph in &glyphs {
             self.cache.queue_glyph(0, glyph.clone());
+        }
+        unsafe {
+            gl::ActiveTexture(gl::TEXTURE0);
+            self.texture_buffer.bind();
+            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
         }
         let _ = self.cache.cache_queued(|rect, data| unsafe {
             gl::TexSubImage2D(
@@ -87,28 +91,27 @@ impl TextRenderer {
             gl::EnableVertexAttribArray(1);
 
             // set shader uniforms
-            gl::UseProgram(self.shader_program);
+            self.shader.bind();
             let projection = cgmath::ortho(0.0, 1000.0, 0.0, 1000.0, 0.1, 100.0);
-            let color_loc = gl::GetUniformLocation(self.shader_program, "color\0".as_ptr() as *const i8);
-            let projection_loc = gl::GetUniformLocation(self.shader_program, "projection\0".as_ptr() as *const i8);
-            gl::Uniform3f(color_loc, 1.0, 1.0, 1.0);
-            gl::UniformMatrix4fv(projection_loc, 1, gl::FALSE, projection.as_ptr());
+            self.shader.set_uniform_mat4("projection", &projection);
+            self.shader.set_uniform_3f("color", 1.0, 1.0, 1.0);
 
             // draw text
             gl::Disable(gl::DEPTH_TEST);
             gl::Disable(gl::CULL_FACE);
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            gl::ActiveTexture(gl::TEXTURE0);
-            self.texture_buffer.bind();
+            self.shader.set_uniform_1i("texture0", 0);
             gl::DrawArrays(gl::TRIANGLES, 0, vertices.len() as i32 / 4);
 
             // cleanup
+            gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::DeleteVertexArrays(1, &vao);
             gl::DeleteBuffers(1, &vbo);
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
             gl::Disable(gl::BLEND);
+            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
 
             if polygon_mode != gl::FILL as i32 {
                 gl::PolygonMode(gl::FRONT_AND_BACK, polygon_mode as u32);
@@ -180,7 +183,7 @@ impl Texture {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
             gl::TexImage2D(gl::TEXTURE_2D, 0, gl::R8 as i32, width, height, 0, gl::RED, gl::UNSIGNED_BYTE, data.as_ptr() as *const std::ffi::c_void);
-            gl::GenerateMipmap(gl::TEXTURE_2D);
+            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
         }
 
         Texture { id: texture_buffer }

@@ -73,8 +73,6 @@ fn main() {
         terrain.update();
         terrain.render(&camera, &projection);
 
-        texture_renderer.render(&texture);
-
         debug_controller.draw_debug_ui(delta_time as f32, &mouse_picker, &line_renderer, &mut text_renderer, &camera, &projection);
 
         window.swap_buffers();

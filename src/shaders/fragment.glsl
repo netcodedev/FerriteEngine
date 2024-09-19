@@ -3,6 +3,11 @@
 in vec4 outColor;
 in vec3 Normal;
 in vec3 toLightVector;
+in vec2 TexCoords;
+in float BlockType;
+
+uniform sampler2D texture0;
+uniform sampler2D texture1;
 
 out vec4 FragColor;
 
@@ -36,5 +41,10 @@ void main()
     float intensity = dot(normal, unitToLightVector);
     float brightness = max(intensity, 0.5);
     vec3 diffuse = brightness * vec3(1.0);
-    FragColor = outColor * vec4(diffuse, 1.0);
+    vec4 texColor = vec4(0.0);
+    if(BlockType > 0.9 && BlockType < 1.1)
+        texColor = texture(texture0, TexCoords);
+    else if(BlockType > 1.9 && BlockType < 2.1)
+        texColor = texture(texture1, TexCoords);
+    FragColor = texColor * vec4(diffuse, 1.0);
 }

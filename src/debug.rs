@@ -1,6 +1,6 @@
 use glfw::{Action, Glfw, Key, CursorMode};
 
-use crate::{camera::{Camera, MousePicker, Projection}, line::{Line, LineRenderer}, mesh::{ChunkBounds, CHUNK_SIZE}, text::TextRenderer};
+use crate::{camera::{Camera, MousePicker, Projection}, line::{Line, LineRenderer}, terrain::{ChunkBounds, CHUNK_SIZE}, text::TextRenderer};
 use cgmath::{EuclideanSpace, Point3, Vector3};
 
 pub struct DebugController {

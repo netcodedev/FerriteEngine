@@ -1,7 +1,7 @@
-use cgmath::{Matrix, Point3, Vector3, Array};
+use cgmath::{Point3, Vector3};
 use gl::types::*;
 use crate::camera::{Camera, Projection};
-use crate::shader::create_shader;
+use crate::shader::Shader;
 
 #[derive(Clone)]
 pub struct Line {
@@ -21,14 +21,14 @@ impl Line {
 }
 
 pub struct LineRenderer {
-    shader: GLuint,
+    shader: Shader,
     vao: GLuint,
     vbo: GLuint,
 }
 
 impl LineRenderer {
     pub fn new() -> Self {
-        let shader = create_shader(include_str!("shaders/line_vertex.glsl"), include_str!("shaders/line_fragment.glsl"));
+        let shader = Shader::new(include_str!("shaders/line_vertex.glsl"), include_str!("shaders/line_fragment.glsl"));
 
         let mut vao = 0;
         let mut vbo = 0;
@@ -56,19 +56,14 @@ impl LineRenderer {
     pub fn render(&self, camera: &Camera, projection: &Projection, line: &Line, color: Vector3<f32>) {
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
-            gl::UseProgram(self.shader);
+            self.shader.bind();
 
             let view = camera.calc_matrix();
             let projection = projection.calc_matrix();
 
-            let view_loc = gl::GetUniformLocation(self.shader, "view\0".as_ptr() as *const i8);
-            gl::UniformMatrix4fv(view_loc, 1, gl::FALSE, view.as_ptr());
-
-            let projection_loc = gl::GetUniformLocation(self.shader, "projection\0".as_ptr() as *const i8);
-            gl::UniformMatrix4fv(projection_loc, 1, gl::FALSE, projection.as_ptr());
-
-            let color_loc = gl::GetUniformLocation(self.shader, "color\0".as_ptr() as *const i8);
-            gl::Uniform3fv(color_loc, 1, color.as_ptr());
+            self.shader.set_uniform_mat4("view", &view);
+            self.shader.set_uniform_mat4("projection", &projection);
+            self.shader.set_uniform_3fv("color", &color);
 
             gl::BindVertexArray(self.vao);
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
