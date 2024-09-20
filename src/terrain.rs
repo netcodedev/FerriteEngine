@@ -114,7 +114,7 @@ impl Chunk {
             shader.bind();
             shader.set_uniform_mat4("view", &camera.calc_matrix());
             shader.set_uniform_mat4("projection", &projection.calc_matrix());
-            mesh.render(&shader, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32));
+            mesh.render(&shader, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32), None);
         }
     }
 
@@ -368,7 +368,7 @@ impl Chunk {
             }
         }
         
-        Mesh::new(vertices, indices, normals, texture_coords, block_type)
+        Mesh::new(vertices, Some(indices), Some(normals), Some(texture_coords), Some(block_type))
     }
 }
 

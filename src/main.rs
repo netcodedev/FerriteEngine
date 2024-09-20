@@ -9,12 +9,14 @@ mod text;
 mod terrain;
 mod line;
 mod texture;
+mod model;
 use camera::{Camera, CameraController, Projection, MousePicker};
 use debug::DebugController;
 use text::TextRenderer;
 use line::{Line, LineRenderer};
+use model::Model;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut glfw = glfw::init(glfw::log_errors).unwrap_or_else(|err| {
         eprintln!("Fehler bei der GLFW-Initialisierung: {}", err);
         std::process::exit(1);
@@ -37,7 +39,7 @@ fn main() {
 
     window.set_cursor_pos(0.0, 0.0);
 
-    let mut camera: Camera = Camera::new((0.0, 100.0, 0.0), Deg(0.0), Deg(0.0));
+    let mut camera: Camera = Camera::new((0.0, 100.0, 0.0), Deg(0.0), Deg(90.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
     let mut camera_controller: CameraController = CameraController::new(10.0, 1.0);
     let mut debug_controller: DebugController = DebugController::new();
@@ -48,6 +50,9 @@ fn main() {
 
     let mut text_renderer = TextRenderer::new(width, height);
     let line_renderer = LineRenderer::new();
+
+    let mut model = Model::new("assets/models/char.fbx")?;
+    model.init();
 
     while !window.should_close() {
         unsafe {
@@ -73,10 +78,14 @@ fn main() {
         terrain.update();
         terrain.render(&camera, &projection);
 
+        model.render(&camera, &projection);
+
         debug_controller.draw_debug_ui(delta_time as f32, &mouse_picker, &line_renderer, &mut text_renderer, &camera, &projection);
 
         window.swap_buffers();
     }
+
+    Ok(())
 }
 
 fn calculate_frametime(glfw: &glfw::Glfw) -> f64 {
