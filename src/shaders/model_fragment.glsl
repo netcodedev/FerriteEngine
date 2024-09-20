@@ -21,5 +21,5 @@ void main()
     float brightness = max(intensity, 0.5);
     vec3 diffuse = brightness * texture(texture_diffuse, TexCoords).rgb;
 
-    FragColor = texture(texture_diffuse, TexCoords) * vec4(diffuse, 1.0);
+    FragColor = vec4(diffuse, 1.0);
 }
