@@ -1,6 +1,5 @@
 #version 330 core
 
-in vec4 outColor;
 in vec3 Normal;
 in vec3 toLightVector;
 in vec2 TexCoords;
