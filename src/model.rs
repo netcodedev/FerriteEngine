@@ -1,12 +1,13 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
-use russimp::{material::{DataContent, TextureType}, scene::{PostProcess, Scene}};
+use cgmath::{InnerSpace, Matrix4, Point3, SquareMatrix, Vector4};
+use russimp::{material::{DataContent, TextureType}, node::Node, scene::{PostProcess, Scene}, Matrix4x4};
 
-use crate::{camera::{Camera, Projection}, mesh::Mesh, shader::Shader, texture::Texture};
+use crate::{camera::{Camera, Projection}, line::{Line, LineRenderer}, mesh::Mesh, shader::Shader, texture::Texture};
 
 pub struct Model {
     model: Scene,
-    mesh: Option<Mesh>,
+    meshes: HashMap<String, ModelMesh>,
     shader: Shader,
     textures: HashMap<TextureType, Texture>
 }
@@ -22,7 +23,7 @@ impl Model {
         let shader: Shader = Shader::new(include_str!("shaders/model_vertex.glsl"), include_str!("shaders/model_fragment.glsl"));
         Ok(Model {
             model: scene,
-            mesh: None,
+            meshes: HashMap::<String, ModelMesh>::new(),
             shader,
             textures: HashMap::<TextureType, Texture>::new()
         })
@@ -47,20 +48,63 @@ impl Model {
                 Vec::<f32>::new()
             }
         }).collect();
-        let mesh = Mesh::new(
-            self.model.meshes[0].vertices.iter().flat_map(|v| vec![v.x, v.y, v.z]).collect(),
-            Some(self.model.meshes[0].faces.iter().flat_map(|f| vec![f.0[0], f.0[1], f.0[2]]).collect::<Vec<u32>>()),
-            Some(self.model.meshes[0].normals.iter().flat_map(|v| vec![v.x, v.y, v.z]).collect()),
-            Some(texture_coords),
-            None
-        );
-        self.mesh = Some(mesh);
+        for mesh in &self.model.meshes {
+            let mut model_mesh = ModelMesh {
+                mesh: Mesh::new(
+                    mesh.vertices.iter().flat_map(|v| vec![v.x, v.y, v.z]).collect(),
+                    Some(mesh.faces.iter().flat_map(|f| vec![f.0[0], f.0[1], f.0[2]]).collect::<Vec<u32>>()),
+                    Some(mesh.normals.iter().flat_map(|v| vec![v.x, v.y, v.z]).collect()),
+                    Some(texture_coords.clone()),
+                    None
+                ),
+                root_bone: None
+            };
+            let mut root_bone = None;
+            if let Some(root_node) = &self.model.root {
+                for node in root_node.children.borrow().iter() {
+                    for bone in &mesh.bones {
+                        if bone.name != node.name {
+                            continue;
+                        }
+                        root_bone = Some(Bone {
+                            name: bone.name.clone(),
+                            offset_matrix: node.transformation.to_matrix_4(),
+                            weights: bone.weights.iter().map(|w| (w.vertex_id, w.weight)).collect(),
+                            children: self.get_child_bones(node, &mesh.bones, Matrix4::identity())
+                        });
+                    }
+                }
+            }
+            model_mesh.root_bone = root_bone;
+            self.meshes.insert(mesh.name.clone(), model_mesh);
+        }
+    }
+
+    fn get_child_bones(&self, node: &Rc<Node>, bones: &Vec<russimp::bone::Bone>, offset_matrix: Matrix4<f32>) -> Option<Vec<Bone>> {
+        if node.children.borrow().len() == 0 {
+            return None;
+        }
+        let mut children = Vec::<Bone>::new();
+        for child in node.children.borrow().iter() {
+            if bones.iter().any(|b| b.name == child.name) {
+                let bone = bones.iter().find(|b| b.name == child.name).unwrap();
+                children.push(Bone {
+                    name: bone.name.clone(),
+                    offset_matrix: offset_matrix * child.transformation.to_matrix_4(),
+                    weights: bone.weights.iter().map(|w| (w.vertex_id, w.weight)).collect(),
+                    children: self.get_child_bones(child, bones, Matrix4::identity())
+                });
+            } else if let Some(child_bones) = self.get_child_bones(child, bones, offset_matrix * child.transformation.to_matrix_4()) {
+                children.extend(child_bones);
+            }
+        }
+        Some(children)
     }
 
     pub fn render(&mut self, camera: &Camera, projection: &Projection) {
-        if let Some(mesh) = &mut self.mesh {
-            if !mesh.is_buffered() {
-                mesh.buffer_data();
+        for mesh in self.meshes.values_mut() {
+            if !mesh.mesh.is_buffered() {
+                mesh.mesh.buffer_data();
             }
             self.shader.bind();
             self.shader.set_uniform_mat4("view", &camera.calc_matrix());
@@ -77,8 +121,67 @@ impl Model {
                 }
             }
             unsafe { gl::Disable(gl::CULL_FACE) };
-            mesh.render(&self.shader, (0.0, 91.0, 0.0), Some(0.01));
+            mesh.mesh.render(&self.shader, (0.0, 0.0, 0.0), None);
             unsafe { gl::Enable(gl::CULL_FACE) };
         }
+    }
+
+    pub fn render_bones(&self, line_renderer: &LineRenderer, camera: &Camera, projection: &Projection) {
+        let root = cgmath::Matrix4::identity();
+        for mesh in self.meshes.values() {
+            if let Some(root_bone) = &mesh.root_bone {
+                self.render_child_bones(root_bone, line_renderer, camera, projection, root);
+            }
+        }
+    }
+
+    fn render_child_bones(&self, bone: &Bone, line_renderer: &LineRenderer, camera: &Camera, projection: &Projection, root: cgmath::Matrix4<f32>) {
+        let bone_matrix = bone.offset_matrix;
+        let position = root * bone_matrix;
+        let pos_vec = (position * Vector4::new(0.0,0.0,0.0,1.0)).truncate();
+        let root_vec = (root * Vector4::new(0.0,0.0,0.0,1.0)).truncate();
+        let direction = pos_vec - root_vec;
+        line_renderer.render(camera, projection, &Line {
+            position: Point3::new(root_vec.x, root_vec.y, root_vec.z),
+            direction: direction.normalize(),
+            length: direction.magnitude(),
+        }, 
+        cgmath::Vector3::new(1.0, 0.0, 0.0),
+        true);
+        if let Some(children) = &bone.children {
+            for child in children {
+                self.render_child_bones(child, line_renderer, camera, projection, position);
+            }
+        }
+    }
+}
+
+struct ModelMesh {
+    mesh: Mesh,
+    root_bone: Option<Bone>
+}
+
+#[derive(Clone)]
+struct Bone {
+    #[allow(dead_code)]
+    name: String,
+    offset_matrix: Matrix4<f32>,
+    #[allow(dead_code)]
+    weights: Vec<(u32, f32)>,
+    children: Option<Vec<Bone>>
+}
+
+trait ToMatrix4 {
+    fn to_matrix_4(&self) -> cgmath::Matrix4<f32>;
+}
+
+impl ToMatrix4 for Matrix4x4 {
+    fn to_matrix_4(&self) -> cgmath::Matrix4<f32> {
+        cgmath::Matrix4::new(
+            self.a1, self.b1, self.c1, self.d1,
+            self.a2, self.b2, self.c2, self.d2,
+            self.a3, self.b3, self.c3, self.d3,
+            self.a4, self.b4, self.c4, self.d4,
+        )
     }
 }

@@ -39,9 +39,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     window.set_cursor_pos(0.0, 0.0);
 
-    let mut camera: Camera = Camera::new((0.0, 100.0, 0.0), Deg(0.0), Deg(90.0));
+    let mut camera: Camera = Camera::new((0.0, 0.0, 0.0), Deg(0.0), Deg(90.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
-    let mut camera_controller: CameraController = CameraController::new(10.0, 1.0);
+    let mut camera_controller: CameraController = CameraController::new(50.0, 1.0);
     let mut debug_controller: DebugController = DebugController::new();
 
     let mut mouse_picker = MousePicker::new();
@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut text_renderer = TextRenderer::new(width, height);
     let line_renderer = LineRenderer::new();
 
-    let mut model = Model::new("assets/models/char.fbx")?;
+    let mut model = Model::new("assets/models/char_anim.fbx")?;
     model.init();
 
     while !window.should_close() {
@@ -79,6 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         terrain.render(&camera, &projection);
 
         model.render(&camera, &projection);
+        model.render_bones(&line_renderer, &camera, &projection);
 
         debug_controller.draw_debug_ui(delta_time as f32, &mouse_picker, &line_renderer, &mut text_renderer, &camera, &projection);
 
