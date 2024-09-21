@@ -53,9 +53,13 @@ impl LineRenderer {
         }
     }
 
-    pub fn render(&self, camera: &Camera, projection: &Projection, line: &Line, color: Vector3<f32>) {
+    pub fn render(&self, camera: &Camera, projection: &Projection, line: &Line, color: Vector3<f32>, always_on_top: bool) {
         unsafe {
-            gl::Enable(gl::DEPTH_TEST);
+            if always_on_top {
+                gl::Disable(gl::DEPTH_TEST);
+            } else {
+                gl::Enable(gl::DEPTH_TEST);
+            }
             self.shader.bind();
 
             let view = camera.calc_matrix();

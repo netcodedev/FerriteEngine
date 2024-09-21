@@ -58,7 +58,7 @@ impl DebugController {
     pub fn draw_debug_ui(&self, delta_time: f32, mouse_picker: &MousePicker, line_renderer: &LineRenderer, text_renderer: &mut TextRenderer, camera: &Camera, projection: &Projection) {
         if self.show_rays {
             if let Some(line) = &mouse_picker.ray {
-                line_renderer.render(&camera, &projection, &line, Vector3::new(1.0, 0.0, 0.0));
+                line_renderer.render(&camera, &projection, &line, Vector3::new(1.0, 0.0, 0.0), false);
             }
         }
 
@@ -89,7 +89,7 @@ impl DebugController {
                     } else {
                         Vector3::new(1.0, 1.0, 0.0)
                     };
-                    line_renderer.render(camera, projection, &line, color);
+                    line_renderer.render(camera, projection, &line, color, false);
                 }
             }
         }
