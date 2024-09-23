@@ -1,15 +1,15 @@
-#version 330 core
+#version 460 core
 
 layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normals;
 layout (location = 2) in vec2 texCoords;
-layout (location = 3) in float block_type;
+layout (location = 3) in uint block_type;
 
 out vec4 outColor;
 out vec3 Normal;
 out vec3 toLightVector;
 out vec2 TexCoords;
-out float BlockType;
+out uint BlockType;
 
 uniform mat4 model;
 uniform mat4 view;

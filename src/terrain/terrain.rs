@@ -1,21 +1,32 @@
 use crate::line::Line;
 use crate::camera::{Camera, Projection};
-use crate::shader::Shader;
+use crate::shader::{DynamicVertexArray, Shader, VertexAttributes};
 use crate::texture::Texture;
 
 use std::sync::mpsc;
 use std::thread;
 use std::collections::HashMap;
+use gl::types::GLuint;
 use ndarray::{Array3, ArrayBase, Dim};
 use libnoise::prelude::*;
 use cgmath::EuclideanSpace;
-use crate::mesh::Mesh;
 
-use super::{Block, Chunk, ChunkBounds, Terrain, CHUNK_SIZE};
+use super::{Block, BlockVertex, Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_SIZE};
 
 impl Block {
     pub fn new(type_id: u32) -> Self {
         Block { type_id }
+    }
+}
+
+impl VertexAttributes for BlockVertex {
+    fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
+        vec![
+            (3, gl::FLOAT), // position
+            (3, gl::FLOAT), // normal
+            (2, gl::FLOAT), // texture_coords
+            (1, gl::UNSIGNED_INT)  // block_type
+        ]
     }
 }
 
@@ -63,6 +74,57 @@ impl ChunkBounds {
             bounds.push(current_chunk);
         }
         bounds
+    }
+}
+
+impl ChunkMesh {
+    pub fn new(vertices: Vec<BlockVertex>, indices: Option<Vec<u32>>) -> Self {
+        ChunkMesh {
+            vertex_array: None,
+            indices,
+            vertices,
+        }
+    }
+
+    pub fn buffer_data(&mut self) {
+        let mut vertex_array = DynamicVertexArray::new();
+        vertex_array.buffer_data_dyn(&self.vertices, &self.indices);
+        self.vertex_array = Some(vertex_array);
+    }
+
+    pub fn render(&self, shader: &Shader, position: (f32, f32, f32), scale: Option<f32>) {
+        unsafe {
+            gl::Enable(gl::DEPTH_TEST);
+            gl::Enable(gl::CULL_FACE);
+            shader.bind();
+            let mut model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(position.0, position.1, position.2));
+            if let Some(scale) = scale {
+                model = model * cgmath::Matrix4::from_scale(scale);
+            }
+            shader.set_uniform_mat4("model", &model);
+            shader.set_uniform_1i("texture0", 0);
+            shader.set_uniform_1i("texture1", 1);
+
+            if let Some(vertex_array) = &self.vertex_array {
+                vertex_array.bind();
+                if let Some(_) = &self.indices {
+                    gl::DrawElements(gl::TRIANGLES, vertex_array.get_element_count() as i32, gl::UNSIGNED_INT, std::ptr::null());
+                } else {
+                    gl::DrawArrays(gl::TRIANGLES, 0, vertex_array.get_element_count() as i32);
+                }
+                DynamicVertexArray::<BlockVertex>::unbind();
+            }
+            gl::Disable(gl::CULL_FACE);
+            gl::Disable(gl::DEPTH_TEST);
+        }
+    }
+
+    pub fn is_buffered(&self) -> bool {
+        if let Some(_) = &self.vertex_array {
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -164,12 +226,9 @@ impl Chunk {
         }
     }
 
-    fn calculate_mesh(&self) -> Mesh {
-        let mut vertices: Vec<f32> = Vec::new();
+    fn calculate_mesh(&self) -> ChunkMesh {
+        let mut vertices: Vec<BlockVertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
-        let mut normals: Vec<f32> = Vec::new();
-        let mut texture_coords: Vec<f32> = Vec::new();
-        let mut block_type: Vec<u32> = Vec::new();
 
         // Sweep over each axis (X, Y and Z)
         for d in 0..3 {
@@ -280,57 +339,104 @@ impl Chunk {
                             // Create a quad for this face. Colour, normal or textures are not stored in this block vertex format.
                             if !flip[n] {
                                 vertices.extend_from_slice(&[
-                                    (x[0] + du[0]) as f32,          (x[1] + du[1]) as f32,          (x[2] + du[2]) as f32,
-                                    x[0] as f32,                    x[1] as f32,                    x[2] as f32,
-                                    (x[0] + du[0] + dv[0]) as f32,  (x[1] + du[1] + dv[1]) as f32,  (x[2] + du[2] + dv[2]) as f32,
-                                    (x[0] + dv[0]) as f32,          (x[1] + dv[1]) as f32,          (x[2] + dv[2]) as f32,
+                                    BlockVertex {
+                                        position: ((x[0] + du[0]) as f32,(x[1] + du[1]) as f32, (x[2] + du[2]) as f32),
+                                        normal: match d {
+                                            0 => (0.0, 1.0, 0.0),
+                                            1 => (1.0, 0.0, 0.0),
+                                            2 => (0.0, 0.0, 1.0),
+                                            _ => (0.0, 0.0, 0.0),
+                                        },
+                                        texture_coords: (0.0, 0.0),
+                                        block_type: b_t[n],
+                                    },
+                                    BlockVertex {
+                                        position: (x[0] as f32, x[1] as f32, x[2] as f32),
+                                        normal: match d {
+                                            0 => (0.0, 1.0, 0.0),
+                                            1 => (1.0, 0.0, 0.0),
+                                            2 => (0.0, 0.0, 1.0),
+                                            _ => (0.0, 0.0, 0.0),
+                                        },
+                                        texture_coords: (1.0 * w as f32, 0.0),
+                                        block_type: b_t[n],
+                                    },
+                                    BlockVertex {
+                                        position: ((x[0] + du[0] + dv[0]) as f32,  (x[1] + du[1] + dv[1]) as f32,  (x[2] + du[2] + dv[2]) as f32),
+                                        normal: match d {
+                                            0 => (0.0, 1.0, 0.0),
+                                            1 => (1.0, 0.0, 0.0),
+                                            2 => (0.0, 0.0, 1.0),
+                                            _ => (0.0, 0.0, 0.0),
+                                        },
+                                        texture_coords: (0.0, 1.0 * h as f32),
+                                        block_type: b_t[n],
+                                    },
+                                    BlockVertex {
+                                        position: ((x[0] + dv[0]) as f32,  (x[1] + dv[1]) as f32,  (x[2] + dv[2]) as f32),
+                                        normal: match d {
+                                            0 => (0.0, 1.0, 0.0),
+                                            1 => (1.0, 0.0, 0.0),
+                                            2 => (0.0, 0.0, 1.0),
+                                            _ => (0.0, 0.0, 0.0),
+                                        },
+                                        texture_coords: (1.0 * w as f32, 1.0 * h as f32),
+                                        block_type: b_t[n],
+                                    }
                                 ]);
                             } else {
                                 vertices.extend_from_slice(&[
-                                    x[0] as f32,                    x[1] as f32,                    x[2] as f32,
-                                    (x[0] + du[0]) as f32,          (x[1] + du[1]) as f32,          (x[2] + du[2]) as f32,
-                                    (x[0] + dv[0]) as f32,          (x[1] + dv[1]) as f32,          (x[2] + dv[2]) as f32,
-                                    (x[0] + du[0] + dv[0]) as f32,  (x[1] + du[1] + dv[1]) as f32,  (x[2] + du[2] + dv[2]) as f32,
+                                    BlockVertex {
+                                        position: (x[0] as f32,                    x[1] as f32,                    x[2] as f32),
+                                        normal: match d {
+                                            0 => (0.0, 1.0, 0.0),
+                                            1 => (1.0, 0.0, 0.0),
+                                            2 => (0.0, 0.0, 1.0),
+                                            _ => (0.0, 0.0, 0.0),
+                                        },
+                                        texture_coords: (0.0, 0.0),
+                                        block_type: b_t[n],
+                                    },
+                                    BlockVertex {
+                                        position: ((x[0] + du[0]) as f32,          (x[1] + du[1]) as f32,          (x[2] + du[2]) as f32),
+                                        normal: match d {
+                                            0 => (0.0, 1.0, 0.0),
+                                            1 => (1.0, 0.0, 0.0),
+                                            2 => (0.0, 0.0, 1.0),
+                                            _ => (0.0, 0.0, 0.0),
+                                        },
+                                        texture_coords: (1.0 * w as f32, 0.0),
+                                        block_type: b_t[n],
+                                    },
+                                    BlockVertex {
+                                        position: ((x[0] + dv[0]) as f32,          (x[1] + dv[1]) as f32,          (x[2] + dv[2]) as f32),
+                                        normal: match d {
+                                            0 => (0.0, 1.0, 0.0),
+                                            1 => (1.0, 0.0, 0.0),
+                                            2 => (0.0, 0.0, 1.0),
+                                            _ => (0.0, 0.0, 0.0),
+                                        },
+                                        texture_coords: (0.0, 1.0 * h as f32),
+                                        block_type: b_t[n],
+                                    },
+                                    BlockVertex {
+                                        position: ((x[0] + du[0] + dv[0]) as f32,  (x[1] + du[1] + dv[1]) as f32,  (x[2] + du[2] + dv[2]) as f32),
+                                        normal: match d {
+                                            0 => (0.0, 1.0, 0.0),
+                                            1 => (1.0, 0.0, 0.0),
+                                            2 => (0.0, 0.0, 1.0),
+                                            _ => (0.0, 0.0, 0.0),
+                                        },
+                                        texture_coords: (1.0 * w as f32, 1.0 * h as f32),
+                                        block_type: b_t[n],
+                                    }
                                 ]);
                             }
 
-                            let vert_count = vertices.len() as u32 / 3;
+                            let vert_count = vertices.len() as u32;
                             indices.extend_from_slice(&[
                                 vert_count - 4, vert_count - 3, vert_count - 2,
                                 vert_count - 2, vert_count - 3, vert_count - 1,
-                            ]);
-
-                            match d {
-                                0 => normals.extend(vec![
-                                    0.0, 1.0, 0.0,
-                                    0.0, 1.0, 0.0,
-                                    0.0, 1.0, 0.0,
-                                    0.0, 1.0, 0.0,
-                                ]),
-                                1 => normals.extend(vec![
-                                    1.0, 0.0, 0.0,
-                                    1.0, 0.0, 0.0,
-                                    1.0, 0.0, 0.0,
-                                    1.0, 0.0, 0.0,
-                                ]),
-                                2 => normals.extend(vec![
-                                    0.0, 0.0, 1.0,
-                                    0.0, 0.0, 1.0,
-                                    0.0, 0.0, 1.0,
-                                    0.0, 0.0, 1.0,
-                                ]),
-                                _ => (),
-                            }
-
-                            texture_coords.extend(vec![
-                                0.0, 0.0,
-                                1.0 * w as f32, 0.0,
-                                0.0, 1.0 * h as f32,
-                                1.0 * w as f32, 1.0 * h as f32,
-                            ]);
-
-                            block_type.extend(vec![
-                                b_t[n], b_t[n], b_t[n], b_t[n],
                             ]);
 
                             // Clear this part of the mask, so we don't add duplicate faces
@@ -351,8 +457,7 @@ impl Chunk {
                 }
             }
         }
-        
-        Mesh::new(vertices, Some(indices), Some(normals), Some(texture_coords), Some(block_type))
+        ChunkMesh::new(vertices, Some(indices))
     }
 }
 
@@ -373,7 +478,6 @@ impl Terrain {
         let _ = thread::spawn(move || chunkloader(RADIUS,-1,1,tx2));
         let _ = thread::spawn(move || chunkloader(RADIUS,1,-1,tx3));
         let _ = thread::spawn(move || chunkloader(RADIUS,-1,-1,tx4));
-
 
         let grass_texture = Texture::new(std::path::Path::new("assets/grass.png"));
         let stone_texture = Texture::new(std::path::Path::new("assets/stone.png"));

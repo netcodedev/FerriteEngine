@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use glfw::Context;
 use cgmath::Deg;
 
@@ -52,8 +54,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut text_renderer = TextRenderer::new(width, height);
     let line_renderer = LineRenderer::new();
 
-    let mut model = Model::new("assets/models/char_anim.fbx")?;
-    model.init();
+    // let start = Instant::now();
+    // let mut model = Model::new("assets/models/char_anim.fbx")?;
+    // model.init();
+    // println!("Model loading took: {:?}", start.elapsed());
 
     while !window.should_close() {
         unsafe {
@@ -79,8 +83,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         terrain.update();
         terrain.render(&camera, &projection);
 
-        model.render(&camera, &projection);
-        model.render_bones(&line_renderer, &camera, &projection);
+        // model.render(&camera, &projection);
+        // model.render_bones(&line_renderer, &camera, &projection);
 
         debug_controller.draw_debug_ui(delta_time as f32, &mouse_picker, &line_renderer, &mut text_renderer, &camera, &projection);
 
