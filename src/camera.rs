@@ -17,8 +17,8 @@ const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 #[derive(Debug)]
 pub struct Camera {
     pub position: Point3<f32>,
-    yaw: Rad<f32>,
-    pitch: Rad<f32>,
+    pub yaw: Rad<f32>,
+    pub pitch: Rad<f32>,
 }
 
 impl Camera {
@@ -182,10 +182,18 @@ impl CameraController {
     }
 
     pub fn process_mouse(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) {
+        static mut SKIP: bool = true;
         match event {
             glfw::WindowEvent::CursorPos(xpos, ypos) => {
                 match window.get_cursor_mode() {
                     CursorMode::Disabled => {
+                        unsafe {
+                            if SKIP {
+                                SKIP = false;
+                                window.set_cursor_pos(0.0, 0.0);
+                                return;
+                            }
+                        }
                         self.rotate_horizontal = *xpos as f32;
                         self.rotate_vertical = *ypos as f32;
 
