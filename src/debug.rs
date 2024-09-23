@@ -72,6 +72,8 @@ impl DebugController {
             text_renderer.render(5, 95, 65.0, format!("yaw: {:?} pitch {:?}", camera.yaw, camera.pitch).as_str());
             text_renderer.render(5, 140, 65.0, format!("Chunk: xMin: {} yMin: {} zMin: {}", bounds.min.0, bounds.min.1, bounds.min.2).as_str());
             text_renderer.render(5, 185, 65.0, format!("       xMax: {} yMax: {} zMax: {}", bounds.max.0, bounds.max.1, bounds.max.2).as_str());
+            let mut lines: Vec<Line> = Vec::new();
+            let mut corner_lines: Vec<Line> = Vec::new();
             let spacing = (CHUNK_SIZE / 8) as i32;
             for i in 0..9 {
                 for j in 0..9 {
@@ -85,14 +87,15 @@ impl DebugController {
                         direction: Vector3::new(0.0, 1.0, 0.0),
                         length: CHUNK_SIZE as f32,
                     };
-                    let color = if (i == 0 || i == 8) && (j == 0 || j == 8) {
-                        Vector3::new(1.0, 0.0, 0.0)
+                    if (i == 0 || i == 8) && (j == 0 || j == 8) {
+                        corner_lines.push(line);
                     } else {
-                        Vector3::new(1.0, 1.0, 0.0)
-                    };
-                    line_renderer.render(camera, projection, &line, color, false);
+                        lines.push(line);
+                    }
                 }
             }
+            line_renderer.render_lines(camera, projection, &lines, Vector3::new(1.0, 1.0, 0.0), false);
+            line_renderer.render_lines(camera, projection, &corner_lines, Vector3::new(1.0, 0.0, 1.0), false);
         }
     }
 }
