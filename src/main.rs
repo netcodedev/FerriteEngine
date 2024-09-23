@@ -39,9 +39,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     window.set_cursor_pos(0.0, 0.0);
 
-    let mut camera: Camera = Camera::new((0.0, 0.0, 0.0), Deg(0.0), Deg(90.0));
+    let mut camera: Camera = Camera::new((0.0, 92.0, 2.0), Deg(0.0), Deg(90.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
-    let mut camera_controller: CameraController = CameraController::new(50.0, 1.0);
+    let mut camera_controller: CameraController = CameraController::new(10.0, 1.0);
     let mut debug_controller: DebugController = DebugController::new();
 
     let mut mouse_picker = MousePicker::new();

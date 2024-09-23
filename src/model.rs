@@ -9,7 +9,9 @@ pub struct Model {
     model: Scene,
     meshes: HashMap<String, ModelMesh>,
     shader: Shader,
-    textures: HashMap<TextureType, Texture>
+    textures: HashMap<TextureType, Texture>,
+    position: cgmath::Vector3<f32>,
+    scale: f32,
 }
 
 impl Model {
@@ -25,7 +27,9 @@ impl Model {
             model: scene,
             meshes: HashMap::<String, ModelMesh>::new(),
             shader,
-            textures: HashMap::<TextureType, Texture>::new()
+            textures: HashMap::<TextureType, Texture>::new(),
+            position: cgmath::Vector3::new(0.0, 91.0, 0.0),
+            scale: 0.01,
         })
     }
 
@@ -68,7 +72,8 @@ impl Model {
                         }
                         root_bone = Some(Bone {
                             name: bone.name.clone(),
-                            offset_matrix: node.transformation.to_matrix_4(),
+                            transformation_matrix: node.transformation.to_matrix_4(),
+                            offset_matrix: bone.offset_matrix.to_matrix_4(),
                             weights: bone.weights.iter().map(|w| (w.vertex_id, w.weight)).collect(),
                             children: self.get_child_bones(node, &mesh.bones, Matrix4::identity())
                         });
@@ -90,7 +95,8 @@ impl Model {
                 let bone = bones.iter().find(|b| b.name == child.name).unwrap();
                 children.push(Bone {
                     name: bone.name.clone(),
-                    offset_matrix: offset_matrix * child.transformation.to_matrix_4(),
+                    transformation_matrix: offset_matrix * child.transformation.to_matrix_4(),
+                    offset_matrix: bone.offset_matrix.to_matrix_4(),
                     weights: bone.weights.iter().map(|w| (w.vertex_id, w.weight)).collect(),
                     children: self.get_child_bones(child, bones, Matrix4::identity())
                 });
@@ -121,13 +127,13 @@ impl Model {
                 }
             }
             unsafe { gl::Disable(gl::CULL_FACE) };
-            mesh.mesh.render(&self.shader, (0.0, 0.0, 0.0), None);
+            mesh.mesh.render(&self.shader, (self.position.x, self.position.y, self.position.z), Some(self.scale));
             unsafe { gl::Enable(gl::CULL_FACE) };
         }
     }
 
     pub fn render_bones(&self, line_renderer: &LineRenderer, camera: &Camera, projection: &Projection) {
-        let root = cgmath::Matrix4::identity();
+        let root = Matrix4::from_translation(self.position) * Matrix4::from_scale(self.scale);
         for mesh in self.meshes.values() {
             if let Some(root_bone) = &mesh.root_bone {
                 self.render_child_bones(root_bone, line_renderer, camera, projection, root);
@@ -136,18 +142,30 @@ impl Model {
     }
 
     fn render_child_bones(&self, bone: &Bone, line_renderer: &LineRenderer, camera: &Camera, projection: &Projection, root: cgmath::Matrix4<f32>) {
-        let bone_matrix = bone.offset_matrix;
+        let bone_matrix = bone.transformation_matrix;
         let position = root * bone_matrix;
+        let offset_pos = position * bone.offset_matrix;
         let pos_vec = (position * Vector4::new(0.0,0.0,0.0,1.0)).truncate();
         let root_vec = (root * Vector4::new(0.0,0.0,0.0,1.0)).truncate();
+        let offset_vec = (offset_pos * Vector4::new(0.0,0.0,0.0,1.0)).truncate();
         let direction = pos_vec - root_vec;
+        let offset_dir = offset_vec - root_vec;
         line_renderer.render(camera, projection, &Line {
-            position: Point3::new(root_vec.x, root_vec.y, root_vec.z),
-            direction: direction.normalize(),
-            length: direction.magnitude(),
-        }, 
-        cgmath::Vector3::new(1.0, 0.0, 0.0),
-        true);
+                position: Point3::new(root_vec.x, root_vec.y, root_vec.z),
+                direction: direction.normalize(),
+                length: direction.magnitude(),
+            }, 
+            cgmath::Vector3::new(1.0, 0.0, 0.0),
+            true
+        );
+        line_renderer.render(camera, projection, &Line {
+                position: Point3::new(root_vec.x, root_vec.y, root_vec.z),
+                direction: offset_dir.normalize(),
+                length: offset_dir.magnitude(),
+            }, 
+            cgmath::Vector3::new(0.0, 0.0, 1.0),
+            true
+        );
         if let Some(children) = &bone.children {
             for child in children {
                 self.render_child_bones(child, line_renderer, camera, projection, position);
@@ -165,6 +183,7 @@ struct ModelMesh {
 struct Bone {
     #[allow(dead_code)]
     name: String,
+    transformation_matrix: Matrix4<f32>,
     offset_matrix: Matrix4<f32>,
     #[allow(dead_code)]
     weights: Vec<(u32, f32)>,
