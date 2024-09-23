@@ -6,18 +6,16 @@ pub struct Mesh {
     indices: Option<Vec<u32>>,
     normals: Option<Vec<f32>>,
     texture_coords: Option<Vec<f32>>,
-    block_type: Option<Vec<u32>>,
 }
 
 impl Mesh {
-    pub fn new(vertices: Vec<f32>, indices: Option<Vec<u32>>, normals: Option<Vec<f32>>, texture_coords: Option<Vec<f32>>, block_type: Option<Vec<u32>>) -> Self {
+    pub fn new(vertices: Vec<f32>, indices: Option<Vec<u32>>, normals: Option<Vec<f32>>, texture_coords: Option<Vec<f32>>) -> Self {
         Mesh {
             vertex_array: None,
             vertices,
             indices,
             normals,
             texture_coords,
-            block_type,
         }
     }
 
@@ -28,7 +26,6 @@ impl Mesh {
             indices: if let Some(indices) = &self.indices { Some(indices.clone()) } else { None },
             normals: if let Some(normals) = &self.normals { Some(normals.clone()) } else { None },
             texture_coords: if let Some(texture_coords) = &self.texture_coords { Some(texture_coords.clone()) } else { None },
-            block_type: if let Some(block_type) = &self.block_type { Some(block_type.clone()) } else { None },
         });
         self.vertex_array = Some(vertex_array);
     }

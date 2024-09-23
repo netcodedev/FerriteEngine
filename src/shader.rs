@@ -27,7 +27,6 @@ pub struct VertexBufferData {
     pub indices: Option<Vec<u32>>,
     pub normals: Option<Vec<f32>>,
     pub texture_coords: Option<Vec<f32>>,
-    pub block_type: Option<Vec<u32>>,
 }
 
 pub trait VertexAttributes {
@@ -202,12 +201,6 @@ impl VertexArray {
                 gl::VertexAttribPointer(current_attrib, 2, gl::FLOAT, gl::FALSE, 0, (vertex_data.len() * std::mem::size_of::<f32>()) as *const _);
                 gl::EnableVertexAttribArray(current_attrib);
                 vertex_data.extend(texture_coords.clone());
-                current_attrib += 1;
-            }
-            if let Some(block_type) = &buffer_data.block_type {
-                gl::VertexAttribPointer(current_attrib, 1, gl::FLOAT, gl::FALSE, 0, (vertex_data.len() * std::mem::size_of::<f32>()) as *const _);
-                gl::EnableVertexAttribArray(current_attrib);
-                vertex_data.extend(block_type.iter().map(|s| *s as f32));
             }
             gl::BufferData(
                 gl::ARRAY_BUFFER,

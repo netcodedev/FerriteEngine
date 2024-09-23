@@ -53,7 +53,6 @@ impl Model {
                     Some(mesh.faces.iter().flat_map(|f| vec![f.0[0], f.0[1], f.0[2]]).collect::<Vec<u32>>()),
                     Some(mesh.normals.iter().flat_map(|v| vec![v.x, v.y, v.z]).collect()),
                     Some(texture_coords.clone()),
-                    None
                 ),
                 root_bone: None
             };
