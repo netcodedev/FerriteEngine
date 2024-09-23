@@ -182,20 +182,19 @@ impl CameraController {
     }
 
     pub fn process_mouse(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) {
-        static mut SKIP: bool = true;
         match event {
             glfw::WindowEvent::CursorPos(xpos, ypos) => {
                 match window.get_cursor_mode() {
                     CursorMode::Disabled => {
-                        unsafe {
-                            if SKIP {
-                                SKIP = false;
-                                window.set_cursor_pos(0.0, 0.0);
-                                return;
-                            }
-                        }
                         self.rotate_horizontal = *xpos as f32;
                         self.rotate_vertical = *ypos as f32;
+
+                        if self.rotate_horizontal.abs() > 250.0 {
+                            self.rotate_horizontal = 0.0;
+                        }
+                        if self.rotate_vertical.abs() > 250.0 {
+                            self.rotate_vertical = 0.0;
+                        }
 
                         window.set_cursor_pos(0.0, 0.0);
                     }
