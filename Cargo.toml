@@ -13,3 +13,6 @@ ndarray = "0.16.1"
 rand = "0.8.5"
 russimp = "3.2.0"
 rusttype = { version = "0.9.3", features = ["gpu_cache"] }
+
+[profile.dev]
+opt-level = 3
