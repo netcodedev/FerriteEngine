@@ -3,7 +3,7 @@ use std::{collections::HashMap, rc::Rc};
 use cgmath::{InnerSpace, Matrix4, Point3, SquareMatrix, Vector4};
 use russimp::{material::{DataContent, TextureType}, node::Node, scene::{PostProcess, Scene}};
 
-use crate::{camera::{Camera, Projection}, line::{Line, LineRenderer}, mesh::Mesh, shader::Shader, texture::Texture};
+use crate::{camera::{Camera, Projection}, line::{self, Line, LineRenderer}, mesh::Mesh, shader::Shader, texture::Texture};
 
 use super::{Bone, Model, ModelMesh};
 use crate::utils::ToMatrix4;
@@ -127,42 +127,31 @@ impl Model {
 
     pub fn render_bones(&self, line_renderer: &LineRenderer, camera: &Camera, projection: &Projection) {
         let root = Matrix4::from_translation(self.position) * Matrix4::from_scale(self.scale);
+        let mut lines: Vec<Line> = Vec::new();
         for mesh in self.meshes.values() {
             if let Some(root_bone) = &mesh.root_bone {
-                self.render_child_bones(root_bone, line_renderer, camera, projection, root);
+                lines.extend(self.render_child_bones(root_bone, line_renderer, camera, projection, root));
             }
         }
+        line_renderer.render_lines(camera, projection, &lines, cgmath::Vector3::new(1.0, 0.0, 0.0), true);
     }
 
-    fn render_child_bones(&self, bone: &Bone, line_renderer: &LineRenderer, camera: &Camera, projection: &Projection, root: cgmath::Matrix4<f32>) {
+    fn render_child_bones(&self, bone: &Bone, line_renderer: &LineRenderer, camera: &Camera, projection: &Projection, root: cgmath::Matrix4<f32>) -> Vec<Line> {
         let bone_matrix = bone.transformation_matrix;
         let position = root * bone_matrix;
-        let offset_pos = position * bone.offset_matrix;
         let pos_vec = (position * Vector4::new(0.0,0.0,0.0,1.0)).truncate();
         let root_vec = (root * Vector4::new(0.0,0.0,0.0,1.0)).truncate();
-        let offset_vec = (offset_pos * Vector4::new(0.0,0.0,0.0,1.0)).truncate();
         let direction = pos_vec - root_vec;
-        let offset_dir = offset_vec - root_vec;
-        line_renderer.render(camera, projection, &Line {
-                position: Point3::new(root_vec.x, root_vec.y, root_vec.z),
-                direction: direction.normalize(),
-                length: direction.magnitude(),
-            }, 
-            cgmath::Vector3::new(1.0, 0.0, 0.0),
-            true
-        );
-        line_renderer.render(camera, projection, &Line {
-                position: Point3::new(root_vec.x, root_vec.y, root_vec.z),
-                direction: offset_dir.normalize(),
-                length: offset_dir.magnitude(),
-            }, 
-            cgmath::Vector3::new(0.0, 0.0, 1.0),
-            true
-        );
+        let mut lines = vec![Line {
+            position: Point3::new(root_vec.x, root_vec.y, root_vec.z),
+            direction: direction.normalize(),
+            length: direction.magnitude(),
+        }];
         if let Some(children) = &bone.children {
             for child in children {
-                self.render_child_bones(child, line_renderer, camera, projection, position);
+                lines.extend(self.render_child_bones(child, line_renderer, camera, projection, position));
             }
         }
+        lines
     }
 }
