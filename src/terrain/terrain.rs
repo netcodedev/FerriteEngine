@@ -11,28 +11,12 @@ use libnoise::prelude::*;
 use cgmath::EuclideanSpace;
 use crate::mesh::Mesh;
 
-pub const CHUNK_SIZE: usize = 128;
-
-pub struct Block {
-    pub type_id: u32,
-}
+use super::{Block, Chunk, ChunkBounds, Terrain, CHUNK_SIZE};
 
 impl Block {
     pub fn new(type_id: u32) -> Self {
         Block { type_id }
     }
-}
-
-pub struct Chunk {
-    position: (f32, f32, f32),
-    blocks: ArrayBase<ndarray::OwnedRepr<Option<Block>>, ndarray::Dim<[usize; 3]>>,
-    pub mesh: Option<Mesh>,
-}
-
-#[derive(Eq, PartialEq, Hash, Debug)]
-pub struct ChunkBounds {
-    pub min: (i32, i32, i32),
-    pub max: (i32, i32, i32),
 }
 
 impl ChunkBounds {
@@ -372,21 +356,13 @@ impl Chunk {
     }
 }
 
-pub struct Terrain {
-    pub chunks: HashMap<ChunkBounds, Chunk>,
-    chunk_receiver: mpsc::Receiver<Chunk>,
-    shader: Shader,
-    grass_texture: Texture,
-    stone_texture: Texture,
-}
-
 impl Terrain {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
         let origin = Chunk::new((0.0, 0.0, 0.0));
         tx.send(origin).unwrap();
 
-        let shader = Shader::new(include_str!("shaders/vertex.glsl"), include_str!("shaders/fragment.glsl"));
+        let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
 
         let tx1 = tx.clone();
         let tx2 = tx.clone();
@@ -448,7 +424,7 @@ impl Terrain {
     }
 }
 
-pub fn chunkloader(radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<Chunk>) {
+fn chunkloader(radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<Chunk>) {
     let mut x: i32 = 1;
     let mut z: i32 = 0;
 

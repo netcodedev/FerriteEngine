@@ -1,12 +1,11 @@
 use std::path::Path;
 
-use gl::types::{GLint, GLsizei, GLuint, GLsizeiptr, GLvoid};
+use gl::types::{GLint, GLsizei, GLsizeiptr, GLvoid};
 
 use crate::shader::Shader;
 
-pub struct Texture {
-    pub id: GLuint
-}
+use super::{Texture, TextureRenderer};
+
 
 impl Texture {
     pub fn new(path: &Path) -> Self {
@@ -75,15 +74,10 @@ impl Drop for Texture {
     }
 }
 
-#[allow(dead_code)]
-pub struct TextureRenderer {
-    shader: Shader
-}
-
 impl TextureRenderer {
     #[allow(dead_code)]
     pub fn new() -> Self {
-        let shader = Shader::new(include_str!("shaders/texture_vertex.glsl"), include_str!("shaders/texture_fragment.glsl"));
+        let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
         Self {
             shader
         }

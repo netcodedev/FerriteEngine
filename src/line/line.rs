@@ -3,12 +3,7 @@ use gl::types::*;
 use crate::camera::{Camera, Projection};
 use crate::shader::Shader;
 
-#[derive(Clone)]
-pub struct Line {
-    pub position: Point3<f32>,
-    pub direction: Vector3<f32>,
-    pub length: f32,
-}
+use super::{Line, LineRenderer};
 
 impl Line {
     pub fn new(position: Point3<f32>, direction: Vector3<f32>, length: f32) -> Self {
@@ -20,15 +15,9 @@ impl Line {
     }
 }
 
-pub struct LineRenderer {
-    shader: Shader,
-    vao: GLuint,
-    vbo: GLuint,
-}
-
 impl LineRenderer {
     pub fn new() -> Self {
-        let shader = Shader::new(include_str!("shaders/line_vertex.glsl"), include_str!("shaders/line_fragment.glsl"));
+        let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
 
         let mut vao = 0;
         let mut vbo = 0;

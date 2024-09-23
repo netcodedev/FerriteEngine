@@ -1,25 +1,18 @@
 use rusttype::gpu_cache::Cache;
 use rusttype::{point, Font, Rect, PositionedGlyph, Scale};
 use crate::shader::Shader;
-use gl::types::{GLuint, GLvoid};
+use gl::types::GLvoid;
 
-pub struct TextRenderer {
-    font: Font<'static>,
-    cache: Cache<'static>,
-    shader: Shader,
-    texture_buffer: Texture,
-    width: u32,
-    height: u32,
-}
+use super::{TextRenderer, Texture};
 
 impl TextRenderer {
     pub fn new(width: u32, height: u32) -> TextRenderer {
-        let font_data = include_bytes!("font/RobotoMono.ttf");
+        let font_data = include_bytes!("../../assets/font/RobotoMono.ttf");
         let font = Font::try_from_bytes(font_data as &[u8]).unwrap();
 
         let cache: Cache<'static> = Cache::builder().dimensions(1024, 1024).build();
 
-        let shader = Shader::new(include_str!("shaders/text_vertex.glsl"), include_str!("shaders/text_fragment.glsl"));
+        let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
 
         TextRenderer {
             font,
@@ -164,10 +157,6 @@ impl TextRenderer {
         }
         result
     }
-}
-
-struct Texture {
-    id: GLuint,
 }
 
 impl Texture {

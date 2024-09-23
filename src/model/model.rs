@@ -1,18 +1,12 @@
 use std::{collections::HashMap, rc::Rc};
 
 use cgmath::{InnerSpace, Matrix4, Point3, SquareMatrix, Vector4};
-use russimp::{material::{DataContent, TextureType}, node::Node, scene::{PostProcess, Scene}, Matrix4x4};
+use russimp::{material::{DataContent, TextureType}, node::Node, scene::{PostProcess, Scene}};
 
 use crate::{camera::{Camera, Projection}, line::{Line, LineRenderer}, mesh::Mesh, shader::Shader, texture::Texture};
 
-pub struct Model {
-    model: Scene,
-    meshes: HashMap<String, ModelMesh>,
-    shader: Shader,
-    textures: HashMap<TextureType, Texture>,
-    position: cgmath::Vector3<f32>,
-    scale: f32,
-}
+use super::{Bone, Model, ModelMesh};
+use crate::utils::ToMatrix4;
 
 impl Model {
     pub fn new(path: &str) -> Result<Model, Box<dyn std::error::Error>> {
@@ -22,7 +16,7 @@ impl Model {
                 PostProcess::GenerateSmoothNormals,
                 PostProcess::FlipUVs,
             ])?;
-        let shader: Shader = Shader::new(include_str!("shaders/model_vertex.glsl"), include_str!("shaders/model_fragment.glsl"));
+        let shader: Shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
         Ok(Model {
             model: scene,
             meshes: HashMap::<String, ModelMesh>::new(),
@@ -171,36 +165,5 @@ impl Model {
                 self.render_child_bones(child, line_renderer, camera, projection, position);
             }
         }
-    }
-}
-
-struct ModelMesh {
-    mesh: Mesh,
-    root_bone: Option<Bone>
-}
-
-#[derive(Clone)]
-struct Bone {
-    #[allow(dead_code)]
-    name: String,
-    transformation_matrix: Matrix4<f32>,
-    offset_matrix: Matrix4<f32>,
-    #[allow(dead_code)]
-    weights: Vec<(u32, f32)>,
-    children: Option<Vec<Bone>>
-}
-
-trait ToMatrix4 {
-    fn to_matrix_4(&self) -> cgmath::Matrix4<f32>;
-}
-
-impl ToMatrix4 for Matrix4x4 {
-    fn to_matrix_4(&self) -> cgmath::Matrix4<f32> {
-        cgmath::Matrix4::new(
-            self.a1, self.b1, self.c1, self.d1,
-            self.a2, self.b2, self.c2, self.d2,
-            self.a3, self.b3, self.c3, self.d3,
-            self.a4, self.b4, self.c4, self.d4,
-        )
     }
 }

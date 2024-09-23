@@ -10,6 +10,7 @@ mod terrain;
 mod line;
 mod texture;
 mod model;
+mod utils;
 use camera::{Camera, CameraController, Projection, MousePicker};
 use debug::DebugController;
 use text::TextRenderer;
