@@ -3,7 +3,7 @@ use std::{collections::HashMap, rc::Rc};
 use cgmath::{InnerSpace, Matrix4, Point3, SquareMatrix, Vector4};
 use russimp::{material::{DataContent, TextureType}, node::Node, scene::{PostProcess, Scene}};
 
-use crate::{camera::{Camera, Projection}, line::{self, Line, LineRenderer}, mesh::Mesh, shader::Shader, texture::Texture};
+use crate::{camera::{Camera, Projection}, line::{Line, LineRenderer}, mesh::Mesh, shader::Shader, texture::Texture};
 
 use super::{Bone, Model, ModelMesh};
 use crate::utils::ToMatrix4;

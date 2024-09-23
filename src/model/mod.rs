@@ -21,13 +21,12 @@ struct ModelMesh {
     root_bone: Option<Bone>
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 struct Bone {
-    #[allow(dead_code)]
     name: String,
     transformation_matrix: Matrix4<f32>,
     offset_matrix: Matrix4<f32>,
-    #[allow(dead_code)]
     weights: Vec<(u32, f32)>,
     children: Option<Vec<Bone>>
 }
