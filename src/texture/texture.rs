@@ -1,20 +1,15 @@
 use std::path::Path;
 
-use gl::types::{GLint, GLsizei, GLuint, GLsizeiptr, GLvoid};
+use gl::types::{GLint, GLsizei, GLsizeiptr, GLvoid};
 
 use crate::shader::Shader;
 
-pub struct Texture {
-    pub id: GLuint
-}
+use super::{Texture, TextureRenderer};
+
 
 impl Texture {
     pub fn new(path: &Path) -> Self {
-        let mut id = 0;
-        unsafe {
-            gl::GenTextures(1, &mut id);
-        }
-        let texture = Texture { id };
+        let texture = Texture::gen_texture();
         texture.bind();
         let img = image::open(path).expect("Bild konnte nicht geladen werden").flipv().to_rgba8();
         unsafe {
@@ -35,6 +30,35 @@ impl Texture {
         texture
     }
 
+    fn gen_texture() -> Self {
+        let mut id = 0;
+        unsafe {
+            gl::GenTextures(1, &mut id);
+        }
+        Texture { id }
+    }
+
+    pub fn from_data(width: u32, height: u32, data: Vec<u8>) -> Self {
+        let texture = Texture::gen_texture();
+        texture.bind();
+        unsafe {
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::REPEAT as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::REPEAT as i32);
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                gl::RGBA as GLint,
+                width as GLsizei,
+                height as GLsizei,
+                0,
+                gl::RGBA, gl::UNSIGNED_BYTE, data.as_ptr() as *const _
+            );
+        }
+        texture
+    }
+
     pub fn bind(&self) {
         unsafe {
             gl::BindTexture(gl::TEXTURE_2D, self.id);
@@ -50,15 +74,10 @@ impl Drop for Texture {
     }
 }
 
-#[allow(dead_code)]
-pub struct TextureRenderer {
-    shader: Shader
-}
-
 impl TextureRenderer {
     #[allow(dead_code)]
     pub fn new() -> Self {
-        let shader = Shader::new(include_str!("shaders/texture_vertex.glsl"), include_str!("shaders/texture_fragment.glsl"));
+        let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
         Self {
             shader
         }
