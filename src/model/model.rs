@@ -103,12 +103,13 @@ impl Model {
         Some(children)
     }
 
-    fn get_bone_transformations(bone: &Bone) -> Vec<Matrix4<f32>> {
+    fn get_bone_transformations(bone: &Bone, parent_transform: Matrix4<f32>) -> Vec<Matrix4<f32>> {
         let mut transformations = Vec::<Matrix4<f32>>::new();
-        transformations.push(bone.transformation_matrix);
+        let global_transformation = parent_transform * bone.transformation_matrix;
+        transformations.push(global_transformation * bone.offset_matrix);
         if let Some(children) = &bone.children {
             for child in children {
-                transformations.extend(Self::get_bone_transformations(child));
+                transformations.extend(Self::get_bone_transformations(child, global_transformation));
             }
         }
         transformations
@@ -123,7 +124,7 @@ impl Model {
             self.shader.set_uniform_mat4("view", &camera.calc_matrix());
             self.shader.set_uniform_mat4("projection", &projection.calc_matrix());
             if let Some(root_bone) = &mesh.root_bone {
-                self.shader.set_uniform_mat4_array("boneTransforms", &Model::get_bone_transformations(root_bone));
+                self.shader.set_uniform_mat4_array("boneTransforms", &Model::get_bone_transformations(root_bone, Matrix4::identity()));
             }
             for (i, (texture_type, texture)) in self.textures.iter().enumerate() {
                 unsafe { gl::ActiveTexture(gl::TEXTURE0 + i as u32) };
