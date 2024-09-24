@@ -3,7 +3,6 @@
 in vec3 Normal;
 in vec3 toLightVector;
 in vec2 TexCoords;
-in float BlockType;
 
 uniform sampler2D texture_diffuse;
 uniform sampler2D texture_normals;

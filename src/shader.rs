@@ -6,13 +6,6 @@ pub struct Shader {
     pub id: GLuint,
 }
 
-pub struct VertexArray {
-    id: GLuint,
-    vbo: GLuint,
-    ebo: GLuint,
-    current_vertex_data: Option<VertexBufferData>,
-}
-
 pub struct DynamicVertexArray<T> {
     id: GLuint,
     vbo: GLuint,
@@ -21,27 +14,8 @@ pub struct DynamicVertexArray<T> {
     indices: Option<Vec<u32>>,
 }
 
-#[derive(Clone)]
-pub struct VertexBufferData {
-    pub vertices: Vec<f32>,
-    pub indices: Option<Vec<u32>>,
-    pub normals: Option<Vec<f32>>,
-    pub texture_coords: Option<Vec<f32>>,
-}
-
 pub trait VertexAttributes {
     fn get_vertex_attributes() -> Vec<(usize, GLuint)>;
-}
-
-impl VertexAttributes for VertexBufferData {
-    fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
-        let mut attributes = vec![(3, gl::FLOAT)];
-        attributes.push((3, gl::FLOAT));
-        attributes.push((3, gl::FLOAT));
-        attributes.push((2, gl::FLOAT));
-        attributes.push((1, gl::UNSIGNED_INT));
-        attributes
-    }
 }
 
 impl Shader {
@@ -60,6 +34,14 @@ impl Shader {
             let name = CString::new(name).unwrap();
             let location = gl::GetUniformLocation(self.id, name.as_ptr());
             gl::UniformMatrix4fv(location, 1, gl::FALSE, matrix.as_ptr());
+        }
+    }
+
+    pub fn set_uniform_mat4_array(&self, name: &str, matrices: &Vec<cgmath::Matrix4<f32>>) {
+        unsafe {
+            let name = CString::new(name).unwrap();
+            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            gl::UniformMatrix4fv(location, matrices.len() as i32, gl::FALSE, matrices.as_ptr() as *const f32);
         }
     }
 
@@ -160,92 +142,6 @@ impl Shader {
             gl::DeleteShader(fragment_shader);
     
             shader_program
-        }
-    }
-}
-
-impl VertexArray {
-    pub fn new() -> Self {
-        let mut vao = 0;
-        let mut vbo = 0;
-        let mut ebo = 0;
-        unsafe {
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut vbo);
-            gl::GenBuffers(1, &mut ebo);
-        }
-        VertexArray {
-            id: vao,
-            vbo,
-            ebo,
-            current_vertex_data: None
-        }
-    }
-
-    pub fn buffer_data(&mut self, buffer_data: VertexBufferData) {
-        self.bind();
-        unsafe {
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
-            let mut vertex_data: Vec<f32> = buffer_data.vertices.clone();
-            let mut current_attrib = 0;
-            gl::VertexAttribPointer(current_attrib, 3, gl::FLOAT, gl::FALSE, 0,  std::ptr::null());
-            gl::EnableVertexAttribArray(current_attrib);
-            current_attrib += 1;
-            if let Some(normals) = &buffer_data.normals {
-                gl::VertexAttribPointer(current_attrib, 3, gl::FLOAT, gl::FALSE, 0, (vertex_data.len() * std::mem::size_of::<f32>()) as *const _);
-                gl::EnableVertexAttribArray(current_attrib);
-                vertex_data.extend(normals.clone());
-                current_attrib += 1;
-            }
-            if let Some(texture_coords) = &buffer_data.texture_coords {
-                gl::VertexAttribPointer(current_attrib, 2, gl::FLOAT, gl::FALSE, 0, (vertex_data.len() * std::mem::size_of::<f32>()) as *const _);
-                gl::EnableVertexAttribArray(current_attrib);
-                vertex_data.extend(texture_coords.clone());
-            }
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (vertex_data.len() * std::mem::size_of::<f32>()) as GLsizeiptr,
-                vertex_data.as_ptr() as *const GLvoid,
-                gl::STATIC_DRAW,
-            );
-
-            if let Some(indices) = &buffer_data.indices {
-                gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, self.ebo);
-                gl::BufferData(
-                    gl::ELEMENT_ARRAY_BUFFER,
-                    (indices.len() * std::mem::size_of::<u32>()) as GLsizeiptr,
-                    indices.as_ptr() as *const GLvoid,
-                    gl::STATIC_DRAW,
-                );
-            }
-            // Unbind VBO and VAO (optional, but good practice)
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-        }
-        self.current_vertex_data = Some(buffer_data);
-    }
-
-    pub fn get_element_count(&self) -> usize {
-        if let Some(current_vertex_data) = &self.current_vertex_data {
-            if let Some(indices) = &current_vertex_data.indices {
-                indices.len()
-            } else {
-                current_vertex_data.vertices.len()
-            }
-        } else {
-            0
-        }
-    }
-
-    pub fn bind(&self) {
-        unsafe {
-            gl::BindVertexArray(self.id);
-        }
-    }
-
-    pub fn unbind() {
-        unsafe {
-            gl::BindVertexArray(0);
         }
     }
 }

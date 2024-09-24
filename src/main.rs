@@ -2,7 +2,6 @@ use glfw::Context;
 use cgmath::Deg;
 
 mod shader;
-mod mesh;
 mod camera;
 mod debug;
 mod text;
@@ -34,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     gl::load_with(|symbol| window.get_proc_address(symbol) as *const _);
 
-    window.set_cursor_mode(glfw::CursorMode::Disabled);
+    // window.set_cursor_mode(glfw::CursorMode::Disabled);
     window.set_cursor_pos_polling(true);
     window.set_framebuffer_size_polling(true);
 
