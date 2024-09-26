@@ -8,9 +8,9 @@ render a large number of voxels in real time.
 - Text rendering
 - Line rendering
 - Rendering of 3D models
+- Model animation
 
 ## Planned Features
-- Model animation
 - Inverse Kinematics
 - Infinite world generation
 - Lighting
