@@ -53,6 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut model = Model::new("assets/models/char_anim.fbx")?;
     model.init();
+    model.play_animation("mixamo.com");
 
     while !window.should_close() {
         unsafe {
@@ -78,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         terrain.update();
         terrain.render(&camera, &projection);
 
-        model.render(&camera, &projection);
+        model.update_and_render(delta_time as f32, &camera, &projection);
         model.render_bones(&line_renderer, &camera, &projection);
 
         debug_controller.draw_debug_ui(delta_time as f32, &mouse_picker, &line_renderer, &mut text_renderer, &camera, &projection);
