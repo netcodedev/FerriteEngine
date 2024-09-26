@@ -51,9 +51,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut text_renderer = TextRenderer::new(width, height);
     let line_renderer = LineRenderer::new();
 
+    let mut models: Vec<&mut Model> = Vec::new();
     let mut model = Model::new("assets/models/char_anim.fbx")?;
     model.init();
     model.play_animation("mixamo.com");
+    models.push(&mut model);
 
     while !window.should_close() {
         unsafe {
@@ -79,10 +81,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         terrain.update();
         terrain.render(&camera, &projection);
 
-        model.update_and_render(delta_time as f32, &camera, &projection);
-        model.render_bones(&line_renderer, &camera, &projection);
+        for model in models.iter_mut() {
+            model.update_and_render(delta_time as f32, &camera, &projection);
+        }
 
-        debug_controller.draw_debug_ui(delta_time as f32, &mouse_picker, &line_renderer, &mut text_renderer, &camera, &projection);
+        debug_controller.draw_debug_ui(delta_time as f32, &line_renderer, &mut text_renderer, &camera, &projection, &mouse_picker, &models);
 
         window.swap_buffers();
     }

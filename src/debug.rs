@@ -1,6 +1,6 @@
 use glfw::{Action, Glfw, Key, CursorMode};
 
-use crate::{camera::{Camera, MousePicker, Projection}, line::{Line, LineRenderer}, terrain::{ChunkBounds, CHUNK_SIZE}, text::TextRenderer};
+use crate::{camera::{Camera, MousePicker, Projection}, line::{Line, LineRenderer}, model::Model, terrain::{ChunkBounds, CHUNK_SIZE}, text::TextRenderer};
 use cgmath::{EuclideanSpace, Point3, Vector3};
 
 pub struct DebugController {
@@ -55,7 +55,7 @@ impl DebugController {
         }
     }
 
-    pub fn draw_debug_ui(&self, delta_time: f32, mouse_picker: &MousePicker, line_renderer: &LineRenderer, text_renderer: &mut TextRenderer, camera: &Camera, projection: &Projection) {
+    pub fn draw_debug_ui(&self, delta_time: f32, line_renderer: &LineRenderer, text_renderer: &mut TextRenderer, camera: &Camera, projection: &Projection, mouse_picker: &MousePicker, models: &Vec<&mut Model>) {
         if self.show_rays {
             if let Some(line) = &mouse_picker.ray {
                 line_renderer.render(&camera, &projection, &line, Vector3::new(1.0, 0.0, 0.0), false);
@@ -95,7 +95,11 @@ impl DebugController {
                 }
             }
             line_renderer.render_lines(camera, projection, &lines, Vector3::new(1.0, 1.0, 0.0), false);
-            line_renderer.render_lines(camera, projection, &corner_lines, Vector3::new(1.0, 0.0, 1.0), false);
+            line_renderer.render_lines(camera, projection, &corner_lines, Vector3::new(1.0, 0.0, 0.0), false);
+
+            for model in models {
+                model.render_bones(line_renderer, camera, projection);
+            }
         }
     }
 }
