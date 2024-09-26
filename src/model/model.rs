@@ -123,7 +123,11 @@ impl Model {
             self.shader.set_uniform_mat4("view", &camera.calc_matrix());
             self.shader.set_uniform_mat4("projection", &projection.calc_matrix());
             if let Some(root_bone) = &mesh.root_bone {
-                self.shader.set_uniform_mat4_array("boneTransforms", &Model::get_bone_transformations(root_bone, Matrix4::identity()));
+                let mut bone_transforms = Model::get_bone_transformations(root_bone, Matrix4::identity());
+                bone_transforms.sort_by(|a, b| a.0.cmp(&b.0));
+                let sorted_bone_transforms = bone_transforms.iter().map(|(_, m)| m);
+                let sorted: Vec<Matrix4<f32>> = Vec::from_iter(sorted_bone_transforms.cloned());
+                self.shader.set_uniform_mat4_array("boneTransforms", &sorted);
             }
             for (i, (texture_type, texture)) in self.textures.iter().enumerate() {
                 unsafe { gl::ActiveTexture(gl::TEXTURE0 + i as u32) };
@@ -201,10 +205,10 @@ impl Model {
         Some(children)
     }
 
-    fn get_bone_transformations(bone: &Bone, parent_transform: Matrix4<f32>) -> Vec<Matrix4<f32>> {
-        let mut transformations = Vec::<Matrix4<f32>>::new();
+    fn get_bone_transformations(bone: &Bone, parent_transform: Matrix4<f32>) -> Vec<(usize, Matrix4<f32>)> {
+        let mut transformations = Vec::<(usize, Matrix4<f32>)>::new();
         let global_transformation = parent_transform * bone.current_transform;
-        transformations.push(global_transformation * bone.offset_matrix);
+        transformations.push((bone.id, global_transformation * bone.offset_matrix));
         if let Some(children) = &bone.children {
             for child in children {
                 transformations.extend(Self::get_bone_transformations(child, global_transformation));
@@ -427,8 +431,7 @@ impl Bone {
             let rotation = self.interpolate_rotation(self.current_animation_time);
             let scaling = self.interpolate_scaling(self.current_animation_time);
             let local_transform = translation * rotation * scaling;
-            let global_transformation = local_transform;
-            self.current_transform = global_transformation;
+            self.current_transform = local_transform;
             if let Some(children) = &mut self.children {
                 for child in children.iter_mut() {
                     child.update_animation(time, duration);
