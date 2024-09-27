@@ -1,4 +1,3 @@
-use glfw::Context;
 use cgmath::Deg;
 
 mod shader;
@@ -10,34 +9,18 @@ mod line;
 mod texture;
 mod model;
 mod utils;
+mod window;
 use camera::{Camera, CameraController, Projection, MousePicker};
 use debug::DebugController;
+use terrain::Terrain;
 use text::TextRenderer;
 use line::{Line, LineRenderer};
 use model::Model;
+use window::Window;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut glfw = glfw::init(glfw::log_errors).unwrap_or_else(|err| {
-        eprintln!("Fehler bei der GLFW-Initialisierung: {}", err);
-        std::process::exit(1);
-    });
-
     let (width, height) = (1280, 720);
-
-    let (mut window, events) = glfw.create_window(width, height, "Voxel engine", glfw::WindowMode::Windowed)
-        .expect("Fenster konnte nicht erstellt werden");
-
-    window.make_current();
-    window.set_key_polling(true);
-    window.set_mouse_button_polling(true);
-
-    gl::load_with(|symbol| window.get_proc_address(symbol) as *const _);
-
-    // window.set_cursor_mode(glfw::CursorMode::Disabled);
-    window.set_cursor_pos_polling(true);
-    window.set_framebuffer_size_polling(true);
-
-    window.set_cursor_pos(0.0, 0.0);
+    let mut window = Window::new(width, height);
 
     let mut camera: Camera = Camera::new((0.0, 92.0, 2.0), Deg(-90.0), Deg(0.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
@@ -46,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut mouse_picker = MousePicker::new();
 
-    let mut terrain = terrain::Terrain::new();
+    let mut terrain = Terrain::new();
 
     let mut text_renderer = TextRenderer::new(width, height);
     let line_renderer = LineRenderer::new();
@@ -62,20 +45,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             gl::ClearColor(0.3, 0.3, 0.5, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
         }
-        glfw.poll_events();
         let mut line: Option<(Line, glfw::MouseButton)> = None;
-        for (_, event) in glfw::flush_messages(&events) {
+
+        window.handle_events(|mut window, mut glfw, event| {
             camera_controller.process_keyboard(&event);
             camera_controller.process_mouse(&mut window, &event);
             debug_controller.process_keyboard(&mut glfw, &mut window, &event);
             line = mouse_picker.process_mouse(&event, &camera, &projection);
             projection.resize(&event);
             text_renderer.resize(&event);
-        }
+        });
 
         terrain.process_line(line);
 
-        let delta_time = calculate_frametime(&glfw);
+        let delta_time = window.calculate_frametime();
         camera_controller.update_camera(&mut camera, delta_time as f32);
 
         terrain.update();
@@ -91,15 +74,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-fn calculate_frametime(glfw: &glfw::Glfw) -> f64 {
-    static mut LAST_FRAME_TIME: f64 = 0.0;
-    let current_time = glfw.get_time();
-    let delta_time;
-    unsafe {
-        delta_time = current_time - LAST_FRAME_TIME;
-        LAST_FRAME_TIME = current_time;
-    }
-    delta_time
 }
