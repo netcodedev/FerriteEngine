@@ -13,6 +13,8 @@ impl Window {
             std::process::exit(1);
         });
 
+        glfw.window_hint(glfw::WindowHint::Samples(Some(8)));
+
         let (mut window, events) = glfw.create_window(width, height, "Voxel engine", glfw::WindowMode::Windowed)
             .expect("Fenster konnte nicht erstellt werden");
 
@@ -25,6 +27,9 @@ impl Window {
         window.set_cursor_pos(0.0, 0.0);
 
         gl::load_with(|symbol| window.get_proc_address(symbol) as *const _);
+        unsafe {
+            gl::Enable(gl::MULTISAMPLE);
+        }
 
         Self {
             window,
