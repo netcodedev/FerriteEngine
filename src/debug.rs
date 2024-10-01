@@ -1,9 +1,13 @@
+use std::{cell::RefCell, rc::Rc};
+
 use glfw::{Action, Glfw, Key, CursorMode};
 
 use crate::{camera::{Camera, MousePicker, Projection}, line::{Line, LineRenderer}, model::Model, terrain::{ChunkBounds, CHUNK_SIZE}, text::TextRenderer};
 use cgmath::{EuclideanSpace, Point3, Vector3};
 
 pub struct DebugController {
+    text_renderer: Rc<RefCell<TextRenderer>>,
+    line_renderer: Rc<RefCell<LineRenderer>>,
     pub debug_ui: bool,
     wireframe: bool,
     vsync: bool,
@@ -11,8 +15,10 @@ pub struct DebugController {
 }
 
 impl DebugController {
-    pub fn new() -> Self {
+    pub fn new(text_renderer: Rc<RefCell<TextRenderer>>, line_renderer: Rc<RefCell<LineRenderer>>) -> Self {
         Self {
+            text_renderer,
+            line_renderer,
             debug_ui: false,
             wireframe: false,
             vsync: true,
@@ -55,14 +61,15 @@ impl DebugController {
         }
     }
 
-    pub fn draw_debug_ui(&self, delta_time: f32, line_renderer: &LineRenderer, text_renderer: &mut TextRenderer, camera: &Camera, projection: &Projection, mouse_picker: &MousePicker, models: &Vec<&mut Model>) {
+    pub fn draw_debug_ui(&self, delta_time: f32, camera: &Camera, projection: &Projection, mouse_picker: &MousePicker, models: &Vec<&mut Model>) {
         if self.show_rays {
             if let Some(line) = &mouse_picker.ray {
-                line_renderer.render(&camera, &projection, &line, Vector3::new(1.0, 0.0, 0.0), false);
+                self.line_renderer.borrow().render(&camera, &projection, &line, Vector3::new(1.0, 0.0, 0.0), false);
             }
         }
 
         if self.debug_ui {
+            let mut text_renderer = self.text_renderer.borrow_mut();
             let fps = 1.0 / delta_time;
             let fps_text = format!("{:.2} FPS ({:.2}ms)", fps, delta_time * 1000.0);
             text_renderer.render(5,5,65.0, &fps_text);
@@ -94,11 +101,11 @@ impl DebugController {
                     }
                 }
             }
-            line_renderer.render_lines(camera, projection, &lines, Vector3::new(1.0, 1.0, 0.0), false);
-            line_renderer.render_lines(camera, projection, &corner_lines, Vector3::new(1.0, 0.0, 0.0), false);
+            self.line_renderer.borrow().render_lines(camera, projection, &lines, Vector3::new(1.0, 1.0, 0.0), false);
+            self.line_renderer.borrow().render_lines(camera, projection, &corner_lines, Vector3::new(1.0, 0.0, 0.0), false);
 
             for model in models {
-                model.render_bones(line_renderer, camera, projection);
+                model.render_bones(&self.line_renderer.borrow(), camera, projection);
             }
         }
     }

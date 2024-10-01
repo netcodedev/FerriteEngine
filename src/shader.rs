@@ -53,11 +53,27 @@ impl Shader {
         }
     }
 
+    pub fn set_uniform_1f(&self, name: &str, value: f32) {
+        unsafe {
+            let name = CString::new(name).unwrap();
+            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            gl::Uniform1f(location, value);
+        }
+    }
+
     pub fn set_uniform_3f(&self, name: &str, float1: f32, float2: f32, float3: f32) {
         unsafe {
             let name = CString::new(name).unwrap();
             let location = gl::GetUniformLocation(self.id, name.as_ptr());
             gl::Uniform3f(location, float1, float2, float3);
+        }
+    }
+
+    pub fn set_uniform_4f(&self, name: &str, float1: f32, float2: f32, float3: f32, float4: f32) {
+        unsafe {
+            let name = CString::new(name).unwrap();
+            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            gl::Uniform4f(location, float1, float2, float3, float4);
         }
     }
 
