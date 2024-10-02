@@ -26,7 +26,7 @@ impl UIElement for Button {
         }
     }
 
-    fn handle_events(&self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool {
+    fn handle_events(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool {
         match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
                 let (x, y) = window.get_cursor_pos();

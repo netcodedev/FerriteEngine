@@ -17,7 +17,7 @@ impl UIElement for Text {
         text_renderer.render(self.offset.0 as u32 + 5, self.offset.1 as u32 + 2, self.size, self.text.as_str());
     }
 
-    fn handle_events(&self, _window: &mut glfw::Window, _event: &glfw::WindowEvent) -> bool {
+    fn handle_events(&mut self, _window: &mut glfw::Window, _event: &glfw::WindowEvent) -> bool {
         false
     }
 

@@ -2,10 +2,11 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{plane::PlaneRenderer, text::TextRenderer};
 
-pub mod ui;
 pub mod button;
 pub mod container;
+pub mod panel;
 pub mod text;
+pub mod ui;
 
 pub struct UIRenderer {
     text_renderer: Rc<RefCell<TextRenderer>>,
@@ -15,7 +16,7 @@ pub struct UIRenderer {
 
 pub trait UIElement {
     fn render(&self, text_renderer: &mut TextRenderer, plane_renderer: &PlaneRenderer);
-    fn handle_events(&self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool;
+    fn handle_events(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool;
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>);
     fn set_offset(&mut self, offset: (f32, f32));
 }

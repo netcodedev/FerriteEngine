@@ -20,7 +20,7 @@ use terrain::Terrain;
 use text::TextRenderer;
 use line::{Line, LineRenderer};
 use model::Model;
-use ui::{button::ButtonBuilder, container::ContainerBuilder, text::Text, UIRenderer};
+use ui::{button::ButtonBuilder, panel::PanelBuilder, text::Text, UIRenderer};
 use window::Window;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     model.play_animation("mixamo.com");
     models.push(&mut model);
 
-    ui.borrow_mut().add(ContainerBuilder::new()
+    ui.borrow_mut().add(PanelBuilder::new("Test Panel".to_string())
         .position(10.0, 120.0)
         .size(200.0, 200.0)
         .add_child(Box::new(ButtonBuilder::new()
@@ -69,10 +69,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut line: Option<(Line, glfw::MouseButton)> = None;
 
         window.handle_events(|mut window, mut glfw, event| {
-            camera_controller.process_keyboard(&event);
+            camera_controller.process_keyboard(&mut window, &event);
             camera_controller.process_mouse(&mut window, &event);
             ui.borrow_mut().handle_events(window, &event);
-            debug_controller.process_keyboard(&mut glfw, &mut window, &event);
+            debug_controller.process_keyboard(&mut glfw, &event);
             line = mouse_picker.process_mouse(&event, &camera, &projection);
             projection.resize(&event);
             text_renderer.borrow_mut().resize(&event);

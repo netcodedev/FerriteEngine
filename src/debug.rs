@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use glfw::{Action, Glfw, Key, CursorMode};
+use glfw::{Action, Glfw, Key};
 
 use crate::{camera::{Camera, MousePicker, Projection}, line::{Line, LineRenderer}, model::Model, terrain::{ChunkBounds, CHUNK_SIZE}, text::TextRenderer};
 use cgmath::{Deg, EuclideanSpace, Point3, Vector3};
@@ -26,7 +26,7 @@ impl DebugController {
         }
     }
 
-    pub fn process_keyboard(&mut self, glfw: &mut Glfw, window: &mut glfw::Window, event: &glfw::WindowEvent) {
+    pub fn process_keyboard(&mut self, glfw: &mut Glfw, event: &glfw::WindowEvent) {
         match event {
             glfw::WindowEvent::Key(Key::F1, _, Action::Press, _) => {
                 self.wireframe = !self.wireframe;
@@ -52,11 +52,6 @@ impl DebugController {
             glfw::WindowEvent::Key(Key::F4, _, Action::Press, _) => {
                 self.show_rays = !self.show_rays;
             }
-            glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => match window.get_cursor_mode() {
-                CursorMode::Disabled => window.set_cursor_mode(CursorMode::Normal),
-                CursorMode::Normal => window.set_cursor_mode(CursorMode::Disabled),
-                _ => {}
-            },
             _ => {}
         }
     }

@@ -37,7 +37,7 @@ impl UIElement for Container {
         }
     }
 
-    fn handle_events(&self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool {
+    fn handle_events(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool {
         // test if click is within bounds
         match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
@@ -46,7 +46,7 @@ impl UIElement for Container {
                     x as f32 <= self.offset.0 + self.position.0 + self.size.0 &&
                     y as f32 >= self.offset.1 + self.position.1 &&
                     y as f32 <= self.offset.1 + self.position.1 + self.size.1 {
-                    for child in &self.children {
+                    for child in &mut self.children {
                         if child.handle_events(window, event) {
                             return true;
                         }

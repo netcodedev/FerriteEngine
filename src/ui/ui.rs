@@ -23,8 +23,8 @@ impl UIRenderer {
         }
     }
     
-    pub fn handle_events(&self, window: &mut glfw::Window, event: &glfw::WindowEvent) {
-        for child in &self.children {
+    pub fn handle_events(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) {
+        for child in &mut self.children {
             child.handle_events(window, event);
         }
     }

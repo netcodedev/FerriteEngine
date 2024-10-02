@@ -103,6 +103,7 @@ pub struct CameraController {
     rotate_vertical: f32,
     speed: f32,
     sensitivity: f32,
+    is_active: bool,
 }
 
 impl CameraController {
@@ -118,10 +119,11 @@ impl CameraController {
             rotate_vertical: 0.0,
             speed,
             sensitivity,
+            is_active: false,
         }
     }
 
-    pub fn process_keyboard(&mut self, event: &glfw::WindowEvent) -> bool{
+    pub fn process_keyboard(&mut self, window: &mut glfw::Window,event: &glfw::WindowEvent) -> bool {
         match event {
             glfw::WindowEvent::Key(Key::W | Key::Up, _, action, _) => {
                 let amount = match action {
@@ -177,6 +179,15 @@ impl CameraController {
                 self.amount_down = amount;
                 true
             }
+            glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
+                match window.get_cursor_mode() {
+                    CursorMode::Disabled => window.set_cursor_mode(CursorMode::Normal),
+                    CursorMode::Normal => window.set_cursor_mode(CursorMode::Disabled),
+                    _ => {}
+                }
+                self.is_active = !self.is_active;
+                true
+            },
             _ => false,
         }
     }
@@ -186,17 +197,19 @@ impl CameraController {
             glfw::WindowEvent::CursorPos(xpos, ypos) => {
                 match window.get_cursor_mode() {
                     CursorMode::Disabled => {
-                        self.rotate_horizontal = *xpos as f32;
-                        self.rotate_vertical = *ypos as f32;
+                        if self.is_active {
+                            self.rotate_horizontal = *xpos as f32;
+                            self.rotate_vertical = *ypos as f32;
 
-                        if self.rotate_horizontal.abs() > 250.0 {
-                            self.rotate_horizontal = 0.0;
-                        }
-                        if self.rotate_vertical.abs() > 250.0 {
-                            self.rotate_vertical = 0.0;
-                        }
+                            if self.rotate_horizontal.abs() > 250.0 {
+                                self.rotate_horizontal = 0.0;
+                            }
+                            if self.rotate_vertical.abs() > 250.0 {
+                                self.rotate_vertical = 0.0;
+                            }
 
-                        window.set_cursor_pos(0.0, 0.0);
+                            window.set_cursor_pos(0.0, 0.0);
+                        }
                     }
                     _ => {}
                 }
