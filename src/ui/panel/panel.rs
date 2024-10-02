@@ -11,8 +11,6 @@ impl UIElement for Panel {
             .border_radius_uniform(5.0)
             .border_thickness(1.0)
             .build(),
-        1280,
-        720
         );
         plane_renderer.render(PlaneBuilder::new()
             .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
@@ -21,8 +19,6 @@ impl UIElement for Panel {
             .border_radius((5.0, 5.0, 0.0, 0.0))
             .border_thickness(1.0)
             .build(),
-        1280,
-        720
         );
         text_renderer.render((self.offset.0 + self.position.0 + 8.0) as i32, (self.offset.1 + self.position.1 + 2.0) as i32, 16.0, &self.title);
         self.content.render(text_renderer, &plane_renderer);

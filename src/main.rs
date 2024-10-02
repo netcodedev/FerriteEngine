@@ -16,6 +16,7 @@ mod ui;
 mod window;
 use camera::{Camera, CameraController, Projection, MousePicker};
 use debug::DebugController;
+use plane::PlaneRenderer;
 use terrain::Terrain;
 use text::TextRenderer;
 use line::{Line, LineRenderer};
@@ -29,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let text_renderer = Rc::new(RefCell::new(TextRenderer::new(width, height)));
     let line_renderer = Rc::new(RefCell::new(LineRenderer::new()));
-    let plane_renderer = Rc::new(RefCell::new(plane::PlaneRenderer::new()));
+    let plane_renderer = Rc::new(RefCell::new(PlaneRenderer::new(width as f32, height as f32)));
     let ui = Rc::new(RefCell::new(UIRenderer::new(Rc::clone(&text_renderer), Rc::clone(&plane_renderer))));
 
     let mut camera: Camera = Camera::new((0.0, 92.0, 2.0), Deg(-90.0), Deg(0.0));
@@ -76,6 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             debug_controller.process_keyboard(&mut glfw, &event);
             line = mouse_picker.process_mouse(&event, &camera, &projection);
             projection.resize(&event);
+            plane_renderer.borrow_mut().resize(&event);
             text_renderer.borrow_mut().resize(&event);
         });
 

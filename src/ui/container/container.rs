@@ -22,8 +22,6 @@ impl UIElement for Container {
             .color((0.0, 0.0, 0.0, 0.0))
             .border_color((0.0,0.0,0.0,0.0))
             .build(),
-        1280,
-        720
         );
         for child in &self.children {
             child.render(text_renderer, &plane_renderer);
@@ -32,8 +30,10 @@ impl UIElement for Container {
 
     fn set_offset(&mut self, offset: (f32, f32)) {
         self.offset = offset;
+        let mut current_y_offset = 0.0;
         for child in &mut self.children {
-            child.set_offset((self.offset.0 + self.position.0, self.offset.1 + self.position.1));
+            child.set_offset((self.offset.0 + self.position.0, self.offset.1 + self.position.1 + current_y_offset));
+            current_y_offset += child.get_size().1 + self.gap;
         }
     }
 

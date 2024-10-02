@@ -11,8 +11,6 @@ impl UIElement for Button {
             .border_radius_uniform(5.0)
             .border_thickness(1.0)
             .build(),
-        1280,
-        720
         );
         for child in &self.children {
             child.render(text_renderer, &plane_renderer);

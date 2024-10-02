@@ -3,12 +3,14 @@ use crate::shader::{DynamicVertexArray, Shader, VertexAttributes};
 use super::{Plane, PlaneBuilder, PlaneRenderer, PlaneVertex};
 
 impl PlaneRenderer {
-    pub fn new() -> Self {
+    pub fn new(width: f32, height: f32) -> Self {
         Self {
-            shader: Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"))
+            shader: Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl")),
+            width,
+            height
         }
     }
-    pub fn render(&self, plane: Plane, width: u32, height: u32) {
+    pub fn render(&self, plane: Plane) {
         // calculate plane vertices
         let vertices = vec![
             PlaneVertex {
@@ -56,7 +58,7 @@ impl PlaneRenderer {
         vertex_array.buffer_data_dyn(&vertices, &Some(indices.clone()));
         vertex_array.bind();
         self.shader.bind();
-        let ortho = cgmath::ortho(0.0, width as f32, height as f32, 0.0, -1.0, 100.0);
+        let ortho = cgmath::ortho(0.0, self.width, self.height, 0.0, -1.0, 100.0);
         self.shader.set_uniform_mat4("projection", &ortho);
         self.shader.set_uniform_1f("borderThickness", plane.border_thickness);
         self.shader.set_uniform_4f("borderRadius", plane.border_radius.0, plane.border_radius.1, plane.border_radius.2, plane.border_radius.3);
@@ -66,6 +68,16 @@ impl PlaneRenderer {
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             gl::DrawElements(gl::TRIANGLES, indices.len() as i32, gl::UNSIGNED_INT, std::ptr::null());
+        }
+    }
+
+    pub fn resize(&mut self, event: &glfw::WindowEvent) {
+        match event {
+            glfw::WindowEvent::FramebufferSize(width, height) => {
+                self.width = *width as f32;
+                self.height = *height as f32;
+            }
+            _ => {}
         }
     }
 }

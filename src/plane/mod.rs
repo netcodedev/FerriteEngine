@@ -3,7 +3,9 @@ use crate::shader::Shader;
 pub mod plane;
 
 pub struct PlaneRenderer {
-    shader: Shader
+    shader: Shader,
+    width: f32,
+    height: f32
 }
 
 pub struct Plane {
