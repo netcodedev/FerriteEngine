@@ -14,7 +14,7 @@ mod model;
 mod utils;
 mod ui;
 mod window;
-use plane::Plane;
+use plane::PlaneBuilder;
 use camera::{Camera, CameraController, Projection, MousePicker};
 use debug::DebugController;
 use terrain::Terrain;
@@ -77,11 +77,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             model.update_and_render(delta_time as f32, &camera, &projection);
         }
 
-        plane_renderer.borrow().render(Plane {
-            position: (10.0, 10.0, 0.0),
-            color: (1.0, 1.0, 1.0, 0.5),
-            size: (1000.0, 500.0),
-        }, width, height);
+        plane_renderer.borrow().render(
+            PlaneBuilder::new()
+                .position((0.0, 0.0, 0.0))
+                .size((200.0, height as f32))
+                .color((0.1, 0.1, 0.1, 1.0))
+                .border_thickness(1.0)
+                .border_radius((0.0, 10.0, 10.0, 0.0))
+                .build(),
+            width,
+            height
+        );
 
         debug_controller.draw_debug_ui(delta_time as f32, &camera, &projection, &mouse_picker, &models);
 

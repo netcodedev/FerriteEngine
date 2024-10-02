@@ -8,7 +8,7 @@ out vec4 FragColor;
 
 uniform float borderThickness = 0.0;
 uniform vec4 borderRadius = vec4(0.0);
-uniform vec4 borderColor = vec4(0.0, 0.0, 0.0, 0.0);
+uniform vec4 borderColor = vec4(1.0, 0.0, 0.0, 1.0);
 
 float RectSDF(vec2 position, vec2 halfSize, vec4 radius)
 {
