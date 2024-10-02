@@ -10,10 +10,10 @@ uniform float borderThickness = 0.0;
 uniform float borderRadius = 0.0;
 uniform vec4 borderColor = vec4(0.0, 0.0, 0.0, 0.0);
 
-float RectSDF(vec2 p, vec2 b, float r)
+float RectSDF(vec2 position, vec2 halfSize, float radius)
 {
-    vec2 d = abs(p) - b + vec2(r);
-    return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) - r;   
+    vec2 d = abs(position) - halfSize + vec2(radius);
+    return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) - radius;   
 }
 
 void main()
