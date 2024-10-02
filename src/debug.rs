@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use glfw::{Action, Glfw, Key, CursorMode};
 
 use crate::{camera::{Camera, MousePicker, Projection}, line::{Line, LineRenderer}, model::Model, terrain::{ChunkBounds, CHUNK_SIZE}, text::TextRenderer};
-use cgmath::{EuclideanSpace, Point3, Vector3};
+use cgmath::{Deg, EuclideanSpace, Point3, Vector3};
 
 pub struct DebugController {
     text_renderer: Rc<RefCell<TextRenderer>>,
@@ -76,7 +76,7 @@ impl DebugController {
             let pos = camera.position;
             let bounds = ChunkBounds::parse(pos.to_vec());
             text_renderer.render(5, 25, 20.0, format!("x: {:.2} y: {:.2} z: {:.2}", pos.x, pos.y, pos.z).as_str());
-            text_renderer.render(5, 45, 20.0, format!("yaw: {:?} pitch {:?}", camera.yaw, camera.pitch).as_str());
+            text_renderer.render(5, 45, 20.0, format!("yaw: {:?} pitch {:?}", Deg::from(camera.yaw), Deg::from(camera.pitch)).as_str());
             text_renderer.render(5, 65, 20.0, format!("Chunk: xMin: {} yMin: {} zMin: {}", bounds.min.0, bounds.min.1, bounds.min.2).as_str());
             text_renderer.render(5, 85, 20.0, format!("       xMax: {} yMax: {} zMax: {}", bounds.max.0, bounds.max.1, bounds.max.2).as_str());
             let mut lines: Vec<Line> = Vec::new();
