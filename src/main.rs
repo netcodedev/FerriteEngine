@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         plane_renderer.borrow().render(Plane {
-            position: (0.0, 0.0, 0.0),
+            position: (10.0, 10.0, 0.0),
             color: (1.0, 1.0, 1.0, 0.5),
             size: (1000.0, 500.0),
         }, width, height);

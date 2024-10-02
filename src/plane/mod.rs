@@ -17,5 +17,5 @@ pub struct Plane {
 pub struct PlaneVertex {
     pub position: (f32, f32, f32),
     pub color: (f32, f32, f32, f32),
-    pub dimensions: (f32, f32)
+    pub dimensions: (f32, f32, f32, f32)
 }
