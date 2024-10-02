@@ -9,6 +9,10 @@ render a large number of voxels in real time.
 - Line rendering
 - Rendering of 3D models
 - Model animation
+- Basic UI
+    - Movable Panel
+    - Button
+    - Text
 
 ## Planned Features
 - Inverse Kinematics
