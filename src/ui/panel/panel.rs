@@ -37,8 +37,10 @@ impl UIElement for Panel {
                     self.drag_start = Some((x, y));
                     self.dragging = true;
                     return true;
+                } else {
+                    // Check children
+                    return self.content.handle_events(window, event);
                 }
-                false
             }
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Release, _) => {
                 // Stop dragging

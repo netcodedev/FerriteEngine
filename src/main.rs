@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .position(5.0, 5.0)
             .size(100.0, 20.0)
             .on_click(Box::new(|| {println!("button clicked")}))
-            .add_child(Box::new(Text::new("Hello World!", 16.0)))
+            .add_child(Box::new(Text::new("Click me!", 16.0)))
             .build()
         ))
         .add_child(Box::new(Text::new("Hello World!", 16.0)))
