@@ -1,4 +1,4 @@
-use crate::{plane::{PlaneBuilder, PlaneRenderer}, text::TextRenderer, ui::UIElement};
+use crate::{plane::{PlaneBuilder, PlaneRenderer}, text::TextRenderer, ui::{container::ContainerBuilder, UIElement}};
 
 use super::{Panel, PanelBuilder};
 
@@ -25,9 +25,7 @@ impl UIElement for Panel {
         720
         );
         text_renderer.render((self.offset.0 + self.position.0 + 8.0) as i32, (self.offset.1 + self.position.1 + 2.0) as i32, 16.0, &self.title);
-        for child in &self.children {
-            child.render(text_renderer, &plane_renderer);
-        }
+        self.content.render(text_renderer, &plane_renderer);
     }
 
     fn handle_events(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool {
@@ -70,27 +68,27 @@ impl UIElement for Panel {
     }
 
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>) {
-        for mut child in children {
-            child.set_offset((self.offset.0 + self.position.0, self.offset.1 + self.position.1 + 20.0));
-            self.children.push(child);
-        }
+        self.content.add_children(children);
     }
 
     fn set_offset(&mut self, offset: (f32, f32)) {
         self.offset = offset;
-        for child in &mut self.children {
-            child.set_offset((self.offset.0 + self.position.0, self.offset.1 + self.position.1 + 20.0));
-        }
+        self.content.set_offset((self.offset.0 + self.position.0, self.offset.1 + self.position.1 + 20.0));
     }
 }
 
 impl Panel {
     pub fn new(position: (f32, f32, f32), size: (f32, f32), title: String) -> Self {
+        let mut content = ContainerBuilder::new()
+            .position(0.0, 0.0)
+            .size(size.0, size.1 - 40.0)
+            .build();
+        content.set_offset((position.0, position.1 + 20.0));
         Self {
             position,
             size,
             title,
-            children: Vec::new(),
+            content,
             offset: (0.0, 0.0),
             drag_start: None,
             dragging: false

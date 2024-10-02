@@ -18,9 +18,8 @@ impl UIElement for Container {
         plane_renderer.render(PlaneBuilder::new()
             .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
             .size((self.size.0, self.size.1))
-            .color((0.2, 0.2, 0.2, 1.0))
-            .border_radius_uniform(5.0)
-            .border_thickness(1.0)
+            .color((0.0, 0.0, 0.0, 0.0))
+            .border_color((0.0,0.0,0.0,0.0))
             .build(),
         1280,
         720
