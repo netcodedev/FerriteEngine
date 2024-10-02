@@ -17,4 +17,5 @@ pub trait UIElement {
     fn render(&self, text_renderer: &mut TextRenderer, plane_renderer: &PlaneRenderer);
     fn handle_events(&self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool;
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>);
+    fn set_offset(&mut self, offset: (f32, f32));
 }

@@ -49,13 +49,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     models.push(&mut model);
 
     ui.borrow_mut().add(ContainerBuilder::new()
-        .position(10.0, 10.0)
+        .position(10.0, 120.0)
         .size(200.0, 200.0)
         .add_child(Box::new(ButtonBuilder::new()
-            .position(15.0, 15.0)
+            .position(5.0, 5.0)
             .size(100.0, 20.0)
             .on_click(Box::new(|| {println!("button clicked")}))
-            .add_child(Box::new(Text::new("Hello World!", 30.0)))
+            .add_child(Box::new(Text::new("Hello World!", 16.0)))
             .build()
         ))
         .build()

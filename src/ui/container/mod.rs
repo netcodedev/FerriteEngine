@@ -6,6 +6,7 @@ pub struct Container {
     pub position: (f32, f32),
     pub size: (f32, f32),
     pub children: Vec<Box<dyn UIElement>>,
+    pub offset: (f32, f32),
 }
 
 pub struct ContainerBuilder {

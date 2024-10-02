@@ -7,6 +7,7 @@ pub struct Button {
     pub size: (f32, f32),
     pub on_click: Box<dyn Fn()>,
     pub children: Vec<Box<dyn UIElement>>,
+    pub offset: (f32, f32),
 }
 
 pub struct ButtonBuilder {

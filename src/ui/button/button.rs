@@ -5,9 +5,11 @@ use super::{Button, ButtonBuilder};
 impl UIElement for Button {
     fn render(&self, text_renderer: &mut TextRenderer, plane_renderer: &PlaneRenderer) {
         plane_renderer.render(PlaneBuilder::new()
-            .position((self.position.0, self.position.1, 0.0))
+            .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
             .size((self.size.0, self.size.1))
-            .color((0.3, 0.6, 0.7, 1.0))
+            .color((0.1, 0.4, 0.5, 1.0))
+            .border_radius_uniform(5.0)
+            .border_thickness(1.0)
             .build(),
         1280,
         720
@@ -17,11 +19,21 @@ impl UIElement for Button {
         }
     }
 
+    fn set_offset(&mut self, offset: (f32, f32)) {
+        self.offset = offset;
+        for child in &mut self.children {
+            child.set_offset((self.offset.0 + self.position.0, self.offset.1 + self.position.1));
+        }
+    }
+
     fn handle_events(&self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool {
         match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
                 let (x, y) = window.get_cursor_pos();
-                if x as f32 >= self.position.0 && x as f32 <= self.position.0 + self.size.0 && y as f32 >= self.position.1 && y as f32 <= self.position.1 + self.size.1 {
+                if x as f32 >= self.offset.0 + self.position.0 &&
+                    x as f32 <= self.offset.0 + self.position.0 + self.size.0 &&
+                    y as f32 >= self.offset.1 + self.position.1 &&
+                    y as f32 <= self.offset.1 + self.position.1 + self.size.1 {
                     (self.on_click)();
                     return true
                 }
@@ -32,7 +44,10 @@ impl UIElement for Button {
     }
 
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>) {
-        self.children.extend(children);
+        for mut child in children {
+            child.set_offset((self.offset.0 + self.position.0, self.offset.1 + self.position.1));
+            self.children.push(child);
+        }
     }
 }
 
@@ -43,6 +58,7 @@ impl Button {
             size,
             on_click,
             children: Vec::new(),
+            offset: (0.0, 0.0),
         }
     }
 }
