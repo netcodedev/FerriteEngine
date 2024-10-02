@@ -8,6 +8,7 @@ pub struct Button {
     pub on_click: Box<dyn Fn()>,
     pub children: Vec<Box<dyn UIElement>>,
     pub offset: (f32, f32),
+    pub is_hovering: bool,
 }
 
 pub struct ButtonBuilder {

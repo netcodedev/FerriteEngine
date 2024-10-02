@@ -12,19 +12,22 @@ impl UIElement for Panel {
             .border_thickness(1.0)
             .build(),
         );
-        plane_renderer.render(PlaneBuilder::new()
+        let mut header_plane = PlaneBuilder::new()
             .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
             .size((self.size.0, 20.0))
-            .color((0.2, 0.3, 0.5, 1.0))
             .border_radius((5.0, 5.0, 0.0, 0.0))
-            .border_thickness(1.0)
-            .build(),
-        );
+            .border_thickness(1.0);
+        if self.is_hovering {
+            header_plane = header_plane.color((0.3, 0.4, 0.6, 1.0));
+        } else {
+            header_plane = header_plane.color((0.2, 0.3, 0.5, 1.0))
+        }
+        plane_renderer.render(header_plane.build());
         text_renderer.render((self.offset.0 + self.position.0 + 8.0) as i32, (self.offset.1 + self.position.1 + 2.0) as i32, 16.0, &self.title);
         self.content.render(text_renderer, &plane_renderer);
     }
 
-    fn handle_events(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool {
+    fn handle_events(&mut self, window: &mut glfw::Window, glfw: &mut glfw::Glfw, event: &glfw::WindowEvent) -> bool {
         // test if click is within bounds
         match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
@@ -37,18 +40,24 @@ impl UIElement for Panel {
                     self.drag_start = Some((x, y));
                     self.dragging = true;
                     return true;
-                } else {
-                    // Check children
-                    return self.content.handle_events(window, event);
                 }
             }
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Release, _) => {
                 // Stop dragging
                 self.dragging = false;
                 self.drag_start = None;
-                false
             }
             glfw::WindowEvent::CursorPos(x, y) => {
+                if *x as f32 >= self.offset.0 + self.position.0 &&
+                    *x as f32 <= self.offset.0 + self.position.0 + self.size.0 &&
+                    *y as f32 >= self.offset.1 + self.position.1 &&
+                    *y as f32 <= self.offset.1 + self.position.1 + 20.0 {
+                        window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
+                        self.is_hovering = true;
+                } else if self.is_hovering {
+                    window.set_cursor(None);
+                    self.is_hovering = false;
+                }
                 if self.dragging {
                     // Update panel position while dragging
                     if let Some((start_x, start_y)) = self.drag_start {
@@ -59,10 +68,10 @@ impl UIElement for Panel {
                     }
                     return true;
                 }
-                false
             }
-            _ => false
+            _ => ()
         }
+        self.content.handle_events(window, glfw, event)
     }
 
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>) {
@@ -93,7 +102,8 @@ impl Panel {
             content,
             offset: (0.0, 0.0),
             drag_start: None,
-            dragging: false
+            dragging: false,
+            is_hovering: false,
         }
     }
 }

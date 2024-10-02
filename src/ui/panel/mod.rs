@@ -9,7 +9,8 @@ pub struct Panel {
     pub title: String,
     content: Container,
     drag_start: Option<(f64, f64)>,
-    dragging: bool
+    dragging: bool,
+    is_hovering: bool,
 }
 
 pub struct PanelBuilder {

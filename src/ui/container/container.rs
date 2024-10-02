@@ -37,7 +37,7 @@ impl UIElement for Container {
         }
     }
 
-    fn handle_events(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool {
+    fn handle_events(&mut self, window: &mut glfw::Window, glfw: &mut glfw::Glfw, event: &glfw::WindowEvent) -> bool {
         // test if click is within bounds
         match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
@@ -47,15 +47,20 @@ impl UIElement for Container {
                     y as f32 >= self.offset.1 + self.position.1 &&
                     y as f32 <= self.offset.1 + self.position.1 + self.size.1 {
                     for child in &mut self.children {
-                        if child.handle_events(window, event) {
+                        if child.handle_events(window, glfw, event) {
                             return true;
                         }
                     }
                 }
-                false
             }
-            _ => false
+            _ => ()
         }
+        for child in &mut self.children {
+            if child.handle_events(window, glfw, event) {
+                return true;
+            }
+        }
+        false
     }
 
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>) {
