@@ -48,8 +48,8 @@ impl TextRenderer {
         
         let vertices: Vec<f32> = glyphs.iter().filter_map(|g| self.cache.rect_for(0, g).ok().flatten()).flat_map(|(uv_rect, screen_rect)| {
             let gl_rect = Rect {
-                min: point(-1.0 + (screen_rect.min.x as f32 + x as f32) / self.width as f32, 1.0 - (screen_rect.min.y as f32 + y as f32) / self.height as f32),
-                max: point(-1.0 + (screen_rect.max.x as f32 + x as f32) / self.width as f32, 1.0 - (screen_rect.max.y as f32 + y as f32) / self.height as f32),
+                min: point(screen_rect.min.x as f32 + x as f32, screen_rect.min.y as f32 + y as f32),
+                max: point(screen_rect.max.x as f32 + x as f32, screen_rect.max.y as f32 + y as f32),
             };
             vec![
                 gl_rect.min.x, gl_rect.max.y, uv_rect.min.x, uv_rect.max.y,
@@ -85,7 +85,7 @@ impl TextRenderer {
 
             // set shader uniforms
             self.shader.bind();
-            let projection = cgmath::ortho(0.0, 1000.0, 0.0, 1000.0, 0.1, 100.0);
+            let projection = cgmath::ortho(0.0, 1280.0, 720.0, 0.0, -1.0, 100.0);
             self.shader.set_uniform_mat4("projection", &projection);
             self.shader.set_uniform_3f("color", 1.0, 1.0, 1.0);
 
