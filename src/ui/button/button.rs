@@ -49,6 +49,10 @@ impl UIElement for Button {
             self.children.push(child);
         }
     }
+
+    fn get_size(&self) -> (f32, f32) {
+        self.size
+    }
 }
 
 impl Button {

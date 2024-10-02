@@ -19,4 +19,5 @@ pub trait UIElement {
     fn handle_events(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool;
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>);
     fn set_offset(&mut self, offset: (f32, f32));
+    fn get_size(&self) -> (f32, f32);
 }

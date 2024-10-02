@@ -58,6 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .add_child(Box::new(Text::new("Hello World!", 16.0)))
             .build()
         ))
+        .add_child(Box::new(Text::new("Hello World!", 16.0)))
         .build()
     );
 

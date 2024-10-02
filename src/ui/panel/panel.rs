@@ -75,6 +75,10 @@ impl UIElement for Panel {
         self.offset = offset;
         self.content.set_offset((self.offset.0 + self.position.0, self.offset.1 + self.position.1 + 20.0));
     }
+
+    fn get_size(&self) -> (f32, f32) {
+        self.size
+    }
 }
 
 impl Panel {

@@ -26,4 +26,8 @@ impl UIElement for Text {
     fn set_offset(&mut self, offset: (f32, f32)) {
         self.offset = offset;
     }
+
+    fn get_size(&self) -> (f32, f32) {
+        (self.size * self.text.len() as f32, self.size)
+    }
 }
