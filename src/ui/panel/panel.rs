@@ -24,7 +24,7 @@ impl UIElement for Panel {
         1280,
         720
         );
-        text_renderer.render((self.offset.0 + self.position.0 + 8.0) as u32, (self.offset.1 + self.position.1 + 2.0) as u32, 16.0, &self.title);
+        text_renderer.render((self.offset.0 + self.position.0 + 8.0) as i32, (self.offset.1 + self.position.1 + 2.0) as i32, 16.0, &self.title);
         for child in &self.children {
             child.render(text_renderer, &plane_renderer);
         }

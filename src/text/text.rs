@@ -24,7 +24,7 @@ impl TextRenderer {
         }
     }
 
-    pub fn render(&mut self, x: u32, y: u32, size: f32, text: &str) {
+    pub fn render(&mut self, x: i32, y: i32, size: f32, text: &str) {
         let glyphs = self.layout(Scale::uniform(size), self.width, &text);
         for glyph in &glyphs {
             self.cache.queue_glyph(0, glyph.clone());
