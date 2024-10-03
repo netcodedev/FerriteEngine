@@ -6,7 +6,6 @@ use crate::{camera::{Camera, MousePicker, Projection}, line::{Line, LineRenderer
 use cgmath::{Deg, EuclideanSpace, Point3, Vector3};
 
 pub struct DebugController {
-    text_renderer: Rc<RefCell<TextRenderer>>,
     line_renderer: Rc<RefCell<LineRenderer>>,
     pub debug_ui: bool,
     wireframe: bool,
@@ -15,9 +14,8 @@ pub struct DebugController {
 }
 
 impl DebugController {
-    pub fn new(text_renderer: Rc<RefCell<TextRenderer>>, line_renderer: Rc<RefCell<LineRenderer>>) -> Self {
+    pub fn new(line_renderer: Rc<RefCell<LineRenderer>>) -> Self {
         Self {
-            text_renderer,
             line_renderer,
             debug_ui: false,
             wireframe: false,
@@ -64,16 +62,15 @@ impl DebugController {
         }
 
         if self.debug_ui {
-            let mut text_renderer = self.text_renderer.borrow_mut();
             let fps = 1.0 / delta_time;
             let fps_text = format!("{:.2} FPS ({:.2}ms)", fps, delta_time * 1000.0);
-            text_renderer.render(5,5,20.0, &fps_text);
+            TextRenderer::render(5,5,20.0, &fps_text);
             let pos = camera.position;
             let bounds = ChunkBounds::parse(pos.to_vec());
-            text_renderer.render(5, 25, 20.0, format!("x: {:.2} y: {:.2} z: {:.2}", pos.x, pos.y, pos.z).as_str());
-            text_renderer.render(5, 45, 20.0, format!("yaw: {:?} pitch {:?}", Deg::from(camera.yaw), Deg::from(camera.pitch)).as_str());
-            text_renderer.render(5, 65, 20.0, format!("Chunk: xMin: {} yMin: {} zMin: {}", bounds.min.0, bounds.min.1, bounds.min.2).as_str());
-            text_renderer.render(5, 85, 20.0, format!("       xMax: {} yMax: {} zMax: {}", bounds.max.0, bounds.max.1, bounds.max.2).as_str());
+            TextRenderer::render(5, 25, 20.0, format!("x: {:.2} y: {:.2} z: {:.2}", pos.x, pos.y, pos.z).as_str());
+            TextRenderer::render(5, 45, 20.0, format!("yaw: {:?} pitch {:?}", Deg::from(camera.yaw), Deg::from(camera.pitch)).as_str());
+            TextRenderer::render(5, 65, 20.0, format!("Chunk: xMin: {} yMin: {} zMin: {}", bounds.min.0, bounds.min.1, bounds.min.2).as_str());
+            TextRenderer::render(5, 85, 20.0, format!("       xMax: {} yMax: {} zMax: {}", bounds.max.0, bounds.max.1, bounds.max.2).as_str());
             let mut lines: Vec<Line> = Vec::new();
             let mut corner_lines: Vec<Line> = Vec::new();
             let spacing = (CHUNK_SIZE / 8) as i32;

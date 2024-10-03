@@ -5,15 +5,21 @@ use gl::types::GLvoid;
 
 use super::{TextRenderer, Texture};
 
+use lazy_static::lazy_static;
+use std::sync::Mutex;
+
+lazy_static! {
+    static ref RENDERER: Mutex<TextRenderer> = Mutex::new(TextRenderer::new(1280, 720));
+}
+
 impl TextRenderer {
-    pub fn new(width: u32, height: u32) -> TextRenderer {
+    fn new(width: u32, height: u32) -> TextRenderer {
         let font_data = include_bytes!("../../assets/font/RobotoMono.ttf");
         let font = Font::try_from_bytes(font_data as &[u8]).unwrap();
 
         let cache: Cache<'static> = Cache::builder().dimensions(1024, 1024).build();
 
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
-
         TextRenderer {
             font,
             cache,
@@ -27,17 +33,18 @@ impl TextRenderer {
     /// Renders text to the screen
     /// 
     /// Returns the width and height of the text
-    pub fn render(&mut self, x: i32, y: i32, size: f32, text: &str) -> (i32, i32) {
-        let glyphs = self.layout(Scale::uniform(size), self.width, &text);
+    pub fn render(x: i32, y: i32, size: f32, text: &str) -> (i32, i32) {
+        let mut renderer = RENDERER.lock().unwrap();
+        let glyphs = renderer.layout(Scale::uniform(size), renderer.width, text);
         for glyph in &glyphs {
-            self.cache.queue_glyph(0, glyph.clone());
+            renderer.cache.queue_glyph(0, glyph.clone());
         }
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
-            self.texture_buffer.bind();
+            renderer.texture_buffer.bind();
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
         }
-        let _ = self.cache.cache_queued(|rect, data| unsafe {
+        let _ = renderer.cache.cache_queued(|rect, data| unsafe {
             gl::TexSubImage2D(
                 gl::TEXTURE_2D,
                 0,
@@ -51,7 +58,7 @@ impl TextRenderer {
         
         let mut max_x = 0;
         let mut max_y = 0;
-        let vertices: Vec<f32> = glyphs.iter().filter_map(|g| self.cache.rect_for(0, g).ok().flatten()).flat_map(|(uv_rect, screen_rect)| {
+        let vertices: Vec<f32> = glyphs.iter().filter_map(|g| renderer.cache.rect_for(0, g).ok().flatten()).flat_map(|(uv_rect, screen_rect)| {
             if screen_rect.max.x as i32 > max_x {
                 max_x = screen_rect.max.x as i32;
             }
@@ -95,17 +102,17 @@ impl TextRenderer {
             gl::EnableVertexAttribArray(1);
 
             // set shader uniforms
-            self.shader.bind();
-            let projection = cgmath::ortho(0.0, self.width as f32, self.height as f32, 0.0, -1.0, 100.0);
-            self.shader.set_uniform_mat4("projection", &projection);
-            self.shader.set_uniform_3f("color", 1.0, 1.0, 1.0);
+            renderer.shader.bind();
+            let projection = cgmath::ortho(0.0, renderer.width as f32, renderer.height as f32, 0.0, -1.0, 100.0);
+            renderer.shader.set_uniform_mat4("projection", &projection);
+            renderer.shader.set_uniform_3f("color", 1.0, 1.0, 1.0);
 
             // draw text
             gl::Disable(gl::DEPTH_TEST);
             gl::Disable(gl::CULL_FACE);
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            self.shader.set_uniform_1i("texture0", 0);
+            renderer.shader.set_uniform_1i("texture0", 0);
             gl::DrawArrays(gl::TRIANGLES, 0, vertices.len() as i32 / 4);
 
             // cleanup
@@ -124,17 +131,22 @@ impl TextRenderer {
         (max_x, max_y)
     }
 
-    pub fn resize(&mut self, event: &glfw::WindowEvent) {
+    pub fn resize(width: u32, height: u32) {
+        let mut renderer = RENDERER.lock().unwrap();
+        renderer.width = width;
+        renderer.height = height;
+    }
+
+    pub fn resize_from_event(event: &glfw::WindowEvent) {
         match event {
             glfw::WindowEvent::FramebufferSize(width, height) => {
-                self.width = *width as u32;
-                self.height = *height as u32;
+                TextRenderer::resize(*width as u32, *height as u32);
             }
             _ => {}
         }
     }
 
-    pub fn layout<'a>(&self, scale: Scale, width: u32, text: &str) -> Vec<PositionedGlyph<'a>> {
+    fn layout<'a>(&self, scale: Scale, width: u32, text: &str) -> Vec<PositionedGlyph<'a>> {
         let mut result = Vec::new();
         let v_metrics = self.font.v_metrics(scale);
         let advance_height = v_metrics.ascent - v_metrics.descent + v_metrics.line_gap;

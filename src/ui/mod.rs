@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{plane::PlaneRenderer, text::TextRenderer};
+use crate::plane::PlaneRenderer;
 
 pub mod button;
 pub mod container;
@@ -10,13 +10,12 @@ pub mod text;
 pub mod ui;
 
 pub struct UIRenderer {
-    text_renderer: Rc<RefCell<TextRenderer>>,
     plane_renderer: Rc<RefCell<PlaneRenderer>>,
     children: Vec<Box<dyn UIElement>>,
 }
 
 pub trait UIElement {
-    fn render(&mut self, text_renderer: &mut TextRenderer, plane_renderer: &PlaneRenderer);
+    fn render(&mut self, plane_renderer: &PlaneRenderer);
     fn handle_events(&mut self, window: &mut glfw::Window, glfw: &mut glfw::Glfw, event: &glfw::WindowEvent) -> bool;
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>);
     fn set_offset(&mut self, offset: (f32, f32));

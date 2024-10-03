@@ -10,7 +10,7 @@ pub struct TextRenderer {
     cache: Cache<'static>,
     shader: Shader,
     texture_buffer: Texture,
-    width: u32,
+    pub width: u32,
     height: u32,
 }
 

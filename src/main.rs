@@ -28,20 +28,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (width, height) = (1280, 720);
     let mut window = Window::new(width, height);
 
-    let text_renderer = Rc::new(RefCell::new(TextRenderer::new(width, height)));
+    TextRenderer::resize(width, height);
     let line_renderer = Rc::new(RefCell::new(LineRenderer::new()));
     let plane_renderer = Rc::new(RefCell::new(PlaneRenderer::new(width as f32, height as f32)));
-    let ui = Rc::new(RefCell::new(UIRenderer::new(Rc::clone(&text_renderer), Rc::clone(&plane_renderer))));
+    let ui = Rc::new(RefCell::new(UIRenderer::new(Rc::clone(&plane_renderer))));
 
     let mut camera: Camera = Camera::new((0.0, 92.0, 2.0), Deg(-90.0), Deg(0.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
     let mut camera_controller: CameraController = CameraController::new(1.0, 1.0);
-    let mut debug_controller: DebugController = DebugController::new(Rc::clone(&text_renderer), Rc::clone(&line_renderer));
+    let mut debug_controller: DebugController = DebugController::new(Rc::clone(&line_renderer));
 
     let mut mouse_picker = MousePicker::new();
 
     let mut terrain = Terrain::new();
-
 
     let mut models: Vec<&mut Model> = Vec::new();
     let mut model = Model::new("assets/models/char_anim.fbx")?;
@@ -81,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             line = mouse_picker.process_mouse(&event, &camera, &projection);
             projection.resize(&event);
             plane_renderer.borrow_mut().resize(&event);
-            text_renderer.borrow_mut().resize(&event);
+            TextRenderer::resize_from_event(&event);
         });
 
         terrain.process_line(line);
@@ -99,7 +98,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.borrow_mut().render();
 
         debug_controller.draw_debug_ui(delta_time as f32, &camera, &projection, &mouse_picker, &models);
-
 
         window.swap_buffers();
     }

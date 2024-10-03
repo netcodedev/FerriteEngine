@@ -2299,6 +2299,7 @@ dependencies = [
  "gl",
  "glfw",
  "image",
+ "lazy_static",
  "libnoise",
  "ndarray",
  "rand",
