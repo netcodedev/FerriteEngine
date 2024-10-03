@@ -21,7 +21,7 @@ use terrain::Terrain;
 use text::TextRenderer;
 use line::{Line, LineRenderer};
 use model::Model;
-use ui::{button::ButtonBuilder, panel::PanelBuilder, text::Text, UIRenderer};
+use ui::{button::ButtonBuilder, input::InputBuilder, panel::PanelBuilder, text::Text, UIRenderer};
 use window::Window;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -59,6 +59,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .build()
         ))
         .add_child(Box::new(Text::new("Hello World!", 16.0)))
+        .add_child(Box::new(InputBuilder::new("Input".to_string())
+            .size(190.0, 26.0)
+            .build()
+        ))
         .build()
     );
 

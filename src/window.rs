@@ -23,6 +23,7 @@ impl Window {
         window.set_mouse_button_polling(true);
         window.set_cursor_pos_polling(true);
         window.set_framebuffer_size_polling(true);
+        window.set_char_polling(true);
         // window.set_cursor_mode(glfw::CursorMode::Disabled);
         window.set_cursor_pos(0.0, 0.0);
 

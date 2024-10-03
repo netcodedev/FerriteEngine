@@ -4,6 +4,7 @@ use crate::{plane::PlaneRenderer, text::TextRenderer};
 
 pub mod button;
 pub mod container;
+pub mod input;
 pub mod panel;
 pub mod text;
 pub mod ui;
