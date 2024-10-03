@@ -21,25 +21,28 @@ impl UIElement for Input {
             gl::Clear(gl::STENCIL_BUFFER_BIT);
             gl::StencilFunc(gl::ALWAYS, 1, 0xFF);
             gl::StencilOp(gl::KEEP, gl::KEEP, gl::REPLACE);
+
+            // Disable writing to the color and depth buffer
             gl::ColorMask(gl::FALSE, gl::FALSE, gl::FALSE, gl::FALSE);
             gl::DepthMask(gl::FALSE);
-        };
-        let stencil_plane = plane.size((self.size.0 - 5.0, self.size.1)).build();
-        plane_renderer.render(stencil_plane);
-        unsafe {
+
+            // Render the plane to the stencil buffer
+            let stencil_plane = plane.size((self.size.0 - 5.0, self.size.1)).build();
+            plane_renderer.render(stencil_plane);
             gl::StencilFunc(gl::EQUAL, 1, 0xFF);
             gl::StencilMask(0x00);
             gl::Disable(gl::DEPTH_TEST);
+
+            // Enable writing to the color and depth buffer
             gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
             gl::DepthMask(gl::TRUE);
-        };
-        text_renderer.render(
-            (self.offset.0 + self.position.0 + 5.0) as i32,
-            (self.offset.1 + self.position.1 + 5.0) as i32,
-            16.0,
-            &self.content
-        );
-        unsafe {
+            
+            text_renderer.render(
+                (self.offset.0 + self.position.0 + 5.0) as i32,
+                (self.offset.1 + self.position.1 + 5.0) as i32,
+                16.0,
+                &self.content
+            );
             gl::Disable(gl::STENCIL_TEST);
             gl::StencilMask(0xFF);
             gl::StencilFunc(gl::ALWAYS, 0, 0xFF);
