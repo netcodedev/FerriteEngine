@@ -1,9 +1,9 @@
-use crate::{plane::PlaneBuilder, ui::UIElement};
+use crate::{plane::{PlaneBuilder, PlaneRenderer}, text::TextRenderer, ui::UIElement};
 
 use super::{Input, InputBuilder};
 
 impl UIElement for Input {
-    fn render(&mut self, text_renderer: &mut crate::text::TextRenderer, plane_renderer: &crate::plane::PlaneRenderer) {
+    fn render(&mut self, text_renderer: &mut TextRenderer, plane_renderer: &PlaneRenderer) {
         let mut plane = PlaneBuilder::new()
             .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
             .size((self.size.0, self.size.1))
