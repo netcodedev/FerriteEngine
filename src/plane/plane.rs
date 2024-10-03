@@ -1,16 +1,23 @@
 use crate::shader::{DynamicVertexArray, Shader, VertexAttributes};
 
 use super::{Plane, PlaneBuilder, PlaneRenderer, PlaneVertex};
+use lazy_static::lazy_static;
+use std::sync::Mutex;
+
+lazy_static! {
+    static ref RENDERER: Mutex<PlaneRenderer> = Mutex::new(PlaneRenderer::new(1280.0, 720.0));
+}
 
 impl PlaneRenderer {
-    pub fn new(width: f32, height: f32) -> Self {
+    fn new(width: f32, height: f32) -> Self {
         Self {
             shader: Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl")),
             width,
             height
         }
     }
-    pub fn render(&self, plane: Plane) {
+    pub fn render(plane: Plane) {
+        let renderer = RENDERER.lock().unwrap();
         // calculate plane vertices
         let vertices = vec![
             PlaneVertex {
@@ -57,12 +64,12 @@ impl PlaneRenderer {
         let mut vertex_array = DynamicVertexArray::<PlaneVertex>::new();
         vertex_array.buffer_data_dyn(&vertices, &Some(indices.clone()));
         vertex_array.bind();
-        self.shader.bind();
-        let ortho = cgmath::ortho(0.0, self.width, self.height, 0.0, -1.0, 100.0);
-        self.shader.set_uniform_mat4("projection", &ortho);
-        self.shader.set_uniform_1f("borderThickness", plane.border_thickness);
-        self.shader.set_uniform_4f("borderRadius", plane.border_radius.0, plane.border_radius.1, plane.border_radius.2, plane.border_radius.3);
-        self.shader.set_uniform_4f("borderColor", plane.border_color.0, plane.border_color.1, plane.border_color.2, plane.border_color.3);
+        renderer.shader.bind();
+        let ortho = cgmath::ortho(0.0, renderer.width, renderer.height, 0.0, -1.0, 100.0);
+        renderer.shader.set_uniform_mat4("projection", &ortho);
+        renderer.shader.set_uniform_1f("borderThickness", plane.border_thickness);
+        renderer.shader.set_uniform_4f("borderRadius", plane.border_radius.0, plane.border_radius.1, plane.border_radius.2, plane.border_radius.3);
+        renderer.shader.set_uniform_4f("borderColor", plane.border_color.0, plane.border_color.1, plane.border_color.2, plane.border_color.3);
         unsafe {
             gl::Disable(gl::DEPTH_TEST);
             gl::Enable(gl::BLEND);
@@ -71,11 +78,16 @@ impl PlaneRenderer {
         }
     }
 
-    pub fn resize(&mut self, event: &glfw::WindowEvent) {
+    pub fn resize(width: u32, height: u32) {
+        let mut renderer = RENDERER.lock().unwrap();
+        renderer.width = width as f32;
+        renderer.height = height as f32;
+    }
+
+    pub fn resize_from_event(event: &glfw::WindowEvent) {
         match event {
             glfw::WindowEvent::FramebufferSize(width, height) => {
-                self.width = *width as f32;
-                self.height = *height as f32;
+                Self::resize(*width as u32, *height as u32);
             }
             _ => {}
         }

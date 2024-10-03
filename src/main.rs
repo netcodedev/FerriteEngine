@@ -29,8 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut window = Window::new(width, height);
 
     TextRenderer::resize(width, height);
-    let plane_renderer = Rc::new(RefCell::new(PlaneRenderer::new(width as f32, height as f32)));
-    let ui = Rc::new(RefCell::new(UIRenderer::new(Rc::clone(&plane_renderer))));
+    PlaneRenderer::resize(width, height);
+    let ui = Rc::new(RefCell::new(UIRenderer::new()));
 
     let mut camera: Camera = Camera::new((0.0, 92.0, 2.0), Deg(-90.0), Deg(0.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             debug_controller.process_keyboard(&mut glfw, &event);
             line = mouse_picker.process_mouse(&event, &camera, &projection);
             projection.resize(&event);
-            plane_renderer.borrow_mut().resize(&event);
+            PlaneRenderer::resize_from_event(&event);
             TextRenderer::resize_from_event(&event);
         });
 

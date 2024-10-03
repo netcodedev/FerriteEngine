@@ -1,13 +1,8 @@
-use std::{cell::RefCell, rc::Rc};
-
-use crate::plane::PlaneRenderer;
-
 use super::{UIElement, UIRenderer};
 
 impl UIRenderer {
-    pub fn new(plane_renderer: Rc<RefCell<PlaneRenderer>>) -> Self {
+    pub fn new() -> Self {
         Self {
-            plane_renderer,
             children: Vec::new(),
         }
     }
@@ -18,7 +13,7 @@ impl UIRenderer {
     
     pub fn render(&mut self) {
         for child in &mut self.children {
-            child.render(&self.plane_renderer.borrow());
+            child.render();
         }
     }
     

@@ -3,8 +3,8 @@ use crate::{plane::{PlaneBuilder, PlaneRenderer}, text::TextRenderer, ui::{conta
 use super::{Panel, PanelBuilder};
 
 impl UIElement for Panel {
-    fn render(&mut self, plane_renderer: &PlaneRenderer) {
-        plane_renderer.render(PlaneBuilder::new()
+    fn render(&mut self) {
+        PlaneRenderer::render(PlaneBuilder::new()
             .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
             .size((self.size.0, self.size.1))
             .color((0.2, 0.2, 0.2, 1.0))
@@ -22,9 +22,9 @@ impl UIElement for Panel {
         } else {
             header_plane = header_plane.color((0.2, 0.3, 0.5, 1.0))
         }
-        plane_renderer.render(header_plane.build());
+        PlaneRenderer::render(header_plane.build());
         TextRenderer::render((self.offset.0 + self.position.0 + 8.0) as i32, (self.offset.1 + self.position.1 + 2.0) as i32, 16.0, &self.title);
-        self.content.render(&plane_renderer);
+        self.content.render();
     }
 
     fn handle_events(&mut self, window: &mut glfw::Window, glfw: &mut glfw::Glfw, event: &glfw::WindowEvent) -> bool {

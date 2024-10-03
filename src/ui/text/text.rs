@@ -1,4 +1,4 @@
-use crate::{plane::PlaneRenderer, text::TextRenderer, ui::UIElement};
+use crate::{text::TextRenderer, ui::UIElement};
 
 use super::Text;
 
@@ -14,7 +14,7 @@ impl Text {
 }
 
 impl UIElement for Text {
-    fn render(&mut self, _: &PlaneRenderer) {
+    fn render(&mut self) {
         let (width, _) = TextRenderer::render(self.offset.0 as i32 + 5, self.offset.1 as i32 + 2, self.size, self.text.as_str());
         if width as f32 != self.width {
             self.width = width as f32;

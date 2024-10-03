@@ -3,7 +3,7 @@ use crate::{plane::{PlaneBuilder, PlaneRenderer}, text::TextRenderer, ui::UIElem
 use super::{Input, InputBuilder};
 
 impl UIElement for Input {
-    fn render(&mut self, plane_renderer: &PlaneRenderer) {
+    fn render(&mut self) {
         let mut plane = PlaneBuilder::new()
             .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
             .size((self.size.0, self.size.1))
@@ -14,7 +14,7 @@ impl UIElement for Input {
         } else {
             plane = plane.color((0.2, 0.2, 0.2, 1.0));
         }
-        plane_renderer.render(plane.build());
+        PlaneRenderer::render(plane.build());
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
             gl::Enable(gl::STENCIL_TEST);
@@ -28,7 +28,7 @@ impl UIElement for Input {
 
             // Render the plane to the stencil buffer
             let stencil_plane = plane.size((self.size.0 - 5.0, self.size.1)).build();
-            plane_renderer.render(stencil_plane);
+            PlaneRenderer::render(stencil_plane);
             gl::StencilFunc(gl::EQUAL, 1, 0xFF);
             gl::StencilMask(0x00);
             gl::Disable(gl::DEPTH_TEST);
