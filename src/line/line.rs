@@ -5,6 +5,13 @@ use crate::shader::Shader;
 
 use super::{Line, LineRenderer};
 
+use lazy_static::lazy_static;
+use std::sync::Mutex;
+
+lazy_static! {
+    static ref RENDERER: Mutex<LineRenderer> = Mutex::new(LineRenderer::new());
+}
+
 impl Line {
     pub fn new(position: Point3<f32>, direction: Vector3<f32>, length: f32) -> Self {
         Self {
@@ -16,7 +23,7 @@ impl Line {
 }
 
 impl LineRenderer {
-    pub fn new() -> Self {
+    fn new() -> Self {
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
 
         let mut vao = 0;
@@ -42,24 +49,25 @@ impl LineRenderer {
         }
     }
 
-    pub fn render(&self, camera: &Camera, projection: &Projection, line: &Line, color: Vector3<f32>, always_on_top: bool) {
+    pub fn render(camera: &Camera, projection: &Projection, line: &Line, color: Vector3<f32>, always_on_top: bool) {
+        let renderer = RENDERER.lock().unwrap();
         unsafe {
             if always_on_top {
                 gl::Disable(gl::DEPTH_TEST);
             } else {
                 gl::Enable(gl::DEPTH_TEST);
             }
-            self.shader.bind();
+            renderer.shader.bind();
 
             let view = camera.calc_matrix();
             let projection = projection.calc_matrix();
 
-            self.shader.set_uniform_mat4("view", &view);
-            self.shader.set_uniform_mat4("projection", &projection);
-            self.shader.set_uniform_3fv("color", &color);
+            renderer.shader.set_uniform_mat4("view", &view);
+            renderer.shader.set_uniform_mat4("projection", &projection);
+            renderer.shader.set_uniform_3fv("color", &color);
 
-            gl::BindVertexArray(self.vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+            gl::BindVertexArray(renderer.vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, renderer.vbo);
 
             let end = line.position + line.direction * line.length;
             let lines = vec![
@@ -77,24 +85,25 @@ impl LineRenderer {
         }
     }
 
-    pub fn render_lines(&self, camera: &Camera, projection: &Projection, lines: &Vec<Line>, color: Vector3<f32>, always_on_top: bool) {
+    pub fn render_lines(camera: &Camera, projection: &Projection, lines: &Vec<Line>, color: Vector3<f32>, always_on_top: bool) {
+        let renderer = RENDERER.lock().unwrap();
         unsafe {
             if always_on_top {
                 gl::Disable(gl::DEPTH_TEST);
             } else {
                 gl::Enable(gl::DEPTH_TEST);
             }
-            self.shader.bind();
+            renderer.shader.bind();
 
             let view = camera.calc_matrix();
             let projection = projection.calc_matrix();
 
-            self.shader.set_uniform_mat4("view", &view);
-            self.shader.set_uniform_mat4("projection", &projection);
-            self.shader.set_uniform_3fv("color", &color);
+            renderer.shader.set_uniform_mat4("view", &view);
+            renderer.shader.set_uniform_mat4("projection", &projection);
+            renderer.shader.set_uniform_3fv("color", &color);
 
-            gl::BindVertexArray(self.vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+            gl::BindVertexArray(renderer.vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, renderer.vbo);
 
             let mut lines_data = Vec::new();
             for line in lines {

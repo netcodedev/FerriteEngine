@@ -1,12 +1,9 @@
-use std::{cell::RefCell, rc::Rc};
-
 use glfw::{Action, Glfw, Key};
 
 use crate::{camera::{Camera, MousePicker, Projection}, line::{Line, LineRenderer}, model::Model, terrain::{ChunkBounds, CHUNK_SIZE}, text::TextRenderer};
 use cgmath::{Deg, EuclideanSpace, Point3, Vector3};
 
 pub struct DebugController {
-    line_renderer: Rc<RefCell<LineRenderer>>,
     pub debug_ui: bool,
     wireframe: bool,
     vsync: bool,
@@ -14,9 +11,8 @@ pub struct DebugController {
 }
 
 impl DebugController {
-    pub fn new(line_renderer: Rc<RefCell<LineRenderer>>) -> Self {
+    pub fn new() -> Self {
         Self {
-            line_renderer,
             debug_ui: false,
             wireframe: false,
             vsync: true,
@@ -57,7 +53,7 @@ impl DebugController {
     pub fn draw_debug_ui(&self, delta_time: f32, camera: &Camera, projection: &Projection, mouse_picker: &MousePicker, models: &Vec<&mut Model>) {
         if self.show_rays {
             if let Some(line) = &mouse_picker.ray {
-                self.line_renderer.borrow().render(&camera, &projection, &line, Vector3::new(1.0, 0.0, 0.0), false);
+                LineRenderer::render(&camera, &projection, &line, Vector3::new(1.0, 0.0, 0.0), false);
             }
         }
 
@@ -93,11 +89,11 @@ impl DebugController {
                     }
                 }
             }
-            self.line_renderer.borrow().render_lines(camera, projection, &lines, Vector3::new(1.0, 1.0, 0.0), false);
-            self.line_renderer.borrow().render_lines(camera, projection, &corner_lines, Vector3::new(1.0, 0.0, 0.0), false);
+            LineRenderer::render_lines(camera, projection, &lines, Vector3::new(1.0, 1.0, 0.0), false);
+            LineRenderer::render_lines(camera, projection, &corner_lines, Vector3::new(1.0, 0.0, 0.0), false);
 
             for model in models {
-                model.render_bones(&self.line_renderer.borrow(), camera, projection);
+                model.render_bones(camera, projection);
             }
         }
     }

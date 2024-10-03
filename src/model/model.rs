@@ -146,18 +146,18 @@ impl Model {
         }
     }
 
-    pub fn render_bones(&self, line_renderer: &LineRenderer, camera: &Camera, projection: &Projection) {
+    pub fn render_bones(&self, camera: &Camera, projection: &Projection) {
         let root = Matrix4::from_translation(self.position) * Matrix4::from_scale(self.scale);
         let mut lines: Vec<Line> = Vec::new();
         for mesh in self.meshes.values() {
             if let Some(root_bone) = &mesh.root_bone {
-                lines.extend(self.render_child_bones(root_bone, line_renderer, camera, projection, root));
+                lines.extend(self.render_child_bones(root_bone, camera, projection, root));
             }
         }
-        line_renderer.render_lines(camera, projection, &lines, cgmath::Vector3::new(1.0, 0.0, 0.0), true);
+        LineRenderer::render_lines(camera, projection, &lines, cgmath::Vector3::new(1.0, 0.0, 0.0), true);
     }
 
-    fn render_child_bones(&self, bone: &Bone, line_renderer: &LineRenderer, camera: &Camera, projection: &Projection, root: cgmath::Matrix4<f32>) -> Vec<Line> {
+    fn render_child_bones(&self, bone: &Bone, camera: &Camera, projection: &Projection, root: cgmath::Matrix4<f32>) -> Vec<Line> {
         let position = root * bone.current_transform;
         let pos_vec = (position * Vector4::new(0.0,0.0,0.0,1.0)).truncate();
         let root_vec = (root * Vector4::new(0.0,0.0,0.0,1.0)).truncate();
@@ -169,7 +169,7 @@ impl Model {
         }];
         if let Some(children) = &bone.children {
             for child in children {
-                lines.extend(self.render_child_bones(child, line_renderer, camera, projection, position));
+                lines.extend(self.render_child_bones(child, camera, projection, position));
             }
         }
         lines

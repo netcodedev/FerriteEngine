@@ -19,7 +19,7 @@ use debug::DebugController;
 use plane::PlaneRenderer;
 use terrain::Terrain;
 use text::TextRenderer;
-use line::{Line, LineRenderer};
+use line::Line;
 use model::Model;
 use ui::{button::ButtonBuilder, input::InputBuilder, panel::PanelBuilder, text::Text, UIRenderer};
 use window::Window;
@@ -29,14 +29,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut window = Window::new(width, height);
 
     TextRenderer::resize(width, height);
-    let line_renderer = Rc::new(RefCell::new(LineRenderer::new()));
     let plane_renderer = Rc::new(RefCell::new(PlaneRenderer::new(width as f32, height as f32)));
     let ui = Rc::new(RefCell::new(UIRenderer::new(Rc::clone(&plane_renderer))));
 
     let mut camera: Camera = Camera::new((0.0, 92.0, 2.0), Deg(-90.0), Deg(0.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
     let mut camera_controller: CameraController = CameraController::new(1.0, 1.0);
-    let mut debug_controller: DebugController = DebugController::new(Rc::clone(&line_renderer));
+    let mut debug_controller: DebugController = DebugController::new();
 
     let mut mouse_picker = MousePicker::new();
 
