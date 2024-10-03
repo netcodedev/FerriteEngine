@@ -1,5 +1,3 @@
-use std::{cell::RefCell, rc::Rc};
-
 use cgmath::Deg;
 
 mod camera;
@@ -30,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     TextRenderer::resize(width, height);
     PlaneRenderer::resize(width, height);
-    let ui = Rc::new(RefCell::new(UIRenderer::new()));
+    let mut ui = UIRenderer::new();
 
     let mut camera: Camera = Camera::new((0.0, 92.0, 2.0), Deg(-90.0), Deg(0.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
@@ -47,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     model.play_animation("mixamo.com");
     models.push(&mut model);
 
-    ui.borrow_mut().add(PanelBuilder::new("Test Panel".to_string())
+    ui.add(PanelBuilder::new("Test Panel".to_string())
         .position(10.0, 120.0)
         .size(200.0, 200.0)
         .add_child(Box::new(ButtonBuilder::new()
@@ -74,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         window.handle_events(|mut window, mut glfw, event| {
             camera_controller.process_keyboard(&mut window, &event);
             camera_controller.process_mouse(&mut window, &event);
-            ui.borrow_mut().handle_events(window, &mut glfw, &event);
+            ui.handle_events(window, &mut glfw, &event);
             debug_controller.process_keyboard(&mut glfw, &event);
             line = mouse_picker.process_mouse(&event, &camera, &projection);
             projection.resize(&event);
@@ -94,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             model.update_and_render(delta_time as f32, &camera, &projection);
         }
 
-        ui.borrow_mut().render();
+        ui.render();
 
         debug_controller.draw_debug_ui(delta_time as f32, &camera, &projection, &mouse_picker, &models);
 
