@@ -15,12 +15,35 @@ impl UIElement for Input {
             plane = plane.color((0.2, 0.2, 0.2, 1.0));
         }
         plane_renderer.render(plane.build());
+        unsafe {
+            gl::Enable(gl::DEPTH_TEST);
+            gl::Enable(gl::STENCIL_TEST);
+            gl::Clear(gl::STENCIL_BUFFER_BIT);
+            gl::StencilFunc(gl::ALWAYS, 1, 0xFF);
+            gl::StencilOp(gl::KEEP, gl::KEEP, gl::REPLACE);
+            gl::ColorMask(gl::FALSE, gl::FALSE, gl::FALSE, gl::FALSE);
+            gl::DepthMask(gl::FALSE);
+        };
+        let stencil_plane = plane.size((self.size.0 - 5.0, self.size.1)).build();
+        plane_renderer.render(stencil_plane);
+        unsafe {
+            gl::StencilFunc(gl::EQUAL, 1, 0xFF);
+            gl::StencilMask(0x00);
+            gl::Disable(gl::DEPTH_TEST);
+            gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
+            gl::DepthMask(gl::TRUE);
+        };
         text_renderer.render(
             (self.offset.0 + self.position.0 + 5.0) as i32,
             (self.offset.1 + self.position.1 + 5.0) as i32,
             16.0,
             &self.content
         );
+        unsafe {
+            gl::Disable(gl::STENCIL_TEST);
+            gl::StencilMask(0xFF);
+            gl::StencilFunc(gl::ALWAYS, 0, 0xFF);
+        };
     }
 
     fn handle_events(&mut self, window: &mut glfw::Window, _: &mut glfw::Glfw, event: &glfw::WindowEvent) -> bool {
@@ -104,6 +127,7 @@ impl InputBuilder {
         }
     }
 
+    #[allow(dead_code)]
     pub fn position(mut self, x: f32, y: f32) -> Self {
         self.position = (x, y);
         self

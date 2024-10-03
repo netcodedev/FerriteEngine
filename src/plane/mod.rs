@@ -17,6 +17,7 @@ pub struct Plane {
     pub border_radius: (f32, f32, f32, f32)
 }
 
+#[derive(Clone, Copy)]
 pub struct PlaneBuilder {
     position: (f32, f32, f32),
     size: (f32, f32),

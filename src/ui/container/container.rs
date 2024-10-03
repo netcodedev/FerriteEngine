@@ -96,6 +96,7 @@ impl ContainerBuilder {
         self
     }
 
+    #[allow(dead_code)]
     pub fn add_child(mut self, child: Box<dyn UIElement>) -> Self {
         self.children.push(child);
         self
