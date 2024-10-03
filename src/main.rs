@@ -96,7 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             model.update_and_render(delta_time as f32, &camera, &projection);
         }
 
-        ui.borrow().render();
+        ui.borrow_mut().render();
 
         debug_controller.draw_debug_ui(delta_time as f32, &camera, &projection, &mouse_picker, &models);
 

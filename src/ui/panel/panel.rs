@@ -3,7 +3,7 @@ use crate::{plane::{PlaneBuilder, PlaneRenderer}, text::TextRenderer, ui::{conta
 use super::{Panel, PanelBuilder};
 
 impl UIElement for Panel {
-    fn render(&self, text_renderer: &mut TextRenderer, plane_renderer: &PlaneRenderer) {
+    fn render(&mut self, text_renderer: &mut TextRenderer, plane_renderer: &PlaneRenderer) {
         plane_renderer.render(PlaneBuilder::new()
             .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
             .size((self.size.0, self.size.1))

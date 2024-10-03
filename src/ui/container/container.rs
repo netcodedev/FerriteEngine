@@ -15,7 +15,7 @@ impl Container {
 }
 
 impl UIElement for Container {
-    fn render(&self, text_renderer: &mut TextRenderer, plane_renderer: &PlaneRenderer) {
+    fn render(&mut self, text_renderer: &mut TextRenderer, plane_renderer: &PlaneRenderer) {
         plane_renderer.render(PlaneBuilder::new()
             .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
             .size((self.size.0, self.size.1))
@@ -23,7 +23,7 @@ impl UIElement for Container {
             .border_color((0.0,0.0,0.0,0.0))
             .build(),
         );
-        for child in &self.children {
+        for child in &mut self.children {
             child.render(text_renderer, &plane_renderer);
         }
     }

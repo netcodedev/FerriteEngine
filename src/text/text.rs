@@ -24,7 +24,10 @@ impl TextRenderer {
         }
     }
 
-    pub fn render(&mut self, x: i32, y: i32, size: f32, text: &str) {
+    /// Renders text to the screen
+    /// 
+    /// Returns the width and height of the text
+    pub fn render(&mut self, x: i32, y: i32, size: f32, text: &str) -> (i32, i32) {
         let glyphs = self.layout(Scale::uniform(size), self.width, &text);
         for glyph in &glyphs {
             self.cache.queue_glyph(0, glyph.clone());
@@ -46,7 +49,15 @@ impl TextRenderer {
             );
         });
         
+        let mut max_x = 0;
+        let mut max_y = 0;
         let vertices: Vec<f32> = glyphs.iter().filter_map(|g| self.cache.rect_for(0, g).ok().flatten()).flat_map(|(uv_rect, screen_rect)| {
+            if screen_rect.max.x as i32 > max_x {
+                max_x = screen_rect.max.x as i32;
+            }
+            if screen_rect.max.y as i32 > max_y {
+                max_y = screen_rect.max.y as i32;
+            }
             let gl_rect = Rect {
                 min: point(screen_rect.min.x as f32 + x as f32, screen_rect.min.y as f32 + y as f32),
                 max: point(screen_rect.max.x as f32 + x as f32, screen_rect.max.y as f32 + y as f32),
@@ -110,6 +121,7 @@ impl TextRenderer {
                 gl::PolygonMode(gl::FRONT_AND_BACK, polygon_mode as u32);
             }
         }
+        (max_x, max_y)
     }
 
     pub fn resize(&mut self, event: &glfw::WindowEvent) {

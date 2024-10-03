@@ -3,7 +3,7 @@ use crate::{plane::PlaneBuilder, ui::UIElement};
 use super::{Input, InputBuilder};
 
 impl UIElement for Input {
-    fn render(&self, text_renderer: &mut crate::text::TextRenderer, plane_renderer: &crate::plane::PlaneRenderer) {
+    fn render(&mut self, text_renderer: &mut crate::text::TextRenderer, plane_renderer: &crate::plane::PlaneRenderer) {
         let mut plane = PlaneBuilder::new()
             .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
             .size((self.size.0, self.size.1))
@@ -36,7 +36,7 @@ impl UIElement for Input {
             // Enable writing to the color and depth buffer
             gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
             gl::DepthMask(gl::TRUE);
-            
+
             text_renderer.render(
                 (self.offset.0 + self.position.0 + 5.0) as i32,
                 (self.offset.1 + self.position.1 + 5.0) as i32,

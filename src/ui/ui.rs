@@ -17,8 +17,8 @@ impl UIRenderer {
         self.children.push(Box::new(element));
     }
     
-    pub fn render(&self) {
-        for child in &self.children {
+    pub fn render(&mut self) {
+        for child in &mut self.children {
             child.render(&mut self.text_renderer.borrow_mut(), &self.plane_renderer.borrow());
         }
     }

@@ -4,4 +4,5 @@ pub struct Text {
     pub text: String,
     pub size: f32,
     pub offset: (f32, f32),
+    pub width: f32,
 }

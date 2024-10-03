@@ -3,7 +3,7 @@ use crate::{plane::{PlaneBuilder, PlaneRenderer}, text::TextRenderer, ui::UIElem
 use super::{Button, ButtonBuilder};
 
 impl UIElement for Button {
-    fn render(&self, text_renderer: &mut TextRenderer, plane_renderer: &PlaneRenderer) {
+    fn render(&mut self, text_renderer: &mut TextRenderer, plane_renderer: &PlaneRenderer) {
         let mut plane = PlaneBuilder::new()
             .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
             .size((self.size.0, self.size.1))
@@ -15,7 +15,7 @@ impl UIElement for Button {
             plane = plane.color((0.2, 0.3, 0.5, 1.0));
         }
         plane_renderer.render(plane.build());
-        for child in &self.children {
+        for child in &mut self.children {
             child.render(text_renderer, &plane_renderer);
         }
     }

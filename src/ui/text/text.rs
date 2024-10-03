@@ -8,13 +8,17 @@ impl Text {
             size,
             text: text.to_string(),
             offset: (0.0, 0.0),
+            width: size * text.len() as f32, // initial estimate (will be too high)
         }
     }
 }
 
 impl UIElement for Text {
-    fn render(&self, text_renderer: &mut TextRenderer, _: &PlaneRenderer) {
-        text_renderer.render(self.offset.0 as i32 + 5, self.offset.1 as i32 + 2, self.size, self.text.as_str());
+    fn render(&mut self, text_renderer: &mut TextRenderer, _: &PlaneRenderer) {
+        let (width, _) = text_renderer.render(self.offset.0 as i32 + 5, self.offset.1 as i32 + 2, self.size, self.text.as_str());
+        if width as f32 != self.width {
+            self.width = width as f32;
+        }
     }
 
     fn handle_events(&mut self, _window: &mut glfw::Window, _: &mut glfw::Glfw, _event: &glfw::WindowEvent) -> bool {
@@ -28,6 +32,6 @@ impl UIElement for Text {
     }
 
     fn get_size(&self) -> (f32, f32) {
-        (self.size * self.text.len() as f32, self.size)
+        (self.width, self.size)
     }
 }
