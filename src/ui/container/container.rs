@@ -30,9 +30,9 @@ impl UIElement for Container {
 
     fn set_offset(&mut self, offset: (f32, f32)) {
         self.offset = offset;
-        let mut current_y_offset = 0.0;
+        let mut current_y_offset = self.gap;
         for child in &mut self.children {
-            child.set_offset((self.offset.0 + self.position.0, self.offset.1 + self.position.1 + current_y_offset));
+            child.set_offset((self.offset.0 + self.position.0 + self.gap, self.offset.1 + self.position.1 + current_y_offset));
             current_y_offset += child.get_size().1 + self.gap;
         }
     }
@@ -64,9 +64,9 @@ impl UIElement for Container {
     }
 
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>) {
-        let mut current_y_offset = 0.0;
+        let mut current_y_offset = self.gap;
         for mut child in children {
-            child.set_offset((self.offset.0 + self.position.0, self.offset.1 + self.position.1 + current_y_offset));
+            child.set_offset((self.offset.0 + self.position.0 + self.gap, self.offset.1 + self.position.1 + current_y_offset));
             current_y_offset += child.get_size().1 + self.gap;
             self.children.push(child);
         }
