@@ -15,9 +15,8 @@ mod ui;
 mod window;
 use camera::{Camera, CameraController, Projection, MousePicker};
 use debug::DebugController;
-use marching_cubes::Chunk;
+use marching_cubes::Terrain;
 use plane::PlaneRenderer;
-use terrain::Terrain;
 use text::TextRenderer;
 use line::Line;
 use model::Model;
@@ -32,14 +31,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     PlaneRenderer::resize(width, height);
     let mut ui = UIRenderer::new();
 
-    let mut camera: Camera = Camera::new((0.0, 128.0, 2.0), Deg(-90.0), Deg(0.0));
+    let mut camera: Camera = Camera::new((0.0, 92.0, 2.0), Deg(-90.0), Deg(0.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
     let mut camera_controller: CameraController = CameraController::new(10.0, 1.0);
     let mut debug_controller: DebugController = DebugController::new();
 
     let mut mouse_picker = MousePicker::new();
 
-    // let mut terrain = Terrain::new();
+    let mut terrain = Terrain::new();
 
     let mut models: Vec<&mut Model> = Vec::new();
     let mut model = Model::new("assets/models/char_anim.fbx")?;
@@ -64,8 +63,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
     );
 
-    let mut chunk = Chunk::new((0.0, 0.0, 0.0));
-
     while !window.should_close() {
         unsafe {
             gl::ClearColor(0.3, 0.3, 0.5, 1.0);
@@ -84,14 +81,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             TextRenderer::resize_from_event(&event);
         });
 
-        chunk.render(&camera, &projection);
         // terrain.process_line(line);
 
         let delta_time = window.calculate_frametime();
         camera_controller.update_camera(&mut camera, delta_time as f32);
 
-        // terrain.update();
-        // terrain.render(&camera, &projection);
+        terrain.update();
+        terrain.render(&camera, &projection);
 
         for model in models.iter_mut() {
             model.update_and_render(delta_time as f32, &camera, &projection);

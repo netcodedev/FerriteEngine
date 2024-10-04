@@ -24,7 +24,7 @@ impl Model {
             current_animation: None,
             shader,
             textures: HashMap::<TextureType, Texture>::new(),
-            position: cgmath::Vector3::new(0.0, 128.0, 0.0),
+            position: cgmath::Vector3::new(0.0, 92.0, 0.0),
             scale: 0.01,
         })
     }

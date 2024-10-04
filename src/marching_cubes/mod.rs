@@ -1,16 +1,24 @@
+use std::{collections::HashMap, sync::mpsc};
+
 use ndarray::ArrayBase;
 
-use crate::shader::{DynamicVertexArray, Shader};
+use crate::{shader::{DynamicVertexArray, Shader}, terrain::ChunkBounds};
 
+pub mod terrain;
 pub mod marching_cubes;
 
 const CHUNK_SIZE: usize = 128;
+
+pub struct Terrain {
+    pub chunks: HashMap<ChunkBounds, Chunk>,
+    chunk_receiver: mpsc::Receiver<Chunk>,
+    shader: Shader,
+}
 
 pub struct Chunk {
     position: (f32, f32, f32),
     blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>>,
     mesh: Option<ChunkMesh>,
-    shader: Shader,
 }
 
 pub struct ChunkMesh {
