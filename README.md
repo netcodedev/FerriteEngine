@@ -1,10 +1,10 @@
-# Voxel Engine
-This is a personal project to get a better understanding of rust and OpenGL. The goal is to create a voxel engine that can
-render a large number of voxels in real time.
+# Engine
+This is a personal project to get a better understanding of rust and OpenGL. The goal is to create a 3D engine that can be used to create
+applications of various types.
 
 ## Features
-- Chunked multithreaded world generation
-- Greedy meshing
+- Chunked multithreaded voxel world generation
+- Voxel Greedy meshing
 - Text rendering
 - Line rendering
 - Rendering of 3D models
@@ -15,6 +15,8 @@ render a large number of voxels in real time.
     - Text
 
 ## Planned Features
+- Animation blending
+- Marching cubes terrain generation
 - Inverse Kinematics
 - Infinite world generation
 - Lighting
