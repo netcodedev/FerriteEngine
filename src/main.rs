@@ -72,10 +72,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         window.handle_events(|mut window, mut glfw, event| {
             camera_controller.process_keyboard(&mut window, &event);
             camera_controller.process_mouse(&mut window, &event);
+            projection.resize(&event);
             ui.handle_events(window, &mut glfw, &event);
             debug_controller.process_keyboard(&mut glfw, &event);
             line = mouse_picker.process_mouse(&event, &camera, &projection);
-            projection.resize(&event);
             PlaneRenderer::resize_from_event(&event);
             TextRenderer::resize_from_event(&event);
         });
