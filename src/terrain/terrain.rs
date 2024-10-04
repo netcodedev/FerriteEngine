@@ -120,11 +120,7 @@ impl ChunkMesh {
     }
 
     pub fn is_buffered(&self) -> bool {
-        if let Some(_) = &self.vertex_array {
-            true
-        } else {
-            false
-        }
+        self.vertex_array.is_some()
     }
 }
 
