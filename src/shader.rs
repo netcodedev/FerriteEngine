@@ -106,7 +106,7 @@ impl Shader {
                     info_log.as_mut_ptr() as *mut GLchar,
                 );
                 println!(
-                    "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n{}",
+                    "Vertex Shader Compilation failed\n{}",
                     String::from_utf8_lossy(&info_log)
                 );
             }
@@ -127,7 +127,7 @@ impl Shader {
                     info_log.as_mut_ptr() as *mut GLchar,
                 );
                 println!(
-                    "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n{}",
+                    "Fragment Shader Compilation failed\n{}",
                     String::from_utf8_lossy(&info_log)
                 );
             }
@@ -148,7 +148,7 @@ impl Shader {
                     info_log.as_mut_ptr() as *mut GLchar,
                 );
                 println!(
-                    "ERROR::SHADER::PROGRAM::LINKING_FAILED\n{}",
+                    "Linking shaders failed\n{}",
                     String::from_utf8_lossy(&info_log)
                 );
             }
