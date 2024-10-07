@@ -14,7 +14,7 @@ impl Chunk {
         let tiny_hills = Source::perlin(1).scale([0.1; 2]);
         let cave = Source::perlin(1).scale([0.1; 3]);
         let offset: f64 = 16777216.0;
-        let blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>> = ArrayBase::from_shape_fn((CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE), |(x, y, z)| {
+        let blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>> = ArrayBase::from_shape_fn((CHUNK_SIZE + 1, CHUNK_SIZE + 1, CHUNK_SIZE + 1), |(x, y, z)| {
             let sample_point = (
                 (position.0 * CHUNK_SIZE as f32) as f64 + x as f64 + offset,
                 (position.1 * CHUNK_SIZE as f32) as f64 + y as f64 + offset,
@@ -68,9 +68,9 @@ impl Chunk {
     fn generate_mesh(&self) -> ChunkMesh {
         let mut vertices = Vec::<Vertex>::new();
         let isovalue = 0.3;
-        for z in 0..CHUNK_SIZE - 1 {
-            for y in 0..CHUNK_SIZE - 1 {
-                for x in 0..CHUNK_SIZE - 1 {
+        for z in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for x in 0..CHUNK_SIZE {
                     vertices.extend(self.march_cube((x, y, z), isovalue));
                 }
             }
