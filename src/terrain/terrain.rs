@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use gl::types::GLuint;
 use ndarray::{Array3, ArrayBase, Dim};
 use libnoise::prelude::*;
-use cgmath::EuclideanSpace;
+use cgmath::{EuclideanSpace, Point3};
 
 use super::{Block, BlockVertex, Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_SIZE};
 
@@ -54,6 +54,14 @@ impl ChunkBounds {
         position.x >= self.min.0 as f32 && position.x < self.max.0 as f32 &&
         position.y >= self.min.1 as f32 && position.y < self.max.1 as f32 &&
         position.z >= self.min.2 as f32 && position.z < self.max.2 as f32
+    }
+
+    pub fn center(&self) -> Point3<f32> {
+        Point3::new(
+            (self.min.0 + self.max.0) as f32 / 2.0,
+            (self.min.1 + self.max.1) as f32 / 2.0,
+            (self.min.2 + self.max.2) as f32 / 2.0,
+        )
     }
 
     pub fn get_chunk_bounds_on_line(line: &Line) -> Vec<ChunkBounds> {

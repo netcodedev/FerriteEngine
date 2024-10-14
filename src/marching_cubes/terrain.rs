@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::mpsc, thread};
 
-use crate::{camera::{Camera, Projection}, marching_cubes::Chunk, shader::Shader, terrain::ChunkBounds};
+use crate::{camera::{Camera, Projection, ViewFrustum}, marching_cubes::Chunk, shader::Shader, terrain::ChunkBounds};
 
 use super::Terrain;
 
@@ -37,7 +37,9 @@ impl Terrain {
 
     pub fn render(&mut self, camera: &Camera, projection: &Projection) {
         for (_, chunk) in &mut self.chunks {
-            chunk.render(camera, projection, &self.shader);
+            if ViewFrustum::is_bounds_in_frustum(projection, camera, chunk.get_bounds()) {
+                chunk.render(camera, projection, &self.shader);
+            }
         }
     }
 }
