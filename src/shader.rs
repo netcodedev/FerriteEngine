@@ -23,6 +23,54 @@ impl Shader {
         Shader { id: Shader::create_shader(vertex_source, fragment_source)}
     }
 
+    pub fn compute(compute_source: &str) -> Self {
+        let id: GLuint;
+        unsafe {
+            id = gl::CreateProgram();
+            let compute_shader = gl::CreateShader(gl::COMPUTE_SHADER);
+            let c_str_compute = CString::new(compute_source.as_bytes()).unwrap();
+            gl::ShaderSource(compute_shader, 1, &c_str_compute.as_ptr(), ptr::null());
+            gl::CompileShader(compute_shader);
+
+            let mut success = gl::FALSE as GLint;
+            let mut info_log = Vec::with_capacity(512);
+            info_log.set_len(512 - 1);
+            gl::GetShaderiv(compute_shader, gl::COMPILE_STATUS, &mut success);
+            if success != gl::TRUE as GLint {
+                gl::GetShaderInfoLog(
+                    compute_shader,
+                    512,
+                    ptr::null_mut(),
+                    info_log.as_mut_ptr() as *mut GLchar,
+                );
+                println!(
+                    "Compute Shader Compilation failed\n{}",
+                    String::from_utf8_lossy(&info_log)
+                );
+            }
+
+            gl::AttachShader(id, compute_shader);
+            gl::LinkProgram(id);
+
+            gl::GetProgramiv(id, gl::LINK_STATUS, &mut success);
+            if success != gl::TRUE as GLint {
+                gl::GetProgramInfoLog(
+                    id,
+                    512,
+                    ptr::null_mut(),
+                    info_log.as_mut_ptr() as *mut GLchar,
+                );
+                println!(
+                    "Linking shaders failed\n{}",
+                    String::from_utf8_lossy(&info_log)
+                );
+            }
+
+            gl::DeleteShader(compute_shader);
+        }
+        Shader { id }
+    }
+
     pub fn bind(&self) {
         unsafe {
             gl::UseProgram(self.id);

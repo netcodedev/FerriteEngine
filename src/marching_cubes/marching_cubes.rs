@@ -1,3 +1,5 @@
+use ::core::slice;
+
 use cgmath::{InnerSpace, Vector3, Zero};
 use gl::types::GLuint;
 use libnoise::prelude::*;
@@ -36,6 +38,90 @@ impl Chunk {
         };
         chunk.mesh = Some(chunk.generate_mesh());
         chunk
+    }
+
+    pub fn with_compute(position: (f32, f32, f32)) -> Self {
+        let generator = Source::perlin(1).scale([0.003; 2]);
+        let hills = Source::perlin(1).scale([0.01; 2]);
+        let tiny_hills = Source::perlin(1).scale([0.1; 2]);
+        let cave = Source::perlin(1).scale([0.1; 3]);
+        let offset: f64 = 16777216.0;
+        let blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>> = ArrayBase::from_shape_fn((CHUNK_SIZE + 1, CHUNK_SIZE + 1, CHUNK_SIZE + 1), |(x, y, z)| {
+            let sample_point = (
+                (position.0 * CHUNK_SIZE as f32) as f64 + x as f64 + offset,
+                (position.1 * CHUNK_SIZE as f32) as f64 + y as f64 + offset,
+                (position.2 * CHUNK_SIZE as f32) as f64 + z as f64 + offset,
+            );
+            
+            let noise_value = (1.0 + generator.sample([sample_point.0, sample_point.2]))/2.0;
+            let hills_value = (1.0 + hills.sample([sample_point.0, sample_point.2]))/2.0 * 0.2;
+            let tiny_hills_value = (1.0 + tiny_hills.sample([sample_point.0, sample_point.2]))/2.0 * 0.01;
+            if ((noise_value + hills_value + tiny_hills_value) * CHUNK_SIZE as f64) < y as f64 {
+                return 0.0;
+            }
+            (1.0 + cave.sample([sample_point.0, sample_point.1, sample_point.2]) as f32) / 2.0
+        });
+        let shader = Shader::compute(include_str!("compute.glsl"));
+        shader.bind();
+        shader.set_uniform_1i("CHUNK_SIZE", CHUNK_SIZE.try_into().unwrap());
+        let mut ssbo_in_id = 0;
+        let mut ssbo_out_id = 0;
+        let mut count_id = 0;
+        unsafe {
+            gl::GenBuffers(1, &mut ssbo_in_id);
+            gl::BindBuffer(gl::SHADER_STORAGE_BUFFER, ssbo_in_id);
+            gl::BufferData(gl::SHADER_STORAGE_BUFFER, (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * std::mem::size_of::<f32>()) as isize, blocks.as_slice().unwrap().as_ptr() as *const std::ffi::c_void, gl::DYNAMIC_COPY);
+            gl::BindBufferBase(gl::SHADER_STORAGE_BUFFER, 0, ssbo_in_id);
+
+            gl::GenBuffers(1, &mut ssbo_out_id);
+            gl::BindBuffer(gl::SHADER_STORAGE_BUFFER, ssbo_out_id);
+            gl::BufferData(gl::SHADER_STORAGE_BUFFER, (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * std::mem::size_of::<f32>() * 6 * 15) as isize, std::ptr::null(), gl::DYNAMIC_COPY);
+            gl::BindBufferBase(gl::SHADER_STORAGE_BUFFER, 1, ssbo_out_id);
+
+            gl::GenBuffers(1, &mut count_id);
+            gl::BindBuffer(gl::ATOMIC_COUNTER_BUFFER, count_id);
+            gl::BufferData(gl::ATOMIC_COUNTER_BUFFER, std::mem::size_of::<i32>() as isize, std::ptr::null(), gl::DYNAMIC_COPY);
+            gl::BindBufferBase(gl::ATOMIC_COUNTER_BUFFER, 2, count_id);
+
+            let start = std::time::Instant::now();
+            gl::DispatchCompute(CHUNK_SIZE as u32 / 8, CHUNK_SIZE as u32 / 8, CHUNK_SIZE as u32 / 8);
+
+            gl::MemoryBarrier(gl::SHADER_STORAGE_BARRIER_BIT);
+            let elapsed = start.elapsed();
+            let mut vertex_count: i32 = 0;
+            gl::BindBuffer(gl::ATOMIC_COUNTER_BUFFER, count_id);
+            gl::GetBufferSubData(gl::ATOMIC_COUNTER_BUFFER, 0, std::mem::size_of::<i32>() as isize, &mut vertex_count as *mut i32 as *mut std::ffi::c_void);
+            println!("Vertex count: {}", vertex_count);
+            gl::BindBuffer(gl::SHADER_STORAGE_BUFFER, ssbo_out_id);
+
+            let ptr = gl::MapBuffer(gl::SHADER_STORAGE_BUFFER, gl::READ_ONLY) as *const f32;
+            let vertex_data_slice = slice::from_raw_parts(ptr, (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 6 * 15) as usize);
+
+            let vertices: Vec<Vertex> = vertex_data_slice.chunks(8).map(|chunk| {
+                Vertex {
+                    position: [chunk[0], chunk[1], chunk[2]],
+                    normal: [chunk[4], chunk[5], chunk[6]],
+                    color: [0.0, 0.5, 0.1],
+                }
+            }).filter(|v| v.normal != [0.0, 0.0, 0.0]).collect();
+            println!("Elapsed: {:?}", elapsed);
+            println!("{:?}", vertices[0]);
+            println!("{:?}", vertices[1]);
+            println!("{:?}", vertices[2]);
+            println!("{:?}", vertices[3]);
+            println!("{:?}", vertices[4]);
+            println!("{:?}", vertices[5]);
+            println!("{:?}", vertices[6]);
+            println!("{:?}", vertices[7]);
+            println!("{:?}", vertices[8]);
+            println!("{:?}", vertices[9]);
+
+            Self {
+                position,
+                blocks,
+                mesh: Some(ChunkMesh::new(vertices, None)),
+            }
+        }
     }
 
     pub fn render(&mut self, camera: &Camera, projection: &Projection, shader: &Shader) {

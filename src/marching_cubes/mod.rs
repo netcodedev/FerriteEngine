@@ -27,7 +27,7 @@ pub struct ChunkMesh {
     vertices: Vec<Vertex>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[warn(dead_code)]
 #[repr(C)]
 pub struct Vertex {

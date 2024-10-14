@@ -7,7 +7,7 @@ use super::Terrain;
 impl Terrain {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
-        let origin = Chunk::new((0.0, 0.0, 0.0));
+        let origin = Chunk::with_compute((0.0, 0.0, 0.0));
         tx.send(origin).unwrap();
 
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
