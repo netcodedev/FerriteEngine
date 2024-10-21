@@ -2,6 +2,7 @@ use cgmath::Deg;
 
 mod camera;
 mod debug;
+mod dual_contouring;
 mod line;
 mod marching_cubes;
 mod model;
@@ -15,7 +16,7 @@ mod ui;
 mod window;
 use camera::{Camera, CameraController, Projection, MousePicker};
 use debug::DebugController;
-use marching_cubes::Terrain;
+use dual_contouring::Terrain;
 use plane::PlaneRenderer;
 use text::TextRenderer;
 use line::Line;
