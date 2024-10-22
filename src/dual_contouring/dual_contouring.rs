@@ -1,37 +1,24 @@
 use cgmath::{EuclideanSpace, InnerSpace, Point3, Vector3};
 use gl::types::GLuint;
 use libnoise::prelude::*;
-use ndarray::ArrayBase;
 
 use crate::{camera::{Camera, Projection}, shader::{DynamicVertexArray, Shader, VertexAttributes}, terrain::ChunkBounds};
 
-use super::{Chunk, ChunkMesh, Vertex, CHUNK_SIZE, ISO_VALUE};
+use super::{Chunk, ChunkMesh, Vertex, CHUNK_SIZE, CHUNK_SIZE_FLOAT, ISO_VALUE};
 
 impl Chunk {
-    pub fn new(position: (f32, f32, f32)) -> Self {
-        let generator = Source::perlin(1).scale([0.003; 2]);
-        let hills = Source::perlin(1).scale([0.01; 2]);
-        let tiny_hills = Source::perlin(1).scale([0.1; 2]);
+    pub fn new(position: (f32, f32, f32), lod: usize) -> Self {
+        let noises = [
+            Source::perlin(1).scale([0.003; 2]),
+            Source::perlin(1).scale([0.01; 2]),
+            Source::perlin(1).scale([0.1; 2]),
+        ];
         let cave = Source::perlin(1).scale([0.1; 3]);
-        let offset: f64 = 16777216.0;
-        let blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>> = ArrayBase::from_shape_fn((CHUNK_SIZE + 1, CHUNK_SIZE + 1, CHUNK_SIZE + 1), |(x, y, z)| {
-            let sample_point = (
-                (position.0 * CHUNK_SIZE as f32) as f64 + x as f64 + offset,
-                (position.1 * CHUNK_SIZE as f32) as f64 + y as f64 + offset,
-                (position.2 * CHUNK_SIZE as f32) as f64 + z as f64 + offset,
-            );
-            
-            let noise_value = (1.0 + generator.sample([sample_point.0, sample_point.2]))/2.0;
-            let hills_value = (1.0 + hills.sample([sample_point.0, sample_point.2]))/2.0 * 0.2;
-            let tiny_hills_value = (1.0 + tiny_hills.sample([sample_point.0, sample_point.2]))/2.0 * 0.01;
-            if ((noise_value + hills_value + tiny_hills_value) * CHUNK_SIZE as f64) < y as f64 {
-                return ISO_VALUE - 1e-6;
-            }
-            (1.0 + cave.sample([sample_point.0, sample_point.1, sample_point.2]) as f32) / 2.0
-        });
         let mut chunk = Self {
             position,
-            blocks,
+            cave,
+            noises,
+            chunk_size: Chunk::calculate_chunk_size(lod),
             mesh: None,
         };
         chunk.mesh = Some(chunk.generate_mesh());
@@ -65,16 +52,34 @@ impl Chunk {
         }
     }
 
+    fn get_density_at(&self, (x, y, z): (usize, usize, usize)) -> f32 {
+        let offset: f64 = 16777216.0;
+        let sample_point = (
+            (self.position.0 * CHUNK_SIZE_FLOAT) as f64 + x as f64 + offset,
+            (self.position.1 * CHUNK_SIZE_FLOAT) as f64 + y as f64 + offset,
+            (self.position.2 * CHUNK_SIZE_FLOAT) as f64 + z as f64 + offset,
+        );
+        
+        let noise_value = (1.0 + self.noises[0].sample([sample_point.0, sample_point.2]))/2.0;
+        let hills_value = (1.0 + self.noises[1].sample([sample_point.0, sample_point.2]))/2.0 * 0.2;
+        let tiny_hills_value = (1.0 + self.noises[2].sample([sample_point.0, sample_point.2]))/2.0 * 0.01;
+        let height = ((noise_value + hills_value + tiny_hills_value) as f32 * CHUNK_SIZE_FLOAT) - y as f32;
+        let iso = (1.0 + self.cave.sample([sample_point.0, sample_point.1, sample_point.2]) as f32) / 2.0;
+        let height_iso = (height as f32 * CHUNK_SIZE_FLOAT) - y as f32;
+        height_iso - iso
+    }
+
     fn generate_mesh(&self) -> ChunkMesh {
         let mut vertices = Vec::<Vertex>::new();
         let mut indices = Vec::<u32>::new();
-        let mut vertex_grid = vec![[[false; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
-        let mut index_grid = vec![[[0; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
+        let mut vertex_grid = vec![vec![vec![false; self.chunk_size]; self.chunk_size]; self.chunk_size];
+        let mut index_grid = vec![vec![vec![0; self.chunk_size]; self.chunk_size]; self.chunk_size];
         let mut index: u32 = 0;
-        for x in 0..CHUNK_SIZE {
-            for y in 0..CHUNK_SIZE {
-                for z in 0..CHUNK_SIZE {
-                    if self.is_surface_voxel((x, y, z)) {
+        let size_multiplier = CHUNK_SIZE / self.chunk_size;
+        for x in 0..self.chunk_size {
+            for y in 0..self.chunk_size {
+                for z in 0..self.chunk_size {
+                    if self.is_surface_voxel((x * size_multiplier, y * size_multiplier, z * size_multiplier)) {
                         let mut corners: [(Point3<f32>, f32); 8] = [(Point3::new(0.0, 0.0, 0.0), ISO_VALUE); 8];
                         for i in 0..8 {
                             let x_add = i & 1;
@@ -83,9 +88,9 @@ impl Chunk {
                             let x_n = x + x_add;
                             let y_n = y + y_add;
                             let z_n = z + z_add;
-                            corners[i] = (Point3::new(x_add as f32, y_add as f32, z_add as f32), self.blocks[[x_n, y_n, z_n]]);
+                            corners[i] = (Point3::new(x_add as f32, y_add as f32, z_add as f32), self.get_density_at((x_n * size_multiplier, y_n * size_multiplier, z_n * size_multiplier)));
                         }
-                        let position = self.calculate_vertex_position((x, y, z), &corners);
+                        let position = self.calculate_vertex_position((x * size_multiplier, y * size_multiplier, z * size_multiplier), &corners);
                         let normal = Chunk::calculate_gradient(&corners, position);
 
                         let vertex = Vertex {
@@ -138,16 +143,21 @@ impl Chunk {
                 }
             }
         }
-        println!("Generated mesh with {} vertices and {} indices", vertices.len(), indices.len());
+        // println!("Generated chunk with {} vertices and {} indices", vertices.len(), indices.len());
         ChunkMesh::new(vertices, Some(indices))
     }
 
+    fn calculate_chunk_size(lod: usize) -> usize {
+        std::cmp::max(2, std::cmp::min(CHUNK_SIZE, CHUNK_SIZE / 2usize.pow(lod as u32 / 2)))
+    }
+
     fn calculate_vertex_position(&self, position: (usize, usize, usize), corners: &[(Point3<f32>, f32)]) -> Point3<f32> {
-        let mut v_pos = Point3::new(0.0,0.0,0.0);
+        let mut v_pos = Point3::new(position.0 as f32, position.1 as f32, position.2 as f32);
         let relative_coordinates = Chunk::calculate_relative_coordinates(&corners);
-        v_pos.x = position.0 as f32 + relative_coordinates.x;
-        v_pos.y = position.1 as f32 + relative_coordinates.y;
-        v_pos.z = position.2 as f32 + relative_coordinates.z;
+
+        v_pos.x += relative_coordinates.x;
+        v_pos.y += relative_coordinates.y;
+        v_pos.z += relative_coordinates.z;
 
         v_pos
     }
@@ -216,11 +226,12 @@ impl Chunk {
 
     fn is_surface_voxel(&self, position: (usize, usize, usize)) -> bool {
         let mut corners = [0.0; 8];
+        let size_multiplier = CHUNK_SIZE / self.chunk_size;
         for i in 0..8 {
-            let x = position.0 + (i & 1);
-            let y = position.1 + ((i >> 1) & 1);
-            let z = position.2 + ((i >> 2) & 1);
-            corners[i] = self.blocks[[x, y, z]];
+            let x = position.0 + ((i & 1) * size_multiplier);
+            let y = position.1 + (((i >> 1) & 1) * size_multiplier);
+            let z = position.2 + (((i >> 2) & 1) * size_multiplier);
+            corners[i] = self.get_density_at((x, y, z));
         }
         let mut cube_index = 0;
         for i in 0..8 {

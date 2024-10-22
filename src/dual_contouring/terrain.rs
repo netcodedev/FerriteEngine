@@ -7,7 +7,7 @@ use super::Terrain;
 impl Terrain {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
-        let origin = Chunk::new((0.0, 0.0, 0.0));
+        let origin = Chunk::new((0.0, 0.0, 0.0), 0);
         tx.send(origin).unwrap();
 
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
@@ -16,7 +16,7 @@ impl Terrain {
         let tx2 = tx.clone();
         let tx3 = tx.clone();
         let tx4 = tx.clone();
-        const RADIUS: i32 = 1;
+        const RADIUS: i32 = 10;
         let _ = thread::spawn(move || chunkloader(RADIUS,1,1,tx1));
         let _ = thread::spawn(move || chunkloader(RADIUS,-1,1,tx2));
         let _ = thread::spawn(move || chunkloader(RADIUS,1,-1,tx3));
@@ -54,9 +54,9 @@ fn chunkloader(radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<Chunk>) {
         }
         let new_chunk: Chunk;
         if z_dir > 0 {
-            new_chunk = Chunk::new(((x * x_dir) as f32, 0.0, z as f32));
+            new_chunk = Chunk::new(((x * x_dir) as f32, 0.0, z as f32), std::cmp::max(x.abs(),z.abs()) as usize);
         } else {
-            new_chunk = Chunk::new(((z * z_dir) as f32, 0.0, (x * x_dir) as f32));
+            new_chunk = Chunk::new(((z * z_dir) as f32, 0.0, (x * x_dir) as f32), std::cmp::max(x.abs(),z.abs()) as usize);
         }
         
         let result = tx.send(new_chunk);

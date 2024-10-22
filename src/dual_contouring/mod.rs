@@ -3,11 +3,12 @@ pub mod terrain;
 
 use std::{collections::HashMap, sync::mpsc};
 
-use ndarray::ArrayBase;
+use libnoise::{Perlin, Scale};
 
 use crate::{shader::{DynamicVertexArray, Shader}, terrain::ChunkBounds};
 
 const CHUNK_SIZE: usize = 128;
+const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 const ISO_VALUE: f32 = 0.3;
 
 pub struct Terrain {
@@ -18,7 +19,9 @@ pub struct Terrain {
 
 pub struct Chunk {
     position: (f32, f32, f32),
-    blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>>,
+    cave: Scale<3, Perlin<3>>,
+    noises: [Scale<2, Perlin<2>>; 3],
+    chunk_size: usize,
     mesh: Option<ChunkMesh>,
 }
 
