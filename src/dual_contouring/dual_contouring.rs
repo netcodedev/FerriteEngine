@@ -101,38 +101,38 @@ impl Chunk {
                         index_grid[x][y][z] = index;
                         vertices.push(vertex);
                         vertex_grid[x][y][z] = true;
-                        if x > 0 && vertex_grid[x - 1][y][z] {
-                            if y > 0 && vertex_grid[x][y - 1][z] {
+                        if x > 0 && vertex_grid[x-1][y][z] {
+                            if y > 0 && vertex_grid[x-1][y-1][z] {
                                 indices.push(index);
-                                indices.push(index_grid[x][y - 1][z] as u32);
-                                indices.push(index_grid[x - 1][y][z] as u32);
+                                indices.push(index_grid[x-1][y][z] as u32);
+                                indices.push(index_grid[x-1][y-1][z] as u32);
 
-                                if vertex_grid[x-1][y-1][z] {
-                                    indices.push(index_grid[x][y - 1][z] as u32);
+                                if vertex_grid[x][y-1][z] {
+                                    indices.push(index);
                                     indices.push(index_grid[x-1][y-1][z] as u32);
-                                    indices.push(index_grid[x - 1][y][z] as u32);
+                                    indices.push(index_grid[x][y-1][z] as u32);
                                 }
                             }
-                            if z > 0 && vertex_grid[x][y][z - 1] {
+                            if z > 0 && vertex_grid[x-1][y][z-1] {
                                 indices.push(index);
-                                indices.push(index_grid[x][y][z - 1] as u32);
-                                indices.push(index_grid[x - 1][y][z] as u32);
+                                indices.push(index_grid[x-1][y][z] as u32);
+                                indices.push(index_grid[x-1][y][z-1] as u32);
 
-                                if vertex_grid[x-1][y][z-1] {
-                                    indices.push(index_grid[x][y][z - 1] as u32);
+                                if vertex_grid[x][y][z-1] {
+                                    indices.push(index);
                                     indices.push(index_grid[x-1][y][z-1] as u32);
-                                    indices.push(index_grid[x - 1][y][z] as u32);
+                                    indices.push(index_grid[x][y][z - 1] as u32);
                                 }
                             }
                         }
-                        if y > 0 && vertex_grid[x][y - 1][z] {
-                            if z > 0 && vertex_grid[x][y][z - 1] {
+                        if y > 0 && vertex_grid[x][y-1][z] {
+                            if z > 0 && vertex_grid[x][y-1][z-1] {
                                 indices.push(index);
-                                indices.push(index_grid[x][y][z - 1] as u32);
-                                indices.push(index_grid[x][y - 1][z] as u32);
+                                indices.push(index_grid[x][y-1][z-1] as u32);
+                                indices.push(index_grid[x][y-1][z] as u32);
 
-                                if vertex_grid[x][y-1][z-1] {
-                                    indices.push(index_grid[x][y - 1][z] as u32);
+                                if vertex_grid[x][y][z-1] {
+                                    indices.push(index);
                                     indices.push(index_grid[x][y][z - 1] as u32);
                                     indices.push(index_grid[x][y - 1][z-1] as u32);
                                 }
@@ -212,7 +212,6 @@ impl Chunk {
     fn calculate_gradient(vertices: &[(Point3<f32>, f32)], point: Point3<f32>) -> Vector3<f32> {
         let corner_gradients = Chunk::calculate_corner_gradients(vertices);
     
-        // Trilineare Interpolation der Gradienten
         let mut gradient = Vector3::new(0.0, 0.0, 0.0);
         for i in 0..8 {
             let c = corner_gradients[i].1;
