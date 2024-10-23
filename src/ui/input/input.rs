@@ -93,6 +93,12 @@ impl UIElement for Input {
                 }
                 false
             }
+            glfw::WindowEvent::Key(_, _, glfw::Action::Press | glfw::Action::Repeat, _) => {
+                if self.is_focused {
+                    return true
+                }
+                false
+            }
             _ => false
         }
     }
