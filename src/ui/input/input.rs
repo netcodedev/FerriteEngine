@@ -86,7 +86,7 @@ impl UIElement for Input {
                 }
                 false
             }
-            glfw::WindowEvent::Key(glfw::Key::Backspace, _, glfw::Action::Press, _) => {
+            glfw::WindowEvent::Key(glfw::Key::Backspace, _, glfw::Action::Press | glfw::Action::Repeat, _) => {
                 if self.is_focused {
                     self.content.pop();
                     return true
