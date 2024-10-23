@@ -1,6 +1,7 @@
 use ndarray::ArrayBase;
 
-use crate::shader::DynamicVertexArray;
+use crate::terrain::ChunkMesh;
+
 
 pub mod marching_cubes;
 
@@ -9,13 +10,7 @@ const CHUNK_SIZE: usize = 128;
 pub struct MarchingCubesChunk {
     position: (f32, f32, f32),
     blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>>,
-    mesh: Option<ChunkMesh>,
-}
-
-pub struct ChunkMesh {
-    vertex_array: Option<DynamicVertexArray<Vertex>>,
-    indices: Option<Vec<u32>>,
-    vertices: Vec<Vertex>,
+    mesh: Option<ChunkMesh<Vertex>>,
 }
 
 #[derive(Clone, Copy)]

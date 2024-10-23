@@ -279,7 +279,7 @@ impl ModelMesh {
 
     pub fn buffer_data(&mut self) {
         let mut vertex_array = DynamicVertexArray::<ModelMeshVertex>::new();
-        vertex_array.buffer_data_dyn(&self.vertices, &Some(self.indices.clone()));
+        vertex_array.buffer_data(&self.vertices, &Some(self.indices.clone()));
         self.vertex_array = Some(vertex_array);
     }
 

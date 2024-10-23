@@ -1,6 +1,6 @@
 use crate::line::Line;
 use crate::camera::{Camera, Projection};
-use crate::shader::{DynamicVertexArray, Shader, VertexAttributes};
+use crate::shader::{Shader, VertexAttributes};
 use crate::terrain::{Chunk, ChunkBounds};
 use crate::texture::Texture;
 
@@ -27,55 +27,8 @@ impl VertexAttributes for BlockVertex {
     }
 }
 
-impl ChunkMesh {
-    pub fn new(vertices: Vec<BlockVertex>, indices: Option<Vec<u32>>) -> Self {
-        ChunkMesh {
-            vertex_array: None,
-            indices,
-            vertices,
-        }
-    }
-
-    pub fn buffer_data(&mut self) {
-        let mut vertex_array = DynamicVertexArray::new();
-        vertex_array.buffer_data_dyn(&self.vertices, &self.indices);
-        self.vertex_array = Some(vertex_array);
-    }
-
-    pub fn render(&self, shader: &Shader, position: (f32, f32, f32), scale: Option<f32>) {
-        unsafe {
-            gl::Enable(gl::DEPTH_TEST);
-            gl::Enable(gl::CULL_FACE);
-            shader.bind();
-            let mut model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(position.0, position.1, position.2));
-            if let Some(scale) = scale {
-                model = model * cgmath::Matrix4::from_scale(scale);
-            }
-            shader.set_uniform_mat4("model", &model);
-            shader.set_uniform_1i("texture0", 0);
-            shader.set_uniform_1i("texture1", 1);
-
-            if let Some(vertex_array) = &self.vertex_array {
-                vertex_array.bind();
-                if let Some(_) = &self.indices {
-                    gl::DrawElements(gl::TRIANGLES, vertex_array.get_element_count() as i32, gl::UNSIGNED_INT, std::ptr::null());
-                } else {
-                    gl::DrawArrays(gl::TRIANGLES, 0, vertex_array.get_element_count() as i32);
-                }
-                DynamicVertexArray::<BlockVertex>::unbind();
-            }
-            gl::Disable(gl::CULL_FACE);
-            gl::Disable(gl::DEPTH_TEST);
-        }
-    }
-
-    pub fn is_buffered(&self) -> bool {
-        self.vertex_array.is_some()
-    }
-}
-
 impl VoxelChunk {
-    fn calculate_mesh(&self) -> ChunkMesh {
+    fn calculate_mesh(&self) -> ChunkMesh<BlockVertex> {
         let mut vertices: Vec<BlockVertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
 

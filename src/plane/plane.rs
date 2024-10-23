@@ -62,7 +62,7 @@ impl PlaneRenderer {
             2, 3, 0,
         ];
         let mut vertex_array = DynamicVertexArray::<PlaneVertex>::new();
-        vertex_array.buffer_data_dyn(&vertices, &Some(indices.clone()));
+        vertex_array.buffer_data(&vertices, &Some(indices.clone()));
         vertex_array.bind();
         renderer.shader.bind();
         let ortho = cgmath::ortho(0.0, renderer.width, renderer.height, 0.0, -1.0, 100.0);

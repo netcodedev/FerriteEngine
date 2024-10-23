@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::mpsc};
 
 use glfw::MouseButton;
 
-use crate::{camera::{Camera, Projection}, line::Line, shader::Shader, texture::Texture};
+use crate::{camera::{Camera, Projection}, line::Line, shader::{DynamicVertexArray, Shader, VertexAttributes}, texture::Texture};
 
 pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
@@ -23,6 +23,12 @@ pub trait Chunk {
     fn process_line(&mut self, line: &Line, button: &MouseButton) -> bool;
     fn get_shader_source() -> (String, String);
     fn get_textures() -> Vec<Texture>;
+}
+
+pub struct ChunkMesh<T: VertexAttributes> {
+    vertex_array: Option<DynamicVertexArray<T>>,
+    indices: Option<Vec<u32>>,
+    vertices: Vec<T>,
 }
 
 #[derive(Eq, PartialEq, Hash, Debug)]

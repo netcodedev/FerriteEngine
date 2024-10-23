@@ -3,9 +3,9 @@ use std::{collections::HashMap, sync::mpsc, thread};
 use cgmath::{EuclideanSpace, Point3};
 use glfw::MouseButton;
 
-use crate::{camera::{Camera, Projection, ViewFrustum}, line::Line, shader::Shader};
+use crate::{camera::{Camera, Projection, ViewFrustum}, line::Line, shader::{DynamicVertexArray, Shader, VertexAttributes}};
 
-use super::{Chunk, ChunkBounds, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
+use super::{Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
 
 impl ChunkBounds {
     pub fn parse(position: cgmath::Vector3<f32>) -> Self {
@@ -154,5 +154,51 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
                 z += 1;
             }
         }
+    }
+}
+
+impl<T: VertexAttributes + Clone> ChunkMesh<T> {
+    pub fn new(vertices: Vec<T>, indices: Option<Vec<u32>>) -> Self {
+        Self {
+            vertex_array: None,
+            indices,
+            vertices,
+        }
+    }
+
+    pub fn buffer_data(&mut self) {
+        let mut vertex_array = DynamicVertexArray::new();
+        vertex_array.buffer_data(&self.vertices, &self.indices.clone());
+        self.vertex_array = Some(vertex_array);
+    }
+
+    pub fn render(&self, shader: &Shader, position: (f32, f32, f32), scale: Option<f32>) {
+        unsafe {
+            gl::Enable(gl::DEPTH_TEST);
+            gl::Enable(gl::CULL_FACE);
+
+            shader.bind();
+            let mut model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(position.0, position.1, position.2));
+            if let Some(scale) = scale {
+                model = model * cgmath::Matrix4::from_scale(scale);
+            }
+            shader.set_uniform_mat4("model", &model);
+
+            if let Some(vertex_array) = &self.vertex_array {
+                vertex_array.bind();
+                if let Some(_) = &self.indices {
+                    gl::DrawElements(gl::TRIANGLES, vertex_array.get_element_count() as i32, gl::UNSIGNED_INT, std::ptr::null());
+                } else {
+                    gl::DrawArrays(gl::TRIANGLES, 0, self.vertices.len() as i32);
+                }
+            }
+
+            gl::Disable(gl::CULL_FACE);
+            gl::Disable(gl::DEPTH_TEST);
+        }
+    }
+
+    pub fn is_buffered(&self) -> bool {
+        self.vertex_array.is_some()
     }
 }

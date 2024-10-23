@@ -3,7 +3,7 @@ use gl::types::GLuint;
 use glfw::MouseButton;
 use libnoise::prelude::*;
 
-use crate::{camera::{Camera, Projection}, line::Line, shader::{DynamicVertexArray, Shader, VertexAttributes}, terrain::{Chunk, ChunkBounds}};
+use crate::{camera::{Camera, Projection}, line::Line, shader::{Shader, VertexAttributes}, terrain::{Chunk, ChunkBounds}};
 
 use super::{DualContouringChunk, ChunkMesh, Vertex, CHUNK_SIZE, CHUNK_SIZE_FLOAT, ISO_VALUE};
 
@@ -25,7 +25,7 @@ impl DualContouringChunk {
         height_iso - iso
     }
 
-    fn generate_mesh(&self) -> ChunkMesh {
+    fn generate_mesh(&self) -> ChunkMesh<Vertex> {
         let mut vertices = Vec::<Vertex>::new();
         let mut indices = Vec::<u32>::new();
         let mut vertex_grid = vec![vec![vec![false; self.chunk_size]; self.chunk_size]; self.chunk_size];
@@ -225,7 +225,7 @@ impl Chunk for DualContouringChunk {
             shader.bind();
             shader.set_uniform_mat4("view", &camera.calc_matrix());
             shader.set_uniform_mat4("projection", &projection.calc_matrix());
-            mesh.render(&shader, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32));
+            mesh.render(&shader, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32), None);
         }
     }
 
@@ -257,48 +257,6 @@ impl Chunk for DualContouringChunk {
     
     fn get_textures() -> Vec<crate::texture::Texture> {
         Vec::new()
-    }
-}
-
-impl ChunkMesh {
-    pub fn new(vertices: Vec<Vertex>, indices: Option<Vec<u32>>) -> Self {
-        Self {
-            vertex_array: None,
-            indices,
-            vertices,
-        }
-    }
-
-    pub fn buffer_data(&mut self) {
-        let mut vertex_array = DynamicVertexArray::new();
-        vertex_array.buffer_data_dyn(&self.vertices, &self.indices.clone());
-        self.vertex_array = Some(vertex_array);
-    }
-
-    pub fn render(&self, shader: &Shader, position: (f32, f32, f32)) {
-        unsafe {
-            gl::Enable(gl::DEPTH_TEST);
-            gl::Disable(gl::CULL_FACE);
-
-            shader.bind();
-            let model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(position.0, position.1, position.2));
-            shader.set_uniform_mat4("model", &model);
-
-            if let Some(vertex_array) = &self.vertex_array {
-                vertex_array.bind();
-                if let Some(indices) = &self.indices {
-                    gl::DrawElements(gl::TRIANGLES, indices.len() as i32, gl::UNSIGNED_INT, std::ptr::null());
-                } else {
-                    gl::DrawArrays(gl::TRIANGLES, 0, self.vertices.len() as i32);
-                }
-            }
-
-            gl::Disable(gl::DEPTH_TEST);
-        }
-    }
-
-    pub fn is_buffered(&self) -> bool {
-        self.vertex_array.is_some()
     }
 }
 

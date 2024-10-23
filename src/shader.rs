@@ -181,7 +181,7 @@ impl<T: VertexAttributes + Clone> DynamicVertexArray<T> {
         }
     }
 
-    pub fn buffer_data_dyn(&mut self, data: &Vec<T>, indices: &Option<Vec<u32>>) {
+    pub fn buffer_data(&mut self, data: &Vec<T>, indices: &Option<Vec<u32>>) {
         self.bind();
         unsafe {
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
