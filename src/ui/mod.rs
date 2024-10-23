@@ -5,6 +5,8 @@ pub mod panel;
 pub mod text;
 pub mod ui;
 
+pub struct UI {}
+
 pub struct UIRenderer {
     children: Vec<Box<dyn UIElement>>,
 }

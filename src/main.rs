@@ -1,5 +1,4 @@
 use std::{cell::RefCell, rc::Rc};
-
 use cgmath::Deg;
 
 mod camera;
@@ -25,7 +24,7 @@ use terrain::Terrain;
 use text::TextRenderer;
 use line::Line;
 use model::Model;
-use ui::{button::ButtonBuilder, input::InputBuilder, panel::PanelBuilder, text::Text, UIRenderer};
+use ui::{UIRenderer, UI};
 use window::Window;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -54,11 +53,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let camera_controller_ref1 = Rc::clone(&camera_controller);
     let camera_controller_ref2 = Rc::clone(&camera_controller);
     let camera_controller_ref3 = Rc::clone(&camera_controller);
-    ui.add(PanelBuilder::new("Camera controls")
-        .position(10.0, 120.0)
-        .size(200.0, 200.0)
-        .add_child(Box::new(Text::new("Camera Speed", 16.0)))
-        .add_child(Box::new(InputBuilder::new("Input")
+    ui.add(UI::panel("Camera controls", |builder| {
+        builder.position(10.0, 120.0)
+        .add_child(UI::text("Camera Speed", 16.0, |b| {b}))
+        .add_child(UI::input(|input| {
+            input
             .size(190.0, 26.0)
             .get_fn(move || {
                 let camera_controller = camera_controller_ref1.borrow();
@@ -71,19 +70,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(_) => {}
                 }
             })
-            .build()
-        ))
-        .add_child(Box::new(ButtonBuilder::new()
-            .size(100.0, 20.0)
-            .on_click(Box::new(move || {
-                let mut camera_controller = camera_controller_ref3.borrow_mut();
-                camera_controller.set_speed(10.0);
-            }))
-            .add_child(Box::new(Text::new("Reset speed", 16.0)))
-            .build()
-        ))
-        .build()
-    );
+        }))
+        .add_child(UI::button("Reset Speed", Box::new(move || {
+            let mut camera_controller = camera_controller_ref3.borrow_mut();
+            camera_controller.set_speed(10.0);
+        }), |b| {b}))
+    }));
 
     while !window.should_close() {
         unsafe {
