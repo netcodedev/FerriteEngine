@@ -252,6 +252,9 @@ impl CameraController {
                     }
                     _ => {}
                 }
+            },
+            glfw::WindowEvent::Scroll(_, y) => {
+                self.speed += *y as f32 * 10.0;
             }
             _ => {}
         }
