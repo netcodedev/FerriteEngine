@@ -54,11 +54,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let camera_controller_ref1 = Rc::clone(&camera_controller);
     let camera_controller_ref2 = Rc::clone(&camera_controller);
     let camera_controller_ref3 = Rc::clone(&camera_controller);
-    ui.add(PanelBuilder::new("Camera controls".to_string())
+    ui.add(PanelBuilder::new("Camera controls")
         .position(10.0, 120.0)
         .size(200.0, 200.0)
         .add_child(Box::new(Text::new("Camera Speed", 16.0)))
-        .add_child(Box::new(InputBuilder::new("Input".to_string())
+        .add_child(Box::new(InputBuilder::new("Input")
             .size(190.0, 26.0)
             .get_fn(move || {
                 let camera_controller = camera_controller_ref1.borrow();

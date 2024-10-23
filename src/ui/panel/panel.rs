@@ -109,11 +109,11 @@ impl Panel {
 }
 
 impl PanelBuilder {
-    pub fn new(title: String) -> Self {
+    pub fn new(title: &str) -> Self {
         Self {
             position: (0.0, 0.0, 0.0),
             size: (0.0, 0.0),
-            title,
+            title: title.to_string(),
             children: Vec::new(),
         }
     }

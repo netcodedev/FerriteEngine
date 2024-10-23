@@ -140,11 +140,11 @@ impl Input {
 }
 
 impl InputBuilder {
-    pub fn new(content: String) -> Self {
+    pub fn new(content: &str) -> Self {
         Self {
             position: (0.0, 0.0),
             size: (0.0, 0.0),
-            content,
+            content: content.to_string(),
             get_fn: None,
             set_fn: None
         }
