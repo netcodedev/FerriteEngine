@@ -3,7 +3,11 @@ use std::{collections::HashMap, sync::mpsc, thread};
 use cgmath::{EuclideanSpace, Point3};
 use glfw::MouseButton;
 
-use crate::{camera::{Camera, Projection, ViewFrustum}, line::Line, shader::{DynamicVertexArray, Shader, VertexAttributes}};
+use crate::{
+    camera::{Camera, Projection, ViewFrustum},
+    line::Line,
+    shader::{DynamicVertexArray, Shader, VertexAttributes},
+};
 
 use super::{Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
 
@@ -28,9 +32,12 @@ impl ChunkBounds {
     }
 
     pub fn contains(&self, position: cgmath::Point3<f32>) -> bool {
-        position.x >= self.min.0 as f32 && position.x < self.max.0 as f32 &&
-        position.y >= self.min.1 as f32 && position.y < self.max.1 as f32 &&
-        position.z >= self.min.2 as f32 && position.z < self.max.2 as f32
+        position.x >= self.min.0 as f32
+            && position.x < self.max.0 as f32
+            && position.y >= self.min.1 as f32
+            && position.y < self.max.1 as f32
+            && position.z >= self.min.2 as f32
+            && position.z < self.max.2 as f32
     }
 
     pub fn center(&self) -> Point3<f32> {
@@ -75,10 +82,10 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
         let tx3 = tx.clone();
         let tx4 = tx.clone();
         const RADIUS: i32 = 10;
-        let _ = thread::spawn(move || Terrain::chunkloader(RADIUS,1,1,tx1));
-        let _ = thread::spawn(move || Terrain::chunkloader(RADIUS,-1,1,tx2));
-        let _ = thread::spawn(move || Terrain::chunkloader(RADIUS,1,-1,tx3));
-        let _ = thread::spawn(move || Terrain::chunkloader(RADIUS,-1,-1,tx4));
+        let _ = thread::spawn(move || Terrain::chunkloader(RADIUS, 1, 1, tx1));
+        let _ = thread::spawn(move || Terrain::chunkloader(RADIUS, -1, 1, tx2));
+        let _ = thread::spawn(move || Terrain::chunkloader(RADIUS, 1, -1, tx3));
+        let _ = thread::spawn(move || Terrain::chunkloader(RADIUS, -1, -1, tx4));
 
         Self {
             chunks: HashMap::<ChunkBounds, T>::new(),
@@ -113,7 +120,7 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
             }
         }
     }
-    
+
     pub fn process_line(&mut self, line: Option<(Line, MouseButton)>) {
         if let Some((line, button)) = line {
             for chunk_bounds in ChunkBounds::get_chunk_bounds_on_line(&line) {
@@ -129,25 +136,31 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
     fn chunkloader(radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<T>) {
         let mut x: i32 = 1;
         let mut z: i32 = 0;
-    
+
         loop {
             if x > radius {
                 break;
             }
             let new_chunk: T;
             if z_dir > 0 {
-                new_chunk = T::new(((x * x_dir) as f32, 0.0, z as f32), std::cmp::max(x.abs(),z.abs()) as usize);
+                new_chunk = T::new(
+                    ((x * x_dir) as f32, 0.0, z as f32),
+                    std::cmp::max(x.abs(), z.abs()) as usize,
+                );
             } else {
-                new_chunk = T::new(((z * z_dir) as f32, 0.0, (x * x_dir) as f32), std::cmp::max(x.abs(),z.abs()) as usize);
+                new_chunk = T::new(
+                    ((z * z_dir) as f32, 0.0, (x * x_dir) as f32),
+                    std::cmp::max(x.abs(), z.abs()) as usize,
+                );
             }
-            
+
             let result = tx.send(new_chunk);
             if result.is_err() {
                 break;
             }
-    
+
             z = -z;
-            if z == -x*z_dir {
+            if z == -x * z_dir {
                 x += 1;
                 z = 0;
             } else if z >= 0 {
@@ -176,23 +189,30 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
         }
-            shader.bind();
-            let mut model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(position.0, position.1, position.2));
-            if let Some(scale) = scale {
-                model = model * cgmath::Matrix4::from_scale(scale);
-            }
-            shader.set_uniform_mat4("model", &model);
+        shader.bind();
+        let mut model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(
+            position.0, position.1, position.2,
+        ));
+        if let Some(scale) = scale {
+            model = model * cgmath::Matrix4::from_scale(scale);
+        }
+        shader.set_uniform_mat4("model", &model);
 
-            if let Some(vertex_array) = &self.vertex_array {
-                vertex_array.bind();
-                unsafe {
-                    if let Some(_) = &self.indices {
-                        gl::DrawElements(gl::TRIANGLES, vertex_array.get_element_count() as i32, gl::UNSIGNED_INT, std::ptr::null());
-                    } else {
-                        gl::DrawArrays(gl::TRIANGLES, 0, self.vertices.len() as i32);
-                    }
+        if let Some(vertex_array) = &self.vertex_array {
+            vertex_array.bind();
+            unsafe {
+                if let Some(_) = &self.indices {
+                    gl::DrawElements(
+                        gl::TRIANGLES,
+                        vertex_array.get_element_count() as i32,
+                        gl::UNSIGNED_INT,
+                        std::ptr::null(),
+                    );
+                } else {
+                    gl::DrawArrays(gl::TRIANGLES, 0, self.vertices.len() as i32);
                 }
             }
+        }
         unsafe {
             gl::Disable(gl::DEPTH_TEST);
         }

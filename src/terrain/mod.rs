@@ -2,7 +2,12 @@ use std::{collections::HashMap, sync::mpsc};
 
 use glfw::MouseButton;
 
-use crate::{camera::{Camera, Projection}, line::Line, shader::{DynamicVertexArray, Shader, VertexAttributes}, texture::Texture};
+use crate::{
+    camera::{Camera, Projection},
+    line::Line,
+    shader::{DynamicVertexArray, Shader, VertexAttributes},
+    texture::Texture,
+};
 
 pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
@@ -13,7 +18,7 @@ pub struct Terrain<T: Chunk> {
     pub chunks: HashMap<ChunkBounds, T>,
     chunk_receiver: mpsc::Receiver<T>,
     shader: Shader,
-    textures: Vec<Texture>
+    textures: Vec<Texture>,
 }
 
 pub trait Chunk {

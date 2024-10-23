@@ -4,9 +4,14 @@ use glfw::MouseButton;
 use libnoise::prelude::*;
 use ndarray::ArrayBase;
 
-use crate::{camera::{Camera, Projection}, line::Line, shader::{Shader, VertexAttributes}, terrain::{Chunk, ChunkBounds}};
+use crate::{
+    camera::{Camera, Projection},
+    line::Line,
+    shader::{Shader, VertexAttributes},
+    terrain::{Chunk, ChunkBounds},
+};
 
-use super::{MarchingCubesChunk, ChunkMesh, Vertex, CHUNK_SIZE, EDGES, POINTS, TRIANGULATIONS};
+use super::{ChunkMesh, MarchingCubesChunk, Vertex, CHUNK_SIZE, EDGES, POINTS, TRIANGULATIONS};
 
 impl MarchingCubesChunk {
     fn generate_mesh(&self) -> ChunkMesh<Vertex> {
@@ -50,7 +55,7 @@ impl MarchingCubesChunk {
 
                 positions[j] = position;
             }
-            
+
             let normal = MarchingCubesChunk::comute_normal(&positions);
 
             for position in positions {
@@ -65,23 +70,57 @@ impl MarchingCubesChunk {
         vertices
     }
 
-    fn get_triangulation(&self, (x,y,z): (usize, usize, usize), isovalue: f32) -> [i8; 15] {
+    fn get_triangulation(&self, (x, y, z): (usize, usize, usize), isovalue: f32) -> [i8; 15] {
         let mut config_idx = 0b00000000;
 
-        config_idx |= if self.blocks[[x,        y,      z       ]] <= isovalue { 1 } else { 0 };
-        config_idx |= if self.blocks[[x,        y,      z + 1   ]] <= isovalue { 1 } else { 0 } << 1;
-        config_idx |= if self.blocks[[x + 1,    y,      z + 1   ]] <= isovalue { 1 } else { 0 } << 2;
-        config_idx |= if self.blocks[[x + 1,    y,      z       ]] <= isovalue { 1 } else { 0 } << 3;
-        config_idx |= if self.blocks[[x,        y + 1,  z       ]] <= isovalue { 1 } else { 0 } << 4;
-        config_idx |= if self.blocks[[x,        y + 1,  z + 1   ]] <= isovalue { 1 } else { 0 } << 5;
-        config_idx |= if self.blocks[[x + 1,    y + 1,  z + 1   ]] <= isovalue { 1 } else { 0 } << 6;
-        config_idx |= if self.blocks[[x + 1,    y + 1,  z       ]] <= isovalue { 1 } else { 0 } << 7;
+        config_idx |= if self.blocks[[x, y, z]] <= isovalue {
+            1
+        } else {
+            0
+        };
+        config_idx |= if self.blocks[[x, y, z + 1]] <= isovalue {
+            1
+        } else {
+            0
+        } << 1;
+        config_idx |= if self.blocks[[x + 1, y, z + 1]] <= isovalue {
+            1
+        } else {
+            0
+        } << 2;
+        config_idx |= if self.blocks[[x + 1, y, z]] <= isovalue {
+            1
+        } else {
+            0
+        } << 3;
+        config_idx |= if self.blocks[[x, y + 1, z]] <= isovalue {
+            1
+        } else {
+            0
+        } << 4;
+        config_idx |= if self.blocks[[x, y + 1, z + 1]] <= isovalue {
+            1
+        } else {
+            0
+        } << 5;
+        config_idx |= if self.blocks[[x + 1, y + 1, z + 1]] <= isovalue {
+            1
+        } else {
+            0
+        } << 6;
+        config_idx |= if self.blocks[[x + 1, y + 1, z]] <= isovalue {
+            1
+        } else {
+            0
+        } << 7;
 
         return TRIANGULATIONS[config_idx as usize];
     }
 
     fn comute_normal(triangle: &[Vector3<f32>; 3]) -> Vector3<f32> {
-        (triangle[1] - triangle[0]).cross(triangle[2] - triangle[0]).normalize()
+        (triangle[1] - triangle[0])
+            .cross(triangle[2] - triangle[0])
+            .normalize()
     }
 }
 
@@ -92,21 +131,31 @@ impl Chunk for MarchingCubesChunk {
         let tiny_hills = Source::perlin(1).scale([0.1; 2]);
         let cave = Source::perlin(1).scale([0.1; 3]);
         let offset: f64 = 16777216.0;
-        let blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>> = ArrayBase::from_shape_fn((CHUNK_SIZE + 1, CHUNK_SIZE + 1, CHUNK_SIZE + 1), |(x, y, z)| {
-            let sample_point = (
-                (position.0 * CHUNK_SIZE as f32) as f64 + x as f64 + offset,
-                (position.1 * CHUNK_SIZE as f32) as f64 + y as f64 + offset,
-                (position.2 * CHUNK_SIZE as f32) as f64 + z as f64 + offset,
+        let blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>> =
+            ArrayBase::from_shape_fn(
+                (CHUNK_SIZE + 1, CHUNK_SIZE + 1, CHUNK_SIZE + 1),
+                |(x, y, z)| {
+                    let sample_point = (
+                        (position.0 * CHUNK_SIZE as f32) as f64 + x as f64 + offset,
+                        (position.1 * CHUNK_SIZE as f32) as f64 + y as f64 + offset,
+                        (position.2 * CHUNK_SIZE as f32) as f64 + z as f64 + offset,
+                    );
+
+                    let noise_value =
+                        (1.0 + generator.sample([sample_point.0, sample_point.2])) / 2.0;
+                    let hills_value =
+                        (1.0 + hills.sample([sample_point.0, sample_point.2])) / 2.0 * 0.2;
+                    let tiny_hills_value =
+                        (1.0 + tiny_hills.sample([sample_point.0, sample_point.2])) / 2.0 * 0.01;
+                    if ((noise_value + hills_value + tiny_hills_value) * CHUNK_SIZE as f64)
+                        < y as f64
+                    {
+                        return 0.0;
+                    }
+                    (1.0 + cave.sample([sample_point.0, sample_point.1, sample_point.2]) as f32)
+                        / 2.0
+                },
             );
-            
-            let noise_value = (1.0 + generator.sample([sample_point.0, sample_point.2]))/2.0;
-            let hills_value = (1.0 + hills.sample([sample_point.0, sample_point.2]))/2.0 * 0.2;
-            let tiny_hills_value = (1.0 + tiny_hills.sample([sample_point.0, sample_point.2]))/2.0 * 0.01;
-            if ((noise_value + hills_value + tiny_hills_value) * CHUNK_SIZE as f64) < y as f64 {
-                return 0.0;
-            }
-            (1.0 + cave.sample([sample_point.0, sample_point.1, sample_point.2]) as f32) / 2.0
-        });
         let mut chunk = Self {
             position,
             blocks,
@@ -127,7 +176,15 @@ impl Chunk for MarchingCubesChunk {
             unsafe {
                 gl::Enable(gl::CULL_FACE);
             }
-            mesh.render(&shader, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32), None);
+            mesh.render(
+                &shader,
+                (
+                    self.position.0 * CHUNK_SIZE as f32,
+                    self.position.1 * CHUNK_SIZE as f32,
+                    self.position.2 * CHUNK_SIZE as f32,
+                ),
+                None,
+            );
             unsafe {
                 gl::Disable(gl::CULL_FACE);
             }
@@ -148,18 +205,18 @@ impl Chunk for MarchingCubesChunk {
             ),
         }
     }
-    
+
     fn process_line(&mut self, _: &Line, _: &MouseButton) -> bool {
         false
     }
-    
+
     fn get_shader_source() -> (String, String) {
         (
             include_str!("vertex.glsl").to_string(),
             include_str!("fragment.glsl").to_string(),
         )
     }
-    
+
     fn get_textures() -> Vec<crate::texture::Texture> {
         Vec::new()
     }
@@ -167,10 +224,6 @@ impl Chunk for MarchingCubesChunk {
 
 impl VertexAttributes for Vertex {
     fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
-        vec![
-            (3, gl::FLOAT),
-            (3, gl::FLOAT),
-            (3, gl::FLOAT),
-        ]
+        vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT)]
     }
 }

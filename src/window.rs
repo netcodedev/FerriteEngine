@@ -3,7 +3,7 @@ use glfw::{Context, GlfwReceiver};
 pub struct Window {
     window: glfw::PWindow,
     glfw: glfw::Glfw,
-    events: GlfwReceiver<(f64, glfw::WindowEvent)>
+    events: GlfwReceiver<(f64, glfw::WindowEvent)>,
 }
 
 impl Window {
@@ -15,7 +15,8 @@ impl Window {
 
         glfw.window_hint(glfw::WindowHint::Samples(Some(8)));
 
-        let (mut window, events) = glfw.create_window(width, height, "Voxel engine", glfw::WindowMode::Windowed)
+        let (mut window, events) = glfw
+            .create_window(width, height, "Voxel engine", glfw::WindowMode::Windowed)
             .expect("Fenster konnte nicht erstellt werden");
 
         window.make_current();
@@ -36,13 +37,13 @@ impl Window {
         Self {
             window,
             glfw,
-            events
+            events,
         }
     }
 
     pub fn handle_events<F>(&mut self, mut event_handler: F)
     where
-        F: FnMut(&mut glfw::Window, &mut glfw::Glfw, glfw::WindowEvent)
+        F: FnMut(&mut glfw::Window, &mut glfw::Glfw, glfw::WindowEvent),
     {
         self.glfw.poll_events();
         for (_, event) in glfw::flush_messages(&self.events) {

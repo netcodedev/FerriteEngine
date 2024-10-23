@@ -1,14 +1,14 @@
-use crate::line::Line;
 use crate::camera::{Camera, Projection};
+use crate::line::Line;
 use crate::shader::{Shader, VertexAttributes};
 use crate::terrain::{Chunk, ChunkBounds};
 use crate::texture::Texture;
 
 use gl::types::GLuint;
-use ndarray::{Array3, ArrayBase, Dim};
 use libnoise::prelude::*;
+use ndarray::{Array3, ArrayBase, Dim};
 
-use super::{Block, BlockVertex, VoxelChunk, ChunkMesh, CHUNK_SIZE};
+use super::{Block, BlockVertex, ChunkMesh, VoxelChunk, CHUNK_SIZE};
 
 impl Block {
     pub fn new(type_id: u32) -> Self {
@@ -19,10 +19,10 @@ impl Block {
 impl VertexAttributes for BlockVertex {
     fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
         vec![
-            (3, gl::FLOAT), // position
-            (3, gl::FLOAT), // normal
-            (2, gl::FLOAT), // texture_coords
-            (1, gl::UNSIGNED_INT)  // block_type
+            (3, gl::FLOAT),        // position
+            (3, gl::FLOAT),        // normal
+            (2, gl::FLOAT),        // texture_coords
+            (1, gl::UNSIGNED_INT), // block_type
         ]
     }
 }
@@ -53,7 +53,9 @@ impl VoxelChunk {
                 while x[v] < CHUNK_SIZE as i32 {
                     x[u] = 0;
                     while x[u] < CHUNK_SIZE as i32 {
-                        let current_block = self.blocks.get(((x[0]) as usize, (x[1]) as usize, (x[2]) as usize));
+                        let current_block =
+                            self.blocks
+                                .get(((x[0]) as usize, (x[1]) as usize, (x[2]) as usize));
                         let current_block_type = if let Some(block) = current_block {
                             if block.is_some() {
                                 block.as_ref().unwrap().type_id
@@ -63,7 +65,11 @@ impl VoxelChunk {
                         } else {
                             0
                         };
-                        let compare_block = self.blocks.get(((x[0] + q[0]) as usize, (x[1] + q[1]) as usize, (x[2] + q[2]) as usize));
+                        let compare_block = self.blocks.get((
+                            (x[0] + q[0]) as usize,
+                            (x[1] + q[1]) as usize,
+                            (x[2] + q[2]) as usize,
+                        ));
                         let compare_block_type = if let Some(block) = compare_block {
                             if block.is_some() {
                                 block.as_ref().unwrap().type_id
@@ -100,7 +106,7 @@ impl VoxelChunk {
                 x[d] += 1;
 
                 n = 0;
-                
+
                 // Generate a mesh from the mask using lexicographic ordering,
                 // by looping over each block in this slice of the chunk
                 for j in 0..CHUNK_SIZE {
@@ -110,7 +116,11 @@ impl VoxelChunk {
                             // Compute the width of this quad and store it in w
                             // This is done by searching along the current axis until mask[n + w] is false
                             let mut w = 1;
-                            while i + w < CHUNK_SIZE && mask[n + w] && flip[n] == flip[n + w] && b_t[n] == b_t[n + w] {
+                            while i + w < CHUNK_SIZE
+                                && mask[n + w]
+                                && flip[n] == flip[n + w]
+                                && b_t[n] == b_t[n + w]
+                            {
                                 w += 1;
                             }
 
@@ -121,7 +131,10 @@ impl VoxelChunk {
                             let mut h = 1;
                             'outer: while j + h < CHUNK_SIZE {
                                 for k in 0..w {
-                                    if !mask[n + k + h * CHUNK_SIZE] || flip[n] != flip[n + k + h * CHUNK_SIZE] || b_t[n] != b_t[n + k + h * CHUNK_SIZE] {
+                                    if !mask[n + k + h * CHUNK_SIZE]
+                                        || flip[n] != flip[n + k + h * CHUNK_SIZE]
+                                        || b_t[n] != b_t[n + k + h * CHUNK_SIZE]
+                                    {
                                         break 'outer;
                                     }
                                 }
@@ -142,7 +155,11 @@ impl VoxelChunk {
                             if !flip[n] {
                                 vertices.extend_from_slice(&[
                                     BlockVertex {
-                                        position: ((x[0] + du[0]) as f32,(x[1] + du[1]) as f32, (x[2] + du[2]) as f32),
+                                        position: (
+                                            (x[0] + du[0]) as f32,
+                                            (x[1] + du[1]) as f32,
+                                            (x[2] + du[2]) as f32,
+                                        ),
                                         normal: match d {
                                             0 => (0.0, 1.0, 0.0),
                                             1 => (1.0, 0.0, 0.0),
@@ -164,7 +181,11 @@ impl VoxelChunk {
                                         block_type: b_t[n],
                                     },
                                     BlockVertex {
-                                        position: ((x[0] + du[0] + dv[0]) as f32,  (x[1] + du[1] + dv[1]) as f32,  (x[2] + du[2] + dv[2]) as f32),
+                                        position: (
+                                            (x[0] + du[0] + dv[0]) as f32,
+                                            (x[1] + du[1] + dv[1]) as f32,
+                                            (x[2] + du[2] + dv[2]) as f32,
+                                        ),
                                         normal: match d {
                                             0 => (0.0, 1.0, 0.0),
                                             1 => (1.0, 0.0, 0.0),
@@ -175,7 +196,11 @@ impl VoxelChunk {
                                         block_type: b_t[n],
                                     },
                                     BlockVertex {
-                                        position: ((x[0] + dv[0]) as f32,  (x[1] + dv[1]) as f32,  (x[2] + dv[2]) as f32),
+                                        position: (
+                                            (x[0] + dv[0]) as f32,
+                                            (x[1] + dv[1]) as f32,
+                                            (x[2] + dv[2]) as f32,
+                                        ),
                                         normal: match d {
                                             0 => (0.0, 1.0, 0.0),
                                             1 => (1.0, 0.0, 0.0),
@@ -184,12 +209,12 @@ impl VoxelChunk {
                                         },
                                         texture_coords: (1.0 * w as f32, 1.0 * h as f32),
                                         block_type: b_t[n],
-                                    }
+                                    },
                                 ]);
                             } else {
                                 vertices.extend_from_slice(&[
                                     BlockVertex {
-                                        position: (x[0] as f32,                    x[1] as f32,                    x[2] as f32),
+                                        position: (x[0] as f32, x[1] as f32, x[2] as f32),
                                         normal: match d {
                                             0 => (0.0, 1.0, 0.0),
                                             1 => (1.0, 0.0, 0.0),
@@ -200,7 +225,11 @@ impl VoxelChunk {
                                         block_type: b_t[n],
                                     },
                                     BlockVertex {
-                                        position: ((x[0] + du[0]) as f32,          (x[1] + du[1]) as f32,          (x[2] + du[2]) as f32),
+                                        position: (
+                                            (x[0] + du[0]) as f32,
+                                            (x[1] + du[1]) as f32,
+                                            (x[2] + du[2]) as f32,
+                                        ),
                                         normal: match d {
                                             0 => (0.0, 1.0, 0.0),
                                             1 => (1.0, 0.0, 0.0),
@@ -211,7 +240,11 @@ impl VoxelChunk {
                                         block_type: b_t[n],
                                     },
                                     BlockVertex {
-                                        position: ((x[0] + dv[0]) as f32,          (x[1] + dv[1]) as f32,          (x[2] + dv[2]) as f32),
+                                        position: (
+                                            (x[0] + dv[0]) as f32,
+                                            (x[1] + dv[1]) as f32,
+                                            (x[2] + dv[2]) as f32,
+                                        ),
                                         normal: match d {
                                             0 => (0.0, 1.0, 0.0),
                                             1 => (1.0, 0.0, 0.0),
@@ -222,7 +255,11 @@ impl VoxelChunk {
                                         block_type: b_t[n],
                                     },
                                     BlockVertex {
-                                        position: ((x[0] + du[0] + dv[0]) as f32,  (x[1] + du[1] + dv[1]) as f32,  (x[2] + du[2] + dv[2]) as f32),
+                                        position: (
+                                            (x[0] + du[0] + dv[0]) as f32,
+                                            (x[1] + du[1] + dv[1]) as f32,
+                                            (x[2] + du[2] + dv[2]) as f32,
+                                        ),
                                         normal: match d {
                                             0 => (0.0, 1.0, 0.0),
                                             1 => (1.0, 0.0, 0.0),
@@ -231,14 +268,18 @@ impl VoxelChunk {
                                         },
                                         texture_coords: (1.0 * w as f32, 1.0 * h as f32),
                                         block_type: b_t[n],
-                                    }
+                                    },
                                 ]);
                             }
 
                             let vert_count = vertices.len() as u32;
                             indices.extend_from_slice(&[
-                                vert_count - 4, vert_count - 3, vert_count - 2,
-                                vert_count - 2, vert_count - 3, vert_count - 1,
+                                vert_count - 4,
+                                vert_count - 3,
+                                vert_count - 2,
+                                vert_count - 2,
+                                vert_count - 3,
+                                vert_count - 1,
                             ]);
 
                             // Clear this part of the mask, so we don't add duplicate faces
@@ -269,20 +310,32 @@ impl Chunk for VoxelChunk {
         let hills = Source::perlin(1).scale([0.01; 2]);
         let tiny_hills = Source::perlin(1).scale([0.1; 2]);
         let offset: f64 = 16777216.0;
-        let blocks: ArrayBase<ndarray::OwnedRepr<Option<Block>>, Dim<[usize; 3]>> = Array3::<Option<Block>>::from_shape_fn([CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE], |(x,y,z)| {
-            let sample_point = (
-                (position.0 * CHUNK_SIZE as f32) as f64 + x as f64 + offset,
-                (position.2 * CHUNK_SIZE as f32) as f64 + z as f64 + offset,
-            );
-            let noise_value = (1.0 + generator.sample([sample_point.0, sample_point.1]))/2.0;
-            let hills_value = (1.0 + hills.sample([sample_point.0, sample_point.1]))/2.0 * 0.2;
-            let tiny_hills_value = (1.0 + tiny_hills.sample([sample_point.0, sample_point.1]))/2.0 * 0.01;
-            if ((noise_value + hills_value + tiny_hills_value) * CHUNK_SIZE as f64) < (y as f64) {
-                return None;
-            }
-            Some(Block::new(1))
-        });
-        let mut chunk = VoxelChunk { position, blocks, mesh: None };
+        let blocks: ArrayBase<ndarray::OwnedRepr<Option<Block>>, Dim<[usize; 3]>> = Array3::<
+            Option<Block>,
+        >::from_shape_fn(
+            [CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE],
+            |(x, y, z)| {
+                let sample_point = (
+                    (position.0 * CHUNK_SIZE as f32) as f64 + x as f64 + offset,
+                    (position.2 * CHUNK_SIZE as f32) as f64 + z as f64 + offset,
+                );
+                let noise_value = (1.0 + generator.sample([sample_point.0, sample_point.1])) / 2.0;
+                let hills_value =
+                    (1.0 + hills.sample([sample_point.0, sample_point.1])) / 2.0 * 0.2;
+                let tiny_hills_value =
+                    (1.0 + tiny_hills.sample([sample_point.0, sample_point.1])) / 2.0 * 0.01;
+                if ((noise_value + hills_value + tiny_hills_value) * CHUNK_SIZE as f64) < (y as f64)
+                {
+                    return None;
+                }
+                Some(Block::new(1))
+            },
+        );
+        let mut chunk = VoxelChunk {
+            position,
+            blocks,
+            mesh: None,
+        };
         chunk.mesh = Some(chunk.calculate_mesh());
         chunk
     }
@@ -312,30 +365,44 @@ impl Chunk for VoxelChunk {
             unsafe {
                 gl::Enable(gl::CULL_FACE);
             }
-            mesh.render(&shader, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32), None);
+            mesh.render(
+                &shader,
+                (
+                    self.position.0 * CHUNK_SIZE as f32,
+                    self.position.1 * CHUNK_SIZE as f32,
+                    self.position.2 * CHUNK_SIZE as f32,
+                ),
+                None,
+            );
             unsafe {
                 gl::Disable(gl::CULL_FACE);
             }
         }
     }
-    
+
     fn process_line(&mut self, line: &Line, button: &glfw::MouseButton) -> bool {
         // calculate the block that the line intersects with
         let step_size = 0.1;
         let max_distance = line.length;
 
         let mut modified = false;
-        let mut last_position = (0,0,0);
+        let mut last_position = (0, 0, 0);
         for i in 0..(max_distance / step_size) as i32 {
             let position = line.position + line.direction * (i as f32 * step_size);
             // check if position is within the bounds of this chunk
-            if position.x < self.position.0 * CHUNK_SIZE as f32 || position.x >= (self.position.0 + 1.0) * CHUNK_SIZE as f32 {
+            if position.x < self.position.0 * CHUNK_SIZE as f32
+                || position.x >= (self.position.0 + 1.0) * CHUNK_SIZE as f32
+            {
                 continue;
             }
-            if position.y < self.position.1 * CHUNK_SIZE as f32 || position.y >= (self.position.1 + 1.0) * CHUNK_SIZE as f32 {
+            if position.y < self.position.1 * CHUNK_SIZE as f32
+                || position.y >= (self.position.1 + 1.0) * CHUNK_SIZE as f32
+            {
                 continue;
             }
-            if position.z < self.position.2 * CHUNK_SIZE as f32 || position.z >= (self.position.2 + 1.0) * CHUNK_SIZE as f32 {
+            if position.z < self.position.2 * CHUNK_SIZE as f32
+                || position.z >= (self.position.2 + 1.0) * CHUNK_SIZE as f32
+            {
                 continue;
             }
             let block_position = (
@@ -343,7 +410,7 @@ impl Chunk for VoxelChunk {
                 (position.y - self.position.1 * CHUNK_SIZE as f32) as usize,
                 (position.z - self.position.2 * CHUNK_SIZE as f32) as usize,
             );
-            if let Some(block) = self.blocks.get(block_position){
+            if let Some(block) = self.blocks.get(block_position) {
                 if block.is_some() {
                     if button == &glfw::MouseButton::Button1 {
                         // println!("(Terrain {},{},{}) Block hit at {:?}", self.position.0, self.position.1, self.position.2, block_position);
@@ -354,7 +421,8 @@ impl Chunk for VoxelChunk {
                     }
                     if button == &glfw::MouseButton::Button2 {
                         // println!("(Terrain {},{},{}) Block hit at {:?}", self.position.0, self.position.1, self.position.2, block_position);
-                        self.blocks[[last_position.0, last_position.1, last_position.2]] = Some(Block::new(2));
+                        self.blocks[[last_position.0, last_position.1, last_position.2]] =
+                            Some(Block::new(2));
                         self.mesh = Some(self.calculate_mesh());
                         modified = true;
                         break;
@@ -372,7 +440,7 @@ impl Chunk for VoxelChunk {
             include_str!("fragment.glsl").to_string(),
         )
     }
-    
+
     fn get_textures() -> Vec<Texture> {
         let grass_texture = Texture::new(std::path::Path::new("assets/grass.png"));
         let stone_texture = Texture::new(std::path::Path::new("assets/stone.png"));

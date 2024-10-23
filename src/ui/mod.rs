@@ -13,7 +13,12 @@ pub struct UIRenderer {
 
 pub trait UIElement {
     fn render(&mut self);
-    fn handle_events(&mut self, window: &mut glfw::Window, glfw: &mut glfw::Glfw, event: &glfw::WindowEvent) -> bool;
+    fn handle_events(
+        &mut self,
+        window: &mut glfw::Window,
+        glfw: &mut glfw::Glfw,
+        event: &glfw::WindowEvent,
+    ) -> bool;
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>);
     fn set_offset(&mut self, offset: (f32, f32));
     fn get_size(&self) -> (f32, f32);

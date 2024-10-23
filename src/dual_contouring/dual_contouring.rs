@@ -3,9 +3,14 @@ use gl::types::GLuint;
 use glfw::MouseButton;
 use libnoise::prelude::*;
 
-use crate::{camera::{Camera, Projection}, line::Line, shader::{Shader, VertexAttributes}, terrain::{Chunk, ChunkBounds}};
+use crate::{
+    camera::{Camera, Projection},
+    line::Line,
+    shader::{Shader, VertexAttributes},
+    terrain::{Chunk, ChunkBounds},
+};
 
-use super::{DualContouringChunk, ChunkMesh, Vertex, CHUNK_SIZE, CHUNK_SIZE_FLOAT, ISO_VALUE};
+use super::{ChunkMesh, DualContouringChunk, Vertex, CHUNK_SIZE, CHUNK_SIZE_FLOAT, ISO_VALUE};
 
 impl DualContouringChunk {
     fn get_density_at(&self, (x, y, z): (usize, usize, usize)) -> f32 {
@@ -15,12 +20,19 @@ impl DualContouringChunk {
             (self.position.1 * CHUNK_SIZE_FLOAT) as f64 + y as f64 + offset,
             (self.position.2 * CHUNK_SIZE_FLOAT) as f64 + z as f64 + offset,
         );
-        
-        let noise_value = (1.0 + self.noises[0].sample([sample_point.0, sample_point.2]))/2.0;
-        let hills_value = (1.0 + self.noises[1].sample([sample_point.0, sample_point.2]))/2.0 * 0.2;
-        let tiny_hills_value = (1.0 + self.noises[2].sample([sample_point.0, sample_point.2]))/2.0 * 0.01;
-        let height = ((noise_value + hills_value + tiny_hills_value) as f32 * CHUNK_SIZE_FLOAT) - y as f32;
-        let iso = (1.0 + self.cave.sample([sample_point.0, sample_point.1, sample_point.2]) as f32) / 2.0;
+
+        let noise_value = (1.0 + self.noises[0].sample([sample_point.0, sample_point.2])) / 2.0;
+        let hills_value =
+            (1.0 + self.noises[1].sample([sample_point.0, sample_point.2])) / 2.0 * 0.2;
+        let tiny_hills_value =
+            (1.0 + self.noises[2].sample([sample_point.0, sample_point.2])) / 2.0 * 0.01;
+        let height =
+            ((noise_value + hills_value + tiny_hills_value) as f32 * CHUNK_SIZE_FLOAT) - y as f32;
+        let iso = (1.0
+            + self
+                .cave
+                .sample([sample_point.0, sample_point.1, sample_point.2]) as f32)
+            / 2.0;
         let height_iso = (height as f32 * CHUNK_SIZE_FLOAT) - y as f32;
         height_iso - iso
     }
@@ -28,15 +40,22 @@ impl DualContouringChunk {
     fn generate_mesh(&self) -> ChunkMesh<Vertex> {
         let mut vertices = Vec::<Vertex>::new();
         let mut indices = Vec::<u32>::new();
-        let mut vertex_grid = vec![vec![vec![false; self.chunk_size+1]; self.chunk_size+1]; self.chunk_size+1];
-        let mut index_grid = vec![vec![vec![0; self.chunk_size+1]; self.chunk_size+1]; self.chunk_size+1];
+        let mut vertex_grid =
+            vec![vec![vec![false; self.chunk_size + 1]; self.chunk_size + 1]; self.chunk_size + 1];
+        let mut index_grid =
+            vec![vec![vec![0; self.chunk_size + 1]; self.chunk_size + 1]; self.chunk_size + 1];
         let mut index: u32 = 0;
         let size_multiplier = CHUNK_SIZE / self.chunk_size;
-        for x in 0..self.chunk_size+1 {
-            for y in 0..self.chunk_size+1 {
-                for z in 0..self.chunk_size+1 {
-                    if self.is_surface_voxel((x * size_multiplier, y * size_multiplier, z * size_multiplier)) {
-                        let mut corners: [(Point3<f32>, f32); 8] = [(Point3::new(0.0, 0.0, 0.0), ISO_VALUE); 8];
+        for x in 0..self.chunk_size + 1 {
+            for y in 0..self.chunk_size + 1 {
+                for z in 0..self.chunk_size + 1 {
+                    if self.is_surface_voxel((
+                        x * size_multiplier,
+                        y * size_multiplier,
+                        z * size_multiplier,
+                    )) {
+                        let mut corners: [(Point3<f32>, f32); 8] =
+                            [(Point3::new(0.0, 0.0, 0.0), ISO_VALUE); 8];
                         for i in 0..8 {
                             let x_add = i & 1;
                             let y_add = (i >> 1) & 1;
@@ -44,9 +63,23 @@ impl DualContouringChunk {
                             let x_n = x + x_add;
                             let y_n = y + y_add;
                             let z_n = z + z_add;
-                            corners[i] = (Point3::new(x_add as f32, y_add as f32, z_add as f32), self.get_density_at((x_n * size_multiplier, y_n * size_multiplier, z_n * size_multiplier)));
+                            corners[i] = (
+                                Point3::new(x_add as f32, y_add as f32, z_add as f32),
+                                self.get_density_at((
+                                    x_n * size_multiplier,
+                                    y_n * size_multiplier,
+                                    z_n * size_multiplier,
+                                )),
+                            );
                         }
-                        let position = self.calculate_vertex_position((x * size_multiplier, y * size_multiplier, z * size_multiplier), &corners);
+                        let position = self.calculate_vertex_position(
+                            (
+                                x * size_multiplier,
+                                y * size_multiplier,
+                                z * size_multiplier,
+                            ),
+                            &corners,
+                        );
                         let normal = DualContouringChunk::calculate_gradient(&corners, position);
 
                         let vertex = Vertex {
@@ -57,40 +90,40 @@ impl DualContouringChunk {
                         index_grid[x][y][z] = index;
                         vertices.push(vertex);
                         vertex_grid[x][y][z] = true;
-                        if x > 0 && vertex_grid[x-1][y][z] {
-                            if y > 0 && vertex_grid[x-1][y-1][z] {
+                        if x > 0 && vertex_grid[x - 1][y][z] {
+                            if y > 0 && vertex_grid[x - 1][y - 1][z] {
                                 indices.push(index);
-                                indices.push(index_grid[x-1][y][z] as u32);
-                                indices.push(index_grid[x-1][y-1][z] as u32);
+                                indices.push(index_grid[x - 1][y][z] as u32);
+                                indices.push(index_grid[x - 1][y - 1][z] as u32);
 
-                                if vertex_grid[x][y-1][z] {
+                                if vertex_grid[x][y - 1][z] {
                                     indices.push(index);
-                                    indices.push(index_grid[x][y-1][z] as u32);
-                                    indices.push(index_grid[x-1][y-1][z] as u32);
+                                    indices.push(index_grid[x][y - 1][z] as u32);
+                                    indices.push(index_grid[x - 1][y - 1][z] as u32);
                                 }
                             }
-                            if z > 0 && vertex_grid[x-1][y][z-1] {
+                            if z > 0 && vertex_grid[x - 1][y][z - 1] {
                                 indices.push(index);
-                                indices.push(index_grid[x-1][y][z-1] as u32);
-                                indices.push(index_grid[x-1][y][z] as u32);
+                                indices.push(index_grid[x - 1][y][z - 1] as u32);
+                                indices.push(index_grid[x - 1][y][z] as u32);
 
-                                if vertex_grid[x][y][z-1] {
+                                if vertex_grid[x][y][z - 1] {
                                     indices.push(index);
                                     indices.push(index_grid[x][y][z - 1] as u32);
-                                    indices.push(index_grid[x-1][y][z-1] as u32);
+                                    indices.push(index_grid[x - 1][y][z - 1] as u32);
                                 }
                             }
                         }
-                        if y > 0 && vertex_grid[x][y-1][z] {
-                            if z > 0 && vertex_grid[x][y-1][z-1] {
+                        if y > 0 && vertex_grid[x][y - 1][z] {
+                            if z > 0 && vertex_grid[x][y - 1][z - 1] {
                                 indices.push(index);
-                                indices.push(index_grid[x][y-1][z] as u32);
-                                indices.push(index_grid[x][y-1][z-1] as u32);
+                                indices.push(index_grid[x][y - 1][z] as u32);
+                                indices.push(index_grid[x][y - 1][z - 1] as u32);
 
-                                if vertex_grid[x][y][z-1] {
+                                if vertex_grid[x][y][z - 1] {
                                     indices.push(index);
                                     indices.push(index_grid[x][y][z - 1] as u32);
-                                    indices.push(index_grid[x][y - 1][z-1] as u32);
+                                    indices.push(index_grid[x][y - 1][z - 1] as u32);
                                 }
                             }
                         }
@@ -104,10 +137,17 @@ impl DualContouringChunk {
     }
 
     fn calculate_chunk_size(lod: usize) -> usize {
-        std::cmp::max(2, std::cmp::min(CHUNK_SIZE, CHUNK_SIZE / 2usize.pow(lod as u32 / 2)))
+        std::cmp::max(
+            2,
+            std::cmp::min(CHUNK_SIZE, CHUNK_SIZE / 2usize.pow(lod as u32 / 2)),
+        )
     }
 
-    fn calculate_vertex_position(&self, position: (usize, usize, usize), corners: &[(Point3<f32>, f32)]) -> Point3<f32> {
+    fn calculate_vertex_position(
+        &self,
+        position: (usize, usize, usize),
+        corners: &[(Point3<f32>, f32)],
+    ) -> Point3<f32> {
         let mut v_pos = Point3::new(position.0 as f32, position.1 as f32, position.2 as f32);
         let relative_coordinates = DualContouringChunk::calculate_relative_coordinates(&corners);
 
@@ -122,30 +162,42 @@ impl DualContouringChunk {
         let t = (ISO_VALUE - p1.1) / (p2.1 - p1.1);
         p1.0 + (p2.0 - p1.0) * t
     }
-    
-    fn find_crossing_edges(vertices: &[(Point3<f32>, f32)]) -> Vec<((Point3<f32>, f32), (Point3<f32>, f32))> {
+
+    fn find_crossing_edges(
+        vertices: &[(Point3<f32>, f32)],
+    ) -> Vec<((Point3<f32>, f32), (Point3<f32>, f32))> {
         let mut crossing_edges = Vec::new();
         for (i, p1) in vertices.iter().enumerate() {
             for p2 in vertices.iter().skip(i + 1) {
-                if (p1.1 <= ISO_VALUE && ISO_VALUE <= p2.1) || (p2.1 <= ISO_VALUE && ISO_VALUE <= p1.1) {
+                if (p1.1 <= ISO_VALUE && ISO_VALUE <= p2.1)
+                    || (p2.1 <= ISO_VALUE && ISO_VALUE <= p1.1)
+                {
                     crossing_edges.push((*p1, *p2));
                 }
             }
         }
         crossing_edges
     }
-    
+
     fn calculate_relative_coordinates(vertices: &[(Point3<f32>, f32)]) -> Point3<f32> {
         let crossing_edges = DualContouringChunk::find_crossing_edges(vertices);
-        let interpolated_points: Vec<Point3<f32>> = crossing_edges.iter().map(|&edge| DualContouringChunk::interpolate(edge.0, edge.1)).collect();
-    
+        let interpolated_points: Vec<Point3<f32>> = crossing_edges
+            .iter()
+            .map(|&edge| DualContouringChunk::interpolate(edge.0, edge.1))
+            .collect();
+
         // Berechne den Schwerpunkt der interpolierten Punkte
-        let center_of_mass = interpolated_points.iter().fold(Vector3::new(0.0, 0.0, 0.0), |acc, &p| acc + p.to_vec()) / (interpolated_points.len() as f32);
-    
+        let center_of_mass = interpolated_points
+            .iter()
+            .fold(Vector3::new(0.0, 0.0, 0.0), |acc, &p| acc + p.to_vec())
+            / (interpolated_points.len() as f32);
+
         Point3::from_vec(center_of_mass)
     }
 
-    fn calculate_corner_gradients(vertices: &[(Point3<f32>, f32)]) -> Vec<(Point3<f32>, Vector3<f32>)> {
+    fn calculate_corner_gradients(
+        vertices: &[(Point3<f32>, f32)],
+    ) -> Vec<(Point3<f32>, Vector3<f32>)> {
         let mut corner_gradients = Vec::new();
         for (i, &(point, value)) in vertices.iter().enumerate() {
             let mut gradient = Vector3::new(0.0, 0.0, 0.0);
@@ -164,18 +216,20 @@ impl DualContouringChunk {
         }
         corner_gradients
     }
-    
+
     fn calculate_gradient(vertices: &[(Point3<f32>, f32)], point: Point3<f32>) -> Vector3<f32> {
         let corner_gradients = DualContouringChunk::calculate_corner_gradients(vertices);
-    
+
         let mut gradient = Vector3::new(0.0, 0.0, 0.0);
         for i in 0..8 {
             let c = corner_gradients[i].1;
             let p = corner_gradients[i].0;
-            let weight = (1.0 - (point.x - p.x).abs()) * (1.0 - (point.y - p.y).abs()) * (1.0 - (point.z - p.z).abs());
+            let weight = (1.0 - (point.x - p.x).abs())
+                * (1.0 - (point.y - p.y).abs())
+                * (1.0 - (point.z - p.z).abs());
             gradient += c * weight;
         }
-    
+
         gradient.normalize()
     }
 
@@ -216,7 +270,7 @@ impl Chunk for DualContouringChunk {
         chunk.mesh = Some(chunk.generate_mesh());
         chunk
     }
-    
+
     fn render(&mut self, camera: &Camera, projection: &Projection, shader: &Shader) {
         if let Some(mesh) = &mut self.mesh {
             if !mesh.is_buffered() {
@@ -228,7 +282,15 @@ impl Chunk for DualContouringChunk {
             unsafe {
                 gl::Disable(gl::CULL_FACE);
             }
-            mesh.render(&shader, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32), None);
+            mesh.render(
+                &shader,
+                (
+                    self.position.0 * CHUNK_SIZE as f32,
+                    self.position.1 * CHUNK_SIZE as f32,
+                    self.position.2 * CHUNK_SIZE as f32,
+                ),
+                None,
+            );
         }
     }
 
@@ -246,18 +308,18 @@ impl Chunk for DualContouringChunk {
             ),
         }
     }
-    
+
     fn process_line(&mut self, _: &Line, _: &MouseButton) -> bool {
         false
     }
-    
+
     fn get_shader_source() -> (String, String) {
         (
             include_str!("vertex.glsl").to_string(),
             include_str!("fragment.glsl").to_string(),
         )
     }
-    
+
     fn get_textures() -> Vec<crate::texture::Texture> {
         Vec::new()
     }
@@ -265,10 +327,6 @@ impl Chunk for DualContouringChunk {
 
 impl VertexAttributes for Vertex {
     fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
-        vec![
-            (3, gl::FLOAT),
-            (3, gl::FLOAT),
-            (3, gl::FLOAT),
-        ]
+        vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT)]
     }
 }

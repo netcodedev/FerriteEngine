@@ -1,7 +1,7 @@
-use rusttype::gpu_cache::Cache;
-use rusttype::{point, Font, Rect, PositionedGlyph, Scale};
 use crate::shader::Shader;
 use gl::types::GLvoid;
+use rusttype::gpu_cache::Cache;
+use rusttype::{point, Font, PositionedGlyph, Rect, Scale};
 
 use super::{TextRenderer, Texture};
 
@@ -31,7 +31,7 @@ impl TextRenderer {
     }
 
     /// Renders text to the screen
-    /// 
+    ///
     /// Returns the width and height of the text
     pub fn render(x: i32, y: i32, size: f32, text: &str) -> (i32, i32) {
         let mut renderer = RENDERER.lock().unwrap();
@@ -52,33 +52,63 @@ impl TextRenderer {
                 rect.min.y as i32,
                 rect.width() as i32,
                 rect.height() as i32,
-                gl::RED, gl::UNSIGNED_BYTE, data.as_ptr() as *const std::ffi::c_void
+                gl::RED,
+                gl::UNSIGNED_BYTE,
+                data.as_ptr() as *const std::ffi::c_void,
             );
         });
-        
+
         let mut max_x = 0;
         let mut max_y = 0;
-        let vertices: Vec<f32> = glyphs.iter().filter_map(|g| renderer.cache.rect_for(0, g).ok().flatten()).flat_map(|(uv_rect, screen_rect)| {
-            if screen_rect.max.x as i32 > max_x {
-                max_x = screen_rect.max.x as i32;
-            }
-            if screen_rect.max.y as i32 > max_y {
-                max_y = screen_rect.max.y as i32;
-            }
-            let gl_rect = Rect {
-                min: point(screen_rect.min.x as f32 + x as f32, screen_rect.min.y as f32 + y as f32),
-                max: point(screen_rect.max.x as f32 + x as f32, screen_rect.max.y as f32 + y as f32),
-            };
-            vec![
-                gl_rect.min.x, gl_rect.max.y, uv_rect.min.x, uv_rect.max.y,
-                gl_rect.min.x, gl_rect.min.y, uv_rect.min.x, uv_rect.min.y,
-                gl_rect.max.x, gl_rect.min.y, uv_rect.max.x, uv_rect.min.y,
-                gl_rect.max.x, gl_rect.min.y, uv_rect.max.x, uv_rect.min.y,
-                gl_rect.max.x, gl_rect.max.y, uv_rect.max.x, uv_rect.max.y,
-                gl_rect.min.x, gl_rect.max.y, uv_rect.min.x, uv_rect.max.y,
-            ]
-        }).collect();
-        
+        let vertices: Vec<f32> = glyphs
+            .iter()
+            .filter_map(|g| renderer.cache.rect_for(0, g).ok().flatten())
+            .flat_map(|(uv_rect, screen_rect)| {
+                if screen_rect.max.x as i32 > max_x {
+                    max_x = screen_rect.max.x as i32;
+                }
+                if screen_rect.max.y as i32 > max_y {
+                    max_y = screen_rect.max.y as i32;
+                }
+                let gl_rect = Rect {
+                    min: point(
+                        screen_rect.min.x as f32 + x as f32,
+                        screen_rect.min.y as f32 + y as f32,
+                    ),
+                    max: point(
+                        screen_rect.max.x as f32 + x as f32,
+                        screen_rect.max.y as f32 + y as f32,
+                    ),
+                };
+                vec![
+                    gl_rect.min.x,
+                    gl_rect.max.y,
+                    uv_rect.min.x,
+                    uv_rect.max.y,
+                    gl_rect.min.x,
+                    gl_rect.min.y,
+                    uv_rect.min.x,
+                    uv_rect.min.y,
+                    gl_rect.max.x,
+                    gl_rect.min.y,
+                    uv_rect.max.x,
+                    uv_rect.min.y,
+                    gl_rect.max.x,
+                    gl_rect.min.y,
+                    uv_rect.max.x,
+                    uv_rect.min.y,
+                    gl_rect.max.x,
+                    gl_rect.max.y,
+                    uv_rect.max.x,
+                    uv_rect.max.y,
+                    gl_rect.min.x,
+                    gl_rect.max.y,
+                    uv_rect.min.x,
+                    uv_rect.max.y,
+                ]
+            })
+            .collect();
+
         // create vao and upload vertex data to gpu
         let mut vao = 0;
         let mut vbo = 0;
@@ -93,17 +123,36 @@ impl TextRenderer {
             gl::GenBuffers(1, &mut vbo);
             gl::BindVertexArray(vao);
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * std::mem::size_of::<f32>()) as isize, vertices.as_ptr() as *const std::ffi::c_void, gl::STATIC_DRAW);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (vertices.len() * std::mem::size_of::<f32>()) as isize,
+                vertices.as_ptr() as *const std::ffi::c_void,
+                gl::STATIC_DRAW,
+            );
             let stride = 4 * std::mem::size_of::<f32>() as i32;
             gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, stride, std::ptr::null());
             gl::EnableVertexAttribArray(0);
             let dummy = [0.0, 0.0];
-            gl::VertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE, stride, (dummy.len() * std::mem::size_of::<f32>()) as *const GLvoid);
+            gl::VertexAttribPointer(
+                1,
+                2,
+                gl::FLOAT,
+                gl::FALSE,
+                stride,
+                (dummy.len() * std::mem::size_of::<f32>()) as *const GLvoid,
+            );
             gl::EnableVertexAttribArray(1);
 
             // set shader uniforms
             renderer.shader.bind();
-            let projection = cgmath::ortho(0.0, renderer.width as f32, renderer.height as f32, 0.0, -1.0, 100.0);
+            let projection = cgmath::ortho(
+                0.0,
+                renderer.width as f32,
+                renderer.height as f32,
+                0.0,
+                -1.0,
+                100.0,
+            );
             renderer.shader.set_uniform_mat4("projection", &projection);
             renderer.shader.set_uniform_3f("color", 1.0, 1.0, 1.0);
 
@@ -195,7 +244,17 @@ impl Texture {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::R8 as i32, width, height, 0, gl::RED, gl::UNSIGNED_BYTE, data.as_ptr() as *const std::ffi::c_void);
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                gl::R8 as i32,
+                width,
+                height,
+                0,
+                gl::RED,
+                gl::UNSIGNED_BYTE,
+                data.as_ptr() as *const std::ffi::c_void,
+            );
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
         }
 

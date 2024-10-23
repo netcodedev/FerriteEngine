@@ -1,8 +1,11 @@
 use cgmath::*;
-use glfw::{Action, Key, CursorMode};
+use glfw::{Action, CursorMode, Key};
 use std::f32::consts::FRAC_PI_2;
 
-use crate::{line::Line, terrain::{ChunkBounds, CHUNK_SIZE}};
+use crate::{
+    line::Line,
+    terrain::{ChunkBounds, CHUNK_SIZE},
+};
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = Matrix4::new(
@@ -22,11 +25,7 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub fn new<
-        V: Into<Point3<f32>>,
-        Y: Into<Rad<f32>>,
-        P: Into<Rad<f32>>,
-    >(
+    pub fn new<V: Into<Point3<f32>>, Y: Into<Rad<f32>>, P: Into<Rad<f32>>>(
         position: V,
         yaw: Y,
         pitch: P,
@@ -44,11 +43,7 @@ impl Camera {
 
         Matrix4::look_to_rh(
             self.position,
-            Vector3::new(
-                cos_pitch * cos_yaw,
-                sin_pitch,
-                cos_pitch * sin_yaw
-            ).normalize(),
+            Vector3::new(cos_pitch * cos_yaw, sin_pitch, cos_pitch * sin_yaw).normalize(),
             Vector3::unit_y(),
         )
     }
@@ -62,13 +57,7 @@ pub struct Projection {
 }
 
 impl Projection {
-    pub fn new<F: Into<Rad<f32>>>(
-        width: u32,
-        height: u32,
-        fovy: F,
-        znear: f32,
-        zfar: f32,
-    ) -> Self {
+    pub fn new<F: Into<Rad<f32>>>(width: u32, height: u32, fovy: F, znear: f32, zfar: f32) -> Self {
         Self {
             aspect: width as f32 / height as f32,
             fovy: fovy.into(),
@@ -91,11 +80,14 @@ impl Projection {
     }
 }
 
-pub struct ViewFrustum {
-}
+pub struct ViewFrustum {}
 
 impl ViewFrustum {
-    pub fn is_bounds_in_frustum(projection: &Projection, camera: &Camera, bounds: ChunkBounds) -> bool {
+    pub fn is_bounds_in_frustum(
+        projection: &Projection,
+        camera: &Camera,
+        bounds: ChunkBounds,
+    ) -> bool {
         let mut result = false;
 
         // check if bounds are close to camera
@@ -106,23 +98,67 @@ impl ViewFrustum {
 
         let view_projection = projection.calc_matrix() * camera.calc_matrix();
         let clip: [Vector4<f32>; 8] = [
-            Vector4::new(bounds.min.0 as f32, bounds.min.1 as f32, bounds.min.2 as f32, 1.0),
-            Vector4::new(bounds.min.0 as f32, bounds.min.1 as f32, bounds.max.2 as f32, 1.0),
-            Vector4::new(bounds.min.0 as f32, bounds.max.1 as f32, bounds.min.2 as f32, 1.0),
-            Vector4::new(bounds.min.0 as f32, bounds.max.1 as f32, bounds.max.2 as f32, 1.0),
-            Vector4::new(bounds.max.0 as f32, bounds.min.1 as f32, bounds.min.2 as f32, 1.0),
-            Vector4::new(bounds.max.0 as f32, bounds.min.1 as f32, bounds.max.2 as f32, 1.0),
-            Vector4::new(bounds.max.0 as f32, bounds.max.1 as f32, bounds.min.2 as f32, 1.0),
-            Vector4::new(bounds.max.0 as f32, bounds.max.1 as f32, bounds.max.2 as f32, 1.0),
+            Vector4::new(
+                bounds.min.0 as f32,
+                bounds.min.1 as f32,
+                bounds.min.2 as f32,
+                1.0,
+            ),
+            Vector4::new(
+                bounds.min.0 as f32,
+                bounds.min.1 as f32,
+                bounds.max.2 as f32,
+                1.0,
+            ),
+            Vector4::new(
+                bounds.min.0 as f32,
+                bounds.max.1 as f32,
+                bounds.min.2 as f32,
+                1.0,
+            ),
+            Vector4::new(
+                bounds.min.0 as f32,
+                bounds.max.1 as f32,
+                bounds.max.2 as f32,
+                1.0,
+            ),
+            Vector4::new(
+                bounds.max.0 as f32,
+                bounds.min.1 as f32,
+                bounds.min.2 as f32,
+                1.0,
+            ),
+            Vector4::new(
+                bounds.max.0 as f32,
+                bounds.min.1 as f32,
+                bounds.max.2 as f32,
+                1.0,
+            ),
+            Vector4::new(
+                bounds.max.0 as f32,
+                bounds.max.1 as f32,
+                bounds.min.2 as f32,
+                1.0,
+            ),
+            Vector4::new(
+                bounds.max.0 as f32,
+                bounds.max.1 as f32,
+                bounds.max.2 as f32,
+                1.0,
+            ),
         ];
 
         for point in clip {
             let point = view_projection * point;
-            if point.x <= point.w && point.x >= -point.w && 
-                point.y <= point.w && point.y >= -point.w && 
-                point.z <= point.w && point.z >= -point.w {
-                    result = true;
-                    break;
+            if point.x <= point.w
+                && point.x >= -point.w
+                && point.y <= point.w
+                && point.y >= -point.w
+                && point.z <= point.w
+                && point.z >= -point.w
+            {
+                result = true;
+                break;
             }
         }
 
@@ -173,7 +209,11 @@ impl CameraController {
         }
     }
 
-    pub fn process_keyboard(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool {
+    pub fn process_keyboard(
+        &mut self,
+        window: &mut glfw::Window,
+        event: &glfw::WindowEvent,
+    ) -> bool {
         match event {
             glfw::WindowEvent::Key(Key::W | Key::Up, _, action, _) => {
                 let amount = match action {
@@ -237,32 +277,30 @@ impl CameraController {
                 }
                 self.is_active = !self.is_active;
                 true
-            },
+            }
             _ => false,
         }
     }
 
     pub fn process_mouse(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) {
         match event {
-            glfw::WindowEvent::CursorPos(xpos, ypos) => {
-                match window.get_cursor_mode() {
-                    CursorMode::Disabled => {
-                        if self.is_active {
-                            self.rotate_horizontal = *xpos as f32;
-                            self.rotate_vertical = *ypos as f32;
+            glfw::WindowEvent::CursorPos(xpos, ypos) => match window.get_cursor_mode() {
+                CursorMode::Disabled => {
+                    if self.is_active {
+                        self.rotate_horizontal = *xpos as f32;
+                        self.rotate_vertical = *ypos as f32;
 
-                            if self.rotate_horizontal.abs() > 250.0 {
-                                self.rotate_horizontal = 0.0;
-                            }
-                            if self.rotate_vertical.abs() > 250.0 {
-                                self.rotate_vertical = 0.0;
-                            }
-
-                            window.set_cursor_pos(0.0, 0.0);
+                        if self.rotate_horizontal.abs() > 250.0 {
+                            self.rotate_horizontal = 0.0;
                         }
+                        if self.rotate_vertical.abs() > 250.0 {
+                            self.rotate_vertical = 0.0;
+                        }
+
+                        window.set_cursor_pos(0.0, 0.0);
                     }
-                    _ => {}
                 }
+                _ => {}
             },
             glfw::WindowEvent::Scroll(_, y) => {
                 self.set_speed(self.speed + (*y as f32 * 10.0));
@@ -276,7 +314,8 @@ impl CameraController {
         let (yaw_sin, yaw_cos) = camera.yaw.0.sin_cos();
         let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
         let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
-        camera.position += forward * (self.amount_forward - self.amount_backward) * self.speed * delta_time;
+        camera.position +=
+            forward * (self.amount_forward - self.amount_backward) * self.speed * delta_time;
         camera.position += right * (self.amount_right - self.amount_left) * self.speed * delta_time;
 
         // Move up/down. Since we don't use roll, we can just
@@ -305,12 +344,15 @@ pub struct MousePicker {
 
 impl MousePicker {
     pub fn new() -> Self {
-        Self {
-            ray: None,
-        }
+        Self { ray: None }
     }
 
-    pub fn process_mouse(&mut self, event: &glfw::WindowEvent, camera: &Camera, projection: &Projection) -> Option<(Line, glfw::MouseButton)> {
+    pub fn process_mouse(
+        &mut self,
+        event: &glfw::WindowEvent,
+        camera: &Camera,
+        projection: &Projection,
+    ) -> Option<(Line, glfw::MouseButton)> {
         let line: Option<(Line, glfw::MouseButton)> = match event {
             glfw::WindowEvent::MouseButton(button, action, _) => {
                 if *action == Action::Press {
@@ -326,18 +368,18 @@ impl MousePicker {
                     None
                 }
             }
-            _ => {
-                None
-            }
+            _ => None,
         };
         line
     }
 
-    pub fn calculate_ray(&mut self, camera: &Camera, projection: &Projection) -> Vector3<f32>{
+    pub fn calculate_ray(&mut self, camera: &Camera, projection: &Projection) -> Vector3<f32> {
         let ray_clip = Vector4::new(0.0, 0.0, -1.0, 1.0);
         let ray_eye = projection.calc_matrix().invert().unwrap() * ray_clip;
         let ray_eye = Vector4::new(ray_eye.x, ray_eye.y, -1.0, 0.0);
 
-        (camera.calc_matrix().invert().unwrap() * ray_eye).truncate().normalize()
+        (camera.calc_matrix().invert().unwrap() * ray_eye)
+            .truncate()
+            .normalize()
     }
 }

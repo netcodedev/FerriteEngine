@@ -6,12 +6,14 @@ use crate::shader::Shader;
 
 use super::{Texture, TextureRenderer};
 
-
 impl Texture {
     pub fn new(path: &Path) -> Self {
         let texture = Texture::gen_texture();
         texture.bind();
-        let img = image::open(path).expect("Bild konnte nicht geladen werden").flipv().to_rgba8();
+        let img = image::open(path)
+            .expect("Bild konnte nicht geladen werden")
+            .flipv()
+            .to_rgba8();
         unsafe {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
@@ -24,7 +26,9 @@ impl Texture {
                 img.width() as GLsizei,
                 img.height() as GLsizei,
                 0,
-                gl::RGBA, gl::UNSIGNED_BYTE, img.as_ptr() as *const _
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                img.as_ptr() as *const _,
             );
         }
         texture
@@ -53,7 +57,9 @@ impl Texture {
                 width as GLsizei,
                 height as GLsizei,
                 0,
-                gl::RGBA, gl::UNSIGNED_BYTE, data.as_ptr() as *const _
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                data.as_ptr() as *const _,
             );
         }
         texture
@@ -78,23 +84,15 @@ impl TextureRenderer {
     #[allow(dead_code)]
     pub fn new() -> Self {
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
-        Self {
-            shader
-        }
+        Self { shader }
     }
 
     #[allow(dead_code)]
     pub fn render(&self, texture: &Texture) {
         let vertices: Vec<f32> = vec![
-            -0.5, -0.5, 0.0, 0.0,
-             0.5, -0.5, 1.0, 0.0,
-             0.5,  0.5, 1.0, 1.0,
-            -0.5,  0.5, 0.0, 1.0,
+            -0.5, -0.5, 0.0, 0.0, 0.5, -0.5, 1.0, 0.0, 0.5, 0.5, 1.0, 1.0, -0.5, 0.5, 0.0, 1.0,
         ];
-        let indices = vec![
-            0, 1, 2,
-            2, 3, 0,
-        ];
+        let indices = vec![0, 1, 2, 2, 3, 0];
 
         let mut vba = 0;
         let mut vbo = 0;
@@ -104,13 +102,37 @@ impl TextureRenderer {
             gl::BindVertexArray(vba);
             gl::GenBuffers(1, &mut vbo);
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::BufferData(gl::ARRAY_BUFFER, (vertices.len() * std::mem::size_of::<f32>()) as GLsizeiptr, vertices.as_ptr() as *const _, gl::STATIC_DRAW);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (vertices.len() * std::mem::size_of::<f32>()) as GLsizeiptr,
+                vertices.as_ptr() as *const _,
+                gl::STATIC_DRAW,
+            );
             gl::GenBuffers(1, &mut ebo);
             gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ebo);
-            gl::BufferData(gl::ELEMENT_ARRAY_BUFFER, (indices.len() * std::mem::size_of::<u32>()) as GLsizeiptr, indices.as_ptr() as *const _, gl::STATIC_DRAW);
-            gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 4 * std::mem::size_of::<f32>() as GLsizei as GLsizei, std::ptr::null());
+            gl::BufferData(
+                gl::ELEMENT_ARRAY_BUFFER,
+                (indices.len() * std::mem::size_of::<u32>()) as GLsizeiptr,
+                indices.as_ptr() as *const _,
+                gl::STATIC_DRAW,
+            );
+            gl::VertexAttribPointer(
+                0,
+                2,
+                gl::FLOAT,
+                gl::FALSE,
+                4 * std::mem::size_of::<f32>() as GLsizei as GLsizei,
+                std::ptr::null(),
+            );
             gl::EnableVertexAttribArray(0);
-            gl::VertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE, 4 * std::mem::size_of::<f32>() as GLsizei, (indices.len() * std::mem::size_of::<f32>()) as *const GLvoid);
+            gl::VertexAttribPointer(
+                1,
+                2,
+                gl::FLOAT,
+                gl::FALSE,
+                4 * std::mem::size_of::<f32>() as GLsizei,
+                (indices.len() * std::mem::size_of::<f32>()) as *const GLvoid,
+            );
             gl::EnableVertexAttribArray(1);
             texture.bind();
             gl::ActiveTexture(gl::TEXTURE0);

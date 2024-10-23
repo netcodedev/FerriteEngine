@@ -1,6 +1,6 @@
+use cgmath::{Array, Matrix};
 use gl::types::*;
 use std::{ffi::CString, ptr};
-use cgmath::{Array, Matrix};
 
 pub struct Shader {
     pub id: GLuint,
@@ -20,7 +20,9 @@ pub trait VertexAttributes {
 
 impl Shader {
     pub fn new(vertex_source: &str, fragment_source: &str) -> Self {
-        Shader { id: Shader::create_shader(vertex_source, fragment_source)}
+        Shader {
+            id: Shader::create_shader(vertex_source, fragment_source),
+        }
     }
 
     pub fn bind(&self) {
@@ -41,7 +43,12 @@ impl Shader {
         unsafe {
             let name = CString::new(name).unwrap();
             let location = gl::GetUniformLocation(self.id, name.as_ptr());
-            gl::UniformMatrix4fv(location, matrices.len() as i32, gl::FALSE, matrices.as_ptr() as *const f32);
+            gl::UniformMatrix4fv(
+                location,
+                matrices.len() as i32,
+                gl::FALSE,
+                matrices.as_ptr() as *const f32,
+            );
         }
     }
 
@@ -92,7 +99,7 @@ impl Shader {
             let c_str_vert = CString::new(vertex_shader_source.as_bytes()).unwrap();
             gl::ShaderSource(vertex_shader, 1, &c_str_vert.as_ptr(), ptr::null());
             gl::CompileShader(vertex_shader);
-    
+
             // 2. Check for vertex shader compilation errors
             let mut success = gl::FALSE as GLint;
             let mut info_log = Vec::with_capacity(512);
@@ -110,13 +117,13 @@ impl Shader {
                     String::from_utf8_lossy(&info_log)
                 );
             }
-    
+
             // 3. Compile fragment shader
             let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
             let c_str_frag = CString::new(fragment_shader_source.as_bytes()).unwrap();
             gl::ShaderSource(fragment_shader, 1, &c_str_frag.as_ptr(), ptr::null());
             gl::CompileShader(fragment_shader);
-    
+
             // 4. Check for fragment shader compilation errors
             gl::GetShaderiv(fragment_shader, gl::COMPILE_STATUS, &mut success);
             if success != gl::TRUE as GLint {
@@ -131,13 +138,13 @@ impl Shader {
                     String::from_utf8_lossy(&info_log)
                 );
             }
-    
+
             // 5. Link shaders
             let shader_program = gl::CreateProgram();
             gl::AttachShader(shader_program, vertex_shader);
             gl::AttachShader(shader_program, fragment_shader);
             gl::LinkProgram(shader_program);
-    
+
             // 6. Check for linking errors
             gl::GetProgramiv(shader_program, gl::LINK_STATUS, &mut success);
             if success != gl::TRUE as GLint {
@@ -152,11 +159,11 @@ impl Shader {
                     String::from_utf8_lossy(&info_log)
                 );
             }
-    
+
             // 7. Delete the shaders as they're linked into our program now and no longer necessary
             gl::DeleteShader(vertex_shader);
             gl::DeleteShader(fragment_shader);
-    
+
             shader_program
         }
     }
@@ -191,11 +198,24 @@ impl<T: VertexAttributes + Clone> DynamicVertexArray<T> {
                 gl::EnableVertexAttribArray(current_attrib);
                 match gl_type {
                     gl::FLOAT => {
-                        gl::VertexAttribPointer(current_attrib, size as i32, gl::FLOAT, gl::FALSE, std::mem::size_of::<T>() as i32, offset as *const _);
+                        gl::VertexAttribPointer(
+                            current_attrib,
+                            size as i32,
+                            gl::FLOAT,
+                            gl::FALSE,
+                            std::mem::size_of::<T>() as i32,
+                            offset as *const _,
+                        );
                         offset += size * std::mem::size_of::<f32>();
                     }
                     gl::UNSIGNED_INT => {
-                        gl::VertexAttribIPointer(current_attrib, size as i32, gl::UNSIGNED_INT, std::mem::size_of::<T>() as i32, offset as *const _);
+                        gl::VertexAttribIPointer(
+                            current_attrib,
+                            size as i32,
+                            gl::UNSIGNED_INT,
+                            std::mem::size_of::<T>() as i32,
+                            offset as *const _,
+                        );
                         offset += size * std::mem::size_of::<u32>();
                     }
                     _ => {}

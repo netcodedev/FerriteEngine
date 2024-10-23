@@ -1,4 +1,7 @@
-use crate::{plane::{PlaneBuilder, PlaneRenderer}, ui::UIElement};
+use crate::{
+    plane::{PlaneBuilder, PlaneRenderer},
+    ui::UIElement,
+};
 
 use super::{Container, ContainerBuilder};
 
@@ -16,12 +19,17 @@ impl Container {
 
 impl UIElement for Container {
     fn render(&mut self) {
-        PlaneRenderer::render(PlaneBuilder::new()
-            .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
-            .size((self.size.0, self.size.1))
-            .color((0.0, 0.0, 0.0, 0.0))
-            .border_color((0.0,0.0,0.0,0.0))
-            .build(),
+        PlaneRenderer::render(
+            PlaneBuilder::new()
+                .position((
+                    self.offset.0 + self.position.0,
+                    self.offset.1 + self.position.1,
+                    0.0,
+                ))
+                .size((self.size.0, self.size.1))
+                .color((0.0, 0.0, 0.0, 0.0))
+                .border_color((0.0, 0.0, 0.0, 0.0))
+                .build(),
         );
         for child in &mut self.children {
             child.render();
@@ -32,20 +40,29 @@ impl UIElement for Container {
         self.offset = offset;
         let mut current_y_offset = self.gap;
         for child in &mut self.children {
-            child.set_offset((self.offset.0 + self.position.0 + self.gap, self.offset.1 + self.position.1 + current_y_offset));
+            child.set_offset((
+                self.offset.0 + self.position.0 + self.gap,
+                self.offset.1 + self.position.1 + current_y_offset,
+            ));
             current_y_offset += child.get_size().1 + self.gap;
         }
     }
 
-    fn handle_events(&mut self, window: &mut glfw::Window, glfw: &mut glfw::Glfw, event: &glfw::WindowEvent) -> bool {
+    fn handle_events(
+        &mut self,
+        window: &mut glfw::Window,
+        glfw: &mut glfw::Glfw,
+        event: &glfw::WindowEvent,
+    ) -> bool {
         // test if click is within bounds
         match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
                 let (x, y) = window.get_cursor_pos();
-                if x as f32 >= self.offset.0 + self.position.0 &&
-                    x as f32 <= self.offset.0 + self.position.0 + self.size.0 &&
-                    y as f32 >= self.offset.1 + self.position.1 &&
-                    y as f32 <= self.offset.1 + self.position.1 + self.size.1 {
+                if x as f32 >= self.offset.0 + self.position.0
+                    && x as f32 <= self.offset.0 + self.position.0 + self.size.0
+                    && y as f32 >= self.offset.1 + self.position.1
+                    && y as f32 <= self.offset.1 + self.position.1 + self.size.1
+                {
                     for child in &mut self.children {
                         if child.handle_events(window, glfw, event) {
                             return true;
@@ -53,7 +70,7 @@ impl UIElement for Container {
                     }
                 }
             }
-            _ => ()
+            _ => (),
         }
         for child in &mut self.children {
             if child.handle_events(window, glfw, event) {
@@ -66,7 +83,10 @@ impl UIElement for Container {
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>) {
         let mut current_y_offset = self.gap;
         for mut child in children {
-            child.set_offset((self.offset.0 + self.position.0 + self.gap, self.offset.1 + self.position.1 + current_y_offset));
+            child.set_offset((
+                self.offset.0 + self.position.0 + self.gap,
+                self.offset.1 + self.position.1 + current_y_offset,
+            ));
             current_y_offset += child.get_size().1 + self.gap;
             self.children.push(child);
         }

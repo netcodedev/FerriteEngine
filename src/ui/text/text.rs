@@ -15,13 +15,23 @@ impl Text {
 
 impl UIElement for Text {
     fn render(&mut self) {
-        let (width, _) = TextRenderer::render(self.offset.0 as i32 + 5, self.offset.1 as i32 + 2, self.size, self.text.as_str());
+        let (width, _) = TextRenderer::render(
+            self.offset.0 as i32 + 5,
+            self.offset.1 as i32 + 2,
+            self.size,
+            self.text.as_str(),
+        );
         if width as f32 != self.width {
             self.width = width as f32;
         }
     }
 
-    fn handle_events(&mut self, _window: &mut glfw::Window, _: &mut glfw::Glfw, _event: &glfw::WindowEvent) -> bool {
+    fn handle_events(
+        &mut self,
+        _window: &mut glfw::Window,
+        _: &mut glfw::Glfw,
+        _event: &glfw::WindowEvent,
+    ) -> bool {
         false
     }
 

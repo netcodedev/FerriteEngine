@@ -1,7 +1,7 @@
-use cgmath::{Point3, Vector3};
-use gl::types::*;
 use crate::camera::{Camera, Projection};
 use crate::shader::Shader;
+use cgmath::{Point3, Vector3};
+use gl::types::*;
 
 use super::{Line, LineRenderer};
 
@@ -17,7 +17,7 @@ impl Line {
         Self {
             position,
             direction,
-            length
+            length,
         }
     }
 }
@@ -35,21 +35,30 @@ impl LineRenderer {
             gl::BindVertexArray(vao);
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
 
-            gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, 3 * std::mem::size_of::<GLfloat>() as GLsizei, std::ptr::null());
+            gl::VertexAttribPointer(
+                0,
+                3,
+                gl::FLOAT,
+                gl::FALSE,
+                3 * std::mem::size_of::<GLfloat>() as GLsizei,
+                std::ptr::null(),
+            );
             gl::EnableVertexAttribArray(0);
 
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
         }
 
-        Self {
-            shader,
-            vao,
-            vbo,
-        }
+        Self { shader, vao, vbo }
     }
 
-    pub fn render(camera: &Camera, projection: &Projection, line: &Line, color: Vector3<f32>, always_on_top: bool) {
+    pub fn render(
+        camera: &Camera,
+        projection: &Projection,
+        line: &Line,
+        color: Vector3<f32>,
+        always_on_top: bool,
+    ) {
         let renderer = RENDERER.lock().unwrap();
         unsafe {
             if always_on_top {
@@ -71,11 +80,20 @@ impl LineRenderer {
 
             let end = line.position + line.direction * line.length;
             let lines = vec![
-                line.position.x, line.position.y, line.position.z,
-                end.x, end.y, end.z,
+                line.position.x,
+                line.position.y,
+                line.position.z,
+                end.x,
+                end.y,
+                end.z,
             ];
 
-            gl::BufferData(gl::ARRAY_BUFFER, (lines.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr, lines.as_ptr() as *const _, gl::STATIC_DRAW);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (lines.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
+                lines.as_ptr() as *const _,
+                gl::STATIC_DRAW,
+            );
             gl::DrawArrays(gl::LINES, 0, (lines.len() / 3) as i32);
 
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
@@ -85,7 +103,13 @@ impl LineRenderer {
         }
     }
 
-    pub fn render_lines(camera: &Camera, projection: &Projection, lines: &Vec<Line>, color: Vector3<f32>, always_on_top: bool) {
+    pub fn render_lines(
+        camera: &Camera,
+        projection: &Projection,
+        lines: &Vec<Line>,
+        color: Vector3<f32>,
+        always_on_top: bool,
+    ) {
         let renderer = RENDERER.lock().unwrap();
         unsafe {
             if always_on_top {
@@ -116,7 +140,12 @@ impl LineRenderer {
                 lines_data.push(end.z);
             }
 
-            gl::BufferData(gl::ARRAY_BUFFER, (lines_data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr, lines_data.as_ptr() as *const _, gl::STATIC_DRAW);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (lines_data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
+                lines_data.as_ptr() as *const _,
+                gl::STATIC_DRAW,
+            );
             gl::DrawArrays(gl::LINES, 0, (lines_data.len() / 3) as i32);
 
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);

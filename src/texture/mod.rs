@@ -4,12 +4,11 @@ use crate::shader::Shader;
 
 pub mod texture;
 
-
 pub struct Texture {
-    pub id: GLuint
+    pub id: GLuint,
 }
 
 #[allow(dead_code)]
 pub struct TextureRenderer {
-    shader: Shader
+    shader: Shader,
 }

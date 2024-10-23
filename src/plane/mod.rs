@@ -5,7 +5,7 @@ pub mod plane;
 pub struct PlaneRenderer {
     shader: Shader,
     width: f32,
-    height: f32
+    height: f32,
 }
 
 pub struct Plane {
@@ -14,7 +14,7 @@ pub struct Plane {
     pub color: (f32, f32, f32, f32),
     pub border_thickness: f32,
     pub border_color: (f32, f32, f32, f32),
-    pub border_radius: (f32, f32, f32, f32)
+    pub border_radius: (f32, f32, f32, f32),
 }
 
 #[derive(Clone, Copy)]
@@ -24,7 +24,7 @@ pub struct PlaneBuilder {
     color: (f32, f32, f32, f32),
     border_thickness: f32,
     border_color: (f32, f32, f32, f32),
-    border_radius: (f32, f32, f32, f32)
+    border_radius: (f32, f32, f32, f32),
 }
 
 #[repr(C)]
@@ -32,5 +32,5 @@ pub struct PlaneBuilder {
 pub struct PlaneVertex {
     pub position: (f32, f32, f32),
     pub color: (f32, f32, f32, f32),
-    pub dimensions: (f32, f32, f32, f32)
+    pub dimensions: (f32, f32, f32, f32),
 }

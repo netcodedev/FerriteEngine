@@ -1,11 +1,18 @@
-use crate::{plane::{PlaneBuilder, PlaneRenderer}, ui::UIElement};
+use crate::{
+    plane::{PlaneBuilder, PlaneRenderer},
+    ui::UIElement,
+};
 
 use super::{Button, ButtonBuilder};
 
 impl UIElement for Button {
     fn render(&mut self) {
         let mut plane = PlaneBuilder::new()
-            .position((self.offset.0 + self.position.0, self.offset.1 + self.position.1, 0.0))
+            .position((
+                self.offset.0 + self.position.0,
+                self.offset.1 + self.position.1,
+                0.0,
+            ))
             .size((self.size.0, self.size.1))
             .border_radius_uniform(5.0)
             .border_thickness(1.0);
@@ -23,43 +30,56 @@ impl UIElement for Button {
     fn set_offset(&mut self, offset: (f32, f32)) {
         self.offset = offset;
         for child in &mut self.children {
-            child.set_offset((self.offset.0 + self.position.0, self.offset.1 + self.position.1));
+            child.set_offset((
+                self.offset.0 + self.position.0,
+                self.offset.1 + self.position.1,
+            ));
         }
     }
 
-    fn handle_events(&mut self, window: &mut glfw::Window, _: &mut glfw::Glfw, event: &glfw::WindowEvent) -> bool {
+    fn handle_events(
+        &mut self,
+        window: &mut glfw::Window,
+        _: &mut glfw::Glfw,
+        event: &glfw::WindowEvent,
+    ) -> bool {
         match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
                 let (x, y) = window.get_cursor_pos();
-                if x as f32 >= self.offset.0 + self.position.0 &&
-                    x as f32 <= self.offset.0 + self.position.0 + self.size.0 &&
-                    y as f32 >= self.offset.1 + self.position.1 &&
-                    y as f32 <= self.offset.1 + self.position.1 + self.size.1 {
+                if x as f32 >= self.offset.0 + self.position.0
+                    && x as f32 <= self.offset.0 + self.position.0 + self.size.0
+                    && y as f32 >= self.offset.1 + self.position.1
+                    && y as f32 <= self.offset.1 + self.position.1 + self.size.1
+                {
                     (self.on_click)();
-                    return true
+                    return true;
                 }
                 false
             }
             glfw::WindowEvent::CursorPos(x, y) => {
-                if *x as f32 >= self.offset.0 + self.position.0 &&
-                    *x as f32 <= self.offset.0 + self.position.0 + self.size.0 &&
-                    *y as f32 >= self.offset.1 + self.position.1 &&
-                    *y as f32 <= self.offset.1 + self.position.1 + self.size.1 {
-                        window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
-                        self.is_hovering = true;
+                if *x as f32 >= self.offset.0 + self.position.0
+                    && *x as f32 <= self.offset.0 + self.position.0 + self.size.0
+                    && *y as f32 >= self.offset.1 + self.position.1
+                    && *y as f32 <= self.offset.1 + self.position.1 + self.size.1
+                {
+                    window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
+                    self.is_hovering = true;
                 } else if self.is_hovering {
                     window.set_cursor(None);
                     self.is_hovering = false;
                 }
                 false
             }
-            _ => false
+            _ => false,
         }
     }
 
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>) {
         for mut child in children {
-            child.set_offset((self.offset.0 + self.position.0, self.offset.1 + self.position.1));
+            child.set_offset((
+                self.offset.0 + self.position.0,
+                self.offset.1 + self.position.1,
+            ));
             self.children.push(child);
         }
     }
