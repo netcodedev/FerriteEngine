@@ -37,6 +37,10 @@ impl UIElement for Input {
             gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
             gl::DepthMask(gl::TRUE);
 
+            if let Some(get_fn) = &self.get_fn {
+                self.content = get_fn();
+            }
+
             TextRenderer::render(
                 (self.offset.0 + self.position.0 + 5.0) as i32,
                 (self.offset.1 + self.position.1 + 5.0) as i32,
@@ -82,6 +86,9 @@ impl UIElement for Input {
             glfw::WindowEvent::Char(character) => {
                 if self.is_focused {
                     self.content.push(*character);
+                    if let Some(set_fn) = &mut self.set_fn {
+                        set_fn(self.content.clone());
+                    }
                     return true
                 }
                 false
@@ -89,6 +96,9 @@ impl UIElement for Input {
             glfw::WindowEvent::Key(glfw::Key::Backspace, _, glfw::Action::Press | glfw::Action::Repeat, _) => {
                 if self.is_focused {
                     self.content.pop();
+                    if let Some(set_fn) = &mut self.set_fn {
+                        set_fn(self.content.clone());
+                    }
                     return true
                 }
                 false
@@ -115,7 +125,7 @@ impl UIElement for Input {
 }
 
 impl Input {
-    pub fn new(position: (f32, f32), size: (f32, f32), content: String) -> Self {
+    pub fn new(position: (f32, f32), size: (f32, f32), content: String, get_fn: Option<Box<dyn Fn() -> String>>, set_fn: Option<Box<dyn FnMut(String)>>) -> Self {
         Self {
             position,
             size,
@@ -123,6 +133,8 @@ impl Input {
             is_hovering: false,
             is_focused: false,
             content,
+            get_fn,
+            set_fn
         }
     }
 }
@@ -133,6 +145,8 @@ impl InputBuilder {
             position: (0.0, 0.0),
             size: (0.0, 0.0),
             content,
+            get_fn: None,
+            set_fn: None
         }
     }
 
@@ -148,6 +162,16 @@ impl InputBuilder {
     }
 
     pub fn build(self) -> Input {
-        Input::new(self.position, self.size, self.content)
+        Input::new(self.position, self.size, self.content, self.get_fn, self.set_fn)
+    }
+
+    pub fn get_fn<F>(mut self, get_fn: F) -> Self where F: Fn() -> String + 'static {
+        self.get_fn = Some(Box::new(get_fn));
+        self
+    }
+
+    pub fn set_fn<F>(mut self, set_fn: F) -> Self where F: FnMut(String) + 'static {
+        self.set_fn = Some(Box::new(set_fn));
+        self
     }
 }

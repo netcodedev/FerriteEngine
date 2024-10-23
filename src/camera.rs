@@ -162,7 +162,18 @@ impl CameraController {
         }
     }
 
-    pub fn process_keyboard(&mut self, window: &mut glfw::Window,event: &glfw::WindowEvent) -> bool {
+    pub fn get_speed(&self) -> f32 {
+        self.speed
+    }
+
+    pub fn set_speed(&mut self, speed: f32) {
+        self.speed = speed;
+        if self.speed < 0.0 {
+            self.speed = 0.0;
+        }
+    }
+
+    pub fn process_keyboard(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) -> bool {
         match event {
             glfw::WindowEvent::Key(Key::W | Key::Up, _, action, _) => {
                 let amount = match action {
@@ -254,7 +265,7 @@ impl CameraController {
                 }
             },
             glfw::WindowEvent::Scroll(_, y) => {
-                self.speed += *y as f32 * 10.0;
+                self.set_speed(self.speed + (*y as f32 * 10.0));
             }
             _ => {}
         }

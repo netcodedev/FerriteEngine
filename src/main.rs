@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use cgmath::Deg;
 
 mod camera;
@@ -36,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut camera: Camera = Camera::new((0.0, 92.0, 2.0), Deg(-90.0), Deg(0.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
-    let mut camera_controller: CameraController = CameraController::new(10.0, 1.0);
+    let camera_controller: Rc<RefCell<CameraController>> = Rc::new(RefCell::new(CameraController::new(10.0, 1.0)));
     let mut debug_controller: DebugController = DebugController::new();
 
     let mut mouse_picker = MousePicker::new();
@@ -49,18 +51,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     model.play_animation("mixamo.com");
     models.push(&mut model);
 
-    ui.add(PanelBuilder::new("Test Panel".to_string())
+    let camera_controller_ref1 = Rc::clone(&camera_controller);
+    let camera_controller_ref2 = Rc::clone(&camera_controller);
+    let camera_controller_ref3 = Rc::clone(&camera_controller);
+    ui.add(PanelBuilder::new("Camera controls".to_string())
         .position(10.0, 120.0)
         .size(200.0, 200.0)
-        .add_child(Box::new(ButtonBuilder::new()
-            .size(100.0, 20.0)
-            .on_click(Box::new(|| {println!("button clicked")}))
-            .add_child(Box::new(Text::new("Click me!", 16.0)))
-            .build()
-        ))
-        .add_child(Box::new(Text::new("Hello World!", 16.0)))
+        .add_child(Box::new(Text::new("Camera Speed", 16.0)))
         .add_child(Box::new(InputBuilder::new("Input".to_string())
             .size(190.0, 26.0)
+            .get_fn(move || {
+                let camera_controller = camera_controller_ref1.borrow();
+                camera_controller.get_speed().to_string()
+            })
+            .set_fn(move |v| {
+                let mut camera_controller = camera_controller_ref2.borrow_mut();
+                match v.parse::<f32>() {
+                    Ok(v) => camera_controller.set_speed(v),
+                    Err(_) => {}
+                }
+            })
+            .build()
+        ))
+        .add_child(Box::new(ButtonBuilder::new()
+            .size(100.0, 20.0)
+            .on_click(Box::new(move || {
+                let mut camera_controller = camera_controller_ref3.borrow_mut();
+                camera_controller.set_speed(10.0);
+            }))
+            .add_child(Box::new(Text::new("Reset speed", 16.0)))
             .build()
         ))
         .build()
@@ -75,6 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         window.handle_events(|mut window, mut glfw, event| {
             if ui.handle_events(window, &mut glfw, &event) { return; }
+            let mut camera_controller = camera_controller.borrow_mut();
             camera_controller.process_keyboard(&mut window, &event);
             camera_controller.process_mouse(&mut window, &event);
             projection.resize(&event);
@@ -87,7 +107,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         terrain.process_line(line);
 
         let delta_time = window.calculate_frametime();
-        camera_controller.update_camera(&mut camera, delta_time as f32);
+        {
+            let mut camera_controller = camera_controller.borrow_mut();
+            camera_controller.update_camera(&mut camera, delta_time as f32);
+        }
 
         terrain.update();
         terrain.render(&camera, &projection);
