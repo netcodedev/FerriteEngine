@@ -13,11 +13,12 @@ mod terrain;
 mod texture;
 mod utils;
 mod ui;
+mod voxel;
 mod window;
 use camera::{Camera, CameraController, Projection, MousePicker};
 use debug::DebugController;
-use dual_contouring::Terrain;
 use plane::PlaneRenderer;
+use terrain::Terrain;
 use text::TextRenderer;
 use line::Line;
 use model::Model;
@@ -39,7 +40,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut mouse_picker = MousePicker::new();
 
-    let mut terrain = Terrain::new();
+    let terrain_type = "voxel";
+    let mut terrain: Box<dyn Terrain> = match terrain_type {
+        "dual" => Box::new(dual_contouring::DualContouringTerrain::new()),
+        "marching" => Box::new(marching_cubes::MarchingCubesTerrain::new()),
+        "voxel" => Box::new(voxel::VoxelTerrain::new()),
+        _ => Box::new(voxel::VoxelTerrain::new()),
+    };
 
     let mut models: Vec<&mut Model> = Vec::new();
     let mut model = Model::new("assets/models/char_anim.fbx")?;
@@ -82,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             TextRenderer::resize_from_event(&event);
         });
 
-        // terrain.process_line(line);
+        terrain.process_line(line);
 
         let delta_time = window.calculate_frametime();
         camera_controller.update_camera(&mut camera, delta_time as f32);

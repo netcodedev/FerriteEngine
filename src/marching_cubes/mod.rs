@@ -9,13 +9,13 @@ pub mod marching_cubes;
 
 const CHUNK_SIZE: usize = 128;
 
-pub struct Terrain {
-    pub chunks: HashMap<ChunkBounds, Chunk>,
-    chunk_receiver: mpsc::Receiver<Chunk>,
+pub struct MarchingCubesTerrain {
+    pub chunks: HashMap<ChunkBounds, MarchingCubesChunk>,
+    chunk_receiver: mpsc::Receiver<MarchingCubesChunk>,
     shader: Shader,
 }
 
-pub struct Chunk {
+pub struct MarchingCubesChunk {
     position: (f32, f32, f32),
     blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>>,
     mesh: Option<ChunkMesh>,

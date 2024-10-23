@@ -11,13 +11,13 @@ const CHUNK_SIZE: usize = 128;
 const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 const ISO_VALUE: f32 = 0.3;
 
-pub struct Terrain {
-    pub chunks: HashMap<ChunkBounds, Chunk>,
-    chunk_receiver: mpsc::Receiver<Chunk>,
+pub struct DualContouringTerrain {
+    pub chunks: HashMap<ChunkBounds, DualContouringChunk>,
+    chunk_receiver: mpsc::Receiver<DualContouringChunk>,
     shader: Shader,
 }
 
-pub struct Chunk {
+pub struct DualContouringChunk {
     position: (f32, f32, f32),
     cave: Scale<3, Perlin<3>>,
     noises: [Scale<2, Perlin<2>>; 3],

@@ -1,13 +1,13 @@
 use std::{collections::HashMap, sync::mpsc, thread};
 
-use crate::{camera::{Camera, Projection, ViewFrustum}, marching_cubes::Chunk, shader::Shader, terrain::ChunkBounds};
+use crate::{camera::{Camera, Projection, ViewFrustum}, marching_cubes::MarchingCubesChunk, shader::Shader, terrain::{Chunk, ChunkBounds, Terrain}};
 
-use super::Terrain;
+use super::MarchingCubesTerrain;
 
-impl Terrain {
+impl MarchingCubesTerrain {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
-        let origin = Chunk::new((0.0, 0.0, 0.0));
+        let origin = MarchingCubesChunk::new((0.0, 0.0, 0.0));
         tx.send(origin).unwrap();
 
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
@@ -23,28 +23,35 @@ impl Terrain {
         let _ = thread::spawn(move || chunkloader(RADIUS,-1,-1,tx4));
 
         Self {
-            chunks: HashMap::<ChunkBounds, Chunk>::new(),
+            chunks: HashMap::<ChunkBounds, MarchingCubesChunk>::new(),
             chunk_receiver: rx,
             shader,
         }
     }
 
-    pub fn update(&mut self) {
+}
+
+impl Terrain for MarchingCubesTerrain {
+    fn update(&mut self) {
         if let Ok(chunk) = self.chunk_receiver.try_recv() {
             self.chunks.insert(chunk.get_bounds(), chunk);
         }
     }
 
-    pub fn render(&mut self, camera: &Camera, projection: &Projection) {
+    fn render(&mut self, camera: &Camera, projection: &Projection) {
         for (_, chunk) in &mut self.chunks {
             if ViewFrustum::is_bounds_in_frustum(projection, camera, chunk.get_bounds()) {
                 chunk.render(camera, projection, &self.shader);
             }
         }
     }
+    
+    fn process_line(&mut self, _: Option<(crate::line::Line, glfw::MouseButton)>) {
+        
+    }
 }
 
-fn chunkloader(radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<Chunk>) {
+fn chunkloader(radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<MarchingCubesChunk>) {
     let mut x: i32 = 1;
     let mut z: i32 = 0;
 
@@ -52,11 +59,11 @@ fn chunkloader(radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<Chunk>) {
         if x > radius {
             break;
         }
-        let new_chunk: Chunk;
+        let new_chunk: MarchingCubesChunk;
         if z_dir > 0 {
-            new_chunk = Chunk::new(((x * x_dir) as f32, 0.0, z as f32));
+            new_chunk = MarchingCubesChunk::new(((x * x_dir) as f32, 0.0, z as f32));
         } else {
-            new_chunk = Chunk::new(((z * z_dir) as f32, 0.0, (x * x_dir) as f32));
+            new_chunk = MarchingCubesChunk::new(((z * z_dir) as f32, 0.0, (x * x_dir) as f32));
         }
         
         let result = tx.send(new_chunk);

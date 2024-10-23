@@ -3,11 +3,11 @@ use gl::types::GLuint;
 use libnoise::prelude::*;
 use ndarray::ArrayBase;
 
-use crate::{camera::{Camera, Projection}, shader::{DynamicVertexArray, Shader, VertexAttributes}, terrain::ChunkBounds};
+use crate::{camera::{Camera, Projection}, shader::{DynamicVertexArray, Shader, VertexAttributes}, terrain::{Chunk, ChunkBounds}};
 
-use super::{Chunk, ChunkMesh, Vertex, CHUNK_SIZE, EDGES, POINTS, TRIANGULATIONS};
+use super::{MarchingCubesChunk, ChunkMesh, Vertex, CHUNK_SIZE, EDGES, POINTS, TRIANGULATIONS};
 
-impl Chunk {
+impl MarchingCubesChunk {
     pub fn new(position: (f32, f32, f32)) -> Self {
         let generator = Source::perlin(1).scale([0.003; 2]);
         let hills = Source::perlin(1).scale([0.01; 2]);
@@ -36,33 +36,6 @@ impl Chunk {
         };
         chunk.mesh = Some(chunk.generate_mesh());
         chunk
-    }
-
-    pub fn render(&mut self, camera: &Camera, projection: &Projection, shader: &Shader) {
-        if let Some(mesh) = &mut self.mesh {
-            if !mesh.is_buffered() {
-                mesh.buffer_data();
-            }
-            shader.bind();
-            shader.set_uniform_mat4("view", &camera.calc_matrix());
-            shader.set_uniform_mat4("projection", &projection.calc_matrix());
-            mesh.render(&shader, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32));
-        }
-    }
-
-    pub fn get_bounds(&self) -> ChunkBounds {
-        ChunkBounds {
-            min: (
-                (self.position.0 * CHUNK_SIZE as f32) as i32,
-                (self.position.1 * CHUNK_SIZE as f32) as i32,
-                (self.position.2 * CHUNK_SIZE as f32) as i32,
-            ),
-            max: (
-                ((self.position.0 + 1.0) * CHUNK_SIZE as f32) as i32,
-                ((self.position.1 + 1.0) * CHUNK_SIZE as f32) as i32,
-                ((self.position.2 + 1.0) * CHUNK_SIZE as f32) as i32,
-            ),
-        }
     }
 
     fn generate_mesh(&self) -> ChunkMesh {
@@ -107,7 +80,7 @@ impl Chunk {
                 positions[j] = position;
             }
             
-            let normal = Chunk::comute_normal(&positions);
+            let normal = MarchingCubesChunk::comute_normal(&positions);
 
             for position in positions {
                 vertices.push(Vertex {
@@ -138,6 +111,35 @@ impl Chunk {
 
     fn comute_normal(triangle: &[Vector3<f32>; 3]) -> Vector3<f32> {
         (triangle[1] - triangle[0]).cross(triangle[2] - triangle[0]).normalize()
+    }
+}
+
+impl Chunk for MarchingCubesChunk {
+    fn render(&mut self, camera: &Camera, projection: &Projection, shader: &Shader) {
+        if let Some(mesh) = &mut self.mesh {
+            if !mesh.is_buffered() {
+                mesh.buffer_data();
+            }
+            shader.bind();
+            shader.set_uniform_mat4("view", &camera.calc_matrix());
+            shader.set_uniform_mat4("projection", &projection.calc_matrix());
+            mesh.render(&shader, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32));
+        }
+    }
+
+    fn get_bounds(&self) -> ChunkBounds {
+        ChunkBounds {
+            min: (
+                (self.position.0 * CHUNK_SIZE as f32) as i32,
+                (self.position.1 * CHUNK_SIZE as f32) as i32,
+                (self.position.2 * CHUNK_SIZE as f32) as i32,
+            ),
+            max: (
+                ((self.position.0 + 1.0) * CHUNK_SIZE as f32) as i32,
+                ((self.position.1 + 1.0) * CHUNK_SIZE as f32) as i32,
+                ((self.position.2 + 1.0) * CHUNK_SIZE as f32) as i32,
+            ),
+        }
     }
 }
 

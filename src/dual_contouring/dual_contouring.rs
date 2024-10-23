@@ -2,11 +2,11 @@ use cgmath::{EuclideanSpace, InnerSpace, Point3, Vector3};
 use gl::types::GLuint;
 use libnoise::prelude::*;
 
-use crate::{camera::{Camera, Projection}, shader::{DynamicVertexArray, Shader, VertexAttributes}, terrain::ChunkBounds};
+use crate::{camera::{Camera, Projection}, shader::{DynamicVertexArray, Shader, VertexAttributes}, terrain::{Chunk, ChunkBounds}};
 
-use super::{Chunk, ChunkMesh, Vertex, CHUNK_SIZE, CHUNK_SIZE_FLOAT, ISO_VALUE};
+use super::{DualContouringChunk, ChunkMesh, Vertex, CHUNK_SIZE, CHUNK_SIZE_FLOAT, ISO_VALUE};
 
-impl Chunk {
+impl DualContouringChunk {
     pub fn new(position: (f32, f32, f32), lod: usize) -> Self {
         let noises = [
             Source::perlin(1).scale([0.003; 2]),
@@ -18,38 +18,11 @@ impl Chunk {
             position,
             cave,
             noises,
-            chunk_size: Chunk::calculate_chunk_size(lod),
+            chunk_size: DualContouringChunk::calculate_chunk_size(lod),
             mesh: None,
         };
         chunk.mesh = Some(chunk.generate_mesh());
         chunk
-    }
-
-    pub fn render(&mut self, camera: &Camera, projection: &Projection, shader: &Shader) {
-        if let Some(mesh) = &mut self.mesh {
-            if !mesh.is_buffered() {
-                mesh.buffer_data();
-            }
-            shader.bind();
-            shader.set_uniform_mat4("view", &camera.calc_matrix());
-            shader.set_uniform_mat4("projection", &projection.calc_matrix());
-            mesh.render(&shader, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32));
-        }
-    }
-
-    pub fn get_bounds(&self) -> ChunkBounds {
-        ChunkBounds {
-            min: (
-                (self.position.0 * CHUNK_SIZE as f32) as i32,
-                (self.position.1 * CHUNK_SIZE as f32) as i32,
-                (self.position.2 * CHUNK_SIZE as f32) as i32,
-            ),
-            max: (
-                ((self.position.0 + 1.0) * CHUNK_SIZE as f32) as i32,
-                ((self.position.1 + 1.0) * CHUNK_SIZE as f32) as i32,
-                ((self.position.2 + 1.0) * CHUNK_SIZE as f32) as i32,
-            ),
-        }
     }
 
     fn get_density_at(&self, (x, y, z): (usize, usize, usize)) -> f32 {
@@ -91,7 +64,7 @@ impl Chunk {
                             corners[i] = (Point3::new(x_add as f32, y_add as f32, z_add as f32), self.get_density_at((x_n * size_multiplier, y_n * size_multiplier, z_n * size_multiplier)));
                         }
                         let position = self.calculate_vertex_position((x * size_multiplier, y * size_multiplier, z * size_multiplier), &corners);
-                        let normal = Chunk::calculate_gradient(&corners, position);
+                        let normal = DualContouringChunk::calculate_gradient(&corners, position);
 
                         let vertex = Vertex {
                             position: [position.x, position.y, position.z],
@@ -153,7 +126,7 @@ impl Chunk {
 
     fn calculate_vertex_position(&self, position: (usize, usize, usize), corners: &[(Point3<f32>, f32)]) -> Point3<f32> {
         let mut v_pos = Point3::new(position.0 as f32, position.1 as f32, position.2 as f32);
-        let relative_coordinates = Chunk::calculate_relative_coordinates(&corners);
+        let relative_coordinates = DualContouringChunk::calculate_relative_coordinates(&corners);
 
         v_pos.x += relative_coordinates.x;
         v_pos.y += relative_coordinates.y;
@@ -180,8 +153,8 @@ impl Chunk {
     }
     
     fn calculate_relative_coordinates(vertices: &[(Point3<f32>, f32)]) -> Point3<f32> {
-        let crossing_edges = Chunk::find_crossing_edges(vertices);
-        let interpolated_points: Vec<Point3<f32>> = crossing_edges.iter().map(|&edge| Chunk::interpolate(edge.0, edge.1)).collect();
+        let crossing_edges = DualContouringChunk::find_crossing_edges(vertices);
+        let interpolated_points: Vec<Point3<f32>> = crossing_edges.iter().map(|&edge| DualContouringChunk::interpolate(edge.0, edge.1)).collect();
     
         // Berechne den Schwerpunkt der interpolierten Punkte
         let center_of_mass = interpolated_points.iter().fold(Vector3::new(0.0, 0.0, 0.0), |acc, &p| acc + p.to_vec()) / (interpolated_points.len() as f32);
@@ -210,7 +183,7 @@ impl Chunk {
     }
     
     fn calculate_gradient(vertices: &[(Point3<f32>, f32)], point: Point3<f32>) -> Vector3<f32> {
-        let corner_gradients = Chunk::calculate_corner_gradients(vertices);
+        let corner_gradients = DualContouringChunk::calculate_corner_gradients(vertices);
     
         let mut gradient = Vector3::new(0.0, 0.0, 0.0);
         for i in 0..8 {
@@ -239,6 +212,35 @@ impl Chunk {
             }
         }
         cube_index != 0 && cube_index != 255
+    }
+}
+
+impl Chunk for DualContouringChunk {
+    fn render(&mut self, camera: &Camera, projection: &Projection, shader: &Shader) {
+        if let Some(mesh) = &mut self.mesh {
+            if !mesh.is_buffered() {
+                mesh.buffer_data();
+            }
+            shader.bind();
+            shader.set_uniform_mat4("view", &camera.calc_matrix());
+            shader.set_uniform_mat4("projection", &projection.calc_matrix());
+            mesh.render(&shader, (self.position.0 * CHUNK_SIZE as f32, self.position.1 * CHUNK_SIZE as f32, self.position.2 * CHUNK_SIZE as f32));
+        }
+    }
+
+    fn get_bounds(&self) -> ChunkBounds {
+        ChunkBounds {
+            min: (
+                (self.position.0 * CHUNK_SIZE as f32) as i32,
+                (self.position.1 * CHUNK_SIZE as f32) as i32,
+                (self.position.2 * CHUNK_SIZE as f32) as i32,
+            ),
+            max: (
+                ((self.position.0 + 1.0) * CHUNK_SIZE as f32) as i32,
+                ((self.position.1 + 1.0) * CHUNK_SIZE as f32) as i32,
+                ((self.position.2 + 1.0) * CHUNK_SIZE as f32) as i32,
+            ),
+        }
     }
 }
 
