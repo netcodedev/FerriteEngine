@@ -1,21 +1,12 @@
 pub mod dual_contouring;
-pub mod terrain;
-
-use std::{collections::HashMap, sync::mpsc};
 
 use libnoise::{Perlin, Scale};
 
-use crate::{shader::{DynamicVertexArray, Shader}, terrain::ChunkBounds};
+use crate::shader::DynamicVertexArray;
 
 const CHUNK_SIZE: usize = 128;
 const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 const ISO_VALUE: f32 = 0.3;
-
-pub struct DualContouringTerrain {
-    pub chunks: HashMap<ChunkBounds, DualContouringChunk>,
-    chunk_receiver: mpsc::Receiver<DualContouringChunk>,
-    shader: Shader,
-}
 
 pub struct DualContouringChunk {
     position: (f32, f32, f32),

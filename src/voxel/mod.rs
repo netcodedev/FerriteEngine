@@ -1,8 +1,6 @@
-use std::{collections::HashMap, sync::mpsc};
-
 use ndarray::ArrayBase;
 
-use crate::{shader::{DynamicVertexArray, Shader}, terrain::ChunkBounds, texture::Texture};
+use crate::shader::DynamicVertexArray;
 
 pub mod voxel;
 
@@ -32,13 +30,4 @@ pub struct ChunkMesh {
     vertex_array: Option<DynamicVertexArray<BlockVertex>>,
     indices: Option<Vec<u32>>,
     vertices: Vec<BlockVertex>,
-}
-
-
-pub struct VoxelTerrain {
-    pub chunks: HashMap<ChunkBounds, VoxelChunk>,
-    chunk_receiver: mpsc::Receiver<VoxelChunk>,
-    shader: Shader,
-    grass_texture: Texture,
-    stone_texture: Texture,
 }

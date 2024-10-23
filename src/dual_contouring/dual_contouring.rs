@@ -1,30 +1,13 @@
 use cgmath::{EuclideanSpace, InnerSpace, Point3, Vector3};
 use gl::types::GLuint;
+use glfw::MouseButton;
 use libnoise::prelude::*;
 
-use crate::{camera::{Camera, Projection}, shader::{DynamicVertexArray, Shader, VertexAttributes}, terrain::{Chunk, ChunkBounds}};
+use crate::{camera::{Camera, Projection}, line::Line, shader::{DynamicVertexArray, Shader, VertexAttributes}, terrain::{Chunk, ChunkBounds}};
 
 use super::{DualContouringChunk, ChunkMesh, Vertex, CHUNK_SIZE, CHUNK_SIZE_FLOAT, ISO_VALUE};
 
 impl DualContouringChunk {
-    pub fn new(position: (f32, f32, f32), lod: usize) -> Self {
-        let noises = [
-            Source::perlin(1).scale([0.003; 2]),
-            Source::perlin(1).scale([0.01; 2]),
-            Source::perlin(1).scale([0.1; 2]),
-        ];
-        let cave = Source::perlin(1).scale([0.1; 3]);
-        let mut chunk = Self {
-            position,
-            cave,
-            noises,
-            chunk_size: DualContouringChunk::calculate_chunk_size(lod),
-            mesh: None,
-        };
-        chunk.mesh = Some(chunk.generate_mesh());
-        chunk
-    }
-
     fn get_density_at(&self, (x, y, z): (usize, usize, usize)) -> f32 {
         let offset: f64 = 16777216.0;
         let sample_point = (
@@ -216,6 +199,24 @@ impl DualContouringChunk {
 }
 
 impl Chunk for DualContouringChunk {
+    fn new(position: (f32, f32, f32), lod: usize) -> Self {
+        let noises = [
+            Source::perlin(1).scale([0.003; 2]),
+            Source::perlin(1).scale([0.01; 2]),
+            Source::perlin(1).scale([0.1; 2]),
+        ];
+        let cave = Source::perlin(1).scale([0.1; 3]);
+        let mut chunk = Self {
+            position,
+            cave,
+            noises,
+            chunk_size: DualContouringChunk::calculate_chunk_size(lod),
+            mesh: None,
+        };
+        chunk.mesh = Some(chunk.generate_mesh());
+        chunk
+    }
+    
     fn render(&mut self, camera: &Camera, projection: &Projection, shader: &Shader) {
         if let Some(mesh) = &mut self.mesh {
             if !mesh.is_buffered() {
@@ -241,6 +242,21 @@ impl Chunk for DualContouringChunk {
                 ((self.position.2 + 1.0) * CHUNK_SIZE as f32) as i32,
             ),
         }
+    }
+    
+    fn process_line(&mut self, _: &Line, _: &MouseButton) -> bool {
+        false
+    }
+    
+    fn get_shader_source() -> (String, String) {
+        (
+            include_str!("vertex.glsl").to_string(),
+            include_str!("fragment.glsl").to_string(),
+        )
+    }
+    
+    fn get_textures() -> Vec<crate::texture::Texture> {
+        Vec::new()
     }
 }
 

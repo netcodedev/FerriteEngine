@@ -17,6 +17,7 @@ mod voxel;
 mod window;
 use camera::{Camera, CameraController, Projection, MousePicker};
 use debug::DebugController;
+use dual_contouring::DualContouringChunk;
 use plane::PlaneRenderer;
 use terrain::Terrain;
 use text::TextRenderer;
@@ -40,13 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut mouse_picker = MousePicker::new();
 
-    let terrain_type = "voxel";
-    let mut terrain: Box<dyn Terrain> = match terrain_type {
-        "dual" => Box::new(dual_contouring::DualContouringTerrain::new()),
-        "marching" => Box::new(marching_cubes::MarchingCubesTerrain::new()),
-        "voxel" => Box::new(voxel::VoxelTerrain::new()),
-        _ => Box::new(voxel::VoxelTerrain::new()),
-    };
+    let mut terrain = Terrain::<DualContouringChunk>::new();
 
     let mut models: Vec<&mut Model> = Vec::new();
     let mut model = Model::new("assets/models/char_anim.fbx")?;

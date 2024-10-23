@@ -1,43 +1,14 @@
 use cgmath::{InnerSpace, Vector3, Zero};
 use gl::types::GLuint;
+use glfw::MouseButton;
 use libnoise::prelude::*;
 use ndarray::ArrayBase;
 
-use crate::{camera::{Camera, Projection}, shader::{DynamicVertexArray, Shader, VertexAttributes}, terrain::{Chunk, ChunkBounds}};
+use crate::{camera::{Camera, Projection}, line::Line, shader::{DynamicVertexArray, Shader, VertexAttributes}, terrain::{Chunk, ChunkBounds}};
 
 use super::{MarchingCubesChunk, ChunkMesh, Vertex, CHUNK_SIZE, EDGES, POINTS, TRIANGULATIONS};
 
 impl MarchingCubesChunk {
-    pub fn new(position: (f32, f32, f32)) -> Self {
-        let generator = Source::perlin(1).scale([0.003; 2]);
-        let hills = Source::perlin(1).scale([0.01; 2]);
-        let tiny_hills = Source::perlin(1).scale([0.1; 2]);
-        let cave = Source::perlin(1).scale([0.1; 3]);
-        let offset: f64 = 16777216.0;
-        let blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>> = ArrayBase::from_shape_fn((CHUNK_SIZE + 1, CHUNK_SIZE + 1, CHUNK_SIZE + 1), |(x, y, z)| {
-            let sample_point = (
-                (position.0 * CHUNK_SIZE as f32) as f64 + x as f64 + offset,
-                (position.1 * CHUNK_SIZE as f32) as f64 + y as f64 + offset,
-                (position.2 * CHUNK_SIZE as f32) as f64 + z as f64 + offset,
-            );
-            
-            let noise_value = (1.0 + generator.sample([sample_point.0, sample_point.2]))/2.0;
-            let hills_value = (1.0 + hills.sample([sample_point.0, sample_point.2]))/2.0 * 0.2;
-            let tiny_hills_value = (1.0 + tiny_hills.sample([sample_point.0, sample_point.2]))/2.0 * 0.01;
-            if ((noise_value + hills_value + tiny_hills_value) * CHUNK_SIZE as f64) < y as f64 {
-                return 0.0;
-            }
-            (1.0 + cave.sample([sample_point.0, sample_point.1, sample_point.2]) as f32) / 2.0
-        });
-        let mut chunk = Self {
-            position,
-            blocks,
-            mesh: None,
-        };
-        chunk.mesh = Some(chunk.generate_mesh());
-        chunk
-    }
-
     fn generate_mesh(&self) -> ChunkMesh {
         let mut vertices = Vec::<Vertex>::new();
         let isovalue = 0.3;
@@ -115,6 +86,36 @@ impl MarchingCubesChunk {
 }
 
 impl Chunk for MarchingCubesChunk {
+    fn new(position: (f32, f32, f32), _: usize) -> Self {
+        let generator = Source::perlin(1).scale([0.003; 2]);
+        let hills = Source::perlin(1).scale([0.01; 2]);
+        let tiny_hills = Source::perlin(1).scale([0.1; 2]);
+        let cave = Source::perlin(1).scale([0.1; 3]);
+        let offset: f64 = 16777216.0;
+        let blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>> = ArrayBase::from_shape_fn((CHUNK_SIZE + 1, CHUNK_SIZE + 1, CHUNK_SIZE + 1), |(x, y, z)| {
+            let sample_point = (
+                (position.0 * CHUNK_SIZE as f32) as f64 + x as f64 + offset,
+                (position.1 * CHUNK_SIZE as f32) as f64 + y as f64 + offset,
+                (position.2 * CHUNK_SIZE as f32) as f64 + z as f64 + offset,
+            );
+            
+            let noise_value = (1.0 + generator.sample([sample_point.0, sample_point.2]))/2.0;
+            let hills_value = (1.0 + hills.sample([sample_point.0, sample_point.2]))/2.0 * 0.2;
+            let tiny_hills_value = (1.0 + tiny_hills.sample([sample_point.0, sample_point.2]))/2.0 * 0.01;
+            if ((noise_value + hills_value + tiny_hills_value) * CHUNK_SIZE as f64) < y as f64 {
+                return 0.0;
+            }
+            (1.0 + cave.sample([sample_point.0, sample_point.1, sample_point.2]) as f32) / 2.0
+        });
+        let mut chunk = Self {
+            position,
+            blocks,
+            mesh: None,
+        };
+        chunk.mesh = Some(chunk.generate_mesh());
+        chunk
+    }
+
     fn render(&mut self, camera: &Camera, projection: &Projection, shader: &Shader) {
         if let Some(mesh) = &mut self.mesh {
             if !mesh.is_buffered() {
@@ -140,6 +141,21 @@ impl Chunk for MarchingCubesChunk {
                 ((self.position.2 + 1.0) * CHUNK_SIZE as f32) as i32,
             ),
         }
+    }
+    
+    fn process_line(&mut self, _: &Line, _: &MouseButton) -> bool {
+        false
+    }
+    
+    fn get_shader_source() -> (String, String) {
+        (
+            include_str!("vertex.glsl").to_string(),
+            include_str!("fragment.glsl").to_string(),
+        )
+    }
+    
+    fn get_textures() -> Vec<crate::texture::Texture> {
+        Vec::new()
     }
 }
 
