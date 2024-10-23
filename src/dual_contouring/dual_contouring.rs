@@ -28,13 +28,13 @@ impl DualContouringChunk {
     fn generate_mesh(&self) -> ChunkMesh<Vertex> {
         let mut vertices = Vec::<Vertex>::new();
         let mut indices = Vec::<u32>::new();
-        let mut vertex_grid = vec![vec![vec![false; self.chunk_size]; self.chunk_size]; self.chunk_size];
-        let mut index_grid = vec![vec![vec![0; self.chunk_size]; self.chunk_size]; self.chunk_size];
+        let mut vertex_grid = vec![vec![vec![false; self.chunk_size+1]; self.chunk_size+1]; self.chunk_size+1];
+        let mut index_grid = vec![vec![vec![0; self.chunk_size+1]; self.chunk_size+1]; self.chunk_size+1];
         let mut index: u32 = 0;
         let size_multiplier = CHUNK_SIZE / self.chunk_size;
-        for x in 0..self.chunk_size {
-            for y in 0..self.chunk_size {
-                for z in 0..self.chunk_size {
+        for x in 0..self.chunk_size+1 {
+            for y in 0..self.chunk_size+1 {
+                for z in 0..self.chunk_size+1 {
                     if self.is_surface_voxel((x * size_multiplier, y * size_multiplier, z * size_multiplier)) {
                         let mut corners: [(Point3<f32>, f32); 8] = [(Point3::new(0.0, 0.0, 0.0), ISO_VALUE); 8];
                         for i in 0..8 {
