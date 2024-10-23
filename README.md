@@ -3,7 +3,7 @@ This is a personal project to get a better understanding of rust and OpenGL. The
 applications of various types.
 
 ## Features
-- Chunked multithreaded voxel world generation
+- Chunked multithreaded terrain generation
 - Voxel Greedy meshing
 - Text rendering
 - Line rendering
@@ -13,10 +13,12 @@ applications of various types.
     - Movable Panel
     - Button
     - Text
+- Voxel terrain generation
+- Marching cubes terrain generation
+- Dual Contouring terrain generation (WIP)
 
 ## Planned Features
 - Animation blending
-- Marching cubes terrain generation
 - Inverse Kinematics
 - Infinite world generation
 - Lighting
