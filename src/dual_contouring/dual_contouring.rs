@@ -65,27 +65,27 @@ impl DualContouringChunk {
 
                                 if vertex_grid[x][y-1][z] {
                                     indices.push(index);
-                                    indices.push(index_grid[x-1][y-1][z] as u32);
                                     indices.push(index_grid[x][y-1][z] as u32);
+                                    indices.push(index_grid[x-1][y-1][z] as u32);
                                 }
                             }
                             if z > 0 && vertex_grid[x-1][y][z-1] {
                                 indices.push(index);
-                                indices.push(index_grid[x-1][y][z] as u32);
                                 indices.push(index_grid[x-1][y][z-1] as u32);
+                                indices.push(index_grid[x-1][y][z] as u32);
 
                                 if vertex_grid[x][y][z-1] {
                                     indices.push(index);
-                                    indices.push(index_grid[x-1][y][z-1] as u32);
                                     indices.push(index_grid[x][y][z - 1] as u32);
+                                    indices.push(index_grid[x-1][y][z-1] as u32);
                                 }
                             }
                         }
                         if y > 0 && vertex_grid[x][y-1][z] {
                             if z > 0 && vertex_grid[x][y-1][z-1] {
                                 indices.push(index);
-                                indices.push(index_grid[x][y-1][z-1] as u32);
                                 indices.push(index_grid[x][y-1][z] as u32);
+                                indices.push(index_grid[x][y-1][z-1] as u32);
 
                                 if vertex_grid[x][y][z-1] {
                                     indices.push(index);
