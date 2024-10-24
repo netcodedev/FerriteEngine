@@ -59,7 +59,7 @@ impl DualContouringChunk {
 
     fn calculate_chunk_size(lod: usize) -> usize {
         let lod = std::cmp::max(
-            2,
+            8,
             std::cmp::min(CHUNK_SIZE, CHUNK_SIZE / 2usize.pow(if lod > 0 { (lod - 1) as u32 } else { 0 })),
         );
         if USE_LOD {
