@@ -4,8 +4,6 @@ use crate::terrain::ChunkMesh;
 
 pub mod voxel;
 
-pub const CHUNK_SIZE: usize = 128;
-
 pub struct Block {
     pub type_id: u32,
 }

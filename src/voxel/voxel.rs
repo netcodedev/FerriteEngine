@@ -1,14 +1,14 @@
 use crate::camera::{Camera, Projection};
 use crate::line::Line;
 use crate::shader::{Shader, VertexAttributes};
-use crate::terrain::{Chunk, ChunkBounds};
+use crate::terrain::{Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
 use crate::texture::Texture;
 
 use gl::types::GLuint;
 use libnoise::prelude::*;
 use ndarray::{Array3, ArrayBase, Dim};
 
-use super::{Block, BlockVertex, ChunkMesh, VoxelChunk, CHUNK_SIZE};
+use super::{Block, BlockVertex, ChunkMesh, VoxelChunk};
 
 impl Block {
     pub fn new(type_id: u32) -> Self {
@@ -316,8 +316,8 @@ impl Chunk for VoxelChunk {
             [CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE],
             |(x, y, z)| {
                 let sample_point = (
-                    (position.0 * CHUNK_SIZE as f32) as f64 + x as f64 + offset,
-                    (position.2 * CHUNK_SIZE as f32) as f64 + z as f64 + offset,
+                    (position.0 * CHUNK_SIZE_FLOAT) as f64 + x as f64 + offset,
+                    (position.2 * CHUNK_SIZE_FLOAT) as f64 + z as f64 + offset,
                 );
                 let noise_value = (1.0 + generator.sample([sample_point.0, sample_point.1])) / 2.0;
                 let hills_value =
@@ -342,14 +342,14 @@ impl Chunk for VoxelChunk {
     fn get_bounds(&self) -> ChunkBounds {
         ChunkBounds {
             min: (
-                (self.position.0 * CHUNK_SIZE as f32) as i32,
-                (self.position.1 * CHUNK_SIZE as f32) as i32,
-                (self.position.2 * CHUNK_SIZE as f32) as i32,
+                (self.position.0 * CHUNK_SIZE_FLOAT) as i32,
+                (self.position.1 * CHUNK_SIZE_FLOAT) as i32,
+                (self.position.2 * CHUNK_SIZE_FLOAT) as i32,
             ),
             max: (
-                ((self.position.0 + 1.0) * CHUNK_SIZE as f32) as i32,
-                ((self.position.1 + 1.0) * CHUNK_SIZE as f32) as i32,
-                ((self.position.2 + 1.0) * CHUNK_SIZE as f32) as i32,
+                ((self.position.0 + 1.0) * CHUNK_SIZE_FLOAT) as i32,
+                ((self.position.1 + 1.0) * CHUNK_SIZE_FLOAT) as i32,
+                ((self.position.2 + 1.0) * CHUNK_SIZE_FLOAT) as i32,
             ),
         }
     }
@@ -368,9 +368,9 @@ impl Chunk for VoxelChunk {
             mesh.render(
                 &shader,
                 (
-                    self.position.0 * CHUNK_SIZE as f32,
-                    self.position.1 * CHUNK_SIZE as f32,
-                    self.position.2 * CHUNK_SIZE as f32,
+                    self.position.0 * CHUNK_SIZE_FLOAT,
+                    self.position.1 * CHUNK_SIZE_FLOAT,
+                    self.position.2 * CHUNK_SIZE_FLOAT,
                 ),
                 None,
             );
@@ -390,25 +390,25 @@ impl Chunk for VoxelChunk {
         for i in 0..(max_distance / step_size) as i32 {
             let position = line.position + line.direction * (i as f32 * step_size);
             // check if position is within the bounds of this chunk
-            if position.x < self.position.0 * CHUNK_SIZE as f32
-                || position.x >= (self.position.0 + 1.0) * CHUNK_SIZE as f32
+            if position.x < self.position.0 * CHUNK_SIZE_FLOAT
+                || position.x >= (self.position.0 + 1.0) * CHUNK_SIZE_FLOAT
             {
                 continue;
             }
-            if position.y < self.position.1 * CHUNK_SIZE as f32
-                || position.y >= (self.position.1 + 1.0) * CHUNK_SIZE as f32
+            if position.y < self.position.1 * CHUNK_SIZE_FLOAT
+                || position.y >= (self.position.1 + 1.0) * CHUNK_SIZE_FLOAT
             {
                 continue;
             }
-            if position.z < self.position.2 * CHUNK_SIZE as f32
-                || position.z >= (self.position.2 + 1.0) * CHUNK_SIZE as f32
+            if position.z < self.position.2 * CHUNK_SIZE_FLOAT
+                || position.z >= (self.position.2 + 1.0) * CHUNK_SIZE_FLOAT
             {
                 continue;
             }
             let block_position = (
-                (position.x - self.position.0 * CHUNK_SIZE as f32) as usize,
-                (position.y - self.position.1 * CHUNK_SIZE as f32) as usize,
-                (position.z - self.position.2 * CHUNK_SIZE as f32) as usize,
+                (position.x - self.position.0 * CHUNK_SIZE_FLOAT) as usize,
+                (position.y - self.position.1 * CHUNK_SIZE_FLOAT) as usize,
+                (position.z - self.position.2 * CHUNK_SIZE_FLOAT) as usize,
             );
             if let Some(block) = self.blocks.get(block_position) {
                 if block.is_some() {

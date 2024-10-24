@@ -1,11 +1,8 @@
 pub mod dual_contouring;
 
-use libnoise::{Billow, Fbm, Perlin, Scale};
+use libnoise::{Fbm, Perlin, Scale};
 
 use crate::terrain::ChunkMesh;
-
-const CHUNK_SIZE: usize = 128;
-const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 
 pub struct DualContouringChunk {
     position: (f32, f32, f32),
