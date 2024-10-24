@@ -9,9 +9,10 @@ use crate::{
     texture::Texture,
 };
 
-pub const CHUNK_RADIUS: usize = 10;
+pub const CHUNK_RADIUS: usize = 5;
 pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
+pub const USE_LOD: bool = false;
 
 pub mod terrain;
 

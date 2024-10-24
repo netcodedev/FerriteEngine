@@ -6,7 +6,7 @@ use crate::{
     camera::{Camera, Projection},
     line::Line,
     shader::{Shader, VertexAttributes},
-    terrain::{Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT},
+    terrain::{Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT, USE_LOD},
 };
 
 use fast_surface_nets::{ndshape::{AbstractShape, RuntimeShape}, {surface_nets, SurfaceNetsBuffer}};
@@ -58,10 +58,15 @@ impl DualContouringChunk {
     }
 
     fn calculate_chunk_size(lod: usize) -> usize {
-        std::cmp::max(
+        let lod = std::cmp::max(
             2,
             std::cmp::min(CHUNK_SIZE, CHUNK_SIZE / 2usize.pow(if lod > 0 { (lod - 1) as u32 } else { 0 })),
-        )
+        );
+        if USE_LOD {
+            lod
+        } else {
+            CHUNK_SIZE
+        }
     }
 }
 
