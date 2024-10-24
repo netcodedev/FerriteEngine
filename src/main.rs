@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let camera_controller_ref3 = Rc::clone(&camera_controller);
     ui.add(UI::panel("Camera controls", |builder| {
         builder
-            .position(10.0, 120.0)
+            .position(10.0, 130.0)
             .add_child(UI::text("Camera Speed", 16.0, |b| b))
             .add_child(UI::input(|input| {
                 input
