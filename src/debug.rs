@@ -4,7 +4,7 @@ use crate::{
     camera::{Camera, MousePicker, Projection},
     line::{Line, LineRenderer},
     model::Model,
-    terrain::{ChunkBounds, CHUNK_SIZE},
+    terrain::{Chunk, ChunkBounds, Terrain, CHUNK_SIZE},
     text::TextRenderer,
 };
 use cgmath::{Deg, EuclideanSpace, Point3, Vector3};
@@ -56,14 +56,15 @@ impl DebugController {
         }
     }
 
-    pub fn draw_debug_ui(
+    pub fn draw_debug_ui<T>(
         &self,
         delta_time: f32,
         camera: &Camera,
         projection: &Projection,
         mouse_picker: &MousePicker,
+        terrain: &Terrain<T>,
         models: &Vec<&mut Model>,
-    ) {
+    ) where T: Chunk + Send + 'static {
         if self.show_rays {
             if let Some(line) = &mouse_picker.ray {
                 LineRenderer::render(
@@ -118,6 +119,9 @@ impl DebugController {
                     bounds.max.0, bounds.max.1, bounds.max.2
                 )
                 .as_str(),
+            );
+            TextRenderer::render(
+                5, 105, 20.0, format!("Triangles: {}", terrain.get_triangle_count()).as_str(),
             );
             let mut lines: Vec<Line> = Vec::new();
             let mut corner_lines: Vec<Line> = Vec::new();

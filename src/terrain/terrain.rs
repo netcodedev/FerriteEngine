@@ -9,7 +9,7 @@ use crate::{
     shader::{DynamicVertexArray, Shader, VertexAttributes},
 };
 
-use super::{Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
+use super::{Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
 
 impl ChunkBounds {
     pub fn parse(position: cgmath::Vector3<f32>) -> Self {
@@ -81,11 +81,10 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
         let tx2 = tx.clone();
         let tx3 = tx.clone();
         let tx4 = tx.clone();
-        const RADIUS: i32 = 10;
-        let _ = thread::spawn(move || Terrain::chunkloader(RADIUS, 1, 1, tx1));
-        let _ = thread::spawn(move || Terrain::chunkloader(RADIUS, -1, 1, tx2));
-        let _ = thread::spawn(move || Terrain::chunkloader(RADIUS, 1, -1, tx3));
-        let _ = thread::spawn(move || Terrain::chunkloader(RADIUS, -1, -1, tx4));
+        let _ = thread::spawn(move || Terrain::chunkloader(CHUNK_RADIUS as i32, 1, 1, tx1));
+        let _ = thread::spawn(move || Terrain::chunkloader(CHUNK_RADIUS as i32, -1, 1, tx2));
+        let _ = thread::spawn(move || Terrain::chunkloader(CHUNK_RADIUS as i32, 1, -1, tx3));
+        let _ = thread::spawn(move || Terrain::chunkloader(CHUNK_RADIUS as i32, -1, -1, tx4));
 
         Self {
             chunks: HashMap::<ChunkBounds, T>::new(),
@@ -168,6 +167,14 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
             }
         }
     }
+
+    pub fn get_triangle_count(&self) -> usize {
+        let mut count = 0;
+        for (_, chunk) in &self.chunks {
+            count += chunk.get_triangle_count();
+        }
+        count
+    }
 }
 
 impl<T: VertexAttributes + Clone> ChunkMesh<T> {
@@ -220,5 +227,13 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
 
     pub fn is_buffered(&self) -> bool {
         self.vertex_array.is_some()
+    }
+
+    pub fn get_triangle_count(&self) -> usize {
+        if let Some(indices) = &self.indices {
+            indices.len() / 3
+        } else {
+            self.vertices.len() / 3
+        }
     }
 }

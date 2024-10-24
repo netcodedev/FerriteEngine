@@ -16,7 +16,7 @@ void main()
 {
     vec4 worldPosition = model * vec4(position, 1.0);
     gl_Position = projection * view * worldPosition;
-    Normal = normals;
+    Normal = normalize(normals);
     Color = color;
     toLightVector = vec3(0.0, 2000.0, 0.0) - worldPosition.xyz;
 }

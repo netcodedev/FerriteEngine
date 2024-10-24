@@ -126,6 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &camera,
             &projection,
             &mouse_picker,
+            &terrain,
             &models,
         );
 
