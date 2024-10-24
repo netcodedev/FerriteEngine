@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     PlaneRenderer::resize(width, height);
     let mut ui = UIRenderer::new();
 
-    let mut camera: Camera = Camera::new((0.0, 92.0, 2.0), Deg(-90.0), Deg(0.0));
+    let mut camera: Camera = Camera::new((-119.4, 52.7, -30.0), Deg(-138.0), Deg(-17.0));
     let mut projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
     let camera_controller: Rc<RefCell<CameraController>> =
         Rc::new(RefCell::new(CameraController::new(10.0, 1.0)));
