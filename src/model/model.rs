@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use cgmath::{InnerSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3, Vector4};
+use cgmath::{InnerSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3, Vector4, Zero};
 use russimp::{
     material::{DataContent, TextureType},
     node::Node,
@@ -34,7 +34,7 @@ impl Model {
             model: scene,
             meshes: HashMap::<String, ModelMesh>::new(),
             animations: HashMap::<String, Animation>::new(),
-            current_animation: None,
+            current_animations: Vec::new(),
             shader,
             textures: HashMap::<TextureType, Texture>::new(),
             position: cgmath::Vector3::new(-121.0, 50.5, -32.0),
@@ -89,7 +89,7 @@ impl Model {
                                 .collect(),
                             children: self.get_child_bones(node, &mesh.bones, Matrix4::identity()),
                             current_animations: Vec::new(),
-                            current_animation_time: 0.0,
+                            current_animation_time: Vec::new(),
                         });
                     }
                 }
@@ -120,17 +120,34 @@ impl Model {
 
     pub fn play_animation(&mut self, name: &str) {
         if let Some(animation) = self.animations.get(name) {
-            self.current_animation = Some(animation.clone());
+            self.current_animations = vec![animation.clone()];
             for mesh in self.meshes.values_mut() {
                 if let Some(root_bone) = &mut mesh.root_bone {
+                    root_bone.reset();
                     root_bone.set_animation_channel(Some(&animation.channels), 1.0, 0.0);
                 }
             }
         } else {
-            self.current_animation = None;
+            self.current_animations = Vec::new();
             for mesh in self.meshes.values_mut() {
                 if let Some(root_bone) = &mut mesh.root_bone {
+                    root_bone.reset();
                     root_bone.set_animation_channel(None, 1.0, 0.0);
+                }
+            }
+        }
+    }
+
+    pub fn blend_animations(&mut self, name1: &str, name2: &str, weight: f32) {
+        if let Some(animation1) = self.animations.get(name1) {
+            if let Some(animation2) = self.animations.get(name2) {
+                self.current_animations = vec![animation1.clone(), animation2.clone()];
+                for mesh in self.meshes.values_mut() {
+                    if let Some(root_bone) = &mut mesh.root_bone {
+                        root_bone.reset();
+                        root_bone.set_animation_channel(Some(&animation1.channels), 1.0 - weight, 0.0);
+                        root_bone.set_animation_channel(Some(&animation2.channels), weight, 0.0);
+                    }
                 }
             }
         }
@@ -139,10 +156,14 @@ impl Model {
     pub fn update_and_render(&mut self, delta_time: f32, camera: &Camera, projection: &Projection) {
         for mesh in self.meshes.values_mut() {
             if let Some(root_bone) = &mut mesh.root_bone {
-                if let Some(animation) = &self.current_animation {
+                let animation_data = self
+                    .current_animations
+                    .iter()
+                    .map(|a| (delta_time * a.ticks_per_second, a.duration))
+                    .collect();
+                if self.current_animations.len() > 0 {
                     root_bone.update_animation(
-                        delta_time * animation.ticks_per_second,
-                        animation.duration,
+                        animation_data
                     );
                 }
             }
@@ -263,7 +284,7 @@ impl Model {
                             .collect(),
                         children: self.get_child_bones(child, bones, Matrix4::identity()),
                         current_animations: Vec::new(),
-                        current_animation_time: 0.0,
+                        current_animation_time: Vec::new(),
                     });
                 }
             } else if let Some(child_bones) = self.get_child_bones(
@@ -434,6 +455,16 @@ impl Bone {
         bones
     }
 
+    pub fn reset(&mut self) {
+        self.current_animations = Vec::new();
+        self.current_animation_time = Vec::new();
+        if let Some(children) = &mut self.children {
+            for child in children {
+                child.reset();
+            }
+        }
+    }
+
     pub fn set_animation_channel(
         &mut self,
         channels: Option<&HashMap<String, Channel>>,
@@ -443,6 +474,7 @@ impl Bone {
         if let Some(channels) = channels {
             if let Some(channel) = channels.get(&self.name) {
                 self.current_animations.push((weight, channel.clone()));
+                self.current_animation_time.push(0.0);
                 if let Some(children) = &mut self.children {
                     for child in children {
                         child.set_animation_channel(Some(channels), weight, time);
@@ -450,11 +482,11 @@ impl Bone {
                 }
             } else {
                 self.current_animations = Vec::new();
+                self.current_animation_time = Vec::new();
             }
-            self.current_animation_time = time;
         } else {
             self.current_animations = Vec::new();
-            self.current_animation_time = 0.0;
+            self.current_animation_time = Vec::new();
             if let Some(children) = &mut self.children {
                 for child in children {
                     child.set_animation_channel(None, 1.0, 0.0);
@@ -496,82 +528,83 @@ impl Bone {
         0
     }
 
-    fn interpolate_position(&self, index: usize, time: f32) -> Matrix4<f32> {
+    fn interpolate_position(&self, index: usize) -> Vector3<f32> {
+        let time = self.current_animation_time[index];
         if let Some((_, animation)) = &self.current_animations.get(index) {
             let position_index = self.get_position_index(index, time);
             let next_position_index = position_index + 1;
             if next_position_index >= animation.position_keys.len() {
-                return Matrix4::from_translation(animation.position_keys[position_index].1);
+                return animation.position_keys[position_index].1;
             }
             let delta_time = animation.position_keys[next_position_index].0
                 - animation.position_keys[position_index].0;
             let factor = (time - animation.position_keys[position_index].0) / delta_time;
             let start = animation.position_keys[position_index].1;
             let end = animation.position_keys[next_position_index].1;
-            Matrix4::from_translation(start + (end - start) * factor)
+            start + (end - start) * factor
         } else {
-            Matrix4::identity()
+            Vector3::zero()
         }
     }
 
-    fn interpolate_rotation(&self, index: usize, time: f32) -> Matrix4<f32> {
+    fn interpolate_rotation(&self, index: usize) -> Quaternion<f32> {
+        let time = self.current_animation_time[index];
         if let Some((_, animation)) = &self.current_animations.get(index) {
             let rotation_index = self.get_rotation_index(index, time);
             let next_rotation_index = rotation_index + 1;
             if next_rotation_index >= animation.rotation_keys.len() {
-                return Matrix4::from(animation.rotation_keys[rotation_index].1);
+                return animation.rotation_keys[rotation_index].1;
             }
             let delta_time = animation.rotation_keys[next_rotation_index].0
                 - animation.rotation_keys[rotation_index].0;
             let factor = (time - animation.rotation_keys[rotation_index].0) / delta_time;
             let start = animation.rotation_keys[rotation_index].1;
             let end = animation.rotation_keys[next_rotation_index].1;
-            Matrix4::from(cgmath::Quaternion::slerp(start, end, factor))
+            Quaternion::slerp(start, end, factor)
         } else {
-            Matrix4::identity()
+            Quaternion::zero()
         }
     }
 
-    fn interpolate_scaling(&self, index: usize, time: f32) -> Matrix4<f32> {
+    fn interpolate_scaling(&self, index: usize) -> Vector3<f32> {
+        let time = self.current_animation_time[index];
         if let Some((_, animation)) = &self.current_animations.get(index) {
             let scaling_index = self.get_scaling_index(index, time);
             let next_scaling_index = scaling_index + 1;
             if next_scaling_index >= animation.scaling_keys.len() {
-                return Matrix4::from_nonuniform_scale(
-                    animation.scaling_keys[scaling_index].1.x,
-                    animation.scaling_keys[scaling_index].1.y,
-                    animation.scaling_keys[scaling_index].1.z,
-                );
+                return animation.scaling_keys[scaling_index].1;
             }
             let delta_time = animation.scaling_keys[next_scaling_index].0
                 - animation.scaling_keys[scaling_index].0;
             let factor = (time - animation.scaling_keys[scaling_index].0) / delta_time;
             let start = animation.scaling_keys[scaling_index].1;
             let end = animation.scaling_keys[next_scaling_index].1;
-            let scale = start + (end - start) * factor;
-            Matrix4::from_nonuniform_scale(scale.x, scale.y, scale.z)
+            start + (end - start) * factor
         } else {
-            Matrix4::identity()
+            Vector3::new(1.0, 1.0, 1.0)
         }
     }
 
-    pub fn update_animation(&mut self, time: f32, duration: f32) {
-        let mut final_transform = Matrix4::identity();
+    pub fn update_animation(&mut self, animation_data: Vec<(f32, f32)>) {
+        let mut final_transform = (Vector3::zero(), Quaternion::zero(), Vector3::new(0.0, 0.0, 0.0));
         for (i, (weight, _)) in self.current_animations.iter().enumerate() {
-            self.current_animation_time += time;
-            self.current_animation_time %= duration;
-            let translation = self.interpolate_position(i, self.current_animation_time);
-            let rotation = self.interpolate_rotation(i, self.current_animation_time);
-            let scaling = self.interpolate_scaling(i, self.current_animation_time);
-            let local_transform = translation * rotation * scaling;
-            final_transform = final_transform * (local_transform * *weight);
+            self.current_animation_time[i] += animation_data[i].0;
+            self.current_animation_time[i] %= animation_data[i].1;
+            let translation = self.interpolate_position(i);
+            let rotation = self.interpolate_rotation(i);
+            let scaling = self.interpolate_scaling(i);
+            final_transform.0 += translation * *weight;
+            final_transform.1 = Quaternion::slerp(final_transform.1, rotation, *weight);
+            final_transform.2 += scaling * *weight;
             if let Some(children) = &mut self.children {
                 for child in children.iter_mut() {
-                    child.update_animation(time, duration);
+                    child.update_animation(animation_data.clone());
                 }
             }
         }
-        self.current_transform = final_transform;
+        self.current_transform = Matrix4::from_translation(final_transform.0)
+            * Matrix4::from(final_transform.1)
+            * Matrix4::from_nonuniform_scale(final_transform.2.x, final_transform.2.y, final_transform.2.z);
     }
 }
 
@@ -615,7 +648,7 @@ impl Channel {
                 Vector3::new(key.value.x, key.value.y, key.value.z),
             ));
         }
-        let mut rotation_keys = Vec::<(f32, cgmath::Quaternion<f32>)>::new();
+        let mut rotation_keys = Vec::<(f32, Quaternion<f32>)>::new();
         for key in &channel.rotation_keys {
             rotation_keys.push((
                 key.time as f32,

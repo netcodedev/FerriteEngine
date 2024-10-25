@@ -55,6 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     model.add_animation(idle_animation);
     model.add_animation(walk_animation);
     model.play_animation("idle");
+    model.blend_animations("idle", "walk", 0.5);
     models.push(&mut model);
 
     let camera_controller_ref1 = Rc::clone(&camera_controller);

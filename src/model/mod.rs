@@ -14,7 +14,7 @@ pub struct Model {
     model: Scene,
     meshes: HashMap<String, ModelMesh>,
     animations: HashMap<String, Animation>,
-    current_animation: Option<Animation>,
+    current_animations: Vec<Animation>,
     shader: Shader,
     textures: HashMap<TextureType, Texture>,
     position: cgmath::Vector3<f32>,
@@ -48,7 +48,7 @@ struct Bone {
     weights: Vec<(u32, f32)>,
     children: Option<Vec<Bone>>,
     current_animations: Vec<(f32, Channel)>,
-    current_animation_time: f32,
+    current_animation_time: Vec<f32>,
     current_transform: Matrix4<f32>,
 }
 
