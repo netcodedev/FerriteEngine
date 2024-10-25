@@ -53,7 +53,7 @@ struct Bone {
 }
 
 #[derive(Clone)]
-struct Animation {
+pub struct Animation {
     name: String,
     duration: f32,
     ticks_per_second: f32,

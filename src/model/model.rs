@@ -68,10 +68,6 @@ impl Model {
                 }
             })
             .collect();
-        for animation in &self.model.animations {
-            let animation = Animation::new(animation);
-            self.animations.insert(animation.name.clone(), animation);
-        }
         for mesh in &self.model.meshes {
             let mut root_bone = None;
             if let Some(root_node) = &self.model.root {
@@ -116,6 +112,10 @@ impl Model {
             );
             self.meshes.insert(mesh.name.clone(), model_mesh);
         }
+    }
+
+    pub fn add_animation(&mut self, animation: Animation) {
+        self.animations.insert(animation.name.clone(), animation);
     }
 
     pub fn play_animation(&mut self, name: &str) {
@@ -585,6 +585,21 @@ impl Animation {
             ticks_per_second: animation.ticks_per_second as f32,
             channels,
         }
+    }
+
+    pub fn from_file(path: &str) -> Result<Animation, Box<dyn std::error::Error>> {
+        let scene = Scene::from_file(
+            path,
+            vec![],
+        )?;
+        if scene.animations.len() == 0 {
+            return Err("No animations found".into());
+        }
+        Ok(Animation::new(&scene.animations[0]))
+    }
+
+    pub fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
     }
 }
 

@@ -20,7 +20,7 @@ use camera::{Camera, CameraController, MousePicker, Projection};
 use debug::DebugController;
 use dual_contouring::DualContouringChunk;
 use line::Line;
-use model::Model;
+use model::{Animation, Model};
 use plane::PlaneRenderer;
 use terrain::Terrain;
 use text::TextRenderer;
@@ -48,7 +48,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut models: Vec<&mut Model> = Vec::new();
     let mut model = Model::new("assets/models/Idle.fbx")?;
     model.init();
-    model.play_animation("mixamo.com");
+    let mut idle_animation = Animation::from_file("assets/models/Idle.fbx")?;
+    idle_animation.set_name("idle");
+    let mut walk_animation = Animation::from_file("assets/models/Walk.fbx")?;
+    walk_animation.set_name("walk");
+    model.add_animation(idle_animation);
+    model.add_animation(walk_animation);
+    model.play_animation("idle");
     models.push(&mut model);
 
     let camera_controller_ref1 = Rc::clone(&camera_controller);
