@@ -9,8 +9,10 @@ use crate::{
     texture::Texture,
 };
 
+pub const CHUNK_RADIUS: usize = 5;
 pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
+pub const USE_LOD: bool = false;
 
 pub mod terrain;
 
@@ -28,6 +30,7 @@ pub trait Chunk {
     fn process_line(&mut self, line: &Line, button: &MouseButton) -> bool;
     fn get_shader_source() -> (String, String);
     fn get_textures() -> Vec<Texture>;
+    fn get_triangle_count(&self) -> usize;
 }
 
 pub struct ChunkMesh<T: VertexAttributes> {

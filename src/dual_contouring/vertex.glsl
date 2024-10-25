@@ -16,7 +16,17 @@ void main()
 {
     vec4 worldPosition = model * vec4(position, 1.0);
     gl_Position = projection * view * worldPosition;
-    Normal = normals;
-    Color = color;
+    Normal = normalize(normals);
+    if(position.y < 50.0) {
+        Color = vec3(0.1, 0.2, 0.8);
+    } else if(position.y < 51.0) {
+        Color = vec3(0.6, 0.6, 0.1);
+    } else if(position.y > 90.0) {
+        Color = vec3(0.95, 0.95, 0.95);
+    } else if(position.y > 80.0) {
+        Color = vec3(0.5, 0.5, 0.5);
+    } else {
+        Color = color;
+    }
     toLightVector = vec3(0.0, 2000.0, 0.0) - worldPosition.xyz;
 }
