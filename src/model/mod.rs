@@ -52,7 +52,6 @@ struct Bone {
     current_transform: Matrix4<f32>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 struct Animation {
     name: String,
@@ -61,7 +60,6 @@ struct Animation {
     channels: HashMap<String, Channel>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 struct Channel {
     bone_id: String,
