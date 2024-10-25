@@ -47,7 +47,7 @@ struct Bone {
     offset_matrix: Matrix4<f32>,
     weights: Vec<(u32, f32)>,
     children: Option<Vec<Bone>>,
-    current_animation: Option<Channel>,
+    current_animations: Vec<(f32, Channel)>,
     current_animation_time: f32,
     current_transform: Matrix4<f32>,
 }

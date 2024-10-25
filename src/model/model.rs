@@ -88,7 +88,7 @@ impl Model {
                                 .map(|w| (w.vertex_id, w.weight))
                                 .collect(),
                             children: self.get_child_bones(node, &mesh.bones, Matrix4::identity()),
-                            current_animation: None,
+                            current_animations: Vec::new(),
                             current_animation_time: 0.0,
                         });
                     }
@@ -123,14 +123,14 @@ impl Model {
             self.current_animation = Some(animation.clone());
             for mesh in self.meshes.values_mut() {
                 if let Some(root_bone) = &mut mesh.root_bone {
-                    root_bone.set_animation_channel(Some(&animation.channels), 0.0);
+                    root_bone.set_animation_channel(Some(&animation.channels), 1.0, 0.0);
                 }
             }
         } else {
             self.current_animation = None;
             for mesh in self.meshes.values_mut() {
                 if let Some(root_bone) = &mut mesh.root_bone {
-                    root_bone.set_animation_channel(None, 0.0);
+                    root_bone.set_animation_channel(None, 1.0, 0.0);
                 }
             }
         }
@@ -262,7 +262,7 @@ impl Model {
                             .map(|w| (w.vertex_id, w.weight))
                             .collect(),
                         children: self.get_child_bones(child, bones, Matrix4::identity()),
-                        current_animation: None,
+                        current_animations: Vec::new(),
                         current_animation_time: 0.0,
                     });
                 }
@@ -437,33 +437,34 @@ impl Bone {
     pub fn set_animation_channel(
         &mut self,
         channels: Option<&HashMap<String, Channel>>,
+        weight: f32,
         time: f32,
     ) {
         if let Some(channels) = channels {
             if let Some(channel) = channels.get(&self.name) {
-                self.current_animation = Some(channel.clone());
+                self.current_animations.push((weight, channel.clone()));
                 if let Some(children) = &mut self.children {
                     for child in children {
-                        child.set_animation_channel(Some(channels), time);
+                        child.set_animation_channel(Some(channels), weight, time);
                     }
                 }
             } else {
-                self.current_animation = None;
+                self.current_animations = Vec::new();
             }
             self.current_animation_time = time;
         } else {
-            self.current_animation = None;
+            self.current_animations = Vec::new();
             self.current_animation_time = 0.0;
             if let Some(children) = &mut self.children {
                 for child in children {
-                    child.set_animation_channel(None, 0.0);
+                    child.set_animation_channel(None, 1.0, 0.0);
                 }
             }
         }
     }
 
-    fn get_position_index(&self, time: f32) -> usize {
-        if let Some(animation) = &self.current_animation {
+    fn get_position_index(&self, index: usize, time: f32) -> usize {
+        if let Some((_, animation)) = &self.current_animations.get(index) {
             for i in 0..animation.position_keys.len() {
                 if animation.position_keys[i].0 > time {
                     return i - 1;
@@ -473,8 +474,8 @@ impl Bone {
         0
     }
 
-    fn get_rotation_index(&self, time: f32) -> usize {
-        if let Some(animation) = &self.current_animation {
+    fn get_rotation_index(&self, index: usize, time: f32) -> usize {
+        if let Some((_, animation)) = &self.current_animations.get(index) {
             for i in 0..animation.rotation_keys.len() {
                 if animation.rotation_keys[i].0 > time {
                     return i - 1;
@@ -484,8 +485,8 @@ impl Bone {
         0
     }
 
-    fn get_scaling_index(&self, time: f32) -> usize {
-        if let Some(animation) = &self.current_animation {
+    fn get_scaling_index(&self, index: usize, time: f32) -> usize {
+        if let Some((_, animation)) = &self.current_animations.get(index) {
             for i in 0..animation.scaling_keys.len() {
                 if animation.scaling_keys[i].0 > time {
                     return i - 1;
@@ -495,9 +496,9 @@ impl Bone {
         0
     }
 
-    fn interpolate_position(&self, time: f32) -> Matrix4<f32> {
-        if let Some(animation) = &self.current_animation {
-            let position_index = self.get_position_index(time);
+    fn interpolate_position(&self, index: usize, time: f32) -> Matrix4<f32> {
+        if let Some((_, animation)) = &self.current_animations.get(index) {
+            let position_index = self.get_position_index(index, time);
             let next_position_index = position_index + 1;
             if next_position_index >= animation.position_keys.len() {
                 return Matrix4::from_translation(animation.position_keys[position_index].1);
@@ -513,9 +514,9 @@ impl Bone {
         }
     }
 
-    fn interpolate_rotation(&self, time: f32) -> Matrix4<f32> {
-        if let Some(animation) = &self.current_animation {
-            let rotation_index = self.get_rotation_index(time);
+    fn interpolate_rotation(&self, index: usize, time: f32) -> Matrix4<f32> {
+        if let Some((_, animation)) = &self.current_animations.get(index) {
+            let rotation_index = self.get_rotation_index(index, time);
             let next_rotation_index = rotation_index + 1;
             if next_rotation_index >= animation.rotation_keys.len() {
                 return Matrix4::from(animation.rotation_keys[rotation_index].1);
@@ -531,9 +532,9 @@ impl Bone {
         }
     }
 
-    fn interpolate_scaling(&self, time: f32) -> Matrix4<f32> {
-        if let Some(animation) = &self.current_animation {
-            let scaling_index = self.get_scaling_index(time);
+    fn interpolate_scaling(&self, index: usize, time: f32) -> Matrix4<f32> {
+        if let Some((_, animation)) = &self.current_animations.get(index) {
+            let scaling_index = self.get_scaling_index(index, time);
             let next_scaling_index = scaling_index + 1;
             if next_scaling_index >= animation.scaling_keys.len() {
                 return Matrix4::from_nonuniform_scale(
@@ -555,20 +556,22 @@ impl Bone {
     }
 
     pub fn update_animation(&mut self, time: f32, duration: f32) {
-        if let Some(_) = &self.current_animation {
+        let mut final_transform = Matrix4::identity();
+        for (i, (weight, _)) in self.current_animations.iter().enumerate() {
             self.current_animation_time += time;
             self.current_animation_time %= duration;
-            let translation = self.interpolate_position(self.current_animation_time);
-            let rotation = self.interpolate_rotation(self.current_animation_time);
-            let scaling = self.interpolate_scaling(self.current_animation_time);
+            let translation = self.interpolate_position(i, self.current_animation_time);
+            let rotation = self.interpolate_rotation(i, self.current_animation_time);
+            let scaling = self.interpolate_scaling(i, self.current_animation_time);
             let local_transform = translation * rotation * scaling;
-            self.current_transform = local_transform;
+            final_transform = final_transform * (local_transform * *weight);
             if let Some(children) = &mut self.children {
                 for child in children.iter_mut() {
                     child.update_animation(time, duration);
                 }
             }
         }
+        self.current_transform = final_transform;
     }
 }
 
