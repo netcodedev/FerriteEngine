@@ -600,15 +600,15 @@ impl Bone {
                 final_transform.1 = Quaternion::slerp(final_transform.1, rotation, *weight);
             }
             final_transform.2 += scaling * *weight;
-            if let Some(children) = &mut self.children {
-                for child in children.iter_mut() {
-                    child.update_animation(animation_data.clone());
-                }
-            }
         }
         self.current_transform = Matrix4::from_translation(final_transform.0)
             * Matrix4::from(final_transform.1)
             * Matrix4::from_nonuniform_scale(final_transform.2.x, final_transform.2.y, final_transform.2.z);
+        if let Some(children) = &mut self.children {
+            for child in children.iter_mut() {
+                child.update_animation(animation_data.clone());
+            }
+        }
     }
 }
 
