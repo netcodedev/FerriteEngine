@@ -475,14 +475,14 @@ impl Bone {
             if let Some(channel) = channels.get(&self.name) {
                 self.current_animations.push((weight, channel.clone()));
                 self.current_animation_time.push(0.0);
-                if let Some(children) = &mut self.children {
-                    for child in children {
-                        child.set_animation_channel(Some(channels), weight, time);
-                    }
-                }
             } else {
                 self.current_animations = Vec::new();
                 self.current_animation_time = Vec::new();
+            }
+            if let Some(children) = &mut self.children {
+                for child in children {
+                    child.set_animation_channel(Some(channels), weight, time);
+                }
             }
         } else {
             self.current_animations = Vec::new();
@@ -594,7 +594,11 @@ impl Bone {
             let rotation = self.interpolate_rotation(i);
             let scaling = self.interpolate_scaling(i);
             final_transform.0 += translation * *weight;
-            final_transform.1 = Quaternion::slerp(final_transform.1, rotation, *weight);
+            if final_transform.1 == Quaternion::zero() {
+                final_transform.1 = rotation;
+            } else {
+                final_transform.1 = Quaternion::slerp(final_transform.1, rotation, *weight);
+            }
             final_transform.2 += scaling * *weight;
             if let Some(children) = &mut self.children {
                 for child in children.iter_mut() {
