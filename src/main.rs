@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terrain = Terrain::<DualContouringChunk>::new();
 
     let mut models: Vec<&mut Model> = Vec::new();
-    let mut model = Model::new("assets/models/Idle.fbx")?;
+    let mut model = Model::new("assets/models/Mannequin.fbx")?;
     model.init();
     let mut idle_animation = Animation::from_file("assets/models/Idle.fbx")?;
     idle_animation.set_name("idle");
