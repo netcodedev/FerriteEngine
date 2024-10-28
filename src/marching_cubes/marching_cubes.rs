@@ -220,7 +220,7 @@ impl Chunk for MarchingCubesChunk {
     fn get_textures() -> Vec<crate::texture::Texture> {
         Vec::new()
     }
-    
+
     fn get_triangle_count(&self) -> usize {
         if let Some(mesh) = &self.mesh {
             mesh.get_triangle_count()

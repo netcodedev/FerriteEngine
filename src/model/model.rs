@@ -145,7 +145,11 @@ impl Model {
                 for mesh in self.meshes.values_mut() {
                     if let Some(root_bone) = &mut mesh.root_bone {
                         root_bone.reset();
-                        root_bone.set_animation_channel(Some(&animation1.channels), 1.0 - weight, 0.0);
+                        root_bone.set_animation_channel(
+                            Some(&animation1.channels),
+                            1.0 - weight,
+                            0.0,
+                        );
                         root_bone.set_animation_channel(Some(&animation2.channels), weight, 0.0);
                     }
                 }
@@ -162,9 +166,7 @@ impl Model {
                     .map(|a| (delta_time * a.ticks_per_second, a.duration))
                     .collect();
                 if self.current_animations.len() > 0 {
-                    root_bone.update_animation(
-                        animation_data
-                    );
+                    root_bone.update_animation(animation_data);
                 }
             }
         }
@@ -586,7 +588,11 @@ impl Bone {
     }
 
     pub fn update_animation(&mut self, animation_data: Vec<(f32, f32)>) {
-        let mut final_transform = (Vector3::zero(), Quaternion::zero(), Vector3::new(0.0, 0.0, 0.0));
+        let mut final_transform = (
+            Vector3::zero(),
+            Quaternion::zero(),
+            Vector3::new(0.0, 0.0, 0.0),
+        );
         for (i, (weight, _)) in self.current_animations.iter().enumerate() {
             self.current_animation_time[i] += animation_data[i].0;
             self.current_animation_time[i] %= animation_data[i].1;
@@ -603,7 +609,11 @@ impl Bone {
         }
         self.current_transform = Matrix4::from_translation(final_transform.0)
             * Matrix4::from(final_transform.1)
-            * Matrix4::from_nonuniform_scale(final_transform.2.x, final_transform.2.y, final_transform.2.z);
+            * Matrix4::from_nonuniform_scale(
+                final_transform.2.x,
+                final_transform.2.y,
+                final_transform.2.z,
+            );
         if let Some(children) = &mut self.children {
             for child in children.iter_mut() {
                 child.update_animation(animation_data.clone());
@@ -628,10 +638,7 @@ impl Animation {
     }
 
     pub fn from_file(path: &str) -> Result<Animation, Box<dyn std::error::Error>> {
-        let scene = Scene::from_file(
-            path,
-            vec![],
-        )?;
+        let scene = Scene::from_file(path, vec![])?;
         if scene.animations.len() == 0 {
             return Err("No animations found".into());
         }

@@ -9,7 +9,10 @@ use crate::{
     terrain::{Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT, USE_LOD},
 };
 
-use fast_surface_nets::{ndshape::{AbstractShape, RuntimeShape}, {surface_nets, SurfaceNetsBuffer}};
+use fast_surface_nets::{
+    ndshape::{AbstractShape, RuntimeShape},
+    {surface_nets, SurfaceNetsBuffer},
+};
 
 use super::{ChunkMesh, DualContouringChunk, Vertex};
 
@@ -23,9 +26,11 @@ impl DualContouringChunk {
         );
 
         let noise = ((1.0 + self.noise.sample([sample_point.0, sample_point.2])) / 2.0) as f32;
-        let _iso = ((1.0 + self
+        let _iso = ((1.0
+            + self
                 .cave
-                .sample([sample_point.0, sample_point.1, sample_point.2])) / 2.0) as f32;
+                .sample([sample_point.0, sample_point.1, sample_point.2]))
+            / 2.0) as f32;
         let height_iso = 1.0 - ((noise) / ((1.0 + y as f32) / CHUNK_SIZE_FLOAT));
         height_iso
     }
@@ -36,17 +41,25 @@ impl DualContouringChunk {
         let size = (self.chunk_size + 2) as u32;
         let scale_factor = CHUNK_SIZE / self.chunk_size;
         let shape = RuntimeShape::<u32, 3>::new([size, size, size]);
-        let mut sdf = vec![0.0; (size*size*size) as usize];
+        let mut sdf = vec![0.0; (size * size * size) as usize];
         for i in 0..sdf.len() {
             let [x, y, z] = shape.delinearize(i as u32);
-            sdf[i as usize] = self.get_density_at((x as usize * scale_factor, y as usize * scale_factor, z as usize * scale_factor));
+            sdf[i as usize] = self.get_density_at((
+                x as usize * scale_factor,
+                y as usize * scale_factor,
+                z as usize * scale_factor,
+            ));
         }
         let mut buffer = SurfaceNetsBuffer::default();
-        surface_nets(&sdf, &shape, [0; 3], [size as u32-1; 3], &mut buffer);
+        surface_nets(&sdf, &shape, [0; 3], [size as u32 - 1; 3], &mut buffer);
         for (i, vertex) in buffer.positions.into_iter().enumerate() {
             let normal = buffer.normals[i];
             vertices.push(Vertex {
-                position: [vertex[0] * scale_factor as f32, vertex[1] * scale_factor as f32, vertex[2] * scale_factor as f32],
+                position: [
+                    vertex[0] * scale_factor as f32,
+                    vertex[1] * scale_factor as f32,
+                    vertex[2] * scale_factor as f32,
+                ],
                 normal,
                 color: [0.0, 0.5, 0.1],
             });
@@ -60,7 +73,10 @@ impl DualContouringChunk {
     fn calculate_chunk_size(lod: usize) -> usize {
         let lod = std::cmp::max(
             8,
-            std::cmp::min(CHUNK_SIZE, CHUNK_SIZE / 2usize.pow(if lod > 0 { (lod - 1) as u32 } else { 0 })),
+            std::cmp::min(
+                CHUNK_SIZE,
+                CHUNK_SIZE / 2usize.pow(if lod > 0 { (lod - 1) as u32 } else { 0 }),
+            ),
         );
         if USE_LOD {
             lod
@@ -140,7 +156,7 @@ impl Chunk for DualContouringChunk {
     fn get_textures() -> Vec<crate::texture::Texture> {
         Vec::new()
     }
-    
+
     fn get_triangle_count(&self) -> usize {
         if let Some(mesh) = &self.mesh {
             mesh.get_triangle_count()

@@ -64,7 +64,9 @@ impl DebugController {
         mouse_picker: &MousePicker,
         terrain: &Terrain<T>,
         models: &Vec<&mut Model>,
-    ) where T: Chunk + Send + 'static {
+    ) where
+        T: Chunk + Send + 'static,
+    {
         if self.show_rays {
             if let Some(line) = &mouse_picker.ray {
                 LineRenderer::render(
@@ -121,7 +123,10 @@ impl DebugController {
                 .as_str(),
             );
             TextRenderer::render(
-                5, 105, 20.0, format!("Triangles: {}", terrain.get_triangle_count()).as_str(),
+                5,
+                105,
+                20.0,
+                format!("Triangles: {}", terrain.get_triangle_count()).as_str(),
             );
             let mut lines: Vec<Line> = Vec::new();
             let mut corner_lines: Vec<Line> = Vec::new();

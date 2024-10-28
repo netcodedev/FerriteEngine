@@ -447,7 +447,7 @@ impl Chunk for VoxelChunk {
 
         vec![grass_texture, stone_texture]
     }
-    
+
     fn get_triangle_count(&self) -> usize {
         if let Some(mesh) = &self.mesh {
             mesh.get_triangle_count()
