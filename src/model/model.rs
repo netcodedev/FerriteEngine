@@ -35,6 +35,7 @@ impl Model {
             meshes: HashMap::<String, ModelMesh>::new(),
             animations: HashMap::<String, Animation>::new(),
             current_animations: Vec::new(),
+            sync_animations: false,
             shader,
             textures: HashMap::<TextureType, Texture>::new(),
             position: cgmath::Vector3::new(-121.0, 50.5, -32.0),
@@ -138,10 +139,11 @@ impl Model {
         }
     }
 
-    pub fn blend_animations(&mut self, name1: &str, name2: &str, weight: f32) {
+    pub fn blend_animations(&mut self, name1: &str, name2: &str, weight: f32, sync: bool) {
         if let Some(animation1) = self.animations.get(name1) {
             if let Some(animation2) = self.animations.get(name2) {
                 self.current_animations = vec![animation1.clone(), animation2.clone()];
+                self.sync_animations = sync;
                 for mesh in self.meshes.values_mut() {
                     if let Some(root_bone) = &mut mesh.root_bone {
                         root_bone.reset();
@@ -166,7 +168,7 @@ impl Model {
                     .map(|a| (delta_time * a.ticks_per_second, a.duration))
                     .collect();
                 if self.current_animations.len() > 0 {
-                    root_bone.update_animation(animation_data);
+                    root_bone.update_animation(animation_data, self.sync_animations);
                 }
             }
         }
@@ -587,15 +589,21 @@ impl Bone {
         }
     }
 
-    pub fn update_animation(&mut self, animation_data: Vec<(f32, f32)>) {
+    pub fn update_animation(&mut self, animation_data: Vec<(f32, f32)>, sync: bool) {
         let mut final_transform = (
             Vector3::zero(),
             Quaternion::zero(),
             Vector3::new(0.0, 0.0, 0.0),
         );
+        let mut progression = 0.0;
         for (i, (weight, _)) in self.current_animations.iter().enumerate() {
-            self.current_animation_time[i] += animation_data[i].0;
-            self.current_animation_time[i] %= animation_data[i].1;
+            if sync && i > 0 {
+                self.current_animation_time[i] = progression * animation_data[i].1;
+            } else {
+                self.current_animation_time[i] += animation_data[i].0;
+                self.current_animation_time[i] %= animation_data[i].1;
+                progression = self.current_animation_time[i] / animation_data[i].1;
+            }
             let translation = self.interpolate_position(i);
             let rotation = self.interpolate_rotation(i);
             let scaling = self.interpolate_scaling(i);
@@ -616,7 +624,7 @@ impl Bone {
             );
         if let Some(children) = &mut self.children {
             for child in children.iter_mut() {
-                child.update_animation(animation_data.clone());
+                child.update_animation(animation_data.clone(), sync);
             }
         }
     }

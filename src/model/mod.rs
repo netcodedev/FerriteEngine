@@ -15,6 +15,7 @@ pub struct Model {
     meshes: HashMap<String, ModelMesh>,
     animations: HashMap<String, Animation>,
     current_animations: Vec<Animation>,
+    sync_animations: bool,
     shader: Shader,
     textures: HashMap<TextureType, Texture>,
     position: cgmath::Vector3<f32>,
