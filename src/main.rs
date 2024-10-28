@@ -52,10 +52,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     idle_animation.set_name("idle");
     let mut walk_animation = Animation::from_file("assets/models/Walk.fbx")?;
     walk_animation.set_name("walk");
+    let mut run_animation = Animation::from_file("assets/models/Run.fbx")?;
+    run_animation.set_name("run");
     model.add_animation(idle_animation);
     model.add_animation(walk_animation);
+    model.add_animation(run_animation);
     model.play_animation("idle");
-    model.blend_animations("idle", "walk", 0.5);
+    model.blend_animations("walk", "run", 0.5);
     models.push(&mut model);
 
     let camera_controller_ref1 = Rc::clone(&camera_controller);
