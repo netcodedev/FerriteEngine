@@ -9,6 +9,7 @@ applications of various types.
 - Line rendering
 - Rendering of 3D models
 - Model animation
+- Animation blending
 - Basic UI
     - Movable Panel
     - Button
@@ -18,7 +19,7 @@ applications of various types.
 - Dual Contouring terrain generation (WIP)
 
 ## Planned Features
-- Animation blending
+- Root Motion
 - Inverse Kinematics
 - Infinite world generation
 - Lighting
