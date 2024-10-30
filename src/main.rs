@@ -89,10 +89,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
 
     while !window.should_close() {
-        unsafe {
-            gl::ClearColor(0.3, 0.3, 0.5, 1.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-        }
+        window.clear((0.3, 0.3, 0.5, 1.0), gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+        
         let mut line: Option<(Line, glfw::MouseButton)> = None;
 
         window.handle_events(|mut window, mut glfw, event| {

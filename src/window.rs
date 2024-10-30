@@ -41,6 +41,13 @@ impl Window {
         }
     }
 
+    pub fn clear(&self, (r, g, b, a): (f32, f32, f32, f32), mask: u32) {
+        unsafe {
+            gl::ClearColor(r, g, b, a);
+            gl::Clear(mask);
+        }
+    }
+
     pub fn handle_events<F>(&mut self, mut event_handler: F)
     where
         F: FnMut(&mut glfw::Window, &mut glfw::Glfw, glfw::WindowEvent),
