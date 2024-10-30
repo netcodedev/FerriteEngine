@@ -3,9 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 
 mod camera;
 mod debug;
-mod dual_contouring;
 mod line;
-mod marching_cubes;
 mod model;
 mod plane;
 mod shader;
@@ -14,15 +12,13 @@ mod text;
 mod texture;
 mod ui;
 mod utils;
-mod voxel;
 mod window;
 use camera::{Camera, CameraController, MousePicker, Projection};
 use debug::DebugController;
-use dual_contouring::DualContouringChunk;
 use line::Line;
 use model::{Model, ModelBuilder};
 use plane::PlaneRenderer;
-use terrain::Terrain;
+use terrain::{dual_contouring::DualContouringChunk, Terrain};
 use text::TextRenderer;
 use ui::{UIRenderer, UI};
 use window::Window;
@@ -52,8 +48,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_animation("run", "Run.fbx")
         .build();
     model.init();
-    model.play_animation("idle");
     model.blend_animations("walk", "run", 0.5, true);
+    model.play_animation("idle");
     models.push(&mut model);
 
     let camera_controller_ref1 = Rc::clone(&camera_controller);
@@ -90,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     while !window.should_close() {
         window.clear((0.3, 0.3, 0.5, 1.0), gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-        
+
         let mut line: Option<(Line, glfw::MouseButton)> = None;
 
         window.handle_events(|mut window, mut glfw, event| {

@@ -14,7 +14,10 @@ pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 pub const USE_LOD: bool = false;
 
-pub mod terrain;
+mod terrain;
+pub mod dual_contouring;
+pub mod marching_cubes;
+pub mod voxel;
 
 pub struct Terrain<T: Chunk> {
     pub chunks: HashMap<ChunkBounds, T>,
