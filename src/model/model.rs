@@ -14,7 +14,7 @@ use crate::{
     texture::Texture,
 };
 
-use super::{Animation, Bone, Model, ModelMesh};
+use super::{Animation, Bone, Model, ModelBuilder, ModelMesh};
 use crate::utils::ToMatrix4;
 
 impl Model {
@@ -321,5 +321,24 @@ impl Model {
             }
         }
         transformations
+    }
+}
+
+impl ModelBuilder {
+    pub fn new(path: &str) -> Result<ModelBuilder, Box<dyn std::error::Error>> {
+        Ok(ModelBuilder {
+            model: Model::new(path)?,
+        })
+    }
+
+    pub fn with_animation(mut self, name: &str, path: &str) -> ModelBuilder {
+        let mut animation = Animation::from_file(path).unwrap();
+        animation.set_name(name);
+        self.model.add_animation(animation);
+        self
+    }
+
+    pub fn build(self) -> Model {
+        self.model
     }
 }

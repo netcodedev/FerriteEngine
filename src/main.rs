@@ -20,7 +20,7 @@ use camera::{Camera, CameraController, MousePicker, Projection};
 use debug::DebugController;
 use dual_contouring::DualContouringChunk;
 use line::Line;
-use model::{Animation, Model};
+use model::{Model, ModelBuilder};
 use plane::PlaneRenderer;
 use terrain::Terrain;
 use text::TextRenderer;
@@ -46,17 +46,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terrain = Terrain::<DualContouringChunk>::new();
 
     let mut models: Vec<&mut Model> = Vec::new();
-    let mut model = Model::new("Mannequin.fbx")?;
+    let mut model = ModelBuilder::new("Mannequin.fbx")?
+        .with_animation("idle", "Idle.fbx")
+        .with_animation("walk", "Walk.fbx")
+        .with_animation("run", "Run.fbx").build();
     model.init();
-    let mut idle_animation = Animation::from_file("Idle.fbx")?;
-    idle_animation.set_name("idle");
-    let mut walk_animation = Animation::from_file("Walk.fbx")?;
-    walk_animation.set_name("walk");
-    let mut run_animation = Animation::from_file("Run.fbx")?;
-    run_animation.set_name("run");
-    model.add_animation(idle_animation);
-    model.add_animation(walk_animation);
-    model.add_animation(run_animation);
     model.play_animation("idle");
     model.blend_animations("walk", "run", 0.5, true);
     models.push(&mut model);

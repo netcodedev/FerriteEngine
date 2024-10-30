@@ -26,6 +26,10 @@ pub struct Model {
     scale: f32,
 }
 
+pub struct ModelBuilder {
+    model: Model,
+}
+
 #[derive(Debug, Clone)]
 #[repr(C)]
 struct ModelMeshVertex {
