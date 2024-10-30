@@ -6,7 +6,7 @@ use ndarray::ArrayBase;
 
 use crate::{
     camera::{Camera, Projection},
-    line::Line,
+    renderer::{line::Line, texture::Texture},
     shader::{Shader, VertexAttributes},
     terrain::{Chunk, ChunkBounds},
 };
@@ -217,7 +217,7 @@ impl Chunk for MarchingCubesChunk {
         )
     }
 
-    fn get_textures() -> Vec<crate::texture::Texture> {
+    fn get_textures() -> Vec<Texture> {
         Vec::new()
     }
 

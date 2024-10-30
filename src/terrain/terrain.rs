@@ -5,7 +5,7 @@ use glfw::MouseButton;
 
 use crate::{
     camera::{Camera, Projection, ViewFrustum},
-    line::Line,
+    renderer::line::Line,
     shader::{DynamicVertexArray, Shader, VertexAttributes},
 };
 

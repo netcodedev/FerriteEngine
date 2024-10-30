@@ -1,4 +1,4 @@
-use crate::{text::TextRenderer, ui::UIElement};
+use crate::renderer::{ui::UIElement, text::TextRenderer};
 
 use super::Text;
 

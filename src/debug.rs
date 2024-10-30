@@ -2,10 +2,12 @@ use glfw::{Action, Glfw, Key};
 
 use crate::{
     camera::{Camera, MousePicker, Projection},
-    line::{Line, LineRenderer},
     model::Model,
     terrain::{Chunk, ChunkBounds, Terrain, CHUNK_SIZE},
-    text::TextRenderer,
+    renderer::{
+        line::{Line, LineRenderer},
+        text::TextRenderer,
+    }
 };
 use cgmath::{Deg, EuclideanSpace, Point3, Vector3};
 

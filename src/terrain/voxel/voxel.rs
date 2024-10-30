@@ -1,8 +1,10 @@
 use crate::camera::{Camera, Projection};
-use crate::line::Line;
 use crate::shader::{Shader, VertexAttributes};
 use crate::terrain::{Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
-use crate::texture::Texture;
+use crate::renderer::{
+    line::Line,
+    texture::Texture
+};
 
 use gl::types::GLuint;
 use libnoise::prelude::*;

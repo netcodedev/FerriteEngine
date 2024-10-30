@@ -3,7 +3,7 @@ use glfw::{Action, CursorMode, Key};
 use std::f32::consts::FRAC_PI_2;
 
 use crate::{
-    line::Line,
+    renderer::line::Line,
     terrain::{ChunkBounds, CHUNK_SIZE},
 };
 

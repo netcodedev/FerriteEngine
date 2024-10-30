@@ -5,7 +5,7 @@ use russimp::{material::TextureType, scene::Scene};
 
 use crate::{
     shader::{DynamicVertexArray, Shader},
-    texture::Texture,
+    renderer::texture::Texture,
 };
 
 mod animation;

@@ -4,9 +4,11 @@ use glfw::MouseButton;
 
 use crate::{
     camera::{Camera, Projection},
-    line::Line,
     shader::{DynamicVertexArray, Shader, VertexAttributes},
-    texture::Texture,
+    renderer::{
+        line::Line,
+        texture::Texture,
+    }
 };
 
 pub const CHUNK_RADIUS: usize = 5;
