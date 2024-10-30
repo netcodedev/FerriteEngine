@@ -171,9 +171,7 @@ impl Model {
                     .collect();
                 if self.current_animations.len() > 0 {
                     let delta = root_bone.update_animation(animation_data, self.sync_animations, true);
-                    if delta.magnitude() < 2.0 {
-                        root_translation += delta;
-                    }
+                    root_translation += delta;
                 }
             }
         }
@@ -603,12 +601,16 @@ impl Bone {
             Vector3::new(0.0, 0.0, 0.0),
         );
         let mut progression = 0.0;
+        let mut cycle_completed = false;
         for (i, (weight, _)) in self.current_animations.iter().enumerate() {
             if sync && i > 0 {
                 self.current_animation_time[i] = progression * animation_data[i].1;
             } else {
                 self.current_animation_time[i] += animation_data[i].0;
-                self.current_animation_time[i] %= animation_data[i].1;
+                if self.current_animation_time[i] >= animation_data[i].1 {
+                    cycle_completed = true;
+                    self.current_animation_time[i] %= animation_data[i].1;
+                }
                 progression = self.current_animation_time[i] / animation_data[i].1;
             }
             let translation = self.interpolate_position(i);
@@ -634,8 +636,13 @@ impl Bone {
                 child.update_animation(animation_data.clone(), sync, false);
             }
         }
+        if cycle_completed {
+            self.last_translation = final_transform.0;
+        }
         let delta = final_transform.0 - self.last_translation;
-        self.last_translation = final_transform.0;
+        if !cycle_completed {
+            self.last_translation = final_transform.0;
+        }
         delta
     }
 }
