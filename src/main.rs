@@ -46,19 +46,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terrain = Terrain::<DualContouringChunk>::new();
 
     let mut models: Vec<&mut Model> = Vec::new();
-    let mut model = Model::new("assets/models/Mannequin.fbx")?;
+    let mut model = Model::new("Mannequin.fbx")?;
     model.init();
-    let mut idle_animation = Animation::from_file("assets/models/Idle.fbx")?;
+    let mut idle_animation = Animation::from_file("Idle.fbx")?;
     idle_animation.set_name("idle");
-    let mut walk_animation = Animation::from_file("assets/models/Walking.fbx")?;
+    let mut walk_animation = Animation::from_file("Walk.fbx")?;
     walk_animation.set_name("walk");
-    let mut run_animation = Animation::from_file("assets/models/Run.fbx")?;
+    let mut run_animation = Animation::from_file("Run.fbx")?;
     run_animation.set_name("run");
     model.add_animation(idle_animation);
     model.add_animation(walk_animation);
     model.add_animation(run_animation);
+    model.play_animation("idle");
     model.blend_animations("walk", "run", 0.5, true);
-    model.play_animation("walk");
     models.push(&mut model);
 
     let camera_controller_ref1 = Rc::clone(&camera_controller);

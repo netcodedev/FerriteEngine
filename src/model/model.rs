@@ -20,7 +20,7 @@ use crate::utils::ToMatrix4;
 impl Model {
     pub fn new(path: &str) -> Result<Model, Box<dyn std::error::Error>> {
         let scene = Scene::from_file(
-            path,
+            format!("assets/models/{path}").as_str(),
             vec![
                 PostProcess::Triangulate,
                 // PostProcess::JoinIdenticalVertices,
@@ -663,7 +663,7 @@ impl Animation {
     }
 
     pub fn from_file(path: &str) -> Result<Animation, Box<dyn std::error::Error>> {
-        let scene = Scene::from_file(path, vec![])?;
+        let scene = Scene::from_file(format!("assets/animations/{path}").as_str(), vec![])?;
         if scene.animations.len() == 0 {
             return Err("No animations found".into());
         }
