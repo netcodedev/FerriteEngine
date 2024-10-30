@@ -1,9 +1,8 @@
-use crate::shader::Shader;
 use gl::types::GLvoid;
 use rusttype::gpu_cache::Cache;
 use rusttype::{point, Font, PositionedGlyph, Rect, Scale};
 
-use super::{TextRenderer, Texture};
+use super::{Shader, TextRenderer, Texture};
 
 use lazy_static::lazy_static;
 use std::sync::Mutex;

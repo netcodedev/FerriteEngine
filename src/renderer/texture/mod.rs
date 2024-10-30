@@ -1,6 +1,6 @@
 use gl::types::GLuint;
 
-use crate::shader::Shader;
+use crate::renderer::shader::Shader;
 
 pub mod texture;
 

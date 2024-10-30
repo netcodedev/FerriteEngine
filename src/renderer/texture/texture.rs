@@ -2,9 +2,7 @@ use std::path::Path;
 
 use gl::types::{GLint, GLsizei, GLsizeiptr, GLvoid};
 
-use crate::shader::Shader;
-
-use super::{Texture, TextureRenderer};
+use super::{Shader, Texture, TextureRenderer};
 
 impl Texture {
     pub fn new(path: &Path) -> Self {

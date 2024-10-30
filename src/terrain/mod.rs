@@ -4,11 +4,11 @@ use glfw::MouseButton;
 
 use crate::{
     camera::{Camera, Projection},
-    shader::{DynamicVertexArray, Shader, VertexAttributes},
     renderer::{
         line::Line,
+        shader::{DynamicVertexArray, Shader, VertexAttributes},
         texture::Texture,
-    }
+    },
 };
 
 pub const CHUNK_RADIUS: usize = 5;
@@ -16,9 +16,9 @@ pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 pub const USE_LOD: bool = false;
 
-mod terrain;
 pub mod dual_contouring;
 pub mod marching_cubes;
+mod terrain;
 pub mod voxel;
 
 pub struct Terrain<T: Chunk> {

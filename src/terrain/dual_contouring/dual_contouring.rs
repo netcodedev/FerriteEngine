@@ -4,8 +4,11 @@ use libnoise::prelude::*;
 
 use crate::{
     camera::{Camera, Projection},
-    renderer::{line::Line, texture::Texture},
-    shader::{Shader, VertexAttributes},
+    renderer::{
+        line::Line,
+        shader::{Shader, VertexAttributes},
+        texture::Texture,
+    },
     terrain::{Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT, USE_LOD},
 };
 

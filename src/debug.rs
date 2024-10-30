@@ -3,11 +3,11 @@ use glfw::{Action, Glfw, Key};
 use crate::{
     camera::{Camera, MousePicker, Projection},
     model::Model,
-    terrain::{Chunk, ChunkBounds, Terrain, CHUNK_SIZE},
     renderer::{
         line::{Line, LineRenderer},
         text::TextRenderer,
-    }
+    },
+    terrain::{Chunk, ChunkBounds, Terrain, CHUNK_SIZE},
 };
 use cgmath::{Deg, EuclideanSpace, Point3, Vector3};
 

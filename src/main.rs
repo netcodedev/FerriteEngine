@@ -1,12 +1,16 @@
 use cgmath::Deg;
-use renderer::{line::Line, plane::PlaneRenderer, text::TextRenderer, ui::{UIRenderer, UI}};
+use renderer::{
+    line::Line,
+    plane::PlaneRenderer,
+    text::TextRenderer,
+    ui::{UIRenderer, UI},
+};
 use std::{cell::RefCell, rc::Rc};
 
 mod camera;
 mod debug;
 mod model;
 mod renderer;
-mod shader;
 mod terrain;
 mod utils;
 mod window;
@@ -78,7 +82,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
 
     while !window.should_close() {
-        window.clear((0.3, 0.3, 0.5, 1.0), gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+        window.clear(
+            (0.3, 0.3, 0.5, 1.0),
+            gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
+        );
 
         let mut line: Option<(Line, glfw::MouseButton)> = None;
 

@@ -5,8 +5,10 @@ use glfw::MouseButton;
 
 use crate::{
     camera::{Camera, Projection, ViewFrustum},
-    renderer::line::Line,
-    shader::{DynamicVertexArray, Shader, VertexAttributes},
+    renderer::{
+        line::Line,
+        shader::{DynamicVertexArray, Shader, VertexAttributes},
+    },
 };
 
 use super::{Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT};

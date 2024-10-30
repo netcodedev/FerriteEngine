@@ -1,4 +1,4 @@
-use crate::shader::{DynamicVertexArray, Shader, VertexAttributes};
+use crate::renderer::shader::{DynamicVertexArray, Shader, VertexAttributes};
 
 use super::{Bone, ModelMesh, ModelMeshVertex};
 

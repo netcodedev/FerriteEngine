@@ -6,8 +6,11 @@ use ndarray::ArrayBase;
 
 use crate::{
     camera::{Camera, Projection},
-    renderer::{line::Line, texture::Texture},
-    shader::{Shader, VertexAttributes},
+    renderer::{
+        line::Line,
+        shader::{Shader, VertexAttributes},
+        texture::Texture,
+    },
     terrain::{Chunk, ChunkBounds},
 };
 

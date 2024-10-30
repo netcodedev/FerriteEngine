@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use cgmath::{Matrix4, Vector3};
 use russimp::{material::TextureType, scene::Scene};
 
-use crate::{
+use crate::renderer::{
     shader::{DynamicVertexArray, Shader},
-    renderer::texture::Texture,
+    texture::Texture,
 };
 
 mod animation;

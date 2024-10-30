@@ -1,9 +1,8 @@
 use crate::camera::{Camera, Projection};
-use crate::shader::Shader;
 use cgmath::{Point3, Vector3};
 use gl::types::*;
 
-use super::{Line, LineRenderer};
+use super::{Line, LineRenderer, Shader};
 
 use lazy_static::lazy_static;
 use std::sync::Mutex;

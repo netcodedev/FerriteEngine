@@ -9,11 +9,11 @@ use russimp::{
 
 use crate::{
     camera::{Camera, Projection},
-    shader::Shader,
     renderer::{
         line::{Line, LineRenderer},
+        shader::Shader,
         texture::Texture,
-    }
+    },
 };
 
 use super::{Animation, Bone, Model, ModelBuilder, ModelMesh};
