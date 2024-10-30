@@ -49,7 +49,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut model = ModelBuilder::new("Mannequin.fbx")?
         .with_animation("idle", "Idle.fbx")
         .with_animation("walk", "Walk.fbx")
-        .with_animation("run", "Run.fbx").build();
+        .with_animation("run", "Run.fbx")
+        .build();
     model.init();
     model.play_animation("idle");
     model.blend_animations("walk", "run", 0.5, true);

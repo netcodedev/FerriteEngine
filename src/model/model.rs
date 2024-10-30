@@ -170,7 +170,8 @@ impl Model {
                     .map(|a| (delta_time * a.ticks_per_second, a.duration))
                     .collect();
                 if self.current_animations.len() > 0 {
-                    let delta = root_bone.update_animation(animation_data, self.sync_animations, true);
+                    let delta =
+                        root_bone.update_animation(animation_data, self.sync_animations, true);
                     root_translation += delta;
                 }
             }

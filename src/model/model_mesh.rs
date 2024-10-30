@@ -2,7 +2,6 @@ use crate::shader::{DynamicVertexArray, Shader, VertexAttributes};
 
 use super::{Bone, ModelMesh, ModelMeshVertex};
 
-
 impl ModelMesh {
     pub fn new(
         vertices: Vec<f32>,

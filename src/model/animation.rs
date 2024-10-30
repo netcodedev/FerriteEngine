@@ -4,7 +4,6 @@ use russimp::scene::Scene;
 
 use super::{Animation, Channel};
 
-
 impl Animation {
     pub fn new(animation: &russimp::animation::Animation) -> Animation {
         let mut channels = HashMap::<String, Channel>::new();

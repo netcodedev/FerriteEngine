@@ -2,7 +2,6 @@ use cgmath::{Quaternion, Vector3};
 
 use super::Channel;
 
-
 impl Channel {
     pub fn new(channel: &russimp::animation::NodeAnim) -> Channel {
         let mut position_keys = Vec::<(f32, cgmath::Vector3<f32>)>::new();

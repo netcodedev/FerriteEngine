@@ -146,7 +146,12 @@ impl Bone {
         }
     }
 
-    pub fn update_animation(&mut self, animation_data: Vec<(f32, f32)>, sync: bool, is_root: bool) -> Vector3<f32> {
+    pub fn update_animation(
+        &mut self,
+        animation_data: Vec<(f32, f32)>,
+        sync: bool,
+        is_root: bool,
+    ) -> Vector3<f32> {
         let mut final_transform = (
             Vector3::zero(),
             Quaternion::zero(),
@@ -176,8 +181,11 @@ impl Bone {
             }
             final_transform.2 += scaling * *weight;
         }
-        self.current_transform = if is_root { Matrix4::identity() } else { Matrix4::from_translation(final_transform.0) }
-            * Matrix4::from(final_transform.1)
+        self.current_transform = if is_root {
+            Matrix4::identity()
+        } else {
+            Matrix4::from_translation(final_transform.0)
+        } * Matrix4::from(final_transform.1)
             * Matrix4::from_nonuniform_scale(
                 final_transform.2.x,
                 final_transform.2.y,
