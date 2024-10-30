@@ -41,9 +41,9 @@ impl Window {
         }
     }
 
-    pub fn clear(&self, (r, g, b, a): (f32, f32, f32, f32), mask: u32) {
+    pub fn clear(&self, clear_color: (f32, f32, f32, f32), mask: u32) {
         unsafe {
-            gl::ClearColor(r, g, b, a);
+            gl::ClearColor(clear_color.0, clear_color.1, clear_color.2, clear_color.3);
             gl::Clear(mask);
         }
     }
