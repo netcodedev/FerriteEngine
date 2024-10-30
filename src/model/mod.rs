@@ -8,7 +8,11 @@ use crate::{
     texture::Texture,
 };
 
-pub mod model;
+mod animation;
+mod bone;
+mod channel;
+mod model;
+mod model_mesh;
 
 pub struct Model {
     model: Scene,
