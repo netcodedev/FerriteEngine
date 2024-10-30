@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cgmath::Matrix4;
+use cgmath::{Matrix4, Vector3};
 use russimp::{material::TextureType, scene::Scene};
 
 use crate::{
@@ -51,6 +51,7 @@ struct Bone {
     current_animations: Vec<(f32, Channel)>,
     current_animation_time: Vec<f32>,
     current_transform: Matrix4<f32>,
+    last_translation: Vector3<f32>,
 }
 
 #[derive(Clone)]

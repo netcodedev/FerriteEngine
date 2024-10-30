@@ -91,6 +91,7 @@ impl Model {
                             children: self.get_child_bones(node, &mesh.bones, Matrix4::identity()),
                             current_animations: Vec::new(),
                             current_animation_time: Vec::new(),
+                            last_translation: Vector3::zero(),
                         });
                     }
                 }
@@ -160,6 +161,7 @@ impl Model {
     }
 
     pub fn update_and_render(&mut self, delta_time: f32, camera: &Camera, projection: &Projection) {
+        let mut root_translation = Vector3::zero();
         for mesh in self.meshes.values_mut() {
             if let Some(root_bone) = &mut mesh.root_bone {
                 let animation_data = self
@@ -168,10 +170,14 @@ impl Model {
                     .map(|a| (delta_time * a.ticks_per_second, a.duration))
                     .collect();
                 if self.current_animations.len() > 0 {
-                    root_bone.update_animation(animation_data, self.sync_animations);
+                    let delta = root_bone.update_animation(animation_data, self.sync_animations, true);
+                    if delta.magnitude() < 2.0 {
+                        root_translation += delta;
+                    }
                 }
             }
         }
+        self.position += root_translation * self.scale;
         self.render(camera, projection);
     }
 
@@ -289,6 +295,7 @@ impl Model {
                         children: self.get_child_bones(child, bones, Matrix4::identity()),
                         current_animations: Vec::new(),
                         current_animation_time: Vec::new(),
+                        last_translation: Vector3::zero(),
                     });
                 }
             } else if let Some(child_bones) = self.get_child_bones(
@@ -589,7 +596,7 @@ impl Bone {
         }
     }
 
-    pub fn update_animation(&mut self, animation_data: Vec<(f32, f32)>, sync: bool) {
+    pub fn update_animation(&mut self, animation_data: Vec<(f32, f32)>, sync: bool, is_root: bool) -> Vector3<f32> {
         let mut final_transform = (
             Vector3::zero(),
             Quaternion::zero(),
@@ -615,7 +622,7 @@ impl Bone {
             }
             final_transform.2 += scaling * *weight;
         }
-        self.current_transform = Matrix4::from_translation(final_transform.0)
+        self.current_transform = if is_root { Matrix4::identity() } else { Matrix4::from_translation(final_transform.0) }
             * Matrix4::from(final_transform.1)
             * Matrix4::from_nonuniform_scale(
                 final_transform.2.x,
@@ -624,9 +631,12 @@ impl Bone {
             );
         if let Some(children) = &mut self.children {
             for child in children.iter_mut() {
-                child.update_animation(animation_data.clone(), sync);
+                child.update_animation(animation_data.clone(), sync, false);
             }
         }
+        let delta = final_transform.0 - self.last_translation;
+        self.last_translation = final_transform.0;
+        delta
     }
 }
 

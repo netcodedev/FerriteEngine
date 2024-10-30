@@ -50,15 +50,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     model.init();
     let mut idle_animation = Animation::from_file("assets/models/Idle.fbx")?;
     idle_animation.set_name("idle");
-    let mut walk_animation = Animation::from_file("assets/models/Walk.fbx")?;
+    let mut walk_animation = Animation::from_file("assets/models/Walking.fbx")?;
     walk_animation.set_name("walk");
     let mut run_animation = Animation::from_file("assets/models/Run.fbx")?;
     run_animation.set_name("run");
     model.add_animation(idle_animation);
     model.add_animation(walk_animation);
     model.add_animation(run_animation);
-    model.play_animation("idle");
     model.blend_animations("walk", "run", 0.5, true);
+    model.play_animation("walk");
     models.push(&mut model);
 
     let camera_controller_ref1 = Rc::clone(&camera_controller);
