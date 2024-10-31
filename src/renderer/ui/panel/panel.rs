@@ -81,8 +81,10 @@ impl UIElement for Panel {
                     && *y as f32 >= self.offset.1 + self.position.1
                     && *y as f32 <= self.offset.1 + self.position.1 + 20.0
                 {
-                    window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
-                    self.is_hovering = true;
+                    if !self.is_hovering {
+                        window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
+                        self.is_hovering = true;
+                    }
                 } else if self.is_hovering {
                     window.set_cursor(None);
                     self.is_hovering = false;
