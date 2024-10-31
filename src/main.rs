@@ -12,16 +12,14 @@ mod debug;
 mod model;
 mod renderer;
 mod terrain;
-mod utils;
-mod window;
 use core::{
     camera::{Camera, CameraController, Projection},
     mouse_picker::MousePicker,
+    window::Window,
 };
 use debug::DebugController;
 use model::{Model, ModelBuilder};
 use terrain::{dual_contouring::DualContouringChunk, Terrain};
-use window::Window;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (width, height) = (1280, 720);

@@ -17,7 +17,7 @@ use crate::{
 };
 
 use super::{Animation, Bone, Model, ModelBuilder, ModelMesh};
-use crate::utils::ToMatrix4;
+use crate::core::utils::ToMatrix4;
 
 impl Model {
     pub fn new(path: &str) -> Result<Model, Box<dyn std::error::Error>> {
