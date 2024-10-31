@@ -1,4 +1,4 @@
-use crate::camera::{Camera, Projection};
+use crate::core::camera::{Camera, Projection};
 use cgmath::{Point3, Vector3};
 use gl::types::*;
 

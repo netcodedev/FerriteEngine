@@ -5,7 +5,7 @@ use libnoise::prelude::*;
 use ndarray::ArrayBase;
 
 use crate::{
-    camera::{Camera, Projection},
+    core::camera::{Camera, Projection},
     renderer::{
         line::Line,
         shader::{Shader, VertexAttributes},

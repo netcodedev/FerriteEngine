@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::mpsc};
 use glfw::MouseButton;
 
 use crate::{
-    camera::{Camera, Projection},
+    core::camera::{Camera, Projection},
     renderer::{
         line::Line,
         shader::{DynamicVertexArray, Shader, VertexAttributes},

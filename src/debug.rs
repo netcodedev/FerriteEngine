@@ -1,7 +1,10 @@
 use glfw::{Action, Glfw, Key};
 
 use crate::{
-    camera::{Camera, MousePicker, Projection},
+    core::{
+        camera::{Camera, Projection},
+        mouse_picker::MousePicker,
+    },
     model::Model,
     renderer::{
         line::{Line, LineRenderer},

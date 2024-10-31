@@ -7,14 +7,17 @@ use renderer::{
 };
 use std::{cell::RefCell, rc::Rc};
 
-mod camera;
+mod core;
 mod debug;
 mod model;
 mod renderer;
 mod terrain;
 mod utils;
 mod window;
-use camera::{Camera, CameraController, MousePicker, Projection};
+use core::{
+    camera::{Camera, CameraController, Projection},
+    mouse_picker::MousePicker,
+};
 use debug::DebugController;
 use model::{Model, ModelBuilder};
 use terrain::{dual_contouring::DualContouringChunk, Terrain};

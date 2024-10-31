@@ -1,4 +1,4 @@
-use crate::camera::{Camera, Projection};
+use crate::core::camera::{Camera, Projection};
 use crate::renderer::{
     line::Line,
     shader::{Shader, VertexAttributes},

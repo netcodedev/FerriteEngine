@@ -4,7 +4,10 @@ use cgmath::{EuclideanSpace, Point3};
 use glfw::MouseButton;
 
 use crate::{
-    camera::{Camera, Projection, ViewFrustum},
+    core::{
+        camera::{Camera, Projection},
+        view_frustum::ViewFrustum,
+    },
     renderer::{
         line::Line,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
