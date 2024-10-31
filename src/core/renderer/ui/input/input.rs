@@ -1,4 +1,4 @@
-use crate::renderer::{
+use crate::core::renderer::{
     plane::{PlaneBuilder, PlaneRenderer},
     text::TextRenderer,
     ui::UIElement,

@@ -4,7 +4,7 @@ use glfw::MouseButton;
 
 use crate::{
     core::camera::{Camera, Projection},
-    renderer::{
+    core::renderer::{
         line::Line,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
         texture::Texture,

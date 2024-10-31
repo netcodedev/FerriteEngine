@@ -1,4 +1,4 @@
-use crate::renderer::shader::Shader;
+use crate::core::renderer::shader::Shader;
 
 pub mod plane;
 

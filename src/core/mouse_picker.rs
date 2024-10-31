@@ -1,7 +1,7 @@
 use cgmath::{InnerSpace, SquareMatrix, Vector3, Vector4};
 use glfw::Action;
 
-use crate::renderer::line::Line;
+use crate::core::renderer::line::Line;
 
 use super::camera::{Camera, Projection};
 

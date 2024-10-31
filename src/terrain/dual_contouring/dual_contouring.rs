@@ -4,7 +4,7 @@ use libnoise::prelude::*;
 
 use crate::{
     core::camera::{Camera, Projection},
-    renderer::{
+    core::renderer::{
         line::Line,
         shader::{Shader, VertexAttributes},
         texture::Texture,

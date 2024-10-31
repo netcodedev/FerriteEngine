@@ -1,7 +1,7 @@
 use cgmath::{Point3, Vector3};
 use gl::types::GLuint;
 
-use crate::renderer::shader::Shader;
+use crate::core::renderer::shader::Shader;
 
 pub mod line;
 

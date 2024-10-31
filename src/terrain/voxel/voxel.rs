@@ -1,5 +1,5 @@
 use crate::core::camera::{Camera, Projection};
-use crate::renderer::{
+use crate::core::renderer::{
     line::Line,
     shader::{Shader, VertexAttributes},
     texture::Texture,

@@ -9,7 +9,7 @@ use russimp::{
 
 use crate::{
     core::camera::{Camera, Projection},
-    renderer::{
+    core::renderer::{
         line::{Line, LineRenderer},
         shader::Shader,
         texture::Texture,

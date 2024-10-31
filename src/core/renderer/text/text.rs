@@ -13,7 +13,7 @@ lazy_static! {
 
 impl TextRenderer {
     fn new(width: u32, height: u32) -> TextRenderer {
-        let font_data = include_bytes!("../../../assets/font/RobotoMono.ttf");
+        let font_data = include_bytes!("../../../../assets/font/RobotoMono.ttf");
         let font = Font::try_from_bytes(font_data as &[u8]).unwrap();
 
         let cache: Cache<'static> = Cache::builder().dimensions(1024, 1024).build();

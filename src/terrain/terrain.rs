@@ -3,11 +3,9 @@ use std::{collections::HashMap, sync::mpsc, thread};
 use cgmath::{EuclideanSpace, Point3};
 use glfw::MouseButton;
 
-use crate::{
-    core::{
-        camera::{Camera, Projection},
-        view_frustum::ViewFrustum,
-    },
+use crate::core::{
+    camera::{Camera, Projection},
+    view_frustum::ViewFrustum,
     renderer::{
         line::Line,
         shader::{DynamicVertexArray, Shader, VertexAttributes},

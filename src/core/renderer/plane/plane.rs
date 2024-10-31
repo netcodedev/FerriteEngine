@@ -1,4 +1,4 @@
-use crate::renderer::shader::{DynamicVertexArray, Shader, VertexAttributes};
+use crate::core::renderer::shader::{DynamicVertexArray, Shader, VertexAttributes};
 
 use super::{Plane, PlaneBuilder, PlaneRenderer, PlaneVertex};
 use lazy_static::lazy_static;

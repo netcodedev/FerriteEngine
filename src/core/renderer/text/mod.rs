@@ -1,7 +1,7 @@
 use gl::types::GLuint;
 use rusttype::{gpu_cache::Cache, Font};
 
-use crate::renderer::shader::Shader;
+use crate::core::renderer::shader::Shader;
 
 pub mod text;
 

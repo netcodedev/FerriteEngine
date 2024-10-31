@@ -4,11 +4,11 @@ use crate::{
     core::{
         camera::{Camera, Projection},
         mouse_picker::MousePicker,
-    },
-    model::Model,
-    renderer::{
-        line::{Line, LineRenderer},
-        text::TextRenderer,
+        model::Model,
+        renderer::{
+            line::{Line, LineRenderer},
+            text::TextRenderer,
+        },
     },
     terrain::{Chunk, ChunkBounds, Terrain, CHUNK_SIZE},
 };

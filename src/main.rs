@@ -1,24 +1,22 @@
 use cgmath::Deg;
-use renderer::{
-    line::Line,
-    plane::PlaneRenderer,
-    text::TextRenderer,
-    ui::{UIRenderer, UI},
-};
 use std::{cell::RefCell, rc::Rc};
 
 mod core;
 mod debug;
-mod model;
-mod renderer;
 mod terrain;
 use core::{
     camera::{Camera, CameraController, Projection},
     mouse_picker::MousePicker,
     window::Window,
+    renderer::{
+        line::Line,
+        plane::PlaneRenderer,
+        text::TextRenderer,
+        ui::{UIRenderer, UI},
+    },
+    model::{Model, ModelBuilder}
 };
 use debug::DebugController;
-use model::{Model, ModelBuilder};
 use terrain::{dual_contouring::DualContouringChunk, Terrain};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

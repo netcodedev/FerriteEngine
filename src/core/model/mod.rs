@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use cgmath::{Matrix4, Vector3};
 use russimp::{material::TextureType, scene::Scene};
 
-use crate::renderer::{
+use crate::core::renderer::{
     shader::{DynamicVertexArray, Shader},
     texture::Texture,
 };
