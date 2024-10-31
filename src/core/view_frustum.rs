@@ -4,7 +4,6 @@ use crate::terrain::{ChunkBounds, CHUNK_SIZE};
 
 use super::camera::{Camera, Projection};
 
-
 pub struct ViewFrustum {}
 
 impl ViewFrustum {

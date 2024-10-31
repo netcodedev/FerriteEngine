@@ -3,8 +3,8 @@ use glfw::{Action, Glfw, Key};
 use crate::{
     core::{
         camera::{Camera, Projection},
-        mouse_picker::MousePicker,
         model::Model,
+        mouse_picker::MousePicker,
         renderer::{
             line::{Line, LineRenderer},
             text::TextRenderer,
@@ -68,7 +68,7 @@ impl DebugController {
         projection: &Projection,
         mouse_picker: &MousePicker,
         terrain: &Terrain<T>,
-        models: &Vec<&mut Model>,
+        models: &Vec<Model>,
     ) where
         T: Chunk + Send + 'static,
     {

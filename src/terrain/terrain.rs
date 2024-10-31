@@ -5,11 +5,11 @@ use glfw::MouseButton;
 
 use crate::core::{
     camera::{Camera, Projection},
-    view_frustum::ViewFrustum,
     renderer::{
         line::Line,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
     },
+    view_frustum::ViewFrustum,
 };
 
 use super::{Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT};

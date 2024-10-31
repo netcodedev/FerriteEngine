@@ -7,7 +7,7 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(width: u32, height: u32) -> Self {
+    pub fn new(width: u32, height: u32, title: &str) -> Self {
         let mut glfw = glfw::init(glfw::log_errors).unwrap_or_else(|err| {
             eprintln!("Fehler bei der GLFW-Initialisierung: {}", err);
             std::process::exit(1);
@@ -16,7 +16,7 @@ impl Window {
         glfw.window_hint(glfw::WindowHint::Samples(Some(8)));
 
         let (mut window, events) = glfw
-            .create_window(width, height, "Voxel engine", glfw::WindowMode::Windowed)
+            .create_window(width, height, title, glfw::WindowMode::Windowed)
             .expect("Fenster konnte nicht erstellt werden");
 
         window.make_current();

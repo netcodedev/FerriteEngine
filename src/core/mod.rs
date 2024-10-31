@@ -1,3 +1,4 @@
+pub mod application;
 pub mod camera;
 pub mod model;
 pub mod mouse_picker;
