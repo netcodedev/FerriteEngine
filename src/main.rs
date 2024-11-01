@@ -1,5 +1,5 @@
 use cgmath::Deg;
-use glfw::MouseButton;
+use glfw::{Glfw, MouseButton, WindowEvent};
 use std::{cell::RefCell, rc::Rc};
 
 mod core;
@@ -139,9 +139,9 @@ impl Layer for WorldLayer {
 
     fn on_event(
         &mut self,
-        glfw: &mut glfw::Glfw,
+        glfw: &mut Glfw,
         window: &mut glfw::Window,
-        event: &glfw::WindowEvent,
+        event: &WindowEvent,
     ) {
         if self.ui.handle_events(window, glfw, &event) {
             return;
