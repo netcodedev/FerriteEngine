@@ -1,13 +1,13 @@
-use crate::core::renderer::{
+use crate::core::{renderer::{
     plane::{PlaneBuilder, PlaneRenderer},
     text::TextRenderer,
     ui::{container::ContainerBuilder, UIElement},
-};
+}, scene::Scene};
 
 use super::{Panel, PanelBuilder};
 
 impl UIElement for Panel {
-    fn render(&mut self) {
+    fn render(&mut self, scene: &mut Scene) {
         PlaneRenderer::render(
             PlaneBuilder::new()
                 .position((
@@ -42,11 +42,12 @@ impl UIElement for Panel {
             16.0,
             &self.title,
         );
-        self.content.render();
+        self.content.render(scene);
     }
 
     fn handle_events(
         &mut self,
+        scene: &mut Scene,
         window: &mut glfw::Window,
         glfw: &mut glfw::Glfw,
         event: &glfw::WindowEvent,
@@ -102,7 +103,7 @@ impl UIElement for Panel {
             }
             _ => (),
         }
-        self.content.handle_events(window, glfw, event)
+        self.content.handle_events(scene, window, glfw, event)
     }
 
     fn add_children(&mut self, children: Vec<Box<dyn UIElement>>) {

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+as-any = "0.3.1"
 cgmath = "0.18.0"
 fast-surface-nets = "0.2.0"
 gl = "0.14.0"

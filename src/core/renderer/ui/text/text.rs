@@ -1,4 +1,4 @@
-use crate::core::renderer::{text::TextRenderer, ui::UIElement};
+use crate::core::{renderer::{text::TextRenderer, ui::UIElement}, scene::Scene};
 
 use super::Text;
 
@@ -14,7 +14,7 @@ impl Text {
 }
 
 impl UIElement for Text {
-    fn render(&mut self) {
+    fn render(&mut self, _: &mut Scene) {
         let (width, _) = TextRenderer::render(
             self.offset.0 as i32 + 5,
             self.offset.1 as i32 + 2,
@@ -28,6 +28,7 @@ impl UIElement for Text {
 
     fn handle_events(
         &mut self,
+        _: &mut Scene,
         _window: &mut glfw::Window,
         _: &mut glfw::Glfw,
         _event: &glfw::WindowEvent,

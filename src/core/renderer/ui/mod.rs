@@ -1,3 +1,5 @@
+use crate::core::scene::Scene;
+
 pub mod button;
 pub mod container;
 pub mod input;
@@ -12,9 +14,10 @@ pub struct UIRenderer {
 }
 
 pub trait UIElement {
-    fn render(&mut self);
+    fn render(&mut self, scene: &mut Scene);
     fn handle_events(
         &mut self,
+        scene: &mut Scene,
         window: &mut glfw::Window,
         glfw: &mut glfw::Glfw,
         event: &glfw::WindowEvent,

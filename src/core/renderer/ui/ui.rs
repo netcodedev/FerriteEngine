@@ -1,3 +1,5 @@
+use crate::core::scene::Scene;
+
 use super::{
     button::{Button, ButtonBuilder},
     input::{Input, InputBuilder},
@@ -17,20 +19,21 @@ impl UIRenderer {
         self.children.push(element);
     }
 
-    pub fn render(&mut self) {
+    pub fn render(&mut self, scene: &mut Scene) {
         for child in &mut self.children {
-            child.render();
+            child.render(scene);
         }
     }
 
     pub fn handle_events(
         &mut self,
+        scene: &mut Scene,
         window: &mut glfw::Window,
         glfw: &mut glfw::Glfw,
         event: &glfw::WindowEvent,
     ) -> bool {
         for child in &mut self.children {
-            if child.handle_events(window, glfw, event) {
+            if child.handle_events(scene, window, glfw, event) {
                 return true;
             }
         }
@@ -57,7 +60,7 @@ impl UI {
         Box::new(builder.build())
     }
 
-    pub fn button<InitFn>(text: &str, on_click: Box<dyn Fn()>, init_fn: InitFn) -> Box<Button>
+    pub fn button<InitFn>(text: &str, on_click: Box<dyn Fn(&mut Scene)>, init_fn: InitFn) -> Box<Button>
     where
         InitFn: FnOnce(ButtonBuilder) -> ButtonBuilder + 'static,
     {

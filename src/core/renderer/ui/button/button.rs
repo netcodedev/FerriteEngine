@@ -1,12 +1,12 @@
-use crate::core::renderer::{
+use crate::core::{renderer::{
     plane::{PlaneBuilder, PlaneRenderer},
     ui::UIElement,
-};
+}, scene::Scene};
 
 use super::{Button, ButtonBuilder};
 
 impl UIElement for Button {
-    fn render(&mut self) {
+    fn render(&mut self, scene: &mut Scene) {
         let mut plane = PlaneBuilder::new()
             .position((
                 self.offset.0 + self.position.0,
@@ -23,7 +23,7 @@ impl UIElement for Button {
         }
         PlaneRenderer::render(plane.build());
         for child in &mut self.children {
-            child.render();
+            child.render(scene);
         }
     }
 
@@ -39,6 +39,7 @@ impl UIElement for Button {
 
     fn handle_events(
         &mut self,
+        scene: &mut Scene,
         window: &mut glfw::Window,
         _: &mut glfw::Glfw,
         event: &glfw::WindowEvent,
@@ -51,7 +52,7 @@ impl UIElement for Button {
                     && y as f32 >= self.offset.1 + self.position.1
                     && y as f32 <= self.offset.1 + self.position.1 + self.size.1
                 {
-                    (self.on_click)();
+                    (self.on_click)(scene);
                     return true;
                 }
                 false
@@ -90,7 +91,7 @@ impl UIElement for Button {
 }
 
 impl Button {
-    pub fn new(position: (f32, f32), size: (f32, f32), on_click: Box<dyn Fn()>) -> Self {
+    pub fn new(position: (f32, f32), size: (f32, f32), on_click: Box<dyn Fn(&mut Scene)>) -> Self {
         Self {
             position,
             size,
@@ -107,7 +108,7 @@ impl ButtonBuilder {
         Self {
             position: (0.0, 0.0),
             size: (0.0, 0.0),
-            on_click: Box::new(|| {}),
+            on_click: Box::new(|_| {}),
             children: Vec::new(),
         }
     }
@@ -123,7 +124,7 @@ impl ButtonBuilder {
         self
     }
 
-    pub fn on_click(mut self, on_click: Box<dyn Fn()>) -> Self {
+    pub fn on_click(mut self, on_click: Box<dyn Fn(&mut Scene)>) -> Self {
         self.on_click = on_click;
         self
     }

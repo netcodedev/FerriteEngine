@@ -20,7 +20,7 @@ void main()
     if(position.y < 50.0) {
         Color = vec3(0.1, 0.2, 0.8);
     } else if(position.y < 51.0) {
-        Color = vec3(0.6, 0.6, 0.1);
+        Color = vec3(0.76078431, 0.69803921, 0.50196078);
     } else if(position.y > 90.0) {
         Color = vec3(0.95, 0.95, 0.95);
     } else if(position.y > 80.0) {

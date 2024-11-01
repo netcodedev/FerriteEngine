@@ -9,8 +9,8 @@ pub struct Application {
 
 #[allow(dead_code)]
 pub trait Layer {
-    fn on_attach(&self) {}
-    fn on_detach(&self) {}
+    fn on_attach(&mut self) {}
+    fn on_detach(&mut self) {}
     fn on_update(&mut self, delta_time: f64);
     fn on_event(
         &mut self,

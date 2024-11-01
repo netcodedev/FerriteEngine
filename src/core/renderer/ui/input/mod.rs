@@ -1,7 +1,9 @@
+use crate::core::scene::Scene;
+
 pub mod input;
 
-type GetFn = dyn Fn() -> String;
-type SetFn = dyn FnMut(String);
+type GetFn = dyn Fn(&mut Scene) -> String;
+type SetFn = dyn FnMut(&mut Scene, String);
 
 pub struct Input {
     pub position: (f32, f32),

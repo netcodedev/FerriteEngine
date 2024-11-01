@@ -1,7 +1,7 @@
-use crate::core::renderer::{
+use crate::core::{renderer::{
     plane::{PlaneBuilder, PlaneRenderer},
     ui::UIElement,
-};
+}, scene::Scene};
 
 use super::{Container, ContainerBuilder};
 
@@ -18,7 +18,7 @@ impl Container {
 }
 
 impl UIElement for Container {
-    fn render(&mut self) {
+    fn render(&mut self, scene: &mut Scene) {
         PlaneRenderer::render(
             PlaneBuilder::new()
                 .position((
@@ -32,7 +32,7 @@ impl UIElement for Container {
                 .build(),
         );
         for child in &mut self.children {
-            child.render();
+            child.render(scene);
         }
     }
 
@@ -50,6 +50,7 @@ impl UIElement for Container {
 
     fn handle_events(
         &mut self,
+        scene: &mut Scene,
         window: &mut glfw::Window,
         glfw: &mut glfw::Glfw,
         event: &glfw::WindowEvent,
@@ -64,7 +65,7 @@ impl UIElement for Container {
                     && y as f32 <= self.offset.1 + self.position.1 + self.size.1
                 {
                     for child in &mut self.children {
-                        if child.handle_events(window, glfw, event) {
+                        if child.handle_events(scene, window, glfw, event) {
                             return true;
                         }
                     }
@@ -73,7 +74,7 @@ impl UIElement for Container {
             _ => (),
         }
         for child in &mut self.children {
-            if child.handle_events(window, glfw, event) {
+            if child.handle_events(scene, window, glfw, event) {
                 return true;
             }
         }

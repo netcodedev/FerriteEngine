@@ -42,7 +42,7 @@ impl Application {
         }
     }
 
-    pub fn add_layer(&mut self, layer: Box<dyn Layer>) {
+    pub fn add_layer(&mut self, mut layer: Box<dyn Layer>) {
         layer.on_attach();
         self.layers.push(layer);
     }

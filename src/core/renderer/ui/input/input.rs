@@ -1,13 +1,13 @@
-use crate::core::renderer::{
+use crate::core::{renderer::{
     plane::{PlaneBuilder, PlaneRenderer},
     text::TextRenderer,
     ui::UIElement,
-};
+}, scene::Scene};
 
 use super::{Input, InputBuilder};
 
 impl UIElement for Input {
-    fn render(&mut self) {
+    fn render(&mut self, scene: &mut Scene) {
         let mut plane = PlaneBuilder::new()
             .position((
                 self.offset.0 + self.position.0,
@@ -46,7 +46,7 @@ impl UIElement for Input {
             gl::DepthMask(gl::TRUE);
 
             if let Some(get_fn) = &self.get_fn {
-                self.content = get_fn();
+                self.content = get_fn(scene);
             }
 
             TextRenderer::render(
@@ -63,6 +63,7 @@ impl UIElement for Input {
 
     fn handle_events(
         &mut self,
+        scene: &mut Scene,
         window: &mut glfw::Window,
         _: &mut glfw::Glfw,
         event: &glfw::WindowEvent,
@@ -102,7 +103,7 @@ impl UIElement for Input {
                 if self.is_focused {
                     self.content.push(*character);
                     if let Some(set_fn) = &mut self.set_fn {
-                        set_fn(self.content.clone());
+                        set_fn(scene, self.content.clone());
                     }
                     return true;
                 }
@@ -117,7 +118,7 @@ impl UIElement for Input {
                 if self.is_focused {
                     self.content.pop();
                     if let Some(set_fn) = &mut self.set_fn {
-                        set_fn(self.content.clone());
+                        set_fn(scene, self.content.clone());
                     }
                     return true;
                 }
@@ -149,8 +150,8 @@ impl Input {
         position: (f32, f32),
         size: (f32, f32),
         content: String,
-        get_fn: Option<Box<dyn Fn() -> String>>,
-        set_fn: Option<Box<dyn FnMut(String)>>,
+        get_fn: Option<Box<dyn Fn(&mut Scene) -> String>>,
+        set_fn: Option<Box<dyn FnMut(&mut Scene, String)>>,
     ) -> Self {
         Self {
             position,
@@ -199,7 +200,7 @@ impl InputBuilder {
 
     pub fn get_fn<F>(mut self, get_fn: F) -> Self
     where
-        F: Fn() -> String + 'static,
+        F: Fn(&mut Scene) -> String + 'static,
     {
         self.get_fn = Some(Box::new(get_fn));
         self
@@ -207,7 +208,7 @@ impl InputBuilder {
 
     pub fn set_fn<F>(mut self, set_fn: F) -> Self
     where
-        F: FnMut(String) + 'static,
+        F: FnMut(&mut Scene, String) + 'static,
     {
         self.set_fn = Some(Box::new(set_fn));
         self
