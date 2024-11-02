@@ -24,7 +24,6 @@ fn main() {
 struct WorldLayer {
     scene: Scene,
     line: Option<(Line, MouseButton)>,
-    projection: Projection,
     debug_controller: DebugController,
     terrain: Terrain<DualContouringChunk>,
     mouse_picker: MousePicker,
@@ -36,12 +35,12 @@ impl WorldLayer {
     pub fn new(width: u32, height: u32) -> Result<WorldLayer, Box<dyn std::error::Error>> {
         let mut scene = Scene::new();
         let camera = Camera::new((-119.4, 52.7, -30.0), Deg(-138.0), Deg(-17.0));
+        let projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
         let camera_controller = CameraController::new(10.0, 1.0);
         let mut entity = Entity::new();
-        entity.add_component(CameraComponent::new(camera, camera_controller));
+        entity.add_component(CameraComponent::new(camera, projection, camera_controller));
         scene.add_entity(entity);
         let ui = UIRenderer::new();
-        let projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
         let debug_controller: DebugController = DebugController::new();
         let mouse_picker = MousePicker::new();
 
@@ -61,7 +60,6 @@ impl WorldLayer {
         Ok(Self {
             scene,
             line: None,
-            projection,
             debug_controller,
             terrain,
             mouse_picker,
@@ -106,38 +104,29 @@ impl Layer for WorldLayer {
     fn on_update(&mut self, delta_time: f64) {
         self.scene.update(delta_time);
 
-        {
-            let camera_component = self.scene.get_component::<CameraComponent>();
-            if let None = camera_component {
-                return;
-            }
-            let camera = camera_component.unwrap().get_camera();
-
+        if let Some(camera_component) = self.scene.get_component::<CameraComponent>() {
             self.terrain.process_line(self.line.clone());
             self.terrain.update();
-            self.terrain.render(&camera, &self.projection);
+            self.terrain.render(&camera_component.get_camera(), &camera_component.get_projection());
 
             for model in self.models.iter_mut() {
-                model.update_and_render(delta_time as f32, &camera, &self.projection);
+                model.update_and_render(delta_time as f32, &camera_component.get_camera(), &&camera_component.get_projection());
             }
         }
 
         self.ui.render(&mut self.scene);
 
-        let camera_component = self.scene.get_component::<CameraComponent>();
-        if let None = camera_component {
-            return;
+        if let Some(camera_component) = self.scene.get_component::<CameraComponent>(){
+            self.debug_controller.draw_debug_ui(
+                delta_time as f32,
+                &camera_component.get_camera(),
+                &camera_component.get_projection(),
+                &self.mouse_picker,
+                &self.terrain,
+                &self.models,
+            );
         }
-        let camera = camera_component.unwrap().get_camera();
         
-        self.debug_controller.draw_debug_ui(
-            delta_time as f32,
-            &camera,
-            &self.projection,
-            &self.mouse_picker,
-            &self.terrain,
-            &self.models,
-        );
     }
 
     fn on_event(
@@ -150,18 +139,13 @@ impl Layer for WorldLayer {
             return;
         }
         self.scene.handle_event(glfw, window, event);
-        self.projection.resize(&event);
         self.debug_controller.process_keyboard(glfw, &event);
 
-        let camera_component = self.scene.get_component::<CameraComponent>();
-        if let None = camera_component {
-            return;
+        if let Some(camera_component) = self.scene.get_component::<CameraComponent>(){
+            self.line = self
+                .mouse_picker
+                .process_mouse(&event, &camera_component.get_camera(), &camera_component.get_projection());
         }
-        let camera = camera_component.unwrap().get_camera();
-
-        self.line = self
-            .mouse_picker
-            .process_mouse(&event, &camera, &self.projection);
     }
 
     fn get_name(&self) -> &str {

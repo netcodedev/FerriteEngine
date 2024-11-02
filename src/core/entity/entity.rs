@@ -1,5 +1,6 @@
 use super::{component::Component, Entity};
 
+#[allow(dead_code)]
 impl Entity {
     pub fn new() -> Self {
         Entity {
