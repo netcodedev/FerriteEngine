@@ -110,7 +110,8 @@ impl Layer for WorldLayer {
             self.terrain.render(&camera_component.get_camera(), &camera_component.get_projection());
 
             for model in self.models.iter_mut() {
-                model.update_and_render(delta_time as f32, &camera_component.get_camera(), &&camera_component.get_projection());
+                model.update(delta_time as f32);
+                model.render(&camera_component.get_camera(), &&camera_component.get_projection());
             }
         }
 

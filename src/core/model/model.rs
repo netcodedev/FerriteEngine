@@ -162,7 +162,7 @@ impl Model {
         }
     }
 
-    pub fn update_and_render(&mut self, delta_time: f32, camera: &Camera, projection: &Projection) {
+    pub fn update(&mut self, delta_time: f32) {
         let mut root_translation = Vector3::zero();
         for mesh in self.meshes.values_mut() {
             if let Some(root_bone) = &mut mesh.root_bone {
@@ -179,7 +179,6 @@ impl Model {
             }
         }
         self.position += root_translation * self.scale;
-        self.render(camera, projection);
     }
 
     pub fn render(&mut self, camera: &Camera, projection: &Projection) {
