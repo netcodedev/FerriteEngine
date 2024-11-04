@@ -2,20 +2,21 @@ use cgmath::Deg;
 use glfw::{Glfw, WindowEvent};
 
 mod core;
-mod debug;
 mod terrain;
 use core::{
     application::{Application, Layer},
     camera::{Camera, CameraController, Projection},
     entity::{
-        component::{camera_component::CameraComponent, model_component::ModelComponent},
+        component::{
+            camera_component::CameraComponent, debug_component::DebugController,
+            model_component::ModelComponent,
+        },
         Entity,
     },
     model::ModelBuilder,
     renderer::ui::{UIRenderer, UI},
     scene::Scene,
 };
-use debug::DebugController;
 use terrain::{dual_contouring::DualContouringChunk, Terrain};
 
 fn main() {
@@ -28,7 +29,6 @@ fn main() {
 
 struct WorldLayer {
     scene: Scene,
-    debug_controller: DebugController,
     ui: UIRenderer,
 }
 
@@ -42,7 +42,10 @@ impl WorldLayer {
         entity.add_component(CameraComponent::new(camera, projection, camera_controller));
         scene.add_entity(entity);
         let ui = UIRenderer::new();
-        let debug_controller: DebugController = DebugController::new();
+
+        let mut debug = Entity::new();
+        debug.add_component(DebugController::new());
+        scene.add_entity(debug);
 
         let mut terrain_entity = Entity::new();
         terrain_entity.add_component(Terrain::<DualContouringChunk>::new());
@@ -60,11 +63,7 @@ impl WorldLayer {
         model_entity.add_component(ModelComponent::new(model));
         scene.add_entity(model_entity);
 
-        Ok(Self {
-            scene,
-            debug_controller,
-            ui,
-        })
+        Ok(Self { scene, ui })
     }
 }
 
@@ -114,9 +113,6 @@ impl Layer for WorldLayer {
         self.scene.render();
 
         self.ui.render(&mut self.scene);
-
-        self.debug_controller
-            .draw_debug_ui::<DualContouringChunk>(delta_time as f32, &self.scene);
     }
 
     fn on_event(&mut self, glfw: &mut Glfw, window: &mut glfw::Window, event: &WindowEvent) {
@@ -124,7 +120,6 @@ impl Layer for WorldLayer {
             return;
         }
         self.scene.handle_event(glfw, window, event);
-        self.debug_controller.process_keyboard(glfw, &event);
     }
 
     fn get_name(&self) -> &str {

@@ -11,4 +11,5 @@ pub trait Component: AsAny {
 }
 
 pub mod camera_component;
+pub mod debug_component;
 pub mod model_component;

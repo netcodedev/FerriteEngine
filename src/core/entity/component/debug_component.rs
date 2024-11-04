@@ -2,14 +2,14 @@ use glfw::{Action, Glfw, Key};
 
 use crate::{
     core::{
-        entity::component::{camera_component, model_component::ModelComponent},
+        entity::component::{camera_component, model_component::ModelComponent, Component},
         renderer::{
             line::{Line, LineRenderer},
             text::TextRenderer,
         },
         scene::Scene,
     },
-    terrain::{Chunk, ChunkBounds, Terrain, CHUNK_SIZE},
+    terrain::{dual_contouring::DualContouringChunk, ChunkBounds, Terrain, CHUNK_SIZE},
 };
 use cgmath::{Deg, EuclideanSpace, Point3, Vector3};
 
@@ -18,6 +18,7 @@ pub struct DebugController {
     wireframe: bool,
     vsync: bool,
     show_rays: bool,
+    delta_time: f64,
 }
 
 impl DebugController {
@@ -27,10 +28,17 @@ impl DebugController {
             wireframe: false,
             vsync: true,
             show_rays: false,
+            delta_time: 0.0,
         }
     }
+}
 
-    pub fn process_keyboard(&mut self, glfw: &mut Glfw, event: &glfw::WindowEvent) {
+impl Component for DebugController {
+    fn update(&mut self, _: &Scene, delta_time: f64) {
+        self.delta_time = delta_time;
+    }
+
+    fn handle_event(&mut self, glfw: &mut Glfw, _: &mut glfw::Window, event: &glfw::WindowEvent) {
         match event {
             glfw::WindowEvent::Key(Key::F1, _, Action::Press, _) => {
                 self.wireframe = !self.wireframe;
@@ -60,16 +68,13 @@ impl DebugController {
         }
     }
 
-    pub fn draw_debug_ui<T>(&self, delta_time: f32, scene: &Scene)
-    where
-        T: Chunk + Send + 'static,
-    {
+    fn render(&self, scene: &Scene) {
         if let Some(camera_component) = scene.get_component::<camera_component::CameraComponent>() {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();
 
             if self.show_rays {
-                if let Some(terrain) = scene.get_component::<Terrain<T>>() {
+                if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
                     if let Some((line, _)) = &terrain.get_mouse_picker().ray {
                         LineRenderer::render(
                             &camera,
@@ -83,8 +88,8 @@ impl DebugController {
             }
 
             if self.debug_ui {
-                let fps = 1.0 / delta_time;
-                let fps_text = format!("{:.2} FPS ({:.2}ms)", fps, delta_time * 1000.0);
+                let fps = 1.0 / self.delta_time;
+                let fps_text = format!("{:.2} FPS ({:.2}ms)", fps, self.delta_time * 1000.0);
                 TextRenderer::render(5, 5, 20.0, &fps_text);
                 let pos = camera.position;
                 let bounds = ChunkBounds::parse(pos.to_vec());
@@ -125,7 +130,7 @@ impl DebugController {
                     )
                     .as_str(),
                 );
-                if let Some(terrain) = scene.get_component::<Terrain<T>>() {
+                if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
                     TextRenderer::render(
                         5,
                         105,
