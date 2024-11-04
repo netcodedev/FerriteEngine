@@ -64,4 +64,17 @@ impl Scene {
         }
         None
     }
+
+    pub fn get_components<T>(&self) -> Vec<&T>
+    where
+        T: Component,
+    {
+        let mut components = Vec::new();
+        for entity in self.entities.iter() {
+            if let Some(component) = entity.get_component::<T>() {
+                components.push(component);
+            }
+        }
+        components
+    }
 }

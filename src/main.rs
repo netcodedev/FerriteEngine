@@ -6,9 +6,9 @@ mod debug;
 mod terrain;
 use core::{
     application::{Application, Layer}, camera::{Camera, CameraController, Projection}, entity::{
-        component::camera_component::CameraComponent,
+        component::{camera_component::CameraComponent, model_component::ModelComponent},
         Entity,
-    }, model::{Model, ModelBuilder}, renderer::ui::{UIRenderer, UI}, scene::Scene
+    }, model::ModelBuilder, renderer::ui::{UIRenderer, UI}, scene::Scene
 };
 use debug::DebugController;
 use terrain::{dual_contouring::DualContouringChunk, Terrain};
@@ -24,7 +24,6 @@ fn main() {
 struct WorldLayer {
     scene: Scene,
     debug_controller: DebugController,
-    models: Vec<Model>,
     ui: UIRenderer,
 }
 
@@ -44,7 +43,7 @@ impl WorldLayer {
         terrain_entity.add_component(Terrain::<DualContouringChunk>::new());
         scene.add_entity(terrain_entity);
 
-        let mut models: Vec<Model> = Vec::new();
+        let mut model_entity = Entity::new();
         let mut model = ModelBuilder::new("Mannequin.fbx")?
             .with_animation("idle", "Idle.fbx")
             .with_animation("walk", "Walk.fbx")
@@ -53,12 +52,12 @@ impl WorldLayer {
         model.init();
         model.blend_animations("walk", "run", 0.5, true);
         model.play_animation("idle");
-        models.push(model);
+        model_entity.add_component(ModelComponent::new(model));
+        scene.add_entity(model_entity);
 
         Ok(Self {
             scene,
             debug_controller,
-            models,
             ui,
         })
     }
@@ -109,32 +108,12 @@ impl Layer for WorldLayer {
         self.scene.update(delta_time);
         self.scene.render();
 
-        if let Some(camera_component) = self.scene.get_component::<CameraComponent>() {
-            for model in self.models.iter_mut() {
-                model.update(delta_time as f32);
-                model.render(
-                    &camera_component.get_camera(),
-                    &camera_component.get_projection(),
-                );
-            }
-        }
-
         self.ui.render(&mut self.scene);
 
-        if let Some(camera_component) = self.scene.get_component::<CameraComponent>() {
-            if let Some(terrain_component) = self
-                .scene
-                .get_component::<Terrain<DualContouringChunk>>()
-            {
-                self.debug_controller.draw_debug_ui(
-                    delta_time as f32,
-                    &camera_component.get_camera(),
-                    &camera_component.get_projection(),
-                    &terrain_component,
-                    &self.models,
-                );
-            }
-        }
+        self.debug_controller.draw_debug_ui::<DualContouringChunk>(
+            delta_time as f32,
+            &self.scene
+        );
     }
 
     fn on_event(&mut self, glfw: &mut Glfw, window: &mut glfw::Window, event: &WindowEvent) {
