@@ -1,7 +1,7 @@
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
-        text::TextRenderer,
+        text::{Fonts, Text},
         ui::UIElement,
     },
     scene::Scene,
@@ -51,13 +51,8 @@ impl UIElement for Input {
             if let Some(get_fn) = &self.get_fn {
                 self.content = get_fn(scene);
             }
-
-            TextRenderer::render(
-                (self.offset.0 + self.position.0 + 5.0) as i32,
-                (self.offset.1 + self.position.1 + 5.0) as i32,
-                16.0,
-                &self.content,
-            );
+            self.text.set_content(self.content.clone());
+            self.text.render_at((self.offset.0 + self.position.0 + 5.0) as i32, (self.offset.1 + self.position.1 + 5.0) as i32);
             gl::Disable(gl::STENCIL_TEST);
             gl::StencilMask(0xFF);
             gl::StencilFunc(gl::ALWAYS, 0, 0xFF);
@@ -162,9 +157,10 @@ impl Input {
             offset: (0.0, 0.0),
             is_hovering: false,
             is_focused: false,
-            content,
+            content: content.clone(),
             get_fn,
             set_fn,
+            text: Text::new(Fonts::RobotoMono, 0,0, 16.0, content),
         }
     }
 }

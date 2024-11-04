@@ -1,4 +1,4 @@
-use crate::core::scene::Scene;
+use crate::core::{renderer::text::Text, scene::Scene};
 
 pub mod input;
 
@@ -12,6 +12,7 @@ pub struct Input {
     pub is_hovering: bool,
     pub is_focused: bool,
     pub content: String,
+    text: Text,
     get_fn: Option<Box<GetFn>>,
     set_fn: Option<Box<SetFn>>,
 }

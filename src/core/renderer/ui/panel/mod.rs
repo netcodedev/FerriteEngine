@@ -1,3 +1,5 @@
+use crate::core::renderer::text::Text;
+
 use super::{container::Container, UIElement};
 
 pub mod panel;
@@ -8,6 +10,7 @@ pub struct Panel {
     pub size: (f32, f32),
     pub title: String,
     content: Container,
+    text: Text,
     drag_start: Option<(f64, f64)>,
     dragging: bool,
     is_hovering: bool,

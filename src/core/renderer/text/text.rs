@@ -1,26 +1,181 @@
-use gl::types::GLvoid;
 use rusttype::gpu_cache::Cache;
-use rusttype::{point, Font, PositionedGlyph, Rect, Scale};
+use rusttype::{point, PositionedGlyph, Rect, Scale};
 
-use super::{Shader, TextRenderer, Texture};
+use crate::core::renderer::shader::{DynamicVertexArray, VertexAttributes};
+use crate::core::renderer::text::Fonts;
+
+use super::{Font, Shader, Text, TextMesh, TextRenderer, TextVertex, Texture};
 
 use lazy_static::lazy_static;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 lazy_static! {
     static ref RENDERER: Mutex<TextRenderer> = Mutex::new(TextRenderer::new(1280, 720));
 }
 
+impl Font {
+    fn new(font_data: &'static [u8]) -> Self {
+        Font {
+            font: rusttype::Font::try_from_bytes(font_data).unwrap(),
+        }
+    }
+}
+
+impl Fonts {
+    fn get(&self) -> &Font {
+        static ROBOTO_MONO: OnceLock<Font> = OnceLock::new();
+
+        match self {
+            Fonts::RobotoMono => ROBOTO_MONO.get_or_init(|| { Font::new(include_bytes!("../../../../assets/font/RobotoMono.ttf")) }),
+        }
+    }
+}
+
+impl Text {
+    pub fn new(font: Fonts, x: i32, y: i32, size: f32, content: String) -> Text {
+        let mut text = Text {
+            content,
+            font,
+            size,
+            glyphs: Vec::new(),
+            dirty: true,
+            x, y,
+            mesh: TextMesh::new(),
+            max_x: x,
+            max_y: y,
+        };
+        text.layout(TextRenderer::get_size().0);
+        text
+    }
+
+    pub fn render(&self) -> (i32, i32) {
+        TextRenderer::render(self)
+    }
+
+    pub fn render_at(&mut self, x: i32, y: i32) -> (i32, i32) {
+        if self.x == x && self.y == y {
+            return self.render();
+        }
+        self.x = x;
+        self.y = y;
+        self.layout(TextRenderer::get_size().0);
+        self.render()
+    }
+
+    pub fn set_content(&mut self, content: String) {
+        if self.content == content {
+            return;
+        }
+        self.content = content;
+        self.dirty = true;
+        self.layout(TextRenderer::get_size().0);
+    }
+
+    fn layout(&mut self, width: u32) {
+        if self.dirty {
+            self.glyphs = self.layout_text(Scale::uniform(self.size), width, &self.content);
+            self.dirty = false;
+        }
+        self.update_mesh();
+    }
+
+    fn update_mesh(&mut self) {
+        let vertices: Vec<TextVertex> = self
+            .glyphs
+            .iter()
+            .filter_map(|g| TextRenderer::rect_for(0, g.clone()))
+            .flat_map(|(uv_rect, screen_rect)| {
+                if self.max_x < screen_rect.max.x as i32 {
+                    self.max_x = screen_rect.max.x as i32;
+                }
+                if self.max_y < screen_rect.max.y as i32 {
+                    self.max_y = screen_rect.max.y as i32;
+                }
+                let gl_rect = Rect {
+                    min: point(
+                        screen_rect.min.x as f32 + self.x as f32,
+                        screen_rect.min.y as f32 + self.y as f32,
+                    ),
+                    max: point(
+                        screen_rect.max.x as f32 + self.x as f32,
+                        screen_rect.max.y as f32 + self.y as f32,
+                    ),
+                };
+                vec![
+                    TextVertex {
+                        position: (gl_rect.min.x, gl_rect.max.y),
+                        texture_coords: (uv_rect.min.x, uv_rect.max.y),
+                    },
+                    TextVertex {
+                        position: (gl_rect.min.x, gl_rect.min.y),
+                        texture_coords: (uv_rect.min.x, uv_rect.min.y),
+                    },
+                    TextVertex {
+                        position: (gl_rect.max.x, gl_rect.min.y),
+                        texture_coords: (uv_rect.max.x, uv_rect.min.y),
+                    },
+                    TextVertex {
+                        position: (gl_rect.max.x, gl_rect.min.y),
+                        texture_coords: (uv_rect.max.x, uv_rect.min.y),
+                    },
+                    TextVertex {
+                        position: (gl_rect.max.x, gl_rect.max.y),
+                        texture_coords: (uv_rect.max.x, uv_rect.max.y),
+                    },
+                    TextVertex {
+                        position: (gl_rect.min.x, gl_rect.max.y),
+                        texture_coords: (uv_rect.min.x, uv_rect.max.y),
+                    },
+                ]
+            })
+            .collect();
+        self.mesh.update_vertices(vertices);
+    }
+
+    fn layout_text<'a>(&self, scale: Scale, width: u32, text: &str) -> Vec<PositionedGlyph<'a>> {
+        let font = &self.font.get().font;
+        let mut result = Vec::new();
+        let v_metrics = font.v_metrics(scale);
+        let advance_height = v_metrics.ascent - v_metrics.descent + v_metrics.line_gap;
+        let mut caret = point(0.0, v_metrics.ascent);
+        let mut last_glyph_id = None;
+        for c in text.chars() {
+            if c.is_control() {
+                match c {
+                    '\r' => {
+                        caret = point(0.0, caret.y + advance_height);
+                    }
+                    '\n' => {}
+                    _ => {}
+                }
+                continue;
+            }
+            let base_glyph = font.glyph(c);
+            if let Some(id) = last_glyph_id.take() {
+                caret.x += font.pair_kerning(scale, id, base_glyph.id());
+            }
+            last_glyph_id = Some(base_glyph.id());
+            let mut glyph = base_glyph.scaled(scale).positioned(caret);
+            if let Some(bb) = glyph.pixel_bounding_box() {
+                if bb.max.x > width as i32 {
+                    caret = point(0.0, caret.y + advance_height);
+                    glyph.set_position(caret);
+                    last_glyph_id = None;
+                }
+            }
+            caret.x += glyph.unpositioned().h_metrics().advance_width;
+            result.push(glyph);
+        }
+        result
+    }
+}
+
 impl TextRenderer {
     fn new(width: u32, height: u32) -> TextRenderer {
-        let font_data = include_bytes!("../../../../assets/font/RobotoMono.ttf");
-        let font = Font::try_from_bytes(font_data as &[u8]).unwrap();
-
         let cache: Cache<'static> = Cache::builder().dimensions(1024, 1024).build();
 
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
         TextRenderer {
-            font,
             cache,
             shader,
             texture_buffer: Texture::new(1024, 1024),
@@ -32,12 +187,81 @@ impl TextRenderer {
     /// Renders text to the screen
     ///
     /// Returns the width and height of the text
-    pub fn render(x: i32, y: i32, size: f32, text: &str) -> (i32, i32) {
-        let mut renderer = RENDERER.lock().unwrap();
-        let glyphs = renderer.layout(Scale::uniform(size), renderer.width, text);
-        for glyph in &glyphs {
-            renderer.cache.queue_glyph(0, glyph.clone());
+    pub fn render(text: &Text) -> (i32, i32) {
+        let renderer = RENDERER.lock().unwrap();
+        let mut polygon_mode = 0;
+        unsafe {
+            gl::ActiveTexture(gl::TEXTURE0);
+            renderer.texture_buffer.bind();
+            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+            
+            gl::GetIntegerv(gl::POLYGON_MODE, &mut polygon_mode);
+            if polygon_mode != gl::FILL as i32 {
+                gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
+            }
         }
+
+        text.mesh.vertex_array.bind();
+
+        // set shader uniforms
+        renderer.shader.bind();
+        let projection = cgmath::ortho(
+            0.0,
+            renderer.width as f32,
+            renderer.height as f32,
+            0.0,
+            -1.0,
+            100.0,
+        );
+        renderer.shader.set_uniform_mat4("projection", &projection);
+        renderer.shader.set_uniform_3f("color", 1.0, 1.0, 1.0);
+
+        unsafe {
+            // draw text
+            gl::Disable(gl::DEPTH_TEST);
+            gl::Disable(gl::CULL_FACE);
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            renderer.shader.set_uniform_1i("texture0", 0);
+            gl::DrawArrays(gl::TRIANGLES, 0, text.mesh.vertex_array.get_element_count() as i32);
+
+            // cleanup
+            gl::BindTexture(gl::TEXTURE_2D, 0);
+            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+            gl::BindVertexArray(0);
+            gl::Disable(gl::BLEND);
+            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+
+            if polygon_mode != gl::FILL as i32 {
+                gl::PolygonMode(gl::FRONT_AND_BACK, polygon_mode as u32);
+            }
+        }
+        (text.max_x, text.max_y)
+    }
+
+    pub fn resize(width: u32, height: u32) {
+        let mut renderer = RENDERER.lock().unwrap();
+        renderer.width = width;
+        renderer.height = height;
+    }
+
+    pub fn resize_from_event(event: &glfw::WindowEvent) {
+        match event {
+            glfw::WindowEvent::FramebufferSize(width, height) => {
+                TextRenderer::resize(*width as u32, *height as u32);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn get_size() -> (u32, u32) {
+        let renderer = RENDERER.lock().unwrap();
+        (renderer.width, renderer.height)
+    }
+
+    pub fn rect_for(font_id: usize, glyph: PositionedGlyph<'static>) -> Option<(Rect<f32>, Rect<i32>)> {
+        let mut renderer = RENDERER.lock().unwrap();
+        renderer.cache.queue_glyph(0, glyph.clone());
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             renderer.texture_buffer.bind();
@@ -56,178 +280,30 @@ impl TextRenderer {
                 data.as_ptr() as *const std::ffi::c_void,
             );
         });
-
-        let mut max_x = 0;
-        let mut max_y = 0;
-        let vertices: Vec<f32> = glyphs
-            .iter()
-            .filter_map(|g| renderer.cache.rect_for(0, g).ok().flatten())
-            .flat_map(|(uv_rect, screen_rect)| {
-                if screen_rect.max.x as i32 > max_x {
-                    max_x = screen_rect.max.x as i32;
-                }
-                if screen_rect.max.y as i32 > max_y {
-                    max_y = screen_rect.max.y as i32;
-                }
-                let gl_rect = Rect {
-                    min: point(
-                        screen_rect.min.x as f32 + x as f32,
-                        screen_rect.min.y as f32 + y as f32,
-                    ),
-                    max: point(
-                        screen_rect.max.x as f32 + x as f32,
-                        screen_rect.max.y as f32 + y as f32,
-                    ),
-                };
-                vec![
-                    gl_rect.min.x,
-                    gl_rect.max.y,
-                    uv_rect.min.x,
-                    uv_rect.max.y,
-                    gl_rect.min.x,
-                    gl_rect.min.y,
-                    uv_rect.min.x,
-                    uv_rect.min.y,
-                    gl_rect.max.x,
-                    gl_rect.min.y,
-                    uv_rect.max.x,
-                    uv_rect.min.y,
-                    gl_rect.max.x,
-                    gl_rect.min.y,
-                    uv_rect.max.x,
-                    uv_rect.min.y,
-                    gl_rect.max.x,
-                    gl_rect.max.y,
-                    uv_rect.max.x,
-                    uv_rect.max.y,
-                    gl_rect.min.x,
-                    gl_rect.max.y,
-                    uv_rect.min.x,
-                    uv_rect.max.y,
-                ]
-            })
-            .collect();
-
-        // create vao and upload vertex data to gpu
-        let mut vao = 0;
-        let mut vbo = 0;
-        unsafe {
-            let mut polygon_mode = 0;
-            gl::GetIntegerv(gl::POLYGON_MODE, &mut polygon_mode);
-            if polygon_mode != gl::FILL as i32 {
-                gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
-            }
-
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut vbo);
-            gl::BindVertexArray(vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (vertices.len() * std::mem::size_of::<f32>()) as isize,
-                vertices.as_ptr() as *const std::ffi::c_void,
-                gl::STATIC_DRAW,
-            );
-            let stride = 4 * std::mem::size_of::<f32>() as i32;
-            gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, stride, std::ptr::null());
-            gl::EnableVertexAttribArray(0);
-            let dummy = [0.0, 0.0];
-            gl::VertexAttribPointer(
-                1,
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                stride,
-                (dummy.len() * std::mem::size_of::<f32>()) as *const GLvoid,
-            );
-            gl::EnableVertexAttribArray(1);
-
-            // set shader uniforms
-            renderer.shader.bind();
-            let projection = cgmath::ortho(
-                0.0,
-                renderer.width as f32,
-                renderer.height as f32,
-                0.0,
-                -1.0,
-                100.0,
-            );
-            renderer.shader.set_uniform_mat4("projection", &projection);
-            renderer.shader.set_uniform_3f("color", 1.0, 1.0, 1.0);
-
-            // draw text
-            gl::Disable(gl::DEPTH_TEST);
-            gl::Disable(gl::CULL_FACE);
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            renderer.shader.set_uniform_1i("texture0", 0);
-            gl::DrawArrays(gl::TRIANGLES, 0, vertices.len() as i32 / 4);
-
-            // cleanup
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::DeleteVertexArrays(1, &vao);
-            gl::DeleteBuffers(1, &vbo);
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-            gl::Disable(gl::BLEND);
-            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
-
-            if polygon_mode != gl::FILL as i32 {
-                gl::PolygonMode(gl::FRONT_AND_BACK, polygon_mode as u32);
-            }
-        }
-        (max_x, max_y)
+        renderer.cache.rect_for(font_id, &glyph).ok().flatten()
     }
+}
 
-    pub fn resize(width: u32, height: u32) {
-        let mut renderer = RENDERER.lock().unwrap();
-        renderer.width = width;
-        renderer.height = height;
-    }
-
-    pub fn resize_from_event(event: &glfw::WindowEvent) {
-        match event {
-            glfw::WindowEvent::FramebufferSize(width, height) => {
-                TextRenderer::resize(*width as u32, *height as u32);
-            }
-            _ => {}
+impl TextMesh {
+    fn new() -> TextMesh {
+        TextMesh {
+            vertex_array: DynamicVertexArray::new(),
+            vertices: Vec::new(),
         }
     }
 
-    fn layout<'a>(&self, scale: Scale, width: u32, text: &str) -> Vec<PositionedGlyph<'a>> {
-        let mut result = Vec::new();
-        let v_metrics = self.font.v_metrics(scale);
-        let advance_height = v_metrics.ascent - v_metrics.descent + v_metrics.line_gap;
-        let mut caret = point(0.0, v_metrics.ascent);
-        let mut last_glyph_id = None;
-        for c in text.chars() {
-            if c.is_control() {
-                match c {
-                    '\r' => {
-                        caret = point(0.0, caret.y + advance_height);
-                    }
-                    '\n' => {}
-                    _ => {}
-                }
-                continue;
-            }
-            let base_glyph = self.font.glyph(c);
-            if let Some(id) = last_glyph_id.take() {
-                caret.x += self.font.pair_kerning(scale, id, base_glyph.id());
-            }
-            last_glyph_id = Some(base_glyph.id());
-            let mut glyph = base_glyph.scaled(scale).positioned(caret);
-            if let Some(bb) = glyph.pixel_bounding_box() {
-                if bb.max.x > width as i32 {
-                    caret = point(0.0, caret.y + advance_height);
-                    glyph.set_position(caret);
-                    last_glyph_id = None;
-                }
-            }
-            caret.x += glyph.unpositioned().h_metrics().advance_width;
-            result.push(glyph);
-        }
-        result
+    fn update_vertices(&mut self, vertices: Vec<TextVertex>) {
+        self.vertices = vertices;
+        self.vertex_array.buffer_data(&self.vertices, &None);
+    }
+}
+
+impl VertexAttributes for TextVertex {
+    fn get_vertex_attributes() -> Vec<(usize, gl::types::GLuint)> {
+        vec![
+            (2, gl::FLOAT),
+            (2, gl::FLOAT),
+        ]
     }
 }
 

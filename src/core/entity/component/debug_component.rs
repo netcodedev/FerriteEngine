@@ -5,7 +5,7 @@ use crate::{
         entity::component::{camera_component, model_component::ModelComponent, Component},
         renderer::{
             line::{Line, LineRenderer},
-            text::TextRenderer,
+            text::{Fonts, Text},
         },
         scene::Scene,
     },
@@ -19,6 +19,15 @@ pub struct DebugController {
     vsync: bool,
     show_rays: bool,
     delta_time: f64,
+
+    bounds: ChunkBounds,
+
+    fps_text: Text,
+    pos_text: Text,
+    cam_text: Text,
+    chunk_min_text: Text,
+    chunk_max_text: Text,
+    triangle_count_text: Text,
 }
 
 impl DebugController {
@@ -29,13 +38,50 @@ impl DebugController {
             vsync: true,
             show_rays: false,
             delta_time: 0.0,
+
+            bounds: ChunkBounds {
+                min: (0, 0, 0),
+                max: (0, 0, 0),
+            },
+
+            fps_text: Text::new(Fonts::RobotoMono, 5, 5, 16.0, String::from("FPS: 0.0")),
+            pos_text: Text::new(Fonts::RobotoMono, 5, 25, 16.0, String::from("")),
+            cam_text: Text::new(Fonts::RobotoMono, 5, 45, 16.0, String::from("")),
+            chunk_min_text: Text::new(Fonts::RobotoMono, 5, 65, 16.0, String::from("")),
+            chunk_max_text: Text::new(Fonts::RobotoMono, 5, 85, 16.0, String::from("")),
+            triangle_count_text: Text::new(Fonts::RobotoMono, 5, 105, 16.0, String::from("")),
         }
     }
 }
 
 impl Component for DebugController {
-    fn update(&mut self, _: &Scene, delta_time: f64) {
+    fn update(&mut self, scene: &Scene, delta_time: f64) {
         self.delta_time = delta_time;
+
+        let fps = 1.0 / self.delta_time;
+        self.fps_text.set_content(format!("{:.2} FPS ({:.2}ms)", fps, self.delta_time * 1000.0));
+        if self.debug_ui {
+            if let Some(camera_component) = scene.get_component::<camera_component::CameraComponent>() {
+                let camera = camera_component.get_camera();
+                let pos = camera.position;
+                self.bounds = ChunkBounds::parse(pos.to_vec());
+
+                self.pos_text.set_content(format!("x: {:.2} y: {:.2} z: {:.2}", pos.x, pos.y, pos.z));
+                self.cam_text.set_content(format!("yaw: {:?} pitch {:?}", Deg::from(camera.yaw), Deg::from(camera.pitch)));
+                self.chunk_min_text.set_content(format!(
+                    "Chunk: xMin: {} yMin: {} zMin: {}",
+                    self.bounds.min.0, self.bounds.min.1, self.bounds.min.2
+                ));
+                self.chunk_max_text.set_content(format!(
+                    "       xMax: {} yMax: {} zMax: {}",
+                    self.bounds.max.0, self.bounds.max.1, self.bounds.max.2
+                ));
+            }
+            if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
+                self.triangle_count_text.set_content(format!("Triangles: {}", terrain.get_triangle_count()));
+            }
+
+        }
     }
 
     fn handle_event(&mut self, glfw: &mut Glfw, _: &mut glfw::Window, event: &glfw::WindowEvent) {
@@ -88,56 +134,13 @@ impl Component for DebugController {
             }
 
             if self.debug_ui {
-                let fps = 1.0 / self.delta_time;
-                let fps_text = format!("{:.2} FPS ({:.2}ms)", fps, self.delta_time * 1000.0);
-                TextRenderer::render(5, 5, 20.0, &fps_text);
-                let pos = camera.position;
-                let bounds = ChunkBounds::parse(pos.to_vec());
-                TextRenderer::render(
-                    5,
-                    25,
-                    20.0,
-                    format!("x: {:.2} y: {:.2} z: {:.2}", pos.x, pos.y, pos.z).as_str(),
-                );
-                TextRenderer::render(
-                    5,
-                    45,
-                    20.0,
-                    format!(
-                        "yaw: {:?} pitch {:?}",
-                        Deg::from(camera.yaw),
-                        Deg::from(camera.pitch)
-                    )
-                    .as_str(),
-                );
-                TextRenderer::render(
-                    5,
-                    65,
-                    20.0,
-                    format!(
-                        "Chunk: xMin: {} yMin: {} zMin: {}",
-                        bounds.min.0, bounds.min.1, bounds.min.2
-                    )
-                    .as_str(),
-                );
-                TextRenderer::render(
-                    5,
-                    85,
-                    20.0,
-                    format!(
-                        "       xMax: {} yMax: {} zMax: {}",
-                        bounds.max.0, bounds.max.1, bounds.max.2
-                    )
-                    .as_str(),
-                );
-                if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
-                    TextRenderer::render(
-                        5,
-                        105,
-                        20.0,
-                        format!("Triangles: {}", terrain.get_triangle_count()).as_str(),
-                    );
-                }
+                self.fps_text.render();
+                self.pos_text.render();
+                self.cam_text.render();
+                self.chunk_min_text.render();
+                self.chunk_max_text.render();
+                self.triangle_count_text.render();
+
                 let mut lines: Vec<Line> = Vec::new();
                 let mut corner_lines: Vec<Line> = Vec::new();
                 let spacing = (CHUNK_SIZE / 8) as i32;
@@ -146,10 +149,10 @@ impl Component for DebugController {
                         if i != 0 && i != 8 && j != 0 && j != 8 {
                             continue;
                         }
-                        let x = bounds.min.0 as i32 + i * spacing;
-                        let z = bounds.min.2 as i32 + j * spacing;
+                        let x = self.bounds.min.0 as i32 + i * spacing;
+                        let z = self.bounds.min.2 as i32 + j * spacing;
                         let line = Line {
-                            position: Point3::new(x as f32, bounds.min.1 as f32, z as f32),
+                            position: Point3::new(x as f32, self.bounds.min.1 as f32, z as f32),
                             direction: Vector3::new(0.0, 1.0, 0.0),
                             length: CHUNK_SIZE as f32,
                         };

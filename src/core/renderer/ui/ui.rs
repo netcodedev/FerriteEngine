@@ -46,7 +46,7 @@ impl UI {
     where
         InitFn: FnOnce(Text) -> Text + 'static,
     {
-        let mut text = Text::new(text, size);
+        let mut text = Text::new(text.to_string(), size);
         text = init_fn(text);
         Box::new(text)
     }
@@ -72,7 +72,7 @@ impl UI {
         builder = builder
             .on_click(on_click)
             .size(100.0, 20.0)
-            .add_child(Box::new(Text::new(text, 16.0)));
+            .add_child(Box::new(Text::new(text.to_string(), 16.0)));
         builder = init_fn(builder);
         Box::new(builder.build())
     }

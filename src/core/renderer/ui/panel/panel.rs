@@ -1,7 +1,7 @@
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
-        text::TextRenderer,
+        text::{Fonts, Text},
         ui::{container::ContainerBuilder, UIElement},
     },
     scene::Scene,
@@ -39,11 +39,10 @@ impl UIElement for Panel {
             header_plane = header_plane.color((0.2, 0.3, 0.5, 1.0))
         }
         PlaneRenderer::render(header_plane.build());
-        TextRenderer::render(
+        self.text.set_content(self.title.clone());
+        self.text.render_at(
             (self.offset.0 + self.position.0 + 8.0) as i32,
             (self.offset.1 + self.position.1 + 2.0) as i32,
-            16.0,
-            &self.title,
         );
         self.content.render(scene);
     }
@@ -136,8 +135,9 @@ impl Panel {
         Self {
             position,
             size,
-            title,
+            title: title.clone(),
             content,
+            text: Text::new(Fonts::RobotoMono, 0,0, 16.0, title),
             offset: (0.0, 0.0),
             drag_start: None,
             dragging: false,
