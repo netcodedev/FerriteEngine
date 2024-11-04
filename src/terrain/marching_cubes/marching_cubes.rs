@@ -1,3 +1,5 @@
+use core::panic;
+
 use cgmath::{InnerSpace, Vector3, Zero};
 use gl::types::GLuint;
 use glfw::MouseButton;
@@ -168,10 +170,10 @@ impl Chunk for MarchingCubesChunk {
         chunk
     }
 
-    fn render(&mut self, camera: &Camera, projection: &Projection, shader: &Shader) {
-        if let Some(mesh) = &mut self.mesh {
+    fn render(&self, camera: &Camera, projection: &Projection, shader: &Shader) {
+        if let Some(mesh) = &self.mesh {
             if !mesh.is_buffered() {
-                mesh.buffer_data();
+                panic!("Mesh is not buffered");
             }
             shader.bind();
             shader.set_uniform_mat4("view", &camera.calc_matrix());
@@ -191,6 +193,12 @@ impl Chunk for MarchingCubesChunk {
             unsafe {
                 gl::Disable(gl::CULL_FACE);
             }
+        }
+    }
+
+    fn buffer_data(&mut self) {
+        if let Some(mesh) = &mut self.mesh {
+            mesh.buffer_data();
         }
     }
 

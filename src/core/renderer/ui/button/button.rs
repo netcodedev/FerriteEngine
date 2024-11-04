@@ -1,7 +1,10 @@
-use crate::core::{renderer::{
-    plane::{PlaneBuilder, PlaneRenderer},
-    ui::UIElement,
-}, scene::Scene};
+use crate::core::{
+    renderer::{
+        plane::{PlaneBuilder, PlaneRenderer},
+        ui::UIElement,
+    },
+    scene::Scene,
+};
 
 use super::{Button, ButtonBuilder};
 

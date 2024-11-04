@@ -5,7 +5,7 @@ use crate::core::renderer::shader::Shader;
 
 pub mod line;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Line {
     pub position: Point3<f32>,
     pub direction: Vector3<f32>,

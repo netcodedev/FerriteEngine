@@ -2,13 +2,10 @@ use glfw::{Action, Glfw, Key};
 
 use crate::{
     core::{
-        camera::{Camera, Projection},
-        model::Model,
-        mouse_picker::MousePicker,
-        renderer::{
+        camera::{Camera, Projection}, model::Model, renderer::{
             line::{Line, LineRenderer},
             text::TextRenderer,
-        },
+        }
     },
     terrain::{Chunk, ChunkBounds, Terrain, CHUNK_SIZE},
 };
@@ -66,14 +63,13 @@ impl DebugController {
         delta_time: f32,
         camera: &Camera,
         projection: &Projection,
-        mouse_picker: &MousePicker,
         terrain: &Terrain<T>,
         models: &Vec<Model>,
     ) where
         T: Chunk + Send + 'static,
     {
         if self.show_rays {
-            if let Some(line) = &mouse_picker.ray {
+            if let Some((line, _)) = &terrain.get_mouse_picker().ray {
                 LineRenderer::render(
                     &camera,
                     &projection,

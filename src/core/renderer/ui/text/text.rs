@@ -1,4 +1,7 @@
-use crate::core::{renderer::{text::TextRenderer, ui::UIElement}, scene::Scene};
+use crate::core::{
+    renderer::{text::TextRenderer, ui::UIElement},
+    scene::Scene,
+};
 
 use super::Text;
 

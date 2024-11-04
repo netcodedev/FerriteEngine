@@ -1,3 +1,5 @@
+use core::panic;
+
 use gl::types::GLuint;
 use glfw::MouseButton;
 use libnoise::prelude::*;
@@ -104,10 +106,10 @@ impl Chunk for DualContouringChunk {
         chunk
     }
 
-    fn render(&mut self, camera: &Camera, projection: &Projection, shader: &Shader) {
-        if let Some(mesh) = &mut self.mesh {
+    fn render(&self, camera: &Camera, projection: &Projection, shader: &Shader) {
+        if let Some(mesh) = &self.mesh {
             if !mesh.is_buffered() {
-                mesh.buffer_data();
+                panic!("Mesh is not buffered");
             }
             shader.bind();
             shader.set_uniform_mat4("view", &camera.calc_matrix());
@@ -127,6 +129,12 @@ impl Chunk for DualContouringChunk {
             unsafe {
                 gl::Disable(gl::CULL_FACE);
             }
+        }
+    }
+
+    fn buffer_data(&mut self) {
+        if let Some(mesh) = &mut self.mesh {
+            mesh.buffer_data();
         }
     }
 

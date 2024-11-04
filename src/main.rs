@@ -1,14 +1,14 @@
 use cgmath::Deg;
-use glfw::{Glfw, MouseButton, WindowEvent};
+use glfw::{Glfw, WindowEvent};
 
 mod core;
 mod debug;
 mod terrain;
 use core::{
-    application::{Application, Layer}, camera::{Camera, CameraController, Projection}, entity::{component::camera_component::CameraComponent, Entity}, model::{Model, ModelBuilder}, mouse_picker::MousePicker, renderer::{
-        line::Line,
-        ui::{UIRenderer, UI},
-    }, scene::Scene
+    application::{Application, Layer}, camera::{Camera, CameraController, Projection}, entity::{
+        component::camera_component::CameraComponent,
+        Entity,
+    }, model::{Model, ModelBuilder}, renderer::ui::{UIRenderer, UI}, scene::Scene
 };
 use debug::DebugController;
 use terrain::{dual_contouring::DualContouringChunk, Terrain};
@@ -23,10 +23,7 @@ fn main() {
 
 struct WorldLayer {
     scene: Scene,
-    line: Option<(Line, MouseButton)>,
     debug_controller: DebugController,
-    terrain: Terrain<DualContouringChunk>,
-    mouse_picker: MousePicker,
     models: Vec<Model>,
     ui: UIRenderer,
 }
@@ -42,9 +39,10 @@ impl WorldLayer {
         scene.add_entity(entity);
         let ui = UIRenderer::new();
         let debug_controller: DebugController = DebugController::new();
-        let mouse_picker = MousePicker::new();
 
-        let terrain = Terrain::<DualContouringChunk>::new();
+        let mut terrain_entity = Entity::new();
+        terrain_entity.add_component(Terrain::<DualContouringChunk>::new());
+        scene.add_entity(terrain_entity);
 
         let mut models: Vec<Model> = Vec::new();
         let mut model = ModelBuilder::new("Mannequin.fbx")?
@@ -59,10 +57,7 @@ impl WorldLayer {
 
         Ok(Self {
             scene,
-            line: None,
             debug_controller,
-            terrain,
-            mouse_picker,
             models,
             ui,
         })
@@ -79,11 +74,17 @@ impl Layer for WorldLayer {
                     input
                         .size(190.0, 26.0)
                         .get_fn(|scene| {
-                            let camera_controller = scene.get_component::<CameraComponent>().unwrap().get_camera_controller();
+                            let camera_controller = scene
+                                .get_component::<CameraComponent>()
+                                .unwrap()
+                                .get_camera_controller();
                             camera_controller.get_speed().to_string()
                         })
                         .set_fn(move |scene, v| {
-                            let camera_controller = scene.get_component::<CameraComponent>().unwrap().get_camera_controller_mut();
+                            let camera_controller = scene
+                                .get_component_mut::<CameraComponent>()
+                                .unwrap()
+                                .get_camera_controller_mut();
                             match v.parse::<f32>() {
                                 Ok(v) => camera_controller.set_speed(v),
                                 Err(_) => {}
@@ -93,7 +94,10 @@ impl Layer for WorldLayer {
                 .add_child(UI::button(
                     "Reset Speed",
                     Box::new(move |scene| {
-                        let camera_controller = scene.get_component::<CameraComponent>().unwrap().get_camera_controller_mut();
+                        let camera_controller = scene
+                            .get_component_mut::<CameraComponent>()
+                            .unwrap()
+                            .get_camera_controller_mut();
                         camera_controller.set_speed(10.0);
                     }),
                     |b| b,
@@ -103,50 +107,42 @@ impl Layer for WorldLayer {
 
     fn on_update(&mut self, delta_time: f64) {
         self.scene.update(delta_time);
+        self.scene.render();
 
         if let Some(camera_component) = self.scene.get_component::<CameraComponent>() {
-            self.terrain.process_line(self.line.clone());
-            self.terrain.update();
-            self.terrain.render(&camera_component.get_camera(), &camera_component.get_projection());
-
             for model in self.models.iter_mut() {
                 model.update(delta_time as f32);
-                model.render(&camera_component.get_camera(), &&camera_component.get_projection());
+                model.render(
+                    &camera_component.get_camera(),
+                    &camera_component.get_projection(),
+                );
             }
         }
 
         self.ui.render(&mut self.scene);
 
-        if let Some(camera_component) = self.scene.get_component::<CameraComponent>(){
-            self.debug_controller.draw_debug_ui(
-                delta_time as f32,
-                &camera_component.get_camera(),
-                &camera_component.get_projection(),
-                &self.mouse_picker,
-                &self.terrain,
-                &self.models,
-            );
+        if let Some(camera_component) = self.scene.get_component::<CameraComponent>() {
+            if let Some(terrain_component) = self
+                .scene
+                .get_component::<Terrain<DualContouringChunk>>()
+            {
+                self.debug_controller.draw_debug_ui(
+                    delta_time as f32,
+                    &camera_component.get_camera(),
+                    &camera_component.get_projection(),
+                    &terrain_component,
+                    &self.models,
+                );
+            }
         }
-        
     }
 
-    fn on_event(
-        &mut self,
-        glfw: &mut Glfw,
-        window: &mut glfw::Window,
-        event: &WindowEvent,
-    ) {
+    fn on_event(&mut self, glfw: &mut Glfw, window: &mut glfw::Window, event: &WindowEvent) {
         if self.ui.handle_events(&mut self.scene, window, glfw, &event) {
             return;
         }
         self.scene.handle_event(glfw, window, event);
         self.debug_controller.process_keyboard(glfw, &event);
-
-        if let Some(camera_component) = self.scene.get_component::<CameraComponent>(){
-            self.line = self
-                .mouse_picker
-                .process_mouse(&event, &camera_component.get_camera(), &camera_component.get_projection());
-        }
     }
 
     fn get_name(&self) -> &str {

@@ -4,12 +4,10 @@ use cgmath::{EuclideanSpace, Point3};
 use glfw::MouseButton;
 
 use crate::core::{
-    camera::{Camera, Projection},
-    renderer::{
+    entity::component::{camera_component::CameraComponent, Component}, mouse_picker::MousePicker, renderer::{
         line::Line,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
-    },
-    view_frustum::ViewFrustum,
+    }, scene::Scene, view_frustum::ViewFrustum
 };
 
 use super::{Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
@@ -94,32 +92,7 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
             chunk_receiver: rx,
             shader,
             textures: T::get_textures(),
-        }
-    }
-
-    pub fn update(&mut self) {
-        if let Ok(chunk) = self.chunk_receiver.try_recv() {
-            self.chunks.insert(chunk.get_bounds(), chunk);
-        }
-    }
-
-    pub fn render(&mut self, camera: &Camera, projection: &Projection) {
-        for (i, texture) in self.textures.iter().enumerate() {
-            unsafe {
-                gl::ActiveTexture(gl::TEXTURE0 + i as u32);
-            }
-            texture.bind();
-        }
-        for (_, chunk) in &mut self.chunks {
-            if ViewFrustum::is_bounds_in_frustum(projection, camera, chunk.get_bounds()) {
-                chunk.render(camera, projection, &self.shader);
-            }
-        }
-        for (i, _) in self.textures.iter().enumerate() {
-            unsafe {
-                gl::ActiveTexture(gl::TEXTURE0 + i as u32);
-                gl::BindTexture(gl::TEXTURE_2D, 0);
-            }
+            mouse_picker: MousePicker::new(),
         }
     }
 
@@ -177,6 +150,53 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
             count += chunk.get_triangle_count();
         }
         count
+    }
+
+    pub fn get_mouse_picker(&self) -> &MousePicker {
+        &self.mouse_picker
+    }
+}
+
+impl<T: Chunk + Send + 'static> Component for Terrain<T> {
+    fn update(&mut self, scene: &Scene, _: f64) {
+        if let Ok(mut chunk) = self.chunk_receiver.try_recv() {
+            chunk.buffer_data();
+            self.chunks.insert(chunk.get_bounds(), chunk);
+        }
+        if let Some(camera_component) = scene.get_component::<CameraComponent>() {
+            let camera = camera_component.get_camera();
+            let projection = camera_component.get_projection();
+            self.mouse_picker.update(camera, projection);
+        }
+    }
+
+    fn render(&self, scene: &Scene) {
+        if let Some(camera_component) = scene.get_component::<CameraComponent>() {
+            let camera = camera_component.get_camera();
+            let projection = camera_component.get_projection();
+            for (i, texture) in self.textures.iter().enumerate() {
+                unsafe {
+                    gl::ActiveTexture(gl::TEXTURE0 + i as u32);
+                }
+                texture.bind();
+            }
+            for (_, chunk) in &self.chunks {
+                if ViewFrustum::is_bounds_in_frustum(projection, camera, chunk.get_bounds()) {
+                    chunk.render(camera, projection, &self.shader);
+                }
+            }
+            for (i, _) in self.textures.iter().enumerate() {
+                unsafe {
+                    gl::ActiveTexture(gl::TEXTURE0 + i as u32);
+                    gl::BindTexture(gl::TEXTURE_2D, 0);
+                }
+            }
+        }
+    }
+
+    fn handle_event(&mut self, glfw: &mut glfw::Glfw, window: &mut glfw::Window, event: &glfw::WindowEvent) {
+        let line = self.mouse_picker.handle_event(glfw, window, event);
+        self.process_line(line);
     }
 }
 

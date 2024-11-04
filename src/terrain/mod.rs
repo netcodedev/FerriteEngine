@@ -2,14 +2,11 @@ use std::{collections::HashMap, sync::mpsc};
 
 use glfw::MouseButton;
 
-use crate::{
-    core::camera::{Camera, Projection},
-    core::renderer::{
+use crate::core::{camera::{Camera, Projection}, mouse_picker::MousePicker, renderer::{
         line::Line,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
         texture::Texture,
-    },
-};
+    }};
 
 pub const CHUNK_RADIUS: usize = 5;
 pub const CHUNK_SIZE: usize = 128;
@@ -26,11 +23,13 @@ pub struct Terrain<T: Chunk> {
     chunk_receiver: mpsc::Receiver<T>,
     shader: Shader,
     textures: Vec<Texture>,
+    mouse_picker: MousePicker,
 }
 
 pub trait Chunk {
     fn new(position: (f32, f32, f32), lod: usize) -> Self;
-    fn render(&mut self, camera: &Camera, projection: &Projection, shader: &Shader);
+    fn render(&self, camera: &Camera, projection: &Projection, shader: &Shader);
+    fn buffer_data(&mut self);
     fn get_bounds(&self) -> ChunkBounds;
     fn process_line(&mut self, line: &Line, button: &MouseButton) -> bool;
     fn get_shader_source() -> (String, String);

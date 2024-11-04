@@ -60,7 +60,11 @@ impl UI {
         Box::new(builder.build())
     }
 
-    pub fn button<InitFn>(text: &str, on_click: Box<dyn Fn(&mut Scene)>, init_fn: InitFn) -> Box<Button>
+    pub fn button<InitFn>(
+        text: &str,
+        on_click: Box<dyn Fn(&mut Scene)>,
+        init_fn: InitFn,
+    ) -> Box<Button>
     where
         InitFn: FnOnce(ButtonBuilder) -> ButtonBuilder + 'static,
     {

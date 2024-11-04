@@ -1,4 +1,4 @@
-use crate::core::camera::{Camera, CameraController, Projection};
+use crate::core::{camera::{Camera, CameraController, Projection}, scene::Scene};
 
 use super::Component;
 
@@ -10,8 +10,12 @@ pub struct CameraComponent {
 
 #[allow(dead_code)]
 impl CameraComponent {
-    pub fn new(camera: Camera, projection: Projection, camera_controller: CameraController) -> Self {
-        CameraComponent { 
+    pub fn new(
+        camera: Camera,
+        projection: Projection,
+        camera_controller: CameraController,
+    ) -> Self {
+        CameraComponent {
             camera,
             projection,
             camera_controller,
@@ -44,11 +48,17 @@ impl CameraComponent {
 }
 
 impl Component for CameraComponent {
-    fn update(&mut self, delta_time: f64) {
-        self.camera_controller.update_camera(&mut self.camera, delta_time as f32);
+    fn update(&mut self, _: &Scene, delta_time: f64) {
+        self.camera_controller
+            .update_camera(&mut self.camera, delta_time as f32);
     }
 
-    fn handle_event(&mut self, _: &mut glfw::Glfw, window: &mut glfw::Window, event: &glfw::WindowEvent) {
+    fn handle_event(
+        &mut self,
+        _: &mut glfw::Glfw,
+        window: &mut glfw::Window,
+        event: &glfw::WindowEvent,
+    ) {
         self.camera_controller.process_keyboard(window, event);
         self.camera_controller.process_mouse(window, event);
         self.projection.resize(&event);

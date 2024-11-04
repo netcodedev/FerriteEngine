@@ -1,8 +1,11 @@
-use crate::core::{renderer::{
-    plane::{PlaneBuilder, PlaneRenderer},
-    text::TextRenderer,
-    ui::UIElement,
-}, scene::Scene};
+use crate::core::{
+    renderer::{
+        plane::{PlaneBuilder, PlaneRenderer},
+        text::TextRenderer,
+        ui::UIElement,
+    },
+    scene::Scene,
+};
 
 use super::{Input, InputBuilder};
 

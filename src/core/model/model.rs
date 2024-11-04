@@ -98,7 +98,7 @@ impl Model {
                     }
                 }
             }
-            let model_mesh = ModelMesh::new(
+            let mut model_mesh = ModelMesh::new(
                 mesh.vertices
                     .iter()
                     .flat_map(|v| vec![v.x, v.y, v.z])
@@ -114,6 +114,7 @@ impl Model {
                 texture_coords.clone(),
                 root_bone,
             );
+            model_mesh.buffer_data();
             self.meshes.insert(mesh.name.clone(), model_mesh);
         }
     }
@@ -181,10 +182,10 @@ impl Model {
         self.position += root_translation * self.scale;
     }
 
-    pub fn render(&mut self, camera: &Camera, projection: &Projection) {
-        for mesh in self.meshes.values_mut() {
+    pub fn render(&self, camera: &Camera, projection: &Projection) {
+        for mesh in self.meshes.values() {
             if !mesh.is_buffered() {
-                mesh.buffer_data();
+                panic!("Mesh is not buffered");
             }
             self.shader.bind();
             self.shader.set_uniform_mat4("view", &camera.calc_matrix());

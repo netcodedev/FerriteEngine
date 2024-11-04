@@ -1,7 +1,7 @@
 use component::Component;
 
-mod entity;
 pub mod component;
+mod entity;
 
 pub struct Entity {
     children: Vec<Entity>,

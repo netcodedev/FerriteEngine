@@ -1,8 +1,11 @@
-use crate::core::{renderer::{
-    plane::{PlaneBuilder, PlaneRenderer},
-    text::TextRenderer,
-    ui::{container::ContainerBuilder, UIElement},
-}, scene::Scene};
+use crate::core::{
+    renderer::{
+        plane::{PlaneBuilder, PlaneRenderer},
+        text::TextRenderer,
+        ui::{container::ContainerBuilder, UIElement},
+    },
+    scene::Scene,
+};
 
 use super::{Panel, PanelBuilder};
 
