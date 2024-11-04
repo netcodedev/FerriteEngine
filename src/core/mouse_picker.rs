@@ -14,7 +14,12 @@ pub struct MousePicker {
 
 impl MousePicker {
     pub fn new() -> Self {
-        Self { ray: None, position: Point3::new(0.0,0.0,0.0), camera: Matrix4::identity(), projection: Matrix4::identity() }
+        Self {
+            ray: None,
+            position: Point3::new(0.0, 0.0, 0.0),
+            camera: Matrix4::identity(),
+            projection: Matrix4::identity(),
+        }
     }
 
     pub fn update(&mut self, camera: &Camera, projection: &Projection) {
@@ -33,7 +38,12 @@ impl MousePicker {
             .normalize()
     }
 
-    pub fn handle_event(&mut self, _: &mut glfw::Glfw, _: &mut glfw::Window, event: &glfw::WindowEvent) -> Option<(Line, MouseButton)>{
+    pub fn handle_event(
+        &mut self,
+        _: &mut glfw::Glfw,
+        _: &mut glfw::Window,
+        event: &glfw::WindowEvent,
+    ) -> Option<(Line, MouseButton)> {
         let line: Option<(Line, glfw::MouseButton)> = match event {
             glfw::WindowEvent::MouseButton(button, action, _) => {
                 if *action == Action::Press {

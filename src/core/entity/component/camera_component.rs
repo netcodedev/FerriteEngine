@@ -1,4 +1,7 @@
-use crate::core::{camera::{Camera, CameraController, Projection}, scene::Scene};
+use crate::core::{
+    camera::{Camera, CameraController, Projection},
+    scene::Scene,
+};
 
 use super::Component;
 

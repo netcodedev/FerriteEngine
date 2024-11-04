@@ -5,10 +5,15 @@ mod core;
 mod debug;
 mod terrain;
 use core::{
-    application::{Application, Layer}, camera::{Camera, CameraController, Projection}, entity::{
+    application::{Application, Layer},
+    camera::{Camera, CameraController, Projection},
+    entity::{
         component::{camera_component::CameraComponent, model_component::ModelComponent},
         Entity,
-    }, model::ModelBuilder, renderer::ui::{UIRenderer, UI}, scene::Scene
+    },
+    model::ModelBuilder,
+    renderer::ui::{UIRenderer, UI},
+    scene::Scene,
 };
 use debug::DebugController;
 use terrain::{dual_contouring::DualContouringChunk, Terrain};
@@ -110,10 +115,8 @@ impl Layer for WorldLayer {
 
         self.ui.render(&mut self.scene);
 
-        self.debug_controller.draw_debug_ui::<DualContouringChunk>(
-            delta_time as f32,
-            &self.scene
-        );
+        self.debug_controller
+            .draw_debug_ui::<DualContouringChunk>(delta_time as f32, &self.scene);
     }
 
     fn on_event(&mut self, glfw: &mut Glfw, window: &mut glfw::Window, event: &WindowEvent) {

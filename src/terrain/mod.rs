@@ -2,11 +2,15 @@ use std::{collections::HashMap, sync::mpsc};
 
 use glfw::MouseButton;
 
-use crate::core::{camera::{Camera, Projection}, mouse_picker::MousePicker, renderer::{
+use crate::core::{
+    camera::{Camera, Projection},
+    mouse_picker::MousePicker,
+    renderer::{
         line::Line,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
         texture::Texture,
-    }};
+    },
+};
 
 pub const CHUNK_RADIUS: usize = 5;
 pub const CHUNK_SIZE: usize = 128;

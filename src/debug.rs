@@ -2,10 +2,12 @@ use glfw::{Action, Glfw, Key};
 
 use crate::{
     core::{
-        entity::component::{camera_component, model_component::ModelComponent}, renderer::{
+        entity::component::{camera_component, model_component::ModelComponent},
+        renderer::{
             line::{Line, LineRenderer},
             text::TextRenderer,
-        }, scene::Scene
+        },
+        scene::Scene,
     },
     terrain::{Chunk, ChunkBounds, Terrain, CHUNK_SIZE},
 };
@@ -58,11 +60,10 @@ impl DebugController {
         }
     }
 
-    pub fn draw_debug_ui<T>(
-        &self,
-        delta_time: f32,
-        scene: &Scene
-    ) where T: Chunk + Send + 'static {
+    pub fn draw_debug_ui<T>(&self, delta_time: f32, scene: &Scene)
+    where
+        T: Chunk + Send + 'static,
+    {
         if let Some(camera_component) = scene.get_component::<camera_component::CameraComponent>() {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();

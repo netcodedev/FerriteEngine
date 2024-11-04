@@ -4,10 +4,14 @@ use cgmath::{EuclideanSpace, Point3};
 use glfw::MouseButton;
 
 use crate::core::{
-    entity::component::{camera_component::CameraComponent, Component}, mouse_picker::MousePicker, renderer::{
+    entity::component::{camera_component::CameraComponent, Component},
+    mouse_picker::MousePicker,
+    renderer::{
         line::Line,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
-    }, scene::Scene, view_frustum::ViewFrustum
+    },
+    scene::Scene,
+    view_frustum::ViewFrustum,
 };
 
 use super::{Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
@@ -194,7 +198,12 @@ impl<T: Chunk + Send + 'static> Component for Terrain<T> {
         }
     }
 
-    fn handle_event(&mut self, glfw: &mut glfw::Glfw, window: &mut glfw::Window, event: &glfw::WindowEvent) {
+    fn handle_event(
+        &mut self,
+        glfw: &mut glfw::Glfw,
+        window: &mut glfw::Window,
+        event: &glfw::WindowEvent,
+    ) {
         let line = self.mouse_picker.handle_event(glfw, window, event);
         self.process_line(line);
     }
