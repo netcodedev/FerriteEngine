@@ -12,12 +12,11 @@ impl Scene {
     }
 
     pub fn update(&mut self, delta_time: f64) {
-        let mut entities = Vec::with_capacity(self.entities.len());
-        while let Some(mut entity) = self.entities.pop() {
+        for i in 0..self.entities.len() {
+            let mut entity = self.entities.remove(i);
             entity.update(self, delta_time);
-            entities.push(entity);
+            self.entities.insert(i, entity);
         }
-        self.entities = entities;
     }
 
     pub fn render(&self) {

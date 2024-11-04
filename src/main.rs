@@ -43,10 +43,6 @@ impl WorldLayer {
         scene.add_entity(entity);
         let ui = UIRenderer::new();
 
-        let mut debug = Entity::new();
-        debug.add_component(DebugController::new());
-        scene.add_entity(debug);
-
         let mut terrain_entity = Entity::new();
         terrain_entity.add_component(Terrain::<DualContouringChunk>::new());
         scene.add_entity(terrain_entity);
@@ -62,6 +58,10 @@ impl WorldLayer {
         model.play_animation("idle");
         model_entity.add_component(ModelComponent::new(model));
         scene.add_entity(model_entity);
+
+        let mut debug = Entity::new();
+        debug.add_component(DebugController::new());
+        scene.add_entity(debug);
 
         Ok(Self { scene, ui })
     }
