@@ -44,12 +44,12 @@ impl DebugController {
                 max: (0, 0, 0),
             },
 
-            fps_text: Text::new(Fonts::RobotoMono, 5, 5, 16.0, String::from("FPS: 0.0")),
-            pos_text: Text::new(Fonts::RobotoMono, 5, 25, 16.0, String::from("")),
-            cam_text: Text::new(Fonts::RobotoMono, 5, 45, 16.0, String::from("")),
-            chunk_min_text: Text::new(Fonts::RobotoMono, 5, 65, 16.0, String::from("")),
-            chunk_max_text: Text::new(Fonts::RobotoMono, 5, 85, 16.0, String::from("")),
-            triangle_count_text: Text::new(Fonts::RobotoMono, 5, 105, 16.0, String::from("")),
+            fps_text: Text::new(Fonts::RobotoMono, 5, 5, 26.0, String::from("FPS: 0.0")),
+            pos_text: Text::new(Fonts::RobotoMono, 5, 30, 16.0, String::from("")),
+            cam_text: Text::new(Fonts::RobotoMono, 5, 50, 16.0, String::from("")),
+            chunk_min_text: Text::new(Fonts::RobotoMono, 5, 70, 16.0, String::from("")),
+            chunk_max_text: Text::new(Fonts::RobotoMono, 5, 90, 16.0, String::from("")),
+            triangle_count_text: Text::new(Fonts::RobotoMono, 5, 110, 16.0, String::from("")),
         }
     }
 }
@@ -59,15 +59,26 @@ impl Component for DebugController {
         self.delta_time = delta_time;
 
         let fps = 1.0 / self.delta_time;
-        self.fps_text.set_content(format!("{:.2} FPS ({:.2}ms)", fps, self.delta_time * 1000.0));
+        self.fps_text.set_content(format!(
+            "{:.2} FPS ({:.2}ms)",
+            fps,
+            self.delta_time * 1000.0
+        ));
         if self.debug_ui {
-            if let Some(camera_component) = scene.get_component::<camera_component::CameraComponent>() {
+            if let Some(camera_component) =
+                scene.get_component::<camera_component::CameraComponent>()
+            {
                 let camera = camera_component.get_camera();
                 let pos = camera.position;
                 self.bounds = ChunkBounds::parse(pos.to_vec());
 
-                self.pos_text.set_content(format!("x: {:.2} y: {:.2} z: {:.2}", pos.x, pos.y, pos.z));
-                self.cam_text.set_content(format!("yaw: {:?} pitch {:?}", Deg::from(camera.yaw), Deg::from(camera.pitch)));
+                self.pos_text
+                    .set_content(format!("x: {:.2} y: {:.2} z: {:.2}", pos.x, pos.y, pos.z));
+                self.cam_text.set_content(format!(
+                    "yaw: {:?} pitch {:?}",
+                    Deg::from(camera.yaw),
+                    Deg::from(camera.pitch)
+                ));
                 self.chunk_min_text.set_content(format!(
                     "Chunk: xMin: {} yMin: {} zMin: {}",
                     self.bounds.min.0, self.bounds.min.1, self.bounds.min.2
@@ -78,9 +89,9 @@ impl Component for DebugController {
                 ));
             }
             if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
-                self.triangle_count_text.set_content(format!("Triangles: {}", terrain.get_triangle_count()));
+                self.triangle_count_text
+                    .set_content(format!("Triangles: {}", terrain.get_triangle_count()));
             }
-
         }
     }
 

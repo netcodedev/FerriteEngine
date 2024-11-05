@@ -16,67 +16,11 @@ impl PlaneRenderer {
             height,
         }
     }
-    pub fn render(plane: Plane) {
+    pub fn render(plane: &Plane) {
         let renderer = RENDERER.lock().unwrap();
         // calculate plane vertices
-        let vertices = vec![
-            PlaneVertex {
-                position: (
-                    plane.position.0,
-                    plane.position.1 + plane.size.1,
-                    plane.position.2,
-                ),
-                color: plane.color,
-                dimensions: (
-                    plane.size.0,
-                    plane.size.1,
-                    plane.position.0,
-                    plane.position.1,
-                ),
-            },
-            PlaneVertex {
-                position: (
-                    plane.position.0 + plane.size.0,
-                    plane.position.1 + plane.size.1,
-                    plane.position.2,
-                ),
-                color: plane.color,
-                dimensions: (
-                    plane.size.0,
-                    plane.size.1,
-                    plane.position.0,
-                    plane.position.1,
-                ),
-            },
-            PlaneVertex {
-                position: (
-                    plane.position.0 + plane.size.0,
-                    plane.position.1,
-                    plane.position.2,
-                ),
-                color: plane.color,
-                dimensions: (
-                    plane.size.0,
-                    plane.size.1,
-                    plane.position.0,
-                    plane.position.1,
-                ),
-            },
-            PlaneVertex {
-                position: (plane.position.0, plane.position.1, plane.position.2),
-                color: plane.color,
-                dimensions: (
-                    plane.size.0,
-                    plane.size.1,
-                    plane.position.0,
-                    plane.position.1,
-                ),
-            },
-        ];
-        let indices: Vec<u32> = vec![0, 1, 2, 2, 3, 0];
-        let mut vertex_array = DynamicVertexArray::<PlaneVertex>::new();
-        vertex_array.buffer_data(&vertices, &Some(indices.clone()));
-        vertex_array.bind();
+
+        plane.vertex_array.bind();
         renderer.shader.bind();
         let ortho = cgmath::ortho(0.0, renderer.width, renderer.height, 0.0, -1.0, 100.0);
         renderer.shader.set_uniform_mat4("projection", &ortho);
@@ -103,7 +47,7 @@ impl PlaneRenderer {
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             gl::DrawElements(
                 gl::TRIANGLES,
-                indices.len() as i32,
+                plane.vertex_array.get_element_count() as i32,
                 gl::UNSIGNED_INT,
                 std::ptr::null(),
             );
@@ -171,14 +115,99 @@ impl PlaneBuilder {
         self
     }
     pub fn build(self) -> Plane {
-        Plane {
-            position: self.position,
-            size: self.size,
-            color: self.color,
-            border_thickness: self.border_thickness,
-            border_color: self.border_color,
-            border_radius: self.border_radius,
-        }
+        Plane::new(
+            self.position,
+            self.size,
+            self.color,
+            self.border_thickness,
+            self.border_color,
+            self.border_radius,
+        )
+    }
+}
+
+#[allow(dead_code)]
+impl Plane {
+    pub fn new(
+        position: (f32, f32, f32),
+        size: (f32, f32),
+        color: (f32, f32, f32, f32),
+        border_thickness: f32,
+        border_color: (f32, f32, f32, f32),
+        border_radius: (f32, f32, f32, f32),
+    ) -> Self {
+        let indices: Vec<u32> = vec![0, 1, 2, 2, 3, 0];
+        let vertex_array = DynamicVertexArray::<PlaneVertex>::new();
+        let mut plane = Self {
+            position,
+            size,
+            color,
+            border_thickness,
+            border_color,
+            border_radius,
+            vertex_array,
+        };
+        let vertices = plane.get_vertices();
+        plane.vertex_array.buffer_data(&vertices, &Some(indices));
+        plane
+    }
+
+    fn get_vertices(&self) -> Vec<PlaneVertex> {
+        vec![
+            PlaneVertex {
+                position: (
+                    self.position.0,
+                    self.position.1 + self.size.1,
+                    self.position.2,
+                ),
+                color: self.color,
+                dimensions: (self.size.0, self.size.1, self.position.0, self.position.1),
+            },
+            PlaneVertex {
+                position: (
+                    self.position.0 + self.size.0,
+                    self.position.1 + self.size.1,
+                    self.position.2,
+                ),
+                color: self.color,
+                dimensions: (self.size.0, self.size.1, self.position.0, self.position.1),
+            },
+            PlaneVertex {
+                position: (
+                    self.position.0 + self.size.0,
+                    self.position.1,
+                    self.position.2,
+                ),
+                color: self.color,
+                dimensions: (self.size.0, self.size.1, self.position.0, self.position.1),
+            },
+            PlaneVertex {
+                position: (self.position.0, self.position.1, self.position.2),
+                color: self.color,
+                dimensions: (self.size.0, self.size.1, self.position.0, self.position.1),
+            },
+        ]
+    }
+
+    pub fn set_position(&mut self, position: (f32, f32, f32)) {
+        self.position = position;
+        let vertices = self.get_vertices();
+        let indices: Vec<u32> = vec![0, 1, 2, 2, 3, 0];
+        self.vertex_array.buffer_data(&vertices, &Some(indices));
+    }
+
+    pub fn set_size(&mut self, size: (f32, f32)) {
+        self.size = size;
+        let vertices = self.get_vertices();
+        let indices: Vec<u32> = vec![0, 1, 2, 2, 3, 0];
+        self.vertex_array.buffer_data(&vertices, &Some(indices));
+    }
+
+    pub fn set_color(&mut self, color: (f32, f32, f32, f32)) {
+        self.color = color;
+        let vertices = self.get_vertices();
+        let indices: Vec<u32> = vec![0, 1, 2, 2, 3, 0];
+        self.vertex_array.buffer_data(&vertices, &Some(indices));
     }
 }
 

@@ -11,34 +11,8 @@ use super::{Panel, PanelBuilder};
 
 impl UIElement for Panel {
     fn render(&mut self, scene: &mut Scene) {
-        PlaneRenderer::render(
-            PlaneBuilder::new()
-                .position((
-                    self.offset.0 + self.position.0,
-                    self.offset.1 + self.position.1,
-                    0.0,
-                ))
-                .size((self.size.0, self.size.1))
-                .color((0.2, 0.2, 0.2, 1.0))
-                .border_radius_uniform(5.0)
-                .border_thickness(1.0)
-                .build(),
-        );
-        let mut header_plane = PlaneBuilder::new()
-            .position((
-                self.offset.0 + self.position.0,
-                self.offset.1 + self.position.1,
-                0.0,
-            ))
-            .size((self.size.0, 20.0))
-            .border_radius((5.0, 5.0, 0.0, 0.0))
-            .border_thickness(1.0);
-        if self.is_hovering {
-            header_plane = header_plane.color((0.3, 0.4, 0.6, 1.0));
-        } else {
-            header_plane = header_plane.color((0.2, 0.3, 0.5, 1.0))
-        }
-        PlaneRenderer::render(header_plane.build());
+        PlaneRenderer::render(&self.plane);
+        PlaneRenderer::render(&self.header_plane);
         self.text.set_content(self.title.clone());
         self.text.render_at(
             (self.offset.0 + self.position.0 + 8.0) as i32,
@@ -87,10 +61,12 @@ impl UIElement for Panel {
                     if !self.is_hovering {
                         window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
                         self.is_hovering = true;
+                        self.header_plane.set_color((0.3, 0.4, 0.6, 1.0));
                     }
                 } else if self.is_hovering {
                     window.set_cursor(None);
                     self.is_hovering = false;
+                    self.header_plane.set_color((0.2, 0.3, 0.5, 1.0));
                 }
                 if self.dragging {
                     // Update panel position while dragging
@@ -114,6 +90,16 @@ impl UIElement for Panel {
 
     fn set_offset(&mut self, offset: (f32, f32)) {
         self.offset = offset;
+        self.plane.set_position((
+            self.position.0 + self.offset.0,
+            self.position.1 + self.offset.1,
+            0.0,
+        ));
+        self.header_plane.set_position((
+            self.position.0 + self.offset.0,
+            self.position.1 + self.offset.1,
+            0.0,
+        ));
         self.content.set_offset((
             self.offset.0 + self.position.0,
             self.offset.1 + self.position.1 + 20.0,
@@ -132,16 +118,32 @@ impl Panel {
             .size(size.0, size.1 - 40.0)
             .build();
         content.set_offset((position.0, position.1 + 20.0));
+        let plane = PlaneBuilder::new()
+            .position((position.0, position.1, 0.0))
+            .size((size.0, size.1))
+            .color((0.2, 0.2, 0.2, 1.0))
+            .border_radius_uniform(5.0)
+            .border_thickness(1.0)
+            .build();
+        let header_plane = PlaneBuilder::new()
+            .position((position.0, position.1, 0.0))
+            .size((size.0, 20.0))
+            .color((0.2, 0.3, 0.5, 1.0))
+            .border_radius((5.0, 5.0, 0.0, 0.0))
+            .border_thickness(1.0)
+            .build();
         Self {
             position,
             size,
             title: title.clone(),
             content,
-            text: Text::new(Fonts::RobotoMono, 0,0, 16.0, title),
+            text: Text::new(Fonts::RobotoMono, 0, 0, 16.0, title),
             offset: (0.0, 0.0),
             drag_start: None,
             dragging: false,
             is_hovering: false,
+            plane,
+            header_plane,
         }
     }
 }

@@ -11,21 +11,7 @@ use super::{Input, InputBuilder};
 
 impl UIElement for Input {
     fn render(&mut self, scene: &mut Scene) {
-        let mut plane = PlaneBuilder::new()
-            .position((
-                self.offset.0 + self.position.0,
-                self.offset.1 + self.position.1,
-                0.0,
-            ))
-            .size((self.size.0, self.size.1))
-            .border_radius_uniform(5.0)
-            .border_thickness(1.0);
-        if self.is_hovering || self.is_focused {
-            plane = plane.color((0.3, 0.3, 0.3, 1.0));
-        } else {
-            plane = plane.color((0.2, 0.2, 0.2, 1.0));
-        }
-        PlaneRenderer::render(plane.build());
+        PlaneRenderer::render(&self.plane);
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
             gl::Enable(gl::STENCIL_TEST);
@@ -38,8 +24,7 @@ impl UIElement for Input {
             gl::DepthMask(gl::FALSE);
 
             // Render the plane to the stencil buffer
-            let stencil_plane = plane.size((self.size.0 - 5.0, self.size.1)).build();
-            PlaneRenderer::render(stencil_plane);
+            PlaneRenderer::render(&self.stencil_plane);
             gl::StencilFunc(gl::EQUAL, 1, 0xFF);
             gl::StencilMask(0x00);
             gl::Disable(gl::DEPTH_TEST);
@@ -52,7 +37,10 @@ impl UIElement for Input {
                 self.content = get_fn(scene);
             }
             self.text.set_content(self.content.clone());
-            self.text.render_at((self.offset.0 + self.position.0 + 5.0) as i32, (self.offset.1 + self.position.1 + 5.0) as i32);
+            self.text.render_at(
+                (self.offset.0 + self.position.0 + 5.0) as i32,
+                (self.offset.1 + self.position.1 + 5.0) as i32,
+            );
             gl::Disable(gl::STENCIL_TEST);
             gl::StencilMask(0xFF);
             gl::StencilFunc(gl::ALWAYS, 0, 0xFF);
@@ -74,10 +62,16 @@ impl UIElement for Input {
                     && y as f32 >= self.offset.1 + self.position.1
                     && y as f32 <= self.offset.1 + self.position.1 + self.size.1
                 {
-                    self.is_focused = true;
+                    if !self.is_focused {
+                        self.is_focused = true;
+                        self.plane.set_color((0.3, 0.3, 0.3, 1.0));
+                        self.stencil_plane.set_color((0.3, 0.3, 0.3, 1.0));
+                    }
                     return true;
-                } else {
+                } else if self.is_focused {
                     self.is_focused = false;
+                    self.plane.set_color((0.2, 0.2, 0.2, 1.0));
+                    self.stencil_plane.set_color((0.2, 0.2, 0.2, 1.0));
                 }
                 false
             }
@@ -87,12 +81,19 @@ impl UIElement for Input {
                     && *y as f32 >= self.offset.1 + self.position.1
                     && *y as f32 <= self.offset.1 + self.position.1 + self.size.1
                 {
-                    self.is_hovering = true;
-                    window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::IBeam)));
-                } else {
-                    if self.is_hovering {
-                        window.set_cursor(None);
-                        self.is_hovering = false;
+                    if !self.is_hovering {
+                        self.is_hovering = true;
+                        self.plane.set_color((0.3, 0.3, 0.3, 1.0));
+                        self.stencil_plane.set_color((0.3, 0.3, 0.3, 1.0));
+                        window
+                            .set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::IBeam)));
+                    }
+                } else if self.is_hovering {
+                    window.set_cursor(None);
+                    self.is_hovering = false;
+                    if !self.is_focused {
+                        self.plane.set_color((0.2, 0.2, 0.2, 1.0));
+                        self.stencil_plane.set_color((0.2, 0.2, 0.2, 1.0));
                     }
                 }
                 false
@@ -136,6 +137,13 @@ impl UIElement for Input {
 
     fn set_offset(&mut self, offset: (f32, f32)) {
         self.offset = offset;
+        self.plane
+            .set_position((self.position.0 + offset.0, self.position.1 + offset.1, 0.0));
+        self.stencil_plane.set_position((
+            self.position.0 + offset.0,
+            self.position.1 + offset.1,
+            0.0,
+        ));
     }
 
     fn get_size(&self) -> (f32, f32) {
@@ -151,6 +159,11 @@ impl Input {
         get_fn: Option<Box<dyn Fn(&mut Scene) -> String>>,
         set_fn: Option<Box<dyn FnMut(&mut Scene, String)>>,
     ) -> Self {
+        let plane = PlaneBuilder::new()
+            .position((position.0, position.1, 0.0))
+            .size((size.0, size.1))
+            .border_radius_uniform(5.0)
+            .border_thickness(1.0);
         Self {
             position,
             size,
@@ -160,7 +173,9 @@ impl Input {
             content: content.clone(),
             get_fn,
             set_fn,
-            text: Text::new(Fonts::RobotoMono, 0,0, 16.0, content),
+            text: Text::new(Fonts::RobotoMono, 0, 0, 16.0, content),
+            plane: plane.build(),
+            stencil_plane: plane.size((size.0 - 5.0, size.1)).build(),
         }
     }
 }

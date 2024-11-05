@@ -10,7 +10,13 @@ impl Text {
         Self {
             size,
             content: text.clone(),
-            text: crate::core::renderer::text::Text::new(Fonts::RobotoMono, 0, 0, size, text.to_string()),
+            text: crate::core::renderer::text::Text::new(
+                Fonts::RobotoMono,
+                0,
+                0,
+                size,
+                text.to_string(),
+            ),
             offset: (0.0, 0.0),
             width: size * text.len() as f32, // initial estimate (will be too high)
         }
@@ -20,7 +26,9 @@ impl Text {
 impl UIElement for Text {
     fn render(&mut self, _: &mut Scene) {
         self.text.set_content(self.content.clone());
-        let (width, _) = self.text.render_at(self.offset.0 as i32 + 5, self.offset.1 as i32 + 2);
+        let (width, _) = self
+            .text
+            .render_at(self.offset.0 as i32 + 5, self.offset.1 as i32 + 2);
         if width as f32 != self.width {
             self.width = width as f32;
         }

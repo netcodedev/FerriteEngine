@@ -1,4 +1,4 @@
-use crate::core::scene::Scene;
+use crate::core::{renderer::plane::Plane, scene::Scene};
 
 use super::UIElement;
 
@@ -11,6 +11,7 @@ pub struct Button {
     pub children: Vec<Box<dyn UIElement>>,
     pub offset: (f32, f32),
     pub is_hovering: bool,
+    plane: Plane,
 }
 
 pub struct ButtonBuilder {

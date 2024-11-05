@@ -26,7 +26,9 @@ impl Fonts {
         static ROBOTO_MONO: OnceLock<Font> = OnceLock::new();
 
         match self {
-            Fonts::RobotoMono => ROBOTO_MONO.get_or_init(|| { Font::new(include_bytes!("../../../../assets/font/RobotoMono.ttf")) }),
+            Fonts::RobotoMono => ROBOTO_MONO.get_or_init(|| {
+                Font::new(include_bytes!("../../../../assets/font/RobotoMono.ttf"))
+            }),
         }
     }
 }
@@ -39,7 +41,8 @@ impl Text {
             size,
             glyphs: Vec::new(),
             dirty: true,
-            x, y,
+            x,
+            y,
             mesh: TextMesh::new(),
             max_x: x,
             max_y: y,
@@ -194,7 +197,7 @@ impl TextRenderer {
             gl::ActiveTexture(gl::TEXTURE0);
             renderer.texture_buffer.bind();
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-            
+
             gl::GetIntegerv(gl::POLYGON_MODE, &mut polygon_mode);
             if polygon_mode != gl::FILL as i32 {
                 gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
@@ -223,7 +226,11 @@ impl TextRenderer {
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             renderer.shader.set_uniform_1i("texture0", 0);
-            gl::DrawArrays(gl::TRIANGLES, 0, text.mesh.vertex_array.get_element_count() as i32);
+            gl::DrawArrays(
+                gl::TRIANGLES,
+                0,
+                text.mesh.vertex_array.get_element_count() as i32,
+            );
 
             // cleanup
             gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -259,7 +266,10 @@ impl TextRenderer {
         (renderer.width, renderer.height)
     }
 
-    pub fn rect_for(font_id: usize, glyph: PositionedGlyph<'static>) -> Option<(Rect<f32>, Rect<i32>)> {
+    pub fn rect_for(
+        font_id: usize,
+        glyph: PositionedGlyph<'static>,
+    ) -> Option<(Rect<f32>, Rect<i32>)> {
         let mut renderer = RENDERER.lock().unwrap();
         renderer.cache.queue_glyph(0, glyph.clone());
         unsafe {
@@ -300,10 +310,7 @@ impl TextMesh {
 
 impl VertexAttributes for TextVertex {
     fn get_vertex_attributes() -> Vec<(usize, gl::types::GLuint)> {
-        vec![
-            (2, gl::FLOAT),
-            (2, gl::FLOAT),
-        ]
+        vec![(2, gl::FLOAT), (2, gl::FLOAT)]
     }
 }
 

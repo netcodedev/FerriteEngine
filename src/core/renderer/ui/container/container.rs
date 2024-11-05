@@ -16,24 +16,19 @@ impl Container {
             children: Vec::new(),
             offset: (0.0, 0.0),
             gap: 5.0,
+            plane: PlaneBuilder::new()
+                .position((position.0, position.1, 0.0))
+                .size((size.0, size.1))
+                .color((0.0, 0.0, 0.0, 0.0))
+                .border_color((0.0, 0.0, 0.0, 0.0))
+                .build(),
         }
     }
 }
 
 impl UIElement for Container {
     fn render(&mut self, scene: &mut Scene) {
-        PlaneRenderer::render(
-            PlaneBuilder::new()
-                .position((
-                    self.offset.0 + self.position.0,
-                    self.offset.1 + self.position.1,
-                    0.0,
-                ))
-                .size((self.size.0, self.size.1))
-                .color((0.0, 0.0, 0.0, 0.0))
-                .border_color((0.0, 0.0, 0.0, 0.0))
-                .build(),
-        );
+        PlaneRenderer::render(&self.plane);
         for child in &mut self.children {
             child.render(scene);
         }
@@ -41,6 +36,11 @@ impl UIElement for Container {
 
     fn set_offset(&mut self, offset: (f32, f32)) {
         self.offset = offset;
+        self.plane.set_position((
+            self.offset.0 + self.position.0,
+            self.offset.1 + self.position.1,
+            0.0,
+        ));
         let mut current_y_offset = self.gap;
         for child in &mut self.children {
             child.set_offset((
