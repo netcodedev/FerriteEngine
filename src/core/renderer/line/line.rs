@@ -67,8 +67,8 @@ impl LineRenderer {
             }
             renderer.shader.bind();
 
-            let view = camera.calc_matrix();
-            let projection = projection.calc_matrix();
+            let view = camera.get_matrix();
+            let projection = projection.get_matrix();
 
             renderer.shader.set_uniform_mat4("view", &view);
             renderer.shader.set_uniform_mat4("projection", &projection);
@@ -118,8 +118,8 @@ impl LineRenderer {
             }
             renderer.shader.bind();
 
-            let view = camera.calc_matrix();
-            let projection = projection.calc_matrix();
+            let view = camera.get_matrix();
+            let projection = projection.get_matrix();
 
             renderer.shader.set_uniform_mat4("view", &view);
             renderer.shader.set_uniform_mat4("projection", &projection);

@@ -188,9 +188,9 @@ impl Model {
                 panic!("Mesh is not buffered");
             }
             self.shader.bind();
-            self.shader.set_uniform_mat4("view", &camera.calc_matrix());
+            self.shader.set_uniform_mat4("view", &camera.get_matrix());
             self.shader
-                .set_uniform_mat4("projection", &projection.calc_matrix());
+                .set_uniform_mat4("projection", &projection.get_matrix());
             if let Some(root_bone) = &mesh.root_bone {
                 let mut bone_transforms =
                     Model::get_bone_transformations(root_bone, Matrix4::identity());

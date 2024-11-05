@@ -112,8 +112,8 @@ impl Chunk for DualContouringChunk {
                 panic!("Mesh is not buffered");
             }
             shader.bind();
-            shader.set_uniform_mat4("view", &camera.calc_matrix());
-            shader.set_uniform_mat4("projection", &projection.calc_matrix());
+            shader.set_uniform_mat4("view", &camera.get_matrix());
+            shader.set_uniform_mat4("projection", &projection.get_matrix());
             unsafe {
                 gl::Enable(gl::CULL_FACE);
             }

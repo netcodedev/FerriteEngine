@@ -69,15 +69,15 @@ impl Component for DebugController {
                 scene.get_component::<camera_component::CameraComponent>()
             {
                 let camera = camera_component.get_camera();
-                let pos = camera.position;
+                let pos = camera.get_position();
                 self.bounds = ChunkBounds::parse(pos.to_vec());
 
                 self.pos_text
                     .set_content(format!("x: {:.2} y: {:.2} z: {:.2}", pos.x, pos.y, pos.z));
                 self.cam_text.set_content(format!(
                     "yaw: {:?} pitch {:?}",
-                    Deg::from(camera.yaw),
-                    Deg::from(camera.pitch)
+                    Deg::from(camera.get_yaw()),
+                    Deg::from(camera.get_pitch())
                 ));
                 self.chunk_min_text.set_content(format!(
                     "Chunk: xMin: {} yMin: {} zMin: {}",

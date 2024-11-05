@@ -23,9 +23,9 @@ impl MousePicker {
     }
 
     pub fn update(&mut self, camera: &Camera, projection: &Projection) {
-        self.position = camera.position;
-        self.camera = camera.calc_matrix();
-        self.projection = projection.calc_matrix();
+        self.position = camera.get_position();
+        self.camera = camera.get_matrix();
+        self.projection = projection.get_matrix();
     }
 
     fn calculate_ray(&mut self) -> Vector3<f32> {

@@ -1,6 +1,6 @@
 use std::f32::consts::FRAC_PI_2;
 
-use cgmath::{perspective, InnerSpace, Matrix4, Point3, Rad, Vector3};
+use cgmath::{perspective, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
 use glfw::{Action, CursorMode, Key};
 
 #[rustfmt::skip]
@@ -15,9 +15,11 @@ const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
 #[derive(Debug)]
 pub struct Camera {
-    pub position: Point3<f32>,
-    pub yaw: Rad<f32>,
-    pub pitch: Rad<f32>,
+    position: Point3<f32>,
+    yaw: Rad<f32>,
+    pitch: Rad<f32>,
+
+    matrix: Matrix4<f32>,
 }
 
 impl Camera {
@@ -30,18 +32,42 @@ impl Camera {
             position: position.into(),
             yaw: yaw.into(),
             pitch: pitch.into(),
+            matrix: Matrix4::identity(),
         }
     }
 
-    pub fn calc_matrix(&self) -> Matrix4<f32> {
+    fn calc_matrix(&mut self) {
         let (sin_pitch, cos_pitch) = self.pitch.0.sin_cos();
         let (sin_yaw, cos_yaw) = self.yaw.0.sin_cos();
 
-        Matrix4::look_to_rh(
+        self.matrix = Matrix4::look_to_rh(
             self.position,
             Vector3::new(cos_pitch * cos_yaw, sin_pitch, cos_pitch * sin_yaw).normalize(),
             Vector3::unit_y(),
-        )
+        );
+    }
+
+    pub fn update(&mut self, position: Point3<f32>, yaw: Rad<f32>, pitch: Rad<f32>) {
+        self.position = position;
+        self.yaw = yaw;
+        self.pitch = pitch;
+        self.calc_matrix();
+    }
+
+    pub fn get_position(&self) -> Point3<f32> {
+        self.position
+    }
+
+    pub fn get_yaw(&self) -> Rad<f32> {
+        self.yaw
+    }
+
+    pub fn get_pitch(&self) -> Rad<f32> {
+        self.pitch
+    }
+
+    pub fn get_matrix(&self) -> Matrix4<f32> {
+        self.matrix
     }
 }
 
@@ -50,29 +76,39 @@ pub struct Projection {
     fovy: Rad<f32>,
     znear: f32,
     zfar: f32,
+
+    matrix: Matrix4<f32>,
 }
 
 impl Projection {
     pub fn new<F: Into<Rad<f32>>>(width: u32, height: u32, fovy: F, znear: f32, zfar: f32) -> Self {
-        Self {
+        let mut projection = Self {
             aspect: width as f32 / height as f32,
             fovy: fovy.into(),
             znear,
             zfar,
-        }
+            matrix: Matrix4::identity(),
+        };
+        projection.calc_matrix();
+        projection
     }
 
     pub fn resize(&mut self, event: &glfw::WindowEvent) {
         if let glfw::WindowEvent::FramebufferSize(width, height) = event {
             self.aspect = *width as f32 / *height as f32;
+            self.calc_matrix();
             unsafe {
                 gl::Viewport(0, 0, *width, *height);
             }
         }
     }
 
-    pub fn calc_matrix(&self) -> Matrix4<f32> {
-        OPENGL_TO_WGPU_MATRIX * perspective(self.fovy, self.aspect, self.znear, self.zfar)
+    fn calc_matrix(&mut self) {
+        self.matrix = OPENGL_TO_WGPU_MATRIX * perspective(self.fovy, self.aspect, self.znear, self.zfar);
+    }
+
+    pub fn get_matrix(&self) -> Matrix4<f32> {
+        self.matrix
     }
 }
 
@@ -224,26 +260,33 @@ impl CameraController {
         let (yaw_sin, yaw_cos) = camera.yaw.0.sin_cos();
         let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
         let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
-        camera.position +=
+
+        let mut position = camera.position;
+        let mut yaw = camera.yaw;
+        let mut pitch = camera.pitch;
+
+        position +=
             forward * (self.amount_forward - self.amount_backward) * self.speed * delta_time;
-        camera.position += right * (self.amount_right - self.amount_left) * self.speed * delta_time;
+        position += right * (self.amount_right - self.amount_left) * self.speed * delta_time;
 
         // Move up/down. Since we don't use roll, we can just
         // modify the y coordinate directly.
-        camera.position.y += (self.amount_up - self.amount_down) * self.speed * delta_time;
+        position.y += (self.amount_up - self.amount_down) * self.speed * delta_time;
 
         // Rotate
-        camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity * delta_time;
-        camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity * delta_time;
+        yaw += Rad(self.rotate_horizontal) * self.sensitivity * delta_time;
+        pitch += Rad(-self.rotate_vertical) * self.sensitivity * delta_time;
 
         self.rotate_horizontal = 0.0;
         self.rotate_vertical = 0.0;
 
         // Keep the camera's angle from going too high/low.
-        if camera.pitch < -Rad(SAFE_FRAC_PI_2) {
-            camera.pitch = -Rad(SAFE_FRAC_PI_2);
+        if pitch < -Rad(SAFE_FRAC_PI_2) {
+            pitch = -Rad(SAFE_FRAC_PI_2);
         } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
-            camera.pitch = Rad(SAFE_FRAC_PI_2);
+            pitch = Rad(SAFE_FRAC_PI_2);
         }
+
+        camera.update(position, yaw, pitch);
     }
 }

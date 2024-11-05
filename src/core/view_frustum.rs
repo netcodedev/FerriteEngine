@@ -15,12 +15,12 @@ impl ViewFrustum {
         let mut result = false;
 
         // check if bounds are close to camera
-        let distance = (camera.position - bounds.center()).magnitude();
+        let distance = (camera.get_position() - bounds.center()).magnitude();
         if distance < CHUNK_SIZE as f32 * 0.75 {
             return true;
         }
 
-        let view_projection = projection.calc_matrix() * camera.calc_matrix();
+        let view_projection = projection.get_matrix() * camera.get_matrix();
         let clip: [Vector4<f32>; 8] = [
             Vector4::new(
                 bounds.min.0 as f32,
