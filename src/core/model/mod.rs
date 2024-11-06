@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cgmath::{Matrix4, Vector3};
+use cgmath::{Matrix4, Point3, Vector3};
 use russimp::{material::TextureType, scene::Scene};
 
 use crate::core::renderer::{
@@ -22,7 +22,7 @@ pub struct Model {
     sync_animations: bool,
     shader: Shader,
     textures: HashMap<TextureType, Texture>,
-    position: cgmath::Vector3<f32>,
+    position: Point3<f32>,
     scale: f32,
 }
 
