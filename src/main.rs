@@ -77,20 +77,18 @@ impl Layer for WorldLayer {
                     input
                         .size(190.0, 26.0)
                         .get_fn(|scene| {
-                            let camera_controller = scene
-                                .get_component::<CameraComponent>()
-                                .unwrap()
-                                .get_camera_controller();
-                            camera_controller.get_speed().to_string()
+                            if let Some(camera_component) = scene.get_component::<CameraComponent>() {
+                                camera_component.get_camera_controller().get_speed().to_string()
+                            } else {
+                                "".to_string()
+                            }
                         })
                         .set_fn(move |scene, v| {
-                            let camera_controller = scene
-                                .get_component_mut::<CameraComponent>()
-                                .unwrap()
-                                .get_camera_controller_mut();
-                            match v.parse::<f32>() {
-                                Ok(v) => camera_controller.set_speed(v),
-                                Err(_) => {}
+                            if let Some(camera_component) = scene.get_component_mut::<CameraComponent>() {
+                                match v.parse::<f32>() {
+                                    Ok(v) => camera_component.get_camera_controller_mut().set_speed(v),
+                                    Err(_) => {}
+                                }
                             }
                         })
                 }))
