@@ -1,3 +1,5 @@
+use cgmath::{EuclideanSpace, Matrix4, Point3};
+
 use crate::core::scene::Scene;
 
 use super::{component::Component, Entity};
@@ -8,6 +10,7 @@ impl Entity {
         Entity {
             children: Vec::new(),
             components: Vec::new(),
+            position: Point3::new(0.0, 0.0, 0.0),
         }
     }
 
@@ -21,13 +24,14 @@ impl Entity {
         }
     }
 
-    pub fn render(&self, scene: &Scene) {
+    pub fn render(&self, scene: &Scene, parent_transform: Matrix4<f32>) {
+        let transform = parent_transform * Matrix4::from_translation(self.position.to_vec());
         for component in self.components.iter() {
-            component.render(scene);
+            component.render(scene, &transform);
         }
 
         for child in self.children.iter() {
-            child.render(scene);
+            child.render(scene, transform);
         }
     }
 
@@ -76,5 +80,13 @@ impl Entity {
             }
         }
         None
+    }
+
+    pub fn get_position(&self) -> Point3<f32> {
+        self.position
+    }
+
+    pub fn set_position<P: Into<Point3<f32>>>(&mut self, position: P) {
+        self.position = position.into();
     }
 }

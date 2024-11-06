@@ -1,19 +1,18 @@
 use core::panic;
 
-use cgmath::{InnerSpace, Vector3, Zero};
+use cgmath::{InnerSpace, Matrix4, Vector3, Zero};
 use gl::types::GLuint;
 use glfw::MouseButton;
 use libnoise::prelude::*;
 use ndarray::ArrayBase;
 
 use crate::{
-    core::camera::{Camera, Projection},
-    core::renderer::{
+    core::{camera::{Camera, Projection}, renderer::{
         line::Line,
         shader::{Shader, VertexAttributes},
         texture::Texture,
-    },
-    terrain::{Chunk, ChunkBounds},
+    }},
+    terrain::{Chunk, ChunkBounds, CHUNK_SIZE_FLOAT},
 };
 
 use super::{ChunkMesh, MarchingCubesChunk, Vertex, CHUNK_SIZE, EDGES, POINTS, TRIANGULATIONS};
@@ -170,7 +169,7 @@ impl Chunk for MarchingCubesChunk {
         chunk
     }
 
-    fn render(&self, camera: &Camera, projection: &Projection, shader: &Shader) {
+    fn render(&self, parent_transform: &Matrix4<f32>, camera: &Camera, projection: &Projection, shader: &Shader) {
         if let Some(mesh) = &self.mesh {
             if !mesh.is_buffered() {
                 panic!("Mesh is not buffered");
@@ -183,11 +182,12 @@ impl Chunk for MarchingCubesChunk {
             }
             mesh.render(
                 &shader,
+                &(parent_transform * Matrix4::from_translation(Vector3::new
                 (
-                    self.position.0 * CHUNK_SIZE as f32,
-                    self.position.1 * CHUNK_SIZE as f32,
-                    self.position.2 * CHUNK_SIZE as f32,
-                ),
+                    self.position.0 * CHUNK_SIZE_FLOAT,
+                    self.position.1 * CHUNK_SIZE_FLOAT,
+                    self.position.2 * CHUNK_SIZE_FLOAT,
+                ))),
                 None,
             );
             unsafe {

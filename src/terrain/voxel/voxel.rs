@@ -6,6 +6,7 @@ use crate::core::renderer::{
 };
 use crate::terrain::{Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
 
+use cgmath::{Matrix4, Vector3};
 use gl::types::GLuint;
 use libnoise::prelude::*;
 use ndarray::{Array3, ArrayBase, Dim};
@@ -356,7 +357,7 @@ impl Chunk for VoxelChunk {
         }
     }
 
-    fn render(&self, camera: &Camera, projection: &Projection, shader: &Shader) {
+    fn render(&self, parent_transform: &Matrix4<f32>, camera: &Camera, projection: &Projection, shader: &Shader) {
         if let Some(mesh) = &self.mesh {
             if !mesh.is_buffered() {
                 panic!("Mesh is not buffered");
@@ -369,11 +370,12 @@ impl Chunk for VoxelChunk {
             }
             mesh.render(
                 &shader,
+                &(parent_transform * Matrix4::from_translation(Vector3::new
                 (
                     self.position.0 * CHUNK_SIZE_FLOAT,
                     self.position.1 * CHUNK_SIZE_FLOAT,
                     self.position.2 * CHUNK_SIZE_FLOAT,
-                ),
+                ))),
                 None,
             );
             unsafe {

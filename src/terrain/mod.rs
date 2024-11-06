@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::mpsc};
 
+use cgmath::Matrix4;
 use glfw::MouseButton;
 
 use crate::core::{
@@ -32,7 +33,7 @@ pub struct Terrain<T: Chunk> {
 
 pub trait Chunk {
     fn new(position: (f32, f32, f32), lod: usize) -> Self;
-    fn render(&self, camera: &Camera, projection: &Projection, shader: &Shader);
+    fn render(&self, parent_transform: &Matrix4<f32>, camera: &Camera, projection: &Projection, shader: &Shader);
     fn buffer_data(&mut self);
     fn get_bounds(&self) -> ChunkBounds;
     fn process_line(&mut self, line: &Line, button: &MouseButton) -> bool;

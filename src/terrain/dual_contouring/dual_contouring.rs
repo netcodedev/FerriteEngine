@@ -1,5 +1,6 @@
 use core::panic;
 
+use cgmath::{Matrix4, Vector3};
 use gl::types::GLuint;
 use glfw::MouseButton;
 use libnoise::prelude::*;
@@ -106,7 +107,7 @@ impl Chunk for DualContouringChunk {
         chunk
     }
 
-    fn render(&self, camera: &Camera, projection: &Projection, shader: &Shader) {
+    fn render(&self, parent_transform: &Matrix4<f32>, camera: &Camera, projection: &Projection, shader: &Shader) {
         if let Some(mesh) = &self.mesh {
             if !mesh.is_buffered() {
                 panic!("Mesh is not buffered");
@@ -119,11 +120,12 @@ impl Chunk for DualContouringChunk {
             }
             mesh.render(
                 &shader,
+                &(parent_transform * Matrix4::from_translation(Vector3::new
                 (
-                    self.position.0 * CHUNK_SIZE as f32,
-                    self.position.1 * CHUNK_SIZE as f32,
-                    self.position.2 * CHUNK_SIZE as f32,
-                ),
+                    self.position.0 * CHUNK_SIZE_FLOAT,
+                    self.position.1 * CHUNK_SIZE_FLOAT,
+                    self.position.2 * CHUNK_SIZE_FLOAT,
+                ))),
                 None,
             );
             unsafe {

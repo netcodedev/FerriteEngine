@@ -182,7 +182,7 @@ impl Model {
         self.position += root_translation * self.scale;
     }
 
-    pub fn render(&self, camera: &Camera, projection: &Projection) {
+    pub fn render(&self, parent_transform: &Matrix4<f32>, camera: &Camera, projection: &Projection) {
         for mesh in self.meshes.values() {
             if !mesh.is_buffered() {
                 panic!("Mesh is not buffered");
@@ -218,7 +218,7 @@ impl Model {
             unsafe { gl::Disable(gl::CULL_FACE) };
             mesh.render(
                 &self.shader,
-                (self.position.x, self.position.y, self.position.z),
+                parent_transform * Matrix4::from_translation(self.position.to_vec().into()),
                 Some(self.scale),
             );
             unsafe { gl::Enable(gl::CULL_FACE) };

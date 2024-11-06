@@ -1,3 +1,5 @@
+use cgmath::Matrix4;
+
 use crate::core::renderer::shader::{DynamicVertexArray, Shader, VertexAttributes};
 
 use super::{Bone, ModelMesh, ModelMeshVertex};
@@ -74,16 +76,14 @@ impl ModelMesh {
         }
     }
 
-    pub fn render(&self, shader: &Shader, position: (f32, f32, f32), scale: Option<f32>) {
+    pub fn render(&self, shader: &Shader, position: Matrix4<f32>, scale: Option<f32>) {
         if let Some(vertex_array) = &self.vertex_array {
             unsafe {
                 gl::Enable(gl::DEPTH_TEST);
                 gl::Enable(gl::CULL_FACE);
             }
             vertex_array.bind();
-            let mut model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(
-                position.0, position.1, position.2,
-            ));
+            let mut model = position;
             if let Some(scale) = scale {
                 model = model * cgmath::Matrix4::from_scale(scale);
             }

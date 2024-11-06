@@ -1,7 +1,9 @@
 use cgmath::Deg;
 use glfw::{Glfw, WindowEvent};
+use player::Player;
 
 mod core;
+mod player;
 mod terrain;
 use core::{
     application::{Application, Layer},
@@ -9,11 +11,9 @@ use core::{
     entity::{
         component::{
             camera_component::CameraComponent, debug_component::DebugController,
-            model_component::ModelComponent,
         },
         Entity,
     },
-    model::ModelBuilder,
     renderer::ui::{UIRenderer, UI},
     scene::Scene,
 };
@@ -45,19 +45,7 @@ impl WorldLayer {
 
         let mut terrain_entity = Entity::new();
         terrain_entity.add_component(Terrain::<DualContouringChunk>::new());
-
-        let mut model_entity = Entity::new();
-        let mut model = ModelBuilder::new("Mannequin.fbx")?
-            .with_position((-121.0, 50.6, -32.0))
-            .with_animation("idle", "Idle.fbx")
-            .with_animation("walk", "Walk.fbx")
-            .with_animation("run", "Run.fbx")
-            .build();
-        model.init();
-        model.blend_animations("walk", "run", 0.5, true);
-        model.play_animation("idle");
-        model_entity.add_component(ModelComponent::new(model));
-        terrain_entity.add_child(model_entity);
+        terrain_entity.add_child(Player::new((-121.0, 50.6, -32.0))?);
 
         scene.add_entity(terrain_entity);
 

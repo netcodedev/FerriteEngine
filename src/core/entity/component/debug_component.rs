@@ -11,7 +11,7 @@ use crate::{
     },
     terrain::{dual_contouring::DualContouringChunk, ChunkBounds, Terrain, CHUNK_SIZE},
 };
-use cgmath::{Deg, EuclideanSpace, Point3, Vector3};
+use cgmath::{Deg, EuclideanSpace, Matrix4, Point3, Vector3};
 
 pub struct DebugController {
     pub debug_ui: bool,
@@ -125,7 +125,7 @@ impl Component for DebugController {
         }
     }
 
-    fn render(&self, scene: &Scene) {
+    fn render(&self, scene: &Scene, _: &Matrix4<f32>) {
         if let Some(camera_component) = scene.get_component::<camera_component::CameraComponent>() {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();

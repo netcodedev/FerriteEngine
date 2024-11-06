@@ -1,3 +1,5 @@
+use cgmath::Matrix4;
+
 use crate::core::{model::Model, scene::Scene};
 
 use super::{camera_component::CameraComponent, Component};
@@ -21,9 +23,10 @@ impl Component for ModelComponent {
         self.model.update(delta_time as f32);
     }
 
-    fn render(&self, _scene: &Scene) {
+    fn render(&self, _scene: &Scene, parent_transform: &Matrix4<f32>) {
         if let Some(camera_component) = _scene.get_component::<CameraComponent>() {
             self.model.render(
+                &parent_transform,
                 &camera_component.get_camera(),
                 &camera_component.get_projection(),
             );

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::mpsc, thread};
 
-use cgmath::{EuclideanSpace, Point3};
+use cgmath::{EuclideanSpace, Matrix4, Point3};
 use glfw::MouseButton;
 
 use crate::core::{
@@ -174,7 +174,7 @@ impl<T: Chunk + Send + 'static> Component for Terrain<T> {
         }
     }
 
-    fn render(&self, scene: &Scene) {
+    fn render(&self, scene: &Scene, parent_transform: &Matrix4<f32>) {
         if let Some(camera_component) = scene.get_component::<CameraComponent>() {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();
@@ -186,7 +186,7 @@ impl<T: Chunk + Send + 'static> Component for Terrain<T> {
             }
             for (_, chunk) in &self.chunks {
                 if ViewFrustum::is_bounds_in_frustum(projection, camera, chunk.get_bounds()) {
-                    chunk.render(camera, projection, &self.shader);
+                    chunk.render(parent_transform, camera, projection, &self.shader);
                 }
             }
             for (i, _) in self.textures.iter().enumerate() {
@@ -224,14 +224,12 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
         self.vertex_array = Some(vertex_array);
     }
 
-    pub fn render(&self, shader: &Shader, position: (f32, f32, f32), scale: Option<f32>) {
+    pub fn render(&self, shader: &Shader, transform: &Matrix4<f32>, scale: Option<f32>) {
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
         }
         shader.bind();
-        let mut model = cgmath::Matrix4::from_translation(cgmath::Vector3::new(
-            position.0, position.1, position.2,
-        ));
+        let mut model = transform.clone();
         if let Some(scale) = scale {
             model = model * cgmath::Matrix4::from_scale(scale);
         }

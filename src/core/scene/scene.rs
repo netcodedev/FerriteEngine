@@ -1,3 +1,4 @@
+use cgmath::{Matrix4, SquareMatrix};
 use glfw::{Glfw, WindowEvent};
 
 use crate::core::entity::{component::Component, Entity};
@@ -20,8 +21,9 @@ impl Scene {
     }
 
     pub fn render(&self) {
+        let transform = Matrix4::identity();
         for entity in self.entities.iter() {
-            entity.render(self);
+            entity.render(self, transform);
         }
     }
 
