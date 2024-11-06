@@ -1,6 +1,6 @@
 use cgmath::Matrix4;
 
-use crate::core::{model::Model, scene::Scene};
+use crate::core::{entity::Entity, model::Model, scene::Scene};
 
 use super::{camera_component::CameraComponent, Component};
 
@@ -16,10 +16,14 @@ impl ModelComponent {
     pub fn get_model(&self) -> &Model {
         &self.model
     }
+
+    pub fn get_model_mut(&mut self) -> &mut Model {
+        &mut self.model
+    }
 }
 
 impl Component for ModelComponent {
-    fn update(&mut self, _: &Scene, delta_time: f64) {
+    fn update(&mut self, _: &mut Scene, _: &mut Entity, delta_time: f64) {
         self.model.update(delta_time as f32);
     }
 

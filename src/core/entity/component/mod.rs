@@ -5,8 +5,10 @@ use glfw::{Glfw, Window};
 
 use crate::core::scene::Scene;
 
+use super::Entity;
+
 pub trait Component: AsAny {
-    fn update(&mut self, scene: &Scene, delta_time: f64);
+    fn update(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64);
     fn render(&self, _scene: &Scene, _parent_transform: &Matrix4<f32>) {}
     fn handle_event(&mut self, glfw: &mut Glfw, window: &mut Window, event: &glfw::WindowEvent);
 }

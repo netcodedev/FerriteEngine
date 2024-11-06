@@ -14,9 +14,11 @@ impl Entity {
         }
     }
 
-    pub fn update(&mut self, scene: &Scene, delta_time: f64) {
-        for component in self.components.iter_mut() {
-            component.update(scene, delta_time);
+    pub fn update(&mut self, scene: &mut Scene, delta_time: f64) {
+        for i in 0..self.components.len() {
+            let mut component = self.components.remove(i);
+            component.update(scene, self, delta_time);
+            self.components.insert(i, component);
         }
 
         for child in self.children.iter_mut() {

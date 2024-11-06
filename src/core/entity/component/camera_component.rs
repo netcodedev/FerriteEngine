@@ -1,6 +1,5 @@
 use crate::core::{
-    camera::{Camera, CameraController, Projection},
-    scene::Scene,
+    camera::{Camera, CameraController, Projection}, entity::Entity, scene::Scene
 };
 
 use super::Component;
@@ -51,7 +50,7 @@ impl CameraComponent {
 }
 
 impl Component for CameraComponent {
-    fn update(&mut self, _: &Scene, delta_time: f64) {
+    fn update(&mut self, _: &mut Scene, _: &mut Entity, delta_time: f64) {
         self.camera_controller
             .update_camera(&mut self.camera, delta_time as f32);
     }

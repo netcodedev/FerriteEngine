@@ -35,7 +35,7 @@ struct WorldLayer {
 impl WorldLayer {
     pub fn new(width: u32, height: u32) -> Result<WorldLayer, Box<dyn std::error::Error>> {
         let mut scene = Scene::new();
-        let camera = Camera::new((-119.4, 52.7, -30.0), Deg(-138.0), Deg(-17.0));
+        let camera = Camera::new((-121.1, 54.0, -35.0), Deg(-263.0), Deg(-30.0));
         let projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
         let camera_controller = CameraController::new(10.0, 1.0);
         let mut entity = Entity::new();

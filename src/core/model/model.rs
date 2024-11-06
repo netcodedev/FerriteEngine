@@ -242,6 +242,12 @@ impl Model {
         );
     }
 
+    pub fn reset_position(&mut self) -> Vector3<f32> {
+        let position = self.position;
+        self.position = Point3::new(0.0, 0.0, 0.0);
+        position.to_vec()
+    }
+
     fn render_child_bones(
         &self,
         bone: &Bone,
@@ -334,6 +340,7 @@ impl ModelBuilder {
         })
     }
 
+    #[allow(dead_code)]
     pub fn with_position<P: Into<Point3<f32>>>(mut self, position: P) -> ModelBuilder {
         self.model.position = position.into();
         self

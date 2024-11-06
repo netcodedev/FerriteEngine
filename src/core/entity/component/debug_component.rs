@@ -2,7 +2,7 @@ use glfw::{Action, Glfw, Key};
 
 use crate::{
     core::{
-        entity::component::{camera_component, model_component::ModelComponent, Component},
+        entity::{component::{camera_component, model_component::ModelComponent, Component}, Entity},
         renderer::{
             line::{Line, LineRenderer},
             text::{Fonts, Text},
@@ -55,7 +55,7 @@ impl DebugController {
 }
 
 impl Component for DebugController {
-    fn update(&mut self, scene: &Scene, delta_time: f64) {
+    fn update(&mut self, scene: &mut Scene, _: &mut Entity, delta_time: f64) {
         self.delta_time = delta_time;
 
         let fps = 1.0 / self.delta_time;

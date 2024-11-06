@@ -161,7 +161,7 @@ impl CameraController {
         event: &glfw::WindowEvent,
     ) -> bool {
         match event {
-            glfw::WindowEvent::Key(Key::W | Key::Up, _, action, _) => {
+            glfw::WindowEvent::Key(Key::I | Key::Up, _, action, _) => {
                 let amount = match action {
                     Action::Press => 1.0,
                     Action::Release => 0.0,
@@ -170,7 +170,7 @@ impl CameraController {
                 self.amount_forward = amount;
                 true
             }
-            glfw::WindowEvent::Key(Key::S | Key::Down, _, action, _) => {
+            glfw::WindowEvent::Key(Key::K | Key::Down, _, action, _) => {
                 let amount = match action {
                     Action::Press => 1.0,
                     Action::Release => 0.0,
@@ -179,7 +179,7 @@ impl CameraController {
                 self.amount_backward = amount;
                 true
             }
-            glfw::WindowEvent::Key(Key::A | Key::Left, _, action, _) => {
+            glfw::WindowEvent::Key(Key::J | Key::Left, _, action, _) => {
                 let amount = match action {
                     Action::Press => 1.0,
                     Action::Release => 0.0,
@@ -188,7 +188,7 @@ impl CameraController {
                 self.amount_left = amount;
                 true
             }
-            glfw::WindowEvent::Key(Key::D | Key::Right, _, action, _) => {
+            glfw::WindowEvent::Key(Key::L | Key::Right, _, action, _) => {
                 let amount = match action {
                     Action::Press => 1.0,
                     Action::Release => 0.0,

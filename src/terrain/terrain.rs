@@ -4,7 +4,7 @@ use cgmath::{EuclideanSpace, Matrix4, Point3};
 use glfw::MouseButton;
 
 use crate::core::{
-    entity::component::{camera_component::CameraComponent, Component},
+    entity::{component::{camera_component::CameraComponent, Component}, Entity},
     mouse_picker::MousePicker,
     renderer::{
         line::Line,
@@ -162,7 +162,7 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
 }
 
 impl<T: Chunk + Send + 'static> Component for Terrain<T> {
-    fn update(&mut self, scene: &Scene, _: f64) {
+    fn update(&mut self, scene: &mut Scene, _: &mut Entity, _: f64) {
         if let Ok(mut chunk) = self.chunk_receiver.try_recv() {
             chunk.buffer_data();
             self.chunks.insert(chunk.get_bounds(), chunk);
