@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use cgmath::{InnerSpace, Matrix4, Point3, SquareMatrix, Vector3, Vector4, Zero};
+use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3, Vector4, Zero};
 use russimp::{
     material::{DataContent, TextureType},
     node::Node,
@@ -20,7 +20,7 @@ use super::{Animation, Bone, Model, ModelBuilder, ModelMesh};
 use crate::core::utils::ToMatrix4;
 
 impl Model {
-    pub fn new(path: &str) -> Result<Model, Box<dyn std::error::Error>> {
+    pub fn new<P: Into<Point3<f32>>>(path: &str, position: P) -> Result<Model, Box<dyn std::error::Error>> {
         let scene = Scene::from_file(
             format!("assets/models/{path}").as_str(),
             vec![
@@ -40,7 +40,7 @@ impl Model {
             sync_animations: false,
             shader,
             textures: HashMap::<TextureType, Texture>::new(),
-            position: cgmath::Vector3::new(-121.0, 50.5, -32.0),
+            position: position.into(),
             scale: 0.01,
         })
     }
@@ -226,7 +226,7 @@ impl Model {
     }
 
     pub fn render_bones(&self, camera: &Camera, projection: &Projection) {
-        let root = Matrix4::from_translation(self.position) * Matrix4::from_scale(self.scale);
+        let root = Matrix4::from_translation(self.position.to_vec()) * Matrix4::from_scale(self.scale);
         let mut lines: Vec<Line> = Vec::new();
         for mesh in self.meshes.values() {
             if let Some(root_bone) = &mesh.root_bone {
@@ -330,8 +330,13 @@ impl Model {
 impl ModelBuilder {
     pub fn new(path: &str) -> Result<ModelBuilder, Box<dyn std::error::Error>> {
         Ok(ModelBuilder {
-            model: Model::new(path)?,
+            model: Model::new(path, (0.0, 0.0, 0.0))?,
         })
+    }
+
+    pub fn with_position<P: Into<Point3<f32>>>(mut self, position: P) -> ModelBuilder {
+        self.model.position = position.into();
+        self
     }
 
     pub fn with_animation(mut self, name: &str, path: &str) -> ModelBuilder {
