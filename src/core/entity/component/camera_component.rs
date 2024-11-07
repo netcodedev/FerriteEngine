@@ -1,5 +1,7 @@
 use crate::core::{
-    camera::{Camera, CameraController, Projection}, entity::Entity, scene::Scene
+    camera::{Camera, CameraController, Projection},
+    entity::Entity,
+    scene::Scene,
 };
 
 use super::Component;

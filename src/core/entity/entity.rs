@@ -69,6 +69,11 @@ impl Entity {
                 return Some(component);
             }
         }
+        for child in self.children.iter() {
+            if let Some(component) = child.get_component::<T>() {
+                return Some(component);
+            }
+        }
         None
     }
 

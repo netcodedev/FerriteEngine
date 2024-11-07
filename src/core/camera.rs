@@ -104,7 +104,8 @@ impl Projection {
     }
 
     fn calc_matrix(&mut self) {
-        self.matrix = OPENGL_TO_WGPU_MATRIX * perspective(self.fovy, self.aspect, self.znear, self.zfar);
+        self.matrix =
+            OPENGL_TO_WGPU_MATRIX * perspective(self.fovy, self.aspect, self.znear, self.zfar);
     }
 
     pub fn get_matrix(&self) -> Matrix4<f32> {

@@ -23,9 +23,7 @@ impl ModelComponent {
 }
 
 impl Component for ModelComponent {
-    fn update(&mut self, _: &mut Scene, _: &mut Entity, delta_time: f64) {
-        self.model.update(delta_time as f32);
-    }
+    fn update(&mut self, _: &mut Scene, _: &mut Entity, _: f64) {}
 
     fn render(&self, _scene: &Scene, parent_transform: &Matrix4<f32>) {
         if let Some(camera_component) = _scene.get_component::<CameraComponent>() {

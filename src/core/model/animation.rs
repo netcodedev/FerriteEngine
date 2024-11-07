@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use russimp::scene::Scene;
 
-use super::{Animation, Channel};
+use super::{Animation, Channel, Pose};
 
 impl Animation {
     pub fn new(animation: &russimp::animation::Animation) -> Animation {
@@ -25,6 +25,23 @@ impl Animation {
             return Err("No animations found".into());
         }
         Ok(Animation::new(&scene.animations[0]))
+    }
+
+    pub fn sample(&self, time: f32) -> Pose {
+        let mut pose = Pose::new();
+        if time > self.duration {
+            println!("Cycle completed");
+            pose.cycle_completed = true;
+        }
+        let sample_time = time % self.duration;
+        for (bone_id, channel) in &self.channels {
+            pose.add_transform(bone_id.to_string(), channel.sample(sample_time));
+        }
+        pose
+    }
+
+    pub fn get_progression(&self, time: f32) -> f32 {
+        time % self.duration / self.duration
     }
 
     pub fn set_name(&mut self, name: &str) {

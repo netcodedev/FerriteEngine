@@ -13,6 +13,7 @@ pub trait Component: AsAny {
     fn handle_event(&mut self, glfw: &mut Glfw, window: &mut Window, event: &glfw::WindowEvent);
 }
 
+pub mod animation_component;
 pub mod camera_component;
 pub mod debug_component;
 pub mod model_component;

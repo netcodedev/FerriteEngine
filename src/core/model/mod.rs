@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cgmath::{Matrix4, Point3, Vector3};
+use cgmath::{Matrix4, Point3, Quaternion, Vector3};
 use russimp::{material::TextureType, scene::Scene};
 
 use crate::core::renderer::{
@@ -13,13 +13,11 @@ mod bone;
 mod channel;
 mod model;
 mod model_mesh;
+mod pose;
 
 pub struct Model {
     model: Scene,
     meshes: HashMap<String, ModelMesh>,
-    animations: HashMap<String, Animation>,
-    current_animations: Vec<Animation>,
-    sync_animations: bool,
     shader: Shader,
     textures: HashMap<TextureType, Texture>,
     position: Point3<f32>,
@@ -47,26 +45,34 @@ struct ModelMesh {
     root_bone: Option<Bone>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 struct Bone {
     id: usize,
     name: String,
-    transformation_matrix: Matrix4<f32>,
     offset_matrix: Matrix4<f32>,
     weights: Vec<(u32, f32)>,
     children: Option<Vec<Bone>>,
-    current_animations: Vec<(f32, Channel)>,
-    current_animation_time: Vec<f32>,
     current_transform: Matrix4<f32>,
     last_translation: Vector3<f32>,
 }
 
 #[derive(Clone)]
+pub struct LocalTransform {
+    translation: Vector3<f32>,
+    rotation: Quaternion<f32>,
+    scale: Vector3<f32>,
+}
+
+pub struct Pose {
+    transforms: HashMap<String, LocalTransform>,
+    pub cycle_completed: bool,
+}
+
+#[derive(Clone)]
 pub struct Animation {
     name: String,
-    duration: f32,
-    ticks_per_second: f32,
+    pub duration: f32,
+    pub ticks_per_second: f32,
     channels: HashMap<String, Channel>,
 }
 

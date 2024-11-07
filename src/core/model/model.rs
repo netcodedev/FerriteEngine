@@ -16,11 +16,14 @@ use crate::{
     },
 };
 
-use super::{Animation, Bone, Model, ModelBuilder, ModelMesh};
+use super::{Bone, Model, ModelBuilder, ModelMesh, Pose};
 use crate::core::utils::ToMatrix4;
 
 impl Model {
-    pub fn new<P: Into<Point3<f32>>>(path: &str, position: P) -> Result<Model, Box<dyn std::error::Error>> {
+    pub fn new<P: Into<Point3<f32>>>(
+        path: &str,
+        position: P,
+    ) -> Result<Model, Box<dyn std::error::Error>> {
         let scene = Scene::from_file(
             format!("assets/models/{path}").as_str(),
             vec![
@@ -35,9 +38,6 @@ impl Model {
         Ok(Model {
             model: scene,
             meshes: HashMap::<String, ModelMesh>::new(),
-            animations: HashMap::<String, Animation>::new(),
-            current_animations: Vec::new(),
-            sync_animations: false,
             shader,
             textures: HashMap::<TextureType, Texture>::new(),
             position: position.into(),
@@ -82,7 +82,6 @@ impl Model {
                         root_bone = Some(Bone {
                             id,
                             name: bone.name.clone(),
-                            transformation_matrix: node.transformation.to_matrix_4(),
                             current_transform: node.transformation.to_matrix_4(),
                             offset_matrix: bone.offset_matrix.to_matrix_4(),
                             weights: bone
@@ -91,8 +90,6 @@ impl Model {
                                 .map(|w| (w.vertex_id, w.weight))
                                 .collect(),
                             children: self.get_child_bones(node, &mesh.bones, Matrix4::identity()),
-                            current_animations: Vec::new(),
-                            current_animation_time: Vec::new(),
                             last_translation: Vector3::zero(),
                         });
                     }
@@ -119,70 +116,12 @@ impl Model {
         }
     }
 
-    pub fn add_animation(&mut self, animation: Animation) {
-        self.animations.insert(animation.name.clone(), animation);
-    }
-
-    pub fn play_animation(&mut self, name: &str) {
-        if let Some(animation) = self.animations.get(name) {
-            self.current_animations = vec![animation.clone()];
-            for mesh in self.meshes.values_mut() {
-                if let Some(root_bone) = &mut mesh.root_bone {
-                    root_bone.reset();
-                    root_bone.set_animation_channel(Some(&animation.channels), 1.0, 0.0);
-                }
-            }
-        } else {
-            self.current_animations = Vec::new();
-            for mesh in self.meshes.values_mut() {
-                if let Some(root_bone) = &mut mesh.root_bone {
-                    root_bone.reset();
-                    root_bone.set_animation_channel(None, 1.0, 0.0);
-                }
-            }
-        }
-    }
-
-    pub fn blend_animations(&mut self, name1: &str, name2: &str, weight: f32, sync: bool) {
-        if let Some(animation1) = self.animations.get(name1) {
-            if let Some(animation2) = self.animations.get(name2) {
-                self.current_animations = vec![animation1.clone(), animation2.clone()];
-                self.sync_animations = sync;
-                for mesh in self.meshes.values_mut() {
-                    if let Some(root_bone) = &mut mesh.root_bone {
-                        root_bone.reset();
-                        root_bone.set_animation_channel(
-                            Some(&animation1.channels),
-                            1.0 - weight,
-                            0.0,
-                        );
-                        root_bone.set_animation_channel(Some(&animation2.channels), weight, 0.0);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn update(&mut self, delta_time: f32) {
-        let mut root_translation = Vector3::zero();
-        for mesh in self.meshes.values_mut() {
-            if let Some(root_bone) = &mut mesh.root_bone {
-                let animation_data = self
-                    .current_animations
-                    .iter()
-                    .map(|a| (delta_time * a.ticks_per_second, a.duration))
-                    .collect();
-                if self.current_animations.len() > 0 {
-                    let delta =
-                        root_bone.update_animation(animation_data, self.sync_animations, true);
-                    root_translation += delta;
-                }
-            }
-        }
-        self.position += root_translation * self.scale;
-    }
-
-    pub fn render(&self, parent_transform: &Matrix4<f32>, camera: &Camera, projection: &Projection) {
+    pub fn render(
+        &self,
+        parent_transform: &Matrix4<f32>,
+        camera: &Camera,
+        projection: &Projection,
+    ) {
         for mesh in self.meshes.values() {
             if !mesh.is_buffered() {
                 panic!("Mesh is not buffered");
@@ -222,11 +161,19 @@ impl Model {
                 Some(self.scale),
             );
             unsafe { gl::Enable(gl::CULL_FACE) };
+            self.render_bones(parent_transform, camera, projection);
         }
     }
 
-    pub fn render_bones(&self, camera: &Camera, projection: &Projection) {
-        let root = Matrix4::from_translation(self.position.to_vec()) * Matrix4::from_scale(self.scale);
+    pub fn render_bones(
+        &self,
+        parent_transform: &Matrix4<f32>,
+        camera: &Camera,
+        projection: &Projection,
+    ) {
+        let root = parent_transform
+            * Matrix4::from_translation(self.position.to_vec())
+            * Matrix4::from_scale(self.scale);
         let mut lines: Vec<Line> = Vec::new();
         for mesh in self.meshes.values() {
             if let Some(root_bone) = &mesh.root_bone {
@@ -246,6 +193,16 @@ impl Model {
         let position = self.position;
         self.position = Point3::new(0.0, 0.0, 0.0);
         position.to_vec()
+    }
+
+    pub fn apply_pose(&mut self, pose: &Pose) {
+        let mut root_translation = Vector3::zero();
+        for mesh in self.meshes.values_mut() {
+            if let Some(root_bone) = &mut mesh.root_bone {
+                root_translation += root_bone.apply_pose(pose, true);
+            }
+        }
+        self.position += root_translation * self.scale;
     }
 
     fn render_child_bones(
@@ -291,7 +248,6 @@ impl Model {
                     children.push(Bone {
                         id,
                         name: bone.name.clone(),
-                        transformation_matrix: offset_matrix * child.transformation.to_matrix_4(),
                         current_transform: offset_matrix * child.transformation.to_matrix_4(),
                         offset_matrix: bone.offset_matrix.to_matrix_4(),
                         weights: bone
@@ -300,8 +256,6 @@ impl Model {
                             .map(|w| (w.vertex_id, w.weight))
                             .collect(),
                         children: self.get_child_bones(child, bones, Matrix4::identity()),
-                        current_animations: Vec::new(),
-                        current_animation_time: Vec::new(),
                         last_translation: Vector3::zero(),
                     });
                 }
@@ -343,13 +297,6 @@ impl ModelBuilder {
     #[allow(dead_code)]
     pub fn with_position<P: Into<Point3<f32>>>(mut self, position: P) -> ModelBuilder {
         self.model.position = position.into();
-        self
-    }
-
-    pub fn with_animation(mut self, name: &str, path: &str) -> ModelBuilder {
-        let mut animation = Animation::from_file(path).unwrap();
-        animation.set_name(name);
-        self.model.add_animation(animation);
         self
     }
 

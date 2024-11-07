@@ -4,7 +4,10 @@ use cgmath::{EuclideanSpace, Matrix4, Point3};
 use glfw::MouseButton;
 
 use crate::core::{
-    entity::{component::{camera_component::CameraComponent, Component}, Entity},
+    entity::{
+        component::{camera_component::CameraComponent, Component},
+        Entity,
+    },
     mouse_picker::MousePicker,
     renderer::{
         line::Line,

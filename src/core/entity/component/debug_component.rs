@@ -2,7 +2,10 @@ use glfw::{Action, Glfw, Key};
 
 use crate::{
     core::{
-        entity::{component::{camera_component, model_component::ModelComponent, Component}, Entity},
+        entity::{
+            component::{camera_component, Component},
+            Entity,
+        },
         renderer::{
             line::{Line, LineRenderer},
             text::{Fonts, Text},
@@ -189,9 +192,9 @@ impl Component for DebugController {
                     false,
                 );
 
-                for model in scene.get_components::<ModelComponent>() {
-                    model.get_model().render_bones(camera, projection);
-                }
+                // for model in scene.get_components::<ModelComponent>() {
+                //     model.get_model().render_bones(camera, projection);
+                // }
             }
         }
     }

@@ -357,7 +357,13 @@ impl Chunk for VoxelChunk {
         }
     }
 
-    fn render(&self, parent_transform: &Matrix4<f32>, camera: &Camera, projection: &Projection, shader: &Shader) {
+    fn render(
+        &self,
+        parent_transform: &Matrix4<f32>,
+        camera: &Camera,
+        projection: &Projection,
+        shader: &Shader,
+    ) {
         if let Some(mesh) = &self.mesh {
             if !mesh.is_buffered() {
                 panic!("Mesh is not buffered");
@@ -370,12 +376,12 @@ impl Chunk for VoxelChunk {
             }
             mesh.render(
                 &shader,
-                &(parent_transform * Matrix4::from_translation(Vector3::new
-                (
-                    self.position.0 * CHUNK_SIZE_FLOAT,
-                    self.position.1 * CHUNK_SIZE_FLOAT,
-                    self.position.2 * CHUNK_SIZE_FLOAT,
-                ))),
+                &(parent_transform
+                    * Matrix4::from_translation(Vector3::new(
+                        self.position.0 * CHUNK_SIZE_FLOAT,
+                        self.position.1 * CHUNK_SIZE_FLOAT,
+                        self.position.2 * CHUNK_SIZE_FLOAT,
+                    ))),
                 None,
             );
             unsafe {
