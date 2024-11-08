@@ -308,10 +308,10 @@ impl VoxelChunk {
 }
 
 impl Chunk for VoxelChunk {
-    fn new(position: (f32, f32, f32), _: usize) -> Self {
-        let generator = Source::perlin(1).scale([0.003; 2]);
-        let hills = Source::perlin(1).scale([0.01; 2]);
-        let tiny_hills = Source::perlin(1).scale([0.1; 2]);
+    fn new(seed: u64, position: (f32, f32, f32), _: usize) -> Self {
+        let generator = Source::perlin(seed).scale([0.003; 2]);
+        let hills = Source::perlin(seed).scale([0.01; 2]);
+        let tiny_hills = Source::perlin(seed).scale([0.1; 2]);
         let offset: f64 = 16777216.0;
         let blocks: ArrayBase<ndarray::OwnedRepr<Option<Block>>, Dim<[usize; 3]>> = Array3::<
             Option<Block>,

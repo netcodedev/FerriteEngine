@@ -40,8 +40,8 @@ impl WorldLayer {
         let ui = UIRenderer::new();
 
         let mut terrain_entity = Entity::new();
-        terrain_entity.add_component(Terrain::<DualContouringChunk>::new());
-        terrain_entity.add_child(Player::new((-121.0, 50.6, -32.0), create_animation_graph()?)?);
+        terrain_entity.add_component(Terrain::<DualContouringChunk>::new(2));
+        terrain_entity.add_child(Player::new((0.0, 50.6, 0.0), create_animation_graph()?)?);
 
         scene.add_entity(terrain_entity);
 

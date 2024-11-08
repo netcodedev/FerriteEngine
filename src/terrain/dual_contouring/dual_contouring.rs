@@ -93,9 +93,9 @@ impl DualContouringChunk {
 }
 
 impl Chunk for DualContouringChunk {
-    fn new(position: (f32, f32, f32), lod: usize) -> Self {
-        let noise = Source::perlin(1).scale([0.003; 2]).fbm(6, 1.0, 2.0, 0.5);
-        let cave = Source::perlin(1).scale([0.1; 3]);
+    fn new(seed: u64, position: (f32, f32, f32), lod: usize) -> Self {
+        let noise = Source::perlin(seed).scale([0.003; 2]).fbm(6, 1.0, 2.0, 0.5);
+        let cave = Source::perlin(seed).scale([0.1; 3]);
         let mut chunk = Self {
             position,
             cave,

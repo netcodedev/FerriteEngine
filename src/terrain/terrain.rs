@@ -78,9 +78,9 @@ impl ChunkBounds {
 }
 
 impl<T: Chunk + Send + 'static> Terrain<T> {
-    pub fn new() -> Self {
+    pub fn new(seed: u64) -> Self {
         let (tx, rx) = mpsc::channel();
-        let origin = T::new((0.0, 0.0, 0.0), 0);
+        let origin = T::new(seed, (0.0, 0.0, 0.0), 0);
         tx.send(origin).unwrap();
         let shader_source = T::get_shader_source();
         let shader = Shader::new(&shader_source.0, &shader_source.1);
@@ -89,10 +89,10 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
         let tx2 = tx.clone();
         let tx3 = tx.clone();
         let tx4 = tx.clone();
-        let _ = thread::spawn(move || Terrain::chunkloader(CHUNK_RADIUS as i32, 1, 1, tx1));
-        let _ = thread::spawn(move || Terrain::chunkloader(CHUNK_RADIUS as i32, -1, 1, tx2));
-        let _ = thread::spawn(move || Terrain::chunkloader(CHUNK_RADIUS as i32, 1, -1, tx3));
-        let _ = thread::spawn(move || Terrain::chunkloader(CHUNK_RADIUS as i32, -1, -1, tx4));
+        let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, 1, 1, tx1));
+        let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, -1, 1, tx2));
+        let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, 1, -1, tx3));
+        let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, -1, -1, tx4));
 
         Self {
             chunks: HashMap::<ChunkBounds, T>::new(),
@@ -115,7 +115,7 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
         }
     }
 
-    fn chunkloader(radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<T>) {
+    fn chunkloader(seed: u64, radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<T>) {
         let mut x: i32 = 1;
         let mut z: i32 = 0;
 
@@ -126,11 +126,13 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
             let new_chunk: T;
             if z_dir > 0 {
                 new_chunk = T::new(
+                    seed,
                     ((x * x_dir) as f32, 0.0, z as f32),
                     std::cmp::max(x.abs(), z.abs()) as usize,
                 );
             } else {
                 new_chunk = T::new(
+                    seed,
                     ((z * z_dir) as f32, 0.0, (x * x_dir) as f32),
                     std::cmp::max(x.abs(), z.abs()) as usize,
                 );

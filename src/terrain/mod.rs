@@ -32,7 +32,7 @@ pub struct Terrain<T: Chunk> {
 }
 
 pub trait Chunk {
-    fn new(position: (f32, f32, f32), lod: usize) -> Self;
+    fn new(seed: u64, position: (f32, f32, f32), lod: usize) -> Self;
     fn render(
         &self,
         parent_transform: &Matrix4<f32>,

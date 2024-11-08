@@ -132,11 +132,11 @@ impl MarchingCubesChunk {
 }
 
 impl Chunk for MarchingCubesChunk {
-    fn new(position: (f32, f32, f32), _: usize) -> Self {
-        let generator = Source::perlin(1).scale([0.003; 2]);
-        let hills = Source::perlin(1).scale([0.01; 2]);
-        let tiny_hills = Source::perlin(1).scale([0.1; 2]);
-        let cave = Source::perlin(1).scale([0.1; 3]);
+    fn new(seed: u64, position: (f32, f32, f32), _: usize) -> Self {
+        let generator = Source::perlin(seed).scale([0.003; 2]);
+        let hills = Source::perlin(seed).scale([0.01; 2]);
+        let tiny_hills = Source::perlin(seed).scale([0.1; 2]);
+        let cave = Source::perlin(seed).scale([0.1; 3]);
         let offset: f64 = 16777216.0;
         let blocks: ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<[usize; 3]>> =
             ArrayBase::from_shape_fn(
