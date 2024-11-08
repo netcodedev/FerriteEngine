@@ -1,10 +1,6 @@
 use glfw::{Glfw, WindowEvent};
 
-use crate::core::{
-    entity::Entity,
-    model::animation_graph::AnimationGraph,
-    scene::Scene,
-};
+use crate::core::{entity::Entity, model::animation_graph::AnimationGraph, scene::Scene};
 
 use super::{model_component::ModelComponent, Component};
 
@@ -14,9 +10,7 @@ pub struct AnimationComponent {
 
 impl AnimationComponent {
     pub fn new(animation_graph: AnimationGraph) -> Self {
-        AnimationComponent {
-            animation_graph,
-        }
+        AnimationComponent { animation_graph }
     }
 
     pub fn set_input(&mut self, name: &str, value: f32) {

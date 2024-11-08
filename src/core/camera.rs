@@ -1,6 +1,8 @@
 use std::f32::consts::FRAC_PI_2;
 
-use cgmath::{perspective, EuclideanSpace, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
+use cgmath::{
+    perspective, EuclideanSpace, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3,
+};
 use glfw::{Action, CursorMode, Key};
 
 #[rustfmt::skip]

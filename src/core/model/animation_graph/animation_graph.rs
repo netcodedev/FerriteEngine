@@ -156,7 +156,12 @@ impl State {
         self.animations.insert(animation.name.clone(), animation);
     }
 
-    pub fn add_transition(&mut self, to_state: &str, condition: Box<dyn Fn(&HashMap<String, f32>) -> bool>, transition_time: f32) {
+    pub fn add_transition(
+        &mut self,
+        to_state: &str,
+        condition: Box<dyn Fn(&HashMap<String, f32>) -> bool>,
+        transition_time: f32,
+    ) {
         self.transitions.push(Transition {
             to_state: to_state.to_string(),
             condition,

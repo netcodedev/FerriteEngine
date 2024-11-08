@@ -16,7 +16,10 @@ use crate::core::{
 use super::{Player, PlayerController};
 
 impl Player {
-    pub fn new<P: Into<Point3<f32>>>(position: P, animation_graph: AnimationGraph) -> Result<Entity, Box<dyn std::error::Error>> {
+    pub fn new<P: Into<Point3<f32>>>(
+        position: P,
+        animation_graph: AnimationGraph,
+    ) -> Result<Entity, Box<dyn std::error::Error>> {
         let mut entity = Entity::new();
         entity.set_position(position);
 
