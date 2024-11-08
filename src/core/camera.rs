@@ -56,13 +56,22 @@ impl Camera {
         self.calc_matrix();
     }
 
-    pub fn set_position(&mut self, position: Point3<f32>) {
-        self.position = position;
+    pub fn set_position<P: Into<Point3<f32>>>(&mut self, position: P) {
+        self.position = position.into();
+        self.calc_matrix();
+    }
+
+    pub fn set_relative_position<P: Into<Point3<f32>>>(&mut self, position: P) {
+        self.relative_position = position.into();
         self.calc_matrix();
     }
 
     pub fn get_position(&self) -> Point3<f32> {
         self.position
+    }
+
+    pub fn get_relative_position(&self) -> Point3<f32> {
+        self.relative_position
     }
 
     pub fn get_yaw(&self) -> Rad<f32> {

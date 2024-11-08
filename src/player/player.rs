@@ -61,12 +61,11 @@ impl Component for PlayerController {
             position_delta += model.reset_position();
         }
         entity.set_position(entity.get_position() + position_delta);
-        let new_pos = entity.get_position();
         let camera = scene
             .get_component_mut::<CameraComponent>()
             .unwrap()
             .get_camera_mut();
-        camera.set_position(new_pos);
+        camera.set_position(entity.get_position());
         self.dirty = false;
     }
 

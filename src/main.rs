@@ -30,7 +30,8 @@ struct WorldLayer {
 impl WorldLayer {
     pub fn new(width: u32, height: u32) -> Result<WorldLayer, Box<dyn Error>> {
         let mut scene = Scene::new();
-        let camera = Camera::new((0.1, -3.4, 3.0), Deg(-263.0), Deg(-30.0));
+        let mut camera = Camera::new((0.0, 0.0, 0.0), Deg(-263.0), Deg(-30.0));
+        camera.set_relative_position((0.25, 1.33, -2.05));
         let projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
         let camera_controller = CameraController::new(10.0, 1.0);
         let mut entity = Entity::new();

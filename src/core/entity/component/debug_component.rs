@@ -73,10 +73,11 @@ impl Component for DebugController {
             {
                 let camera = camera_component.get_camera();
                 let pos = camera.get_position();
+                let rel_pos = camera.get_relative_position();
                 self.bounds = ChunkBounds::parse(pos.to_vec());
 
                 self.pos_text
-                    .set_content(format!("x: {:.2} y: {:.2} z: {:.2}", pos.x, pos.y, pos.z));
+                    .set_content(format!("x: {:.2} ({:.2}) y: {:.2} ({:.2}) z: {:.2} ({:.2})", pos.x, rel_pos.x, pos.y, rel_pos.y, pos.z, rel_pos.z));
                 self.cam_text.set_content(format!(
                     "yaw: {:?} pitch {:?}",
                     Deg::from(camera.get_yaw()),
