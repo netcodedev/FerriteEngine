@@ -1,6 +1,6 @@
 use std::f32::consts::FRAC_PI_2;
 
-use cgmath::{perspective, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
+use cgmath::{perspective, EuclideanSpace, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
 use glfw::{Action, CursorMode, Key};
 
 #[rustfmt::skip]
@@ -15,6 +15,7 @@ const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
 #[derive(Debug)]
 pub struct Camera {
+    relative_position: Point3<f32>,
     position: Point3<f32>,
     yaw: Rad<f32>,
     pitch: Rad<f32>,
@@ -29,6 +30,7 @@ impl Camera {
         pitch: P,
     ) -> Self {
         Self {
+            relative_position: Point3::origin(),
             position: position.into(),
             yaw: yaw.into(),
             pitch: pitch.into(),
@@ -41,16 +43,21 @@ impl Camera {
         let (sin_yaw, cos_yaw) = self.yaw.0.sin_cos();
 
         self.matrix = Matrix4::look_to_rh(
-            self.position,
+            self.position + self.relative_position.to_vec(),
             Vector3::new(cos_pitch * cos_yaw, sin_pitch, cos_pitch * sin_yaw).normalize(),
             Vector3::unit_y(),
         );
     }
 
     pub fn update(&mut self, position: Point3<f32>, yaw: Rad<f32>, pitch: Rad<f32>) {
-        self.position = position;
+        self.relative_position = position;
         self.yaw = yaw;
         self.pitch = pitch;
+        self.calc_matrix();
+    }
+
+    pub fn set_position(&mut self, position: Point3<f32>) {
+        self.position = position;
         self.calc_matrix();
     }
 
@@ -262,7 +269,7 @@ impl CameraController {
         let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
         let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
 
-        let mut position = camera.position;
+        let mut position = camera.relative_position;
         let mut yaw = camera.yaw;
         let mut pitch = camera.pitch;
 
