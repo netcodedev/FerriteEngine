@@ -9,28 +9,21 @@ use crate::core::{
         },
         Entity,
     },
-    model::{Animation, ModelBuilder},
+    model::{animation_graph::AnimationGraph, ModelBuilder},
     scene::Scene,
 };
 
 use super::{Player, PlayerController};
 
 impl Player {
-    pub fn new<P: Into<Point3<f32>>>(position: P) -> Result<Entity, Box<dyn std::error::Error>> {
+    pub fn new<P: Into<Point3<f32>>>(position: P, animation_graph: AnimationGraph) -> Result<Entity, Box<dyn std::error::Error>> {
         let mut entity = Entity::new();
         entity.set_position(position);
 
         let mut model = ModelBuilder::new("Mannequin.fbx")?.build();
         model.init();
 
-        let mut animation_component = AnimationComponent::new();
-        animation_component.add_animation("idle", Animation::from_file("Idle.fbx")?);
-        animation_component.add_animation("walk", Animation::from_file("Walk.fbx")?);
-        animation_component.add_animation("back", Animation::from_file("Walk_Backwards.fbx")?);
-        animation_component.add_animation("left", Animation::from_file("Walk_Left.fbx")?);
-        animation_component.add_animation("right", Animation::from_file("Walk_Right.fbx")?);
-        animation_component.add_animation("run", Animation::from_file("Run.fbx")?);
-        animation_component.play_animation("idle");
+        let animation_component = AnimationComponent::new(animation_graph);
 
         entity.add_component(animation_component);
         entity.add_component(ModelComponent::new(model));
@@ -57,32 +50,10 @@ impl Component for PlayerController {
         let mut position_delta: Vector3<f32> = Vector3::zero();
         if let Some(animation_component) = entity.get_component_mut::<AnimationComponent>() {
             if self.dirty {
-                let x_anim = if self.forward - self.backward > 0.0 {
-                    "walk"
-                } else if self.forward - self.backward < 0.0 {
-                    "back"
-                } else {
-                    "idle"
-                };
-                let y_anim = if self.left - self.right > 0.0 {
-                    "left"
-                } else if self.left - self.right < 0.0 {
-                    "right"
-                } else {
-                    "idle"
-                };
-                let blend = x_anim != "idle" && y_anim != "idle";
-                if blend {
-                    animation_component.blend_animations(x_anim, y_anim, 0.5, true);
-                } else {
-                    if x_anim != "idle" {
-                        animation_component.play_animation(x_anim);
-                    } else if y_anim != "idle" {
-                        animation_component.play_animation(y_anim);
-                    } else {
-                        animation_component.play_animation("idle");
-                    }
-                }
+                animation_component.set_input("forward", self.forward);
+                animation_component.set_input("backward", self.backward);
+                animation_component.set_input("left", self.left);
+                animation_component.set_input("right", self.right);
             }
         }
         if let Some(model_component) = entity.get_component_mut::<ModelComponent>() {

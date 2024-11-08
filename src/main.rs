@@ -6,15 +6,12 @@ mod core;
 mod player;
 mod terrain;
 use core::{
-    application::{Application, Layer},
-    camera::{Camera, CameraController, Projection},
-    entity::{
+    application::{Application, Layer}, camera::{Camera, CameraController, Projection}, entity::{
         component::{camera_component::CameraComponent, debug_component::DebugController},
         Entity,
-    },
-    renderer::ui::{UIRenderer, UI},
-    scene::Scene,
+    }, model::{animation_graph::{AnimationGraph, State}, Animation}, renderer::ui::{UIRenderer, UI}, scene::Scene
 };
+use std::error::Error;
 use terrain::{dual_contouring::DualContouringChunk, Terrain};
 
 fn main() {
@@ -31,7 +28,7 @@ struct WorldLayer {
 }
 
 impl WorldLayer {
-    pub fn new(width: u32, height: u32) -> Result<WorldLayer, Box<dyn std::error::Error>> {
+    pub fn new(width: u32, height: u32) -> Result<WorldLayer, Box<dyn Error>> {
         let mut scene = Scene::new();
         let camera = Camera::new((-121.1, 54.0, -35.0), Deg(-263.0), Deg(-30.0));
         let projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
@@ -43,7 +40,7 @@ impl WorldLayer {
 
         let mut terrain_entity = Entity::new();
         terrain_entity.add_component(Terrain::<DualContouringChunk>::new());
-        terrain_entity.add_child(Player::new((-121.0, 50.6, -32.0))?);
+        terrain_entity.add_child(Player::new((-121.0, 50.6, -32.0), create_animation_graph()?)?);
 
         scene.add_entity(terrain_entity);
 
@@ -119,4 +116,151 @@ impl Layer for WorldLayer {
     fn get_name(&self) -> &str {
         "World"
     }
+}
+
+
+fn create_animation_graph() -> Result<AnimationGraph, Box<dyn Error>> {
+    // Animation Graph visualization
+    //
+    // +-----------------+      +-----------------+       +-----------------+
+    // | forward_left    |------| walk            |-------| forward_right   |
+    // +-----------------+      +-----------------+       +-----------------+
+    //        |                        |                        |
+    // +-----------------+      +-----------------+       +-----------------+
+    // | left            |------| idle            |-------| right           |
+    // +-----------------+      +-----------------+       +-----------------+
+    //        |                        |                        |
+    // +-----------------+      +-----------------+       +-----------------+
+    // | backward_left   |------| back            |-------| backward_right  |
+    // +-----------------+      +-----------------+       +-----------------+
+
+    let mut animation_graph = AnimationGraph::new();
+    animation_graph.add_input("forward", 0.0);
+    animation_graph.add_input("backward", 0.0);
+    animation_graph.add_input("left", 0.0);
+    animation_graph.add_input("right", 0.0);
+
+    let transition_speed = 0.5;
+
+    let mut idle_state = State::new("idle");
+    idle_state.add_animation(Animation::from_file("idle", "Idle.fbx")?);
+    idle_state.add_transition("walk", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] > 0.0 && inputs["left"] - inputs["right"] == 0.0
+    }),transition_speed);
+    idle_state.add_transition("back", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] < 0.0 && inputs["left"] - inputs["right"] == 0.0
+    }), transition_speed);
+    idle_state.add_transition("left", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] == 0.0 && inputs["left"] - inputs["right"] > 0.0
+    }), transition_speed);
+    idle_state.add_transition("right", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] == 0.0 && inputs["left"] - inputs["right"] < 0.0
+    }), transition_speed);
+    animation_graph.set_default_state(idle_state);
+
+    let mut walk_state = State::new("walk");
+    walk_state.add_animation(Animation::from_file("walk", "Walk.fbx")?);
+    walk_state.add_transition("idle", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] == 0.0 && inputs["left"] - inputs["right"] == 0.0
+    }), transition_speed);
+    walk_state.add_transition("forward_left", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] > 0.0 && inputs["left"] - inputs["right"] > 0.0
+    }), transition_speed);
+    walk_state.add_transition("forward_right", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] > 0.0 && inputs["left"] - inputs["right"] < 0.0
+    }), transition_speed);
+    animation_graph.add_state(walk_state);
+
+    let mut run_state = State::new("run");
+    run_state.add_animation(Animation::from_file("run", "Run.fbx")?);
+    animation_graph.add_state(run_state);
+
+    let mut back_state = State::new("back");
+    back_state.add_animation(Animation::from_file("back", "Walk_Backwards.fbx")?);
+    back_state.add_transition("idle", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] == 0.0 && inputs["left"] - inputs["right"] == 0.0
+    }), transition_speed);
+    back_state.add_transition("backward_left", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] < 0.0 && inputs["left"] - inputs["right"] > 0.0
+    }), transition_speed);
+    back_state.add_transition("backward_right", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] < 0.0 && inputs["left"] - inputs["right"] < 0.0
+    }), transition_speed);
+    animation_graph.add_state(back_state);
+
+    let mut left_state = State::new("left");
+    left_state.add_animation(Animation::from_file("left", "Walk_Left.fbx")?);
+    left_state.add_transition("idle", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] == 0.0 && inputs["left"] - inputs["right"] == 0.0
+    }), transition_speed);
+    left_state.add_transition("forward_left", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] > 0.0 && inputs["left"] - inputs["right"] > 0.0
+    }), transition_speed);
+    left_state.add_transition("backward_left", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] < 0.0 && inputs["left"] - inputs["right"] > 0.0
+    }), transition_speed);
+    animation_graph.add_state(left_state);
+
+    let mut right_state = State::new("right");
+    right_state.add_animation(Animation::from_file("right", "Walk_Right.fbx")?);
+    right_state.add_transition("idle", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] == 0.0 && inputs["left"] - inputs["right"] == 0.0
+    }), transition_speed);
+    right_state.add_transition("forward_right", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] > 0.0 && inputs["left"] - inputs["right"] < 0.0
+    }), transition_speed);
+    right_state.add_transition("backward_right", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] < 0.0 && inputs["left"] - inputs["right"] < 0.0
+    }), transition_speed);
+    animation_graph.add_state(right_state);
+
+    let mut forward_left_state = State::new("forward_left");
+    forward_left_state.add_animation(Animation::from_file("walk", "Walk.fbx")?);
+    forward_left_state.add_animation(Animation::from_file("left", "Walk_Left.fbx")?);
+    forward_left_state.add_transition("walk", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] > 0.0 && inputs["left"] - inputs["right"] == 0.0
+    }), transition_speed);
+    forward_left_state.add_transition("left", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] == 0.0 && inputs["left"] - inputs["right"] > 0.0
+    }), transition_speed);
+    forward_left_state.sync_animations(true);
+    animation_graph.add_state(forward_left_state);
+
+    let mut forward_right_state = State::new("forward_right");
+    forward_right_state.add_animation(Animation::from_file("walk", "Walk.fbx")?);
+    forward_right_state.add_animation(Animation::from_file("right", "Walk_Right.fbx")?);
+    forward_right_state.add_transition("walk", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] > 0.0 && inputs["left"] - inputs["right"] == 0.0
+    }), transition_speed);
+    forward_right_state.add_transition("right", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] == 0.0 && inputs["left"] - inputs["right"] < 0.0
+    }), transition_speed);
+    forward_right_state.sync_animations(true);
+    animation_graph.add_state(forward_right_state);
+
+    let mut backward_left_state = State::new("backward_left");
+    backward_left_state.add_animation(Animation::from_file("back", "Walk_Backwards.fbx")?);
+    backward_left_state.add_animation(Animation::from_file("left", "Walk_Left.fbx")?);
+    backward_left_state.add_transition("back", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] < 0.0 && inputs["left"] - inputs["right"] == 0.0
+    }), transition_speed);
+    backward_left_state.add_transition("left", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] == 0.0 && inputs["left"] - inputs["right"] > 0.0
+    }), transition_speed);
+    backward_left_state.sync_animations(true);
+    animation_graph.add_state(backward_left_state);
+
+    let mut backward_right_state = State::new("backward_right");
+    backward_right_state.add_animation(Animation::from_file("back", "Walk_Backwards.fbx")?);
+    backward_right_state.add_animation(Animation::from_file("right", "Walk_Right.fbx")?);
+    backward_right_state.add_transition("back", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] < 0.0 && inputs["left"] - inputs["right"] == 0.0
+    }), transition_speed);
+    backward_right_state.add_transition("right", Box::new(|inputs| {
+        inputs["forward"] - inputs["backward"] == 0.0 && inputs["left"] - inputs["right"] < 0.0
+    }), transition_speed);
+    backward_right_state.sync_animations(true);
+    animation_graph.add_state(backward_right_state);
+
+    Ok(animation_graph)
 }

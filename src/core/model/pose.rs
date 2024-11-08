@@ -42,6 +42,7 @@ impl Pose {
                 pose.add_transform(key.clone(), transform.clone());
             }
         }
+        pose.cycle_completed = self.cycle_completed || other.cycle_completed;
         pose
     }
 

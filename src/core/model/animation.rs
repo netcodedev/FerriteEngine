@@ -19,12 +19,14 @@ impl Animation {
         }
     }
 
-    pub fn from_file(path: &str) -> Result<Animation, Box<dyn std::error::Error>> {
+    pub fn from_file(name: &str, path: &str) -> Result<Animation, Box<dyn std::error::Error>> {
         let scene = Scene::from_file(format!("assets/animations/{path}").as_str(), vec![])?;
         if scene.animations.len() == 0 {
             return Err("No animations found".into());
         }
-        Ok(Animation::new(&scene.animations[0]))
+        let mut animation = Animation::new(&scene.animations[0]);
+        animation.set_name(name);
+        Ok(animation)
     }
 
     pub fn sample(&self, time: f32) -> Pose {

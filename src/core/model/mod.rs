@@ -9,6 +9,7 @@ use crate::core::renderer::{
 };
 
 mod animation;
+pub mod animation_graph;
 mod bone;
 mod channel;
 mod model;
