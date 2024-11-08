@@ -7,10 +7,13 @@ use super::{Application, Layer};
 
 impl Application {
     pub fn new(width: u32, height: u32, title: &str) -> Self {
-        let window = Window::new(width, height, title);
+        let mut window = Window::new(width, height, title);
 
         TextRenderer::resize(width, height);
         PlaneRenderer::resize(width, height);
+
+        window.clear((0.3, 0.3, 0.5, 1.0), gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+        window.swap_buffers();
 
         Self {
             window,
