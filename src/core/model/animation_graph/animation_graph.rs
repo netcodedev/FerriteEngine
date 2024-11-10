@@ -11,7 +11,7 @@ impl AnimationGraph {
             default_state: String::new(),
             states: HashMap::new(),
             current_state: String::new(),
-            previous_state: String::new(),
+            previous_state: None,
             transition_progress: 1.0,
             transition_speed: 1.0,
         }
@@ -21,21 +21,25 @@ impl AnimationGraph {
         self.transition_progress += delta_time * self.transition_speed;
         if self.transition_progress > 1.0 {
             self.transition_progress = 1.0;
-            self.previous_state = String::new();
+            self.previous_state = None;
         }
-        if let Some(state) = self.states.get_mut(&self.previous_state) {
-            state.update(delta_time);
+        if let Some(previous_state) = &self.previous_state {
+            if let Some(state) = self.states.get_mut(previous_state) {
+                state.update(delta_time);
+            }
         }
         let mut transition = false;
         if let Some(state) = self.states.get_mut(&self.current_state) {
-            for transitions in &state.transitions {
-                if (transitions.condition)(&self.inputs) {
-                    self.previous_state = self.current_state.clone();
-                    self.current_state = transitions.to_state.clone();
-                    self.transition_progress = 0.0;
-                    self.transition_speed = 1.0 / transitions.transition_time;
-                    transition = true;
-                    break;
+            if self.previous_state.is_none() {
+                for transitions in &state.transitions {
+                    if (transitions.condition)(&self.inputs) {
+                        self.previous_state = Some(self.current_state.clone());
+                        self.current_state = transitions.to_state.clone();
+                        self.transition_progress = 0.0;
+                        self.transition_speed = 1.0 / transitions.transition_time;
+                        transition = true;
+                        break;
+                    }
                 }
             }
             state.update(delta_time);
@@ -65,12 +69,14 @@ impl AnimationGraph {
                 final_pose = Some(new_pose);
             }
         }
-        if let Some(state) = self.states.get(&self.previous_state) {
-            if let Some(new_pose) = state.get_pose() {
-                if let Some(pose) = final_pose {
-                    final_pose = Some(pose.interpolate(&new_pose, 1.0 - self.transition_progress));
-                } else {
-                    final_pose = Some(new_pose);
+        if let Some(previous_state) = &self.previous_state {
+            if let Some(state) = self.states.get(previous_state) {
+                if let Some(new_pose) = state.get_pose() {
+                    if let Some(pose) = final_pose {
+                        final_pose = Some(pose.interpolate(&new_pose, 1.0 - self.transition_progress));
+                    } else {
+                        final_pose = Some(new_pose);
+                    }
                 }
             }
         }

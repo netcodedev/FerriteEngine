@@ -9,7 +9,7 @@ pub struct AnimationGraph {
     default_state: String,
     states: HashMap<String, State>,
     current_state: String,
-    previous_state: String,
+    previous_state: Option<String>,
     transition_progress: f32,
     transition_speed: f32,
 }
