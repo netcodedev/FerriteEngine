@@ -21,7 +21,7 @@ pub struct Model {
     meshes: HashMap<String, ModelMesh>,
     shader: Shader,
     textures: HashMap<TextureType, Texture>,
-    position: Point3<f32>,
+    pub position: Point3<f32>,
     scale: f32,
 }
 

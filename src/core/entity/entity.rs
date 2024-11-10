@@ -77,6 +77,22 @@ impl Entity {
         None
     }
 
+    pub fn get_with_own_component<T>(&self) -> Vec<&Entity>
+    where
+        T: Component,
+    {
+        let mut entities = Vec::new();
+        for component in self.components.iter() {
+            if let Some(_) = component.as_any().downcast_ref::<T>() {
+                entities.push(self);
+            }
+        }
+        for child in self.children.iter() {
+            entities.append(&mut child.get_with_own_component::<T>());
+        }
+        entities
+    }
+
     pub fn get_component_mut<T>(&mut self) -> Option<&mut T>
     where
         T: Component,

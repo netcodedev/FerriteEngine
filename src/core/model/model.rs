@@ -161,7 +161,6 @@ impl Model {
                 Some(self.scale),
             );
             unsafe { gl::Enable(gl::CULL_FACE) };
-            self.render_bones(parent_transform, camera, projection);
         }
     }
 

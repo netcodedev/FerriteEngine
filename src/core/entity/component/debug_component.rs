@@ -16,6 +16,8 @@ use crate::{
 };
 use cgmath::{Deg, EuclideanSpace, Matrix4, Point3, Vector3};
 
+use super::model_component::ModelComponent;
+
 pub struct DebugController {
     pub debug_ui: bool,
     wireframe: bool,
@@ -195,9 +197,12 @@ impl Component for DebugController {
                     false,
                 );
 
-                // for model in scene.get_components::<ModelComponent>() {
-                //     model.get_model().render_bones(camera, projection);
-                // }
+                for entity in scene.get_entities_with_component::<ModelComponent>() {
+                    let transform = Matrix4::from_translation(entity.get_position().to_vec());
+                    if let Some(model_component) = entity.get_component::<ModelComponent>() {
+                        model_component.get_model().render_bones(&transform, camera, projection);
+                    }
+                }
             }
         }
     }

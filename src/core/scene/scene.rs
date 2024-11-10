@@ -66,16 +66,27 @@ impl Scene {
         None
     }
 
-    pub fn get_components<T>(&self) -> Vec<&T>
+    // pub fn get_components<T>(&self) -> Vec<&T>
+    // where
+    //     T: Component,
+    // {
+    //     let mut components = Vec::new();
+    //     for entity in self.entities.iter() {
+    //         if let Some(component) = entity.get_component::<T>() {
+    //             components.push(component);
+    //         }
+    //     }
+    //     components
+    // }
+
+    pub fn get_entities_with_component<T>(&self) -> Vec<&Entity>
     where
         T: Component,
     {
-        let mut components = Vec::new();
+        let mut entities = Vec::new();
         for entity in self.entities.iter() {
-            if let Some(component) = entity.get_component::<T>() {
-                components.push(component);
-            }
+            entities.extend(entity.get_with_own_component::<T>());
         }
-        components
+        entities
     }
 }
