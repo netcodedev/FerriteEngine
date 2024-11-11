@@ -7,7 +7,7 @@
         ],
         "executable": "/mnt/dev/dev/rust/voxelengine/target/debug/voxelengine",
         "inject": false,
-        "numQueuedFrames": 1,
+        "numQueuedFrames": 2,
         "options": {
             "allowFullscreen": true,
             "allowVSync": true,

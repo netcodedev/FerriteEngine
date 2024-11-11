@@ -26,7 +26,12 @@ impl Entity {
         }
     }
 
-    pub fn render(&self, scene: &Scene, view_projection: &Matrix4<f32>, parent_transform: Matrix4<f32>) {
+    pub fn render(
+        &self,
+        scene: &Scene,
+        view_projection: &Matrix4<f32>,
+        parent_transform: Matrix4<f32>,
+    ) {
         let transform = parent_transform * Matrix4::from_translation(self.position.to_vec());
         for component in self.components.iter() {
             component.render(scene, view_projection, &transform);

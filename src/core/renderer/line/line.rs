@@ -65,7 +65,9 @@ impl LineRenderer {
             }
             renderer.shader.bind();
 
-            renderer.shader.set_uniform_mat4("viewProjection", &view_projection);
+            renderer
+                .shader
+                .set_uniform_mat4("viewProjection", &view_projection);
             renderer.shader.set_uniform_3fv("color", &color);
 
             gl::BindVertexArray(renderer.vao);
@@ -111,7 +113,9 @@ impl LineRenderer {
             }
             renderer.shader.bind();
 
-            renderer.shader.set_uniform_mat4("viewProjection", &view_projection);
+            renderer
+                .shader
+                .set_uniform_mat4("viewProjection", &view_projection);
             renderer.shader.set_uniform_3fv("color", &color);
 
             gl::BindVertexArray(renderer.vao);

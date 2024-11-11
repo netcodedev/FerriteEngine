@@ -16,8 +16,12 @@ use core::{
         animation_graph::{AnimationGraph, State},
         Animation,
     },
-    renderer::ui::{UIRenderer, UI},
+    renderer::{
+        light::skylight::SkyLight,
+        ui::{UIRenderer, UI},
+    },
     scene::Scene,
+    window::Window,
 };
 use std::error::Error;
 use terrain::{dual_contouring::DualContouringChunk, Terrain};
@@ -38,6 +42,7 @@ struct WorldLayer {
 impl WorldLayer {
     pub fn new(width: u32, height: u32) -> Result<WorldLayer, Box<dyn Error>> {
         let mut scene = Scene::new();
+        scene.add_shadow_map(4096, 4096);
         let mut camera = Camera::new((0.0, 0.0, 0.0), Deg(-263.0), Deg(-30.0));
         camera.set_relative_position((0.25, 1.33, -2.05));
         let projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
@@ -45,6 +50,11 @@ impl WorldLayer {
         let mut entity = Entity::new();
         entity.add_component(CameraComponent::new(camera, projection, camera_controller));
         scene.add_entity(entity);
+
+        let mut skylight = Entity::new();
+        skylight.add_component(SkyLight::new((10.0, 60.0, 10.0)));
+        scene.add_entity(skylight);
+
         let ui = UIRenderer::new();
 
         let mut terrain_entity = Entity::new();
@@ -108,9 +118,9 @@ impl Layer for WorldLayer {
         }));
     }
 
-    fn on_update(&mut self, delta_time: f64) {
+    fn on_update(&mut self, window: &Window, delta_time: f64) {
         self.scene.update(delta_time);
-        self.scene.render();
+        self.scene.render(window);
 
         self.ui.render(&mut self.scene);
     }

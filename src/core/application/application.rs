@@ -41,7 +41,7 @@ impl Application {
             });
 
             for layer in &mut self.layers {
-                layer.on_update(self.window.calculate_frametime());
+                layer.on_update(&self.window, self.window.calculate_frametime());
             }
 
             self.window.swap_buffers();

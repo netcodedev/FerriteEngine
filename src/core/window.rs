@@ -4,6 +4,8 @@ pub struct Window {
     window: glfw::PWindow,
     glfw: glfw::Glfw,
     events: GlfwReceiver<(f64, glfw::WindowEvent)>,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl Window {
@@ -38,6 +40,8 @@ impl Window {
             window,
             glfw,
             events,
+            width,
+            height,
         }
     }
 
@@ -48,12 +52,25 @@ impl Window {
         }
     }
 
+    pub fn clear_mask(&self, mask: u32) {
+        unsafe {
+            gl::Clear(mask);
+        }
+    }
+
     pub fn handle_events<F>(&mut self, mut event_handler: F)
     where
         F: FnMut(&mut glfw::Window, &mut glfw::Glfw, glfw::WindowEvent),
     {
         self.glfw.poll_events();
         for (_, event) in glfw::flush_messages(&self.events) {
+            match event {
+                glfw::WindowEvent::FramebufferSize(width, height) => {
+                    self.width = width as u32;
+                    self.height = height as u32;
+                }
+                _ => {}
+            }
             event_handler(&mut self.window, &mut self.glfw, event);
         }
     }

@@ -10,6 +10,7 @@ use crate::core::{
     },
     mouse_picker::MousePicker,
     renderer::{
+        light::skylight::SkyLight,
         line::Line,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
     },
@@ -179,25 +180,43 @@ impl<T: Chunk + Send + 'static> Component for Terrain<T> {
         }
     }
 
-    fn render(&self, scene: &Scene, view_projection: &Matrix4<f32>, parent_transform: &Matrix4<f32>) {
+    fn render(
+        &self,
+        scene: &Scene,
+        view_projection: &Matrix4<f32>,
+        parent_transform: &Matrix4<f32>,
+    ) {
         if let Some(camera_component) = scene.get_component::<CameraComponent>() {
-            let camera = camera_component.get_camera();
-            let projection = camera_component.get_projection();
-            for (i, texture) in self.textures.iter().enumerate() {
-                unsafe {
-                    gl::ActiveTexture(gl::TEXTURE0 + i as u32);
+            if let Some(skylight) = scene.get_component::<SkyLight>() {
+                let light_position = skylight.get_position();
+                let light_projection = skylight.get_projection();
+                let camera = camera_component.get_camera();
+                let projection = camera_component.get_projection();
+                for (i, texture) in self.textures.iter().enumerate() {
+                    unsafe {
+                        gl::ActiveTexture(gl::TEXTURE0 + i as u32);
+                    }
+                    texture.bind();
                 }
-                texture.bind();
-            }
-            for (_, chunk) in &self.chunks {
-                if ViewFrustum::is_bounds_in_frustum(projection, camera, chunk.get_bounds()) {
-                    chunk.render(parent_transform, &view_projection, &self.shader);
+                self.shader.bind();
+                self.shader.set_uniform_3f(
+                    "lightPosition",
+                    light_position.x,
+                    light_position.y,
+                    light_position.z,
+                );
+                self.shader
+                    .set_uniform_mat4("lightProjection", &light_projection);
+                for (_, chunk) in &self.chunks {
+                    if ViewFrustum::is_bounds_in_frustum(projection, camera, chunk.get_bounds()) {
+                        chunk.render(parent_transform, &view_projection, &self.shader);
+                    }
                 }
-            }
-            for (i, _) in self.textures.iter().enumerate() {
-                unsafe {
-                    gl::ActiveTexture(gl::TEXTURE0 + i as u32);
-                    gl::BindTexture(gl::TEXTURE_2D, 0);
+                for (i, _) in self.textures.iter().enumerate() {
+                    unsafe {
+                        gl::ActiveTexture(gl::TEXTURE0 + i as u32);
+                        gl::BindTexture(gl::TEXTURE_2D, 0);
+                    }
                 }
             }
         }

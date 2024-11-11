@@ -11,6 +11,7 @@ out vec3 toLightVector;
 out vec2 TexCoords;
 out uint BlockType;
 
+uniform vec4 lightPosition;
 uniform mat4 model;
 uniform mat4 viewProjection;
 
@@ -27,5 +28,5 @@ void main()
     Normal = normals;
     TexCoords = texCoords;
     BlockType = block_type;
-    toLightVector = vec3(0.0, 2000.0, 0.0) - worldPosition.xyz;
+    toLightVector = lightPosition - worldPosition.xyz;
 }

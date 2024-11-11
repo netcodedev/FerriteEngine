@@ -11,7 +11,7 @@ pub struct Application {
 pub trait Layer {
     fn on_attach(&mut self) {}
     fn on_detach(&mut self) {}
-    fn on_update(&mut self, delta_time: f64);
+    fn on_update(&mut self, window: &Window, delta_time: f64);
     fn on_event(
         &mut self,
         glfw: &mut glfw::Glfw,

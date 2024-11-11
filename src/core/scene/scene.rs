@@ -1,7 +1,18 @@
 use cgmath::{Matrix4, SquareMatrix};
 use glfw::{Glfw, WindowEvent};
 
-use crate::core::entity::{component::{camera_component::CameraComponent, Component}, Entity};
+use crate::core::{
+    entity::{
+        component::{camera_component::CameraComponent, Component},
+        Entity,
+    },
+    renderer::{
+        framebuffer::FrameBuffer,
+        light::skylight::SkyLight,
+        texture::{Texture, TextureRenderer},
+    },
+    window::Window,
+};
 
 use super::Scene;
 
@@ -9,7 +20,18 @@ impl Scene {
     pub fn new() -> Self {
         Scene {
             entities: Vec::new(),
+            shadow_fbo: None,
+            texture_renderer: TextureRenderer::new(),
         }
+    }
+
+    pub fn add_shadow_map(&mut self, width: u32, height: u32) {
+        let mut fbo = FrameBuffer::new(width, height);
+        let texture = Texture::new();
+        texture.set_as_depth_texture(width, height);
+        fbo.append_depth_texture(texture);
+        fbo.depth_only();
+        self.shadow_fbo = Some(fbo);
     }
 
     pub fn update(&mut self, delta_time: f64) {
@@ -20,12 +42,45 @@ impl Scene {
         }
     }
 
-    pub fn render(&self) {
-        let transform = Matrix4::identity();
+    pub fn render(&self, window: &Window) {
+        let parent_transform = Matrix4::identity();
+
+        // Shadow Pass
+        if let Some(shadow_fbo) = &self.shadow_fbo {
+            if let Some(skylight) = self.get_component::<SkyLight>() {
+                let light_projection = skylight.get_projection();
+                shadow_fbo.bind();
+                window.clear_mask(gl::DEPTH_BUFFER_BIT);
+                for entity in self.entities.iter() {
+                    entity.render(self, &light_projection, parent_transform);
+                }
+                FrameBuffer::unbind();
+                unsafe {
+                    gl::Viewport(0, 0, window.width as i32, window.height as i32);
+                }
+            }
+        }
+
+        // Render Pass
         let camera = self.get_component::<CameraComponent>().unwrap();
         let view_projection = camera.get_view_projection();
+        if let Some(shadow_fbo) = &self.shadow_fbo {
+            if let Some(texture) = &shadow_fbo.get_depth_texture() {
+                unsafe {
+                    gl::ActiveTexture(gl::TEXTURE0);
+                }
+                texture.bind();
+            }
+        }
         for entity in self.entities.iter() {
-            entity.render(self, &view_projection, transform);
+            entity.render(self, &view_projection, parent_transform);
+        }
+
+        // Render Shadow Map
+        if let Some(shadow_fbo) = &self.shadow_fbo {
+            if let Some(texture) = &shadow_fbo.get_depth_texture() {
+                self.texture_renderer.render(texture);
+            }
         }
     }
 

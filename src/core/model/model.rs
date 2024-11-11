@@ -8,10 +8,10 @@ use russimp::{
 };
 
 use crate::core::renderer::{
-        line::{Line, LineRenderer},
-        shader::Shader,
-        texture::Texture,
-    };
+    line::{Line, LineRenderer},
+    shader::Shader,
+    texture::Texture,
+};
 
 use super::{Bone, Model, ModelBuilder, ModelMesh, Pose};
 use crate::core::utils::ToMatrix4;
@@ -49,10 +49,9 @@ impl Model {
                 let tex = texture.borrow();
                 if let DataContent::Bytes(texture_data) = &tex.data {
                     let data = image::load_from_memory(texture_data.as_slice()).unwrap();
-                    self.textures.insert(
-                        tex_type.clone(),
-                        Texture::from_data(data.width(), data.height(), data.to_rgba8().into_raw()),
-                    );
+                    let texture = Texture::new();
+                    texture.load_from_data(data.width(), data.height(), data.to_rgba8().into_raw());
+                    self.textures.insert(tex_type.clone(), texture);
                 }
             }
         }
@@ -115,6 +114,7 @@ impl Model {
 
     pub fn render(
         &self,
+        light_position: &Point3<f32>,
         parent_transform: &Matrix4<f32>,
         camera_projection: &Matrix4<f32>,
     ) {
@@ -123,7 +123,14 @@ impl Model {
                 panic!("Mesh is not buffered");
             }
             self.shader.bind();
-            self.shader.set_uniform_mat4("viewProjection", &camera_projection);
+            self.shader.set_uniform_3f(
+                "lightPosition",
+                light_position.x,
+                light_position.y,
+                light_position.z,
+            );
+            self.shader
+                .set_uniform_mat4("viewProjection", &camera_projection);
             if let Some(root_bone) = &mesh.root_bone {
                 let mut bone_transforms =
                     Model::get_bone_transformations(root_bone, Matrix4::identity());
@@ -158,11 +165,7 @@ impl Model {
         }
     }
 
-    pub fn render_bones(
-        &self,
-        view_projection: &Matrix4<f32>,
-        parent_transform: &Matrix4<f32>,
-    ) {
+    pub fn render_bones(&self, view_projection: &Matrix4<f32>, parent_transform: &Matrix4<f32>) {
         let root = parent_transform
             * Matrix4::from_translation(self.position.to_vec())
             * Matrix4::from_scale(self.scale);
@@ -196,11 +199,7 @@ impl Model {
         self.position += root_translation * self.scale;
     }
 
-    fn render_child_bones(
-        &self,
-        bone: &Bone,
-        root: cgmath::Matrix4<f32>,
-    ) -> Vec<Line> {
+    fn render_child_bones(&self, bone: &Bone, root: cgmath::Matrix4<f32>) -> Vec<Line> {
         let position = root * bone.current_transform;
         let pos_vec = (position * Vector4::new(0.0, 0.0, 0.0, 1.0)).truncate();
         let root_vec = (root * Vector4::new(0.0, 0.0, 0.0, 1.0)).truncate();

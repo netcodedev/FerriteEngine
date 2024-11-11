@@ -455,8 +455,10 @@ impl Chunk for VoxelChunk {
     }
 
     fn get_textures() -> Vec<Texture> {
-        let grass_texture = Texture::new(std::path::Path::new("assets/grass.png"));
-        let stone_texture = Texture::new(std::path::Path::new("assets/stone.png"));
+        let grass_texture = Texture::new();
+        grass_texture.load_from_file(std::path::Path::new("assets/grass.png"));
+        let stone_texture = Texture::new();
+        stone_texture.load_from_file(std::path::Path::new("assets/stone.png"));
 
         vec![grass_texture, stone_texture]
     }

@@ -8,6 +8,7 @@ out vec3 Normal;
 out vec3 Color;
 out vec3 toLightVector;
 
+uniform vec3 lightPosition;
 uniform mat4 model;
 uniform mat4 viewProjection;
 
@@ -17,5 +18,5 @@ void main()
     gl_Position = viewProjection * worldPosition;
     Normal = normals;
     Color = color;
-    toLightVector = vec3(0.0, 2000.0, 0.0) - worldPosition.xyz;
+    toLightVector = lightPosition - worldPosition.xyz;
 }

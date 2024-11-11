@@ -177,12 +177,7 @@ impl Component for DebugController {
                     }
                 }
             }
-            LineRenderer::render_lines(
-                view_projection,
-                &lines,
-                Vector3::new(1.0, 1.0, 0.0),
-                false,
-            );
+            LineRenderer::render_lines(view_projection, &lines, Vector3::new(1.0, 1.0, 0.0), false);
             LineRenderer::render_lines(
                 view_projection,
                 &corner_lines,
@@ -193,7 +188,9 @@ impl Component for DebugController {
             for entity in scene.get_entities_with_component::<ModelComponent>() {
                 let transform = Matrix4::from_translation(entity.get_position().to_vec());
                 if let Some(model_component) = entity.get_component::<ModelComponent>() {
-                    model_component.get_model().render_bones(view_projection, &transform);
+                    model_component
+                        .get_model()
+                        .render_bones(view_projection, &transform);
                 }
             }
         }

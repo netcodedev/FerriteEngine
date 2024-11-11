@@ -8,10 +8,10 @@ use ndarray::ArrayBase;
 
 use crate::{
     core::renderer::{
-            line::Line,
-            shader::{Shader, VertexAttributes},
-            texture::Texture,
-        },
+        line::Line,
+        shader::{Shader, VertexAttributes},
+        texture::Texture,
+    },
     terrain::{Chunk, ChunkBounds, CHUNK_SIZE_FLOAT},
 };
 

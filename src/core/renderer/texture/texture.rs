@@ -5,11 +5,54 @@ use gl::types::{GLint, GLsizei, GLsizeiptr, GLvoid};
 use super::{Shader, Texture, TextureRenderer};
 
 impl Texture {
-    pub fn new(path: &Path) -> Self {
+    pub fn new() -> Self {
         let texture = Texture::gen_texture();
-        texture.bind();
+        texture
+    }
+
+    fn gen_texture() -> Self {
+        let mut id = 0;
+        unsafe {
+            gl::GenTextures(1, &mut id);
+        }
+        Texture { id }
+    }
+
+    pub fn set_as_depth_texture(&self, width: u32, height: u32) {
+        self.bind();
+        unsafe {
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(
+                gl::TEXTURE_2D,
+                gl::TEXTURE_WRAP_S,
+                gl::CLAMP_TO_BORDER as i32,
+            );
+            gl::TexParameteri(
+                gl::TEXTURE_2D,
+                gl::TEXTURE_WRAP_T,
+                gl::CLAMP_TO_BORDER as i32,
+            );
+            let color = [1.0, 1.0, 1.0, 1.0];
+            gl::TexParameterfv(gl::TEXTURE_2D, gl::TEXTURE_BORDER_COLOR, color.as_ptr());
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                gl::DEPTH_COMPONENT as GLint,
+                width as GLsizei,
+                height as GLsizei,
+                0,
+                gl::DEPTH_COMPONENT,
+                gl::FLOAT,
+                std::ptr::null(),
+            );
+        }
+    }
+
+    pub fn load_from_file(&self, path: &Path) {
+        self.bind();
         let img = image::open(path)
-            .expect("Bild konnte nicht geladen werden")
+            .expect("Image not found")
             .flipv()
             .to_rgba8();
         unsafe {
@@ -29,20 +72,11 @@ impl Texture {
                 img.as_ptr() as *const _,
             );
         }
-        texture
+        Texture::unbind();
     }
 
-    fn gen_texture() -> Self {
-        let mut id = 0;
-        unsafe {
-            gl::GenTextures(1, &mut id);
-        }
-        Texture { id }
-    }
-
-    pub fn from_data(width: u32, height: u32, data: Vec<u8>) -> Self {
-        let texture = Texture::gen_texture();
-        texture.bind();
+    pub fn load_from_data(&self, width: u32, height: u32, data: Vec<u8>) {
+        self.bind();
         unsafe {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
@@ -60,12 +94,18 @@ impl Texture {
                 data.as_ptr() as *const _,
             );
         }
-        texture
+        Texture::unbind();
     }
 
     pub fn bind(&self) {
         unsafe {
             gl::BindTexture(gl::TEXTURE_2D, self.id);
+        }
+    }
+
+    pub fn unbind() {
+        unsafe {
+            gl::BindTexture(gl::TEXTURE_2D, 0);
         }
     }
 }
@@ -78,17 +118,20 @@ impl Drop for Texture {
     }
 }
 
+#[allow(dead_code)]
 impl TextureRenderer {
-    #[allow(dead_code)]
     pub fn new() -> Self {
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
         Self { shader }
     }
 
-    #[allow(dead_code)]
     pub fn render(&self, texture: &Texture) {
+        #[rustfmt::skip]
         let vertices: Vec<f32> = vec![
-            -0.5, -0.5, 0.0, 0.0, 0.5, -0.5, 1.0, 0.0, 0.5, 0.5, 1.0, 1.0, -0.5, 0.5, 0.0, 1.0,
+            0.5, 0.5, 0.0, 0.0,
+            1.0, 0.5, 1.0, 0.0,
+            1.0, 1.0, 1.0, 1.0,
+            0.5, 1.0, 0.0, 1.0,
         ];
         let indices = vec![0, 1, 2, 2, 3, 0];
 
@@ -132,11 +175,12 @@ impl TextureRenderer {
                 (indices.len() * std::mem::size_of::<f32>()) as *const GLvoid,
             );
             gl::EnableVertexAttribArray(1);
-            texture.bind();
             gl::ActiveTexture(gl::TEXTURE0);
+            texture.bind();
             self.shader.bind();
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             gl::Enable(gl::BLEND);
+            gl::Disable(gl::DEPTH_TEST);
             gl::DrawElements(gl::TRIANGLES, 6, gl::UNSIGNED_INT, std::ptr::null());
             gl::Disable(gl::BLEND);
             gl::DeleteBuffers(1, &vbo);

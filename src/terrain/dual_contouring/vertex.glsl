@@ -7,9 +7,12 @@ layout (location = 2) in vec3 color;
 out vec3 Normal;
 out vec3 Color;
 out vec3 toLightVector;
+out vec4 fragPosLightSpace;
 
+uniform vec3 lightPosition;
 uniform mat4 model;
 uniform mat4 viewProjection;
+uniform mat4 lightProjection;
 
 void main()
 {
@@ -27,5 +30,6 @@ void main()
     } else {
         Color = color;
     }
-    toLightVector = vec3(0.0, 2000.0, 0.0) - worldPosition.xyz;
+    fragPosLightSpace = lightProjection * worldPosition;
+    toLightVector = lightPosition - worldPosition.xyz;
 }

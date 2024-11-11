@@ -73,7 +73,8 @@ impl AnimationGraph {
             if let Some(state) = self.states.get(previous_state) {
                 if let Some(new_pose) = state.get_pose() {
                     if let Some(pose) = final_pose {
-                        final_pose = Some(pose.interpolate(&new_pose, 1.0 - self.transition_progress));
+                        final_pose =
+                            Some(pose.interpolate(&new_pose, 1.0 - self.transition_progress));
                     } else {
                         final_pose = Some(new_pose);
                     }

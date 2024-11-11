@@ -13,6 +13,7 @@ out vec3 Normal;
 out vec3 toLightVector;
 out vec2 TexCoords;
 
+uniform vec3 lightPosition;
 uniform mat4 model;
 uniform mat4 viewProjection;
 uniform mat4 boneTransforms[MAX_BONES];
@@ -32,5 +33,5 @@ void main()
     gl_Position = viewProjection * worldPosition;
     Normal = (BoneTransform * vec4(normals, 0.0)).xyz;
     TexCoords = texCoords;
-    toLightVector = vec3(100.0, 100.0, 100.0) - worldPosition.xyz;
+    toLightVector = lightPosition - worldPosition.xyz;
 }
