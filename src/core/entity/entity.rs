@@ -26,14 +26,14 @@ impl Entity {
         }
     }
 
-    pub fn render(&self, scene: &Scene, parent_transform: Matrix4<f32>) {
+    pub fn render(&self, scene: &Scene, view_projection: &Matrix4<f32>, parent_transform: Matrix4<f32>) {
         let transform = parent_transform * Matrix4::from_translation(self.position.to_vec());
         for component in self.components.iter() {
-            component.render(scene, &transform);
+            component.render(scene, view_projection, &transform);
         }
 
         for child in self.children.iter() {
-            child.render(scene, transform);
+            child.render(scene, view_projection, transform);
         }
     }
 

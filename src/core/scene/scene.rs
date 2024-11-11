@@ -1,7 +1,7 @@
 use cgmath::{Matrix4, SquareMatrix};
 use glfw::{Glfw, WindowEvent};
 
-use crate::core::entity::{component::Component, Entity};
+use crate::core::entity::{component::{camera_component::CameraComponent, Component}, Entity};
 
 use super::Scene;
 
@@ -22,8 +22,10 @@ impl Scene {
 
     pub fn render(&self) {
         let transform = Matrix4::identity();
+        let camera = self.get_component::<CameraComponent>().unwrap();
+        let view_projection = camera.get_view_projection();
         for entity in self.entities.iter() {
-            entity.render(self, transform);
+            entity.render(self, &view_projection, transform);
         }
     }
 

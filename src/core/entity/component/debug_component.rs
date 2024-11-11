@@ -133,75 +133,67 @@ impl Component for DebugController {
         }
     }
 
-    fn render(&self, scene: &Scene, _: &Matrix4<f32>) {
-        if let Some(camera_component) = scene.get_component::<camera_component::CameraComponent>() {
-            let camera = camera_component.get_camera();
-            let projection = camera_component.get_projection();
+    fn render(&self, scene: &Scene, view_projection: &Matrix4<f32>, _: &Matrix4<f32>) {
+        if self.show_rays {
+            if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
+                if let Some((line, _)) = &terrain.get_mouse_picker().ray {
+                    LineRenderer::render(
+                        view_projection,
+                        &line,
+                        Vector3::new(1.0, 0.0, 0.0),
+                        false,
+                    );
+                }
+            }
+        }
 
-            if self.show_rays {
-                if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
-                    if let Some((line, _)) = &terrain.get_mouse_picker().ray {
-                        LineRenderer::render(
-                            &camera,
-                            &projection,
-                            &line,
-                            Vector3::new(1.0, 0.0, 0.0),
-                            false,
-                        );
+        if self.debug_ui {
+            self.fps_text.render();
+            self.pos_text.render();
+            self.cam_text.render();
+            self.chunk_min_text.render();
+            self.chunk_max_text.render();
+            self.triangle_count_text.render();
+
+            let mut lines: Vec<Line> = Vec::new();
+            let mut corner_lines: Vec<Line> = Vec::new();
+            let spacing = (CHUNK_SIZE / 8) as i32;
+            for i in 0..9 {
+                for j in 0..9 {
+                    if i != 0 && i != 8 && j != 0 && j != 8 {
+                        continue;
+                    }
+                    let x = self.bounds.min.0 as i32 + i * spacing;
+                    let z = self.bounds.min.2 as i32 + j * spacing;
+                    let line = Line {
+                        position: Point3::new(x as f32, self.bounds.min.1 as f32, z as f32),
+                        direction: Vector3::new(0.0, 1.0, 0.0),
+                        length: CHUNK_SIZE as f32,
+                    };
+                    if (i == 0 || i == 8) && (j == 0 || j == 8) {
+                        corner_lines.push(line);
+                    } else {
+                        lines.push(line);
                     }
                 }
             }
+            LineRenderer::render_lines(
+                view_projection,
+                &lines,
+                Vector3::new(1.0, 1.0, 0.0),
+                false,
+            );
+            LineRenderer::render_lines(
+                view_projection,
+                &corner_lines,
+                Vector3::new(1.0, 0.0, 0.0),
+                false,
+            );
 
-            if self.debug_ui {
-                self.fps_text.render();
-                self.pos_text.render();
-                self.cam_text.render();
-                self.chunk_min_text.render();
-                self.chunk_max_text.render();
-                self.triangle_count_text.render();
-
-                let mut lines: Vec<Line> = Vec::new();
-                let mut corner_lines: Vec<Line> = Vec::new();
-                let spacing = (CHUNK_SIZE / 8) as i32;
-                for i in 0..9 {
-                    for j in 0..9 {
-                        if i != 0 && i != 8 && j != 0 && j != 8 {
-                            continue;
-                        }
-                        let x = self.bounds.min.0 as i32 + i * spacing;
-                        let z = self.bounds.min.2 as i32 + j * spacing;
-                        let line = Line {
-                            position: Point3::new(x as f32, self.bounds.min.1 as f32, z as f32),
-                            direction: Vector3::new(0.0, 1.0, 0.0),
-                            length: CHUNK_SIZE as f32,
-                        };
-                        if (i == 0 || i == 8) && (j == 0 || j == 8) {
-                            corner_lines.push(line);
-                        } else {
-                            lines.push(line);
-                        }
-                    }
-                }
-                LineRenderer::render_lines(
-                    camera,
-                    projection,
-                    &lines,
-                    Vector3::new(1.0, 1.0, 0.0),
-                    false,
-                );
-                LineRenderer::render_lines(
-                    camera,
-                    projection,
-                    &corner_lines,
-                    Vector3::new(1.0, 0.0, 0.0),
-                    false,
-                );
-
-                for entity in scene.get_entities_with_component::<ModelComponent>() {
-                    let transform = Matrix4::from_translation(entity.get_position().to_vec());
-                    if let Some(model_component) = entity.get_component::<ModelComponent>() {
-                        model_component.get_model().render_bones(&transform, camera, projection);
-                    }
+            for entity in scene.get_entities_with_component::<ModelComponent>() {
+                let transform = Matrix4::from_translation(entity.get_position().to_vec());
+                if let Some(model_component) = entity.get_component::<ModelComponent>() {
+                    model_component.get_model().render_bones(view_projection, &transform);
                 }
             }
         }

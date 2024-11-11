@@ -9,7 +9,7 @@ use super::Entity;
 
 pub trait Component: AsAny {
     fn update(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64);
-    fn render(&self, _scene: &Scene, _parent_transform: &Matrix4<f32>) {}
+    fn render(&self, _scene: &Scene, _view_projection: &Matrix4<f32>, _parent_transform: &Matrix4<f32>) {}
     fn handle_event(&mut self, glfw: &mut Glfw, window: &mut Window, event: &glfw::WindowEvent);
 }
 

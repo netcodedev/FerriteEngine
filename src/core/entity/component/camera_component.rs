@@ -1,3 +1,5 @@
+use cgmath::Matrix4;
+
 use crate::core::{
     camera::{Camera, CameraController, Projection},
     entity::Entity,
@@ -48,6 +50,10 @@ impl CameraComponent {
 
     pub fn get_camera_controller_mut(&mut self) -> &mut CameraController {
         &mut self.camera_controller
+    }
+
+    pub fn get_view_projection(&self) -> Matrix4<f32> {
+        self.projection.get_matrix() * self.camera.get_matrix()
     }
 }
 

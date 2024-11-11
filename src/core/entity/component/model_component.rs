@@ -2,7 +2,7 @@ use cgmath::Matrix4;
 
 use crate::core::{entity::Entity, model::Model, scene::Scene};
 
-use super::{camera_component::CameraComponent, Component};
+use super::Component;
 
 pub struct ModelComponent {
     model: Model,
@@ -25,14 +25,11 @@ impl ModelComponent {
 impl Component for ModelComponent {
     fn update(&mut self, _: &mut Scene, _: &mut Entity, _: f64) {}
 
-    fn render(&self, _scene: &Scene, parent_transform: &Matrix4<f32>) {
-        if let Some(camera_component) = _scene.get_component::<CameraComponent>() {
-            let camera_projection = camera_component.get_projection().get_matrix() * camera_component.get_camera().get_matrix();
-            self.model.render(
-                &parent_transform,
-                &camera_projection,
-            );
-        }
+    fn render(&self, _scene: &Scene, view_projection: &Matrix4<f32>, parent_transform: &Matrix4<f32>) {
+        self.model.render(
+            &parent_transform,
+            view_projection,
+        );
     }
 
     fn handle_event(&mut self, _: &mut glfw::Glfw, _: &mut glfw::Window, _: &glfw::WindowEvent) {}

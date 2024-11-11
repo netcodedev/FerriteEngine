@@ -1,5 +1,4 @@
-use crate::core::camera::{Camera, Projection};
-use cgmath::{Point3, Vector3};
+use cgmath::{Matrix4, Point3, Vector3};
 use gl::types::*;
 
 use super::{Line, LineRenderer, Shader};
@@ -52,8 +51,7 @@ impl LineRenderer {
     }
 
     pub fn render(
-        camera: &Camera,
-        projection: &Projection,
+        view_projection: &Matrix4<f32>,
         line: &Line,
         color: Vector3<f32>,
         always_on_top: bool,
@@ -67,11 +65,7 @@ impl LineRenderer {
             }
             renderer.shader.bind();
 
-            let view = camera.get_matrix();
-            let projection = projection.get_matrix();
-
-            renderer.shader.set_uniform_mat4("view", &view);
-            renderer.shader.set_uniform_mat4("projection", &projection);
+            renderer.shader.set_uniform_mat4("viewProjection", &view_projection);
             renderer.shader.set_uniform_3fv("color", &color);
 
             gl::BindVertexArray(renderer.vao);
@@ -103,8 +97,7 @@ impl LineRenderer {
     }
 
     pub fn render_lines(
-        camera: &Camera,
-        projection: &Projection,
+        view_projection: &Matrix4<f32>,
         lines: &Vec<Line>,
         color: Vector3<f32>,
         always_on_top: bool,
@@ -118,11 +111,7 @@ impl LineRenderer {
             }
             renderer.shader.bind();
 
-            let view = camera.get_matrix();
-            let projection = projection.get_matrix();
-
-            renderer.shader.set_uniform_mat4("view", &view);
-            renderer.shader.set_uniform_mat4("projection", &projection);
+            renderer.shader.set_uniform_mat4("viewProjection", &view_projection);
             renderer.shader.set_uniform_3fv("color", &color);
 
             gl::BindVertexArray(renderer.vao);

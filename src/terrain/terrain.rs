@@ -179,11 +179,10 @@ impl<T: Chunk + Send + 'static> Component for Terrain<T> {
         }
     }
 
-    fn render(&self, scene: &Scene, parent_transform: &Matrix4<f32>) {
+    fn render(&self, scene: &Scene, view_projection: &Matrix4<f32>, parent_transform: &Matrix4<f32>) {
         if let Some(camera_component) = scene.get_component::<CameraComponent>() {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();
-            let view_projection = projection.get_matrix() * camera.get_matrix();
             for (i, texture) in self.textures.iter().enumerate() {
                 unsafe {
                     gl::ActiveTexture(gl::TEXTURE0 + i as u32);

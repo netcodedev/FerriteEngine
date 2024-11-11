@@ -7,14 +7,11 @@ use russimp::{
     scene::{PostProcess, Scene},
 };
 
-use crate::{
-    core::camera::{Camera, Projection},
-    core::renderer::{
+use crate::core::renderer::{
         line::{Line, LineRenderer},
         shader::Shader,
         texture::Texture,
-    },
-};
+    };
 
 use super::{Bone, Model, ModelBuilder, ModelMesh, Pose};
 use crate::core::utils::ToMatrix4;
@@ -163,9 +160,8 @@ impl Model {
 
     pub fn render_bones(
         &self,
+        view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
-        camera: &Camera,
-        projection: &Projection,
     ) {
         let root = parent_transform
             * Matrix4::from_translation(self.position.to_vec())
@@ -173,12 +169,11 @@ impl Model {
         let mut lines: Vec<Line> = Vec::new();
         for mesh in self.meshes.values() {
             if let Some(root_bone) = &mesh.root_bone {
-                lines.extend(self.render_child_bones(root_bone, camera, projection, root));
+                lines.extend(self.render_child_bones(root_bone, root));
             }
         }
         LineRenderer::render_lines(
-            camera,
-            projection,
+            view_projection,
             &lines,
             cgmath::Vector3::new(1.0, 0.0, 0.0),
             true,
@@ -204,8 +199,6 @@ impl Model {
     fn render_child_bones(
         &self,
         bone: &Bone,
-        camera: &Camera,
-        projection: &Projection,
         root: cgmath::Matrix4<f32>,
     ) -> Vec<Line> {
         let position = root * bone.current_transform;
@@ -219,7 +212,7 @@ impl Model {
         }];
         if let Some(children) = &bone.children {
             for child in children {
-                lines.extend(self.render_child_bones(child, camera, projection, position));
+                lines.extend(self.render_child_bones(child, position));
             }
         }
         lines
