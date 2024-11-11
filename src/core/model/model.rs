@@ -119,17 +119,14 @@ impl Model {
     pub fn render(
         &self,
         parent_transform: &Matrix4<f32>,
-        camera: &Camera,
-        projection: &Projection,
+        camera_projection: &Matrix4<f32>,
     ) {
         for mesh in self.meshes.values() {
             if !mesh.is_buffered() {
                 panic!("Mesh is not buffered");
             }
             self.shader.bind();
-            self.shader.set_uniform_mat4("view", &camera.get_matrix());
-            self.shader
-                .set_uniform_mat4("projection", &projection.get_matrix());
+            self.shader.set_uniform_mat4("viewProjection", &camera_projection);
             if let Some(root_bone) = &mesh.root_bone {
                 let mut bone_transforms =
                     Model::get_bone_transformations(root_bone, Matrix4::identity());

@@ -27,10 +27,10 @@ impl Component for ModelComponent {
 
     fn render(&self, _scene: &Scene, parent_transform: &Matrix4<f32>) {
         if let Some(camera_component) = _scene.get_component::<CameraComponent>() {
+            let camera_projection = camera_component.get_projection().get_matrix() * camera_component.get_camera().get_matrix();
             self.model.render(
                 &parent_transform,
-                &camera_component.get_camera(),
-                &camera_component.get_projection(),
+                &camera_projection,
             );
         }
     }
