@@ -9,13 +9,12 @@ out vec3 Color;
 out vec3 toLightVector;
 
 uniform mat4 model;
-uniform mat4 view;
-uniform mat4 projection;
+uniform mat4 viewProjection;
 
 void main()
 {
     vec4 worldPosition = model * vec4(position, 1.0);
-    gl_Position = projection * view * worldPosition;
+    gl_Position = viewProjection * worldPosition;
     Normal = normalize(normals);
     if(position.y < 50.0) {
         Color = vec3(0.1, 0.2, 0.8);

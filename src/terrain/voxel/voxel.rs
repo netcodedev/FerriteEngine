@@ -1,4 +1,3 @@
-use crate::core::camera::{Camera, Projection};
 use crate::core::renderer::{
     line::Line,
     shader::{Shader, VertexAttributes},
@@ -360,8 +359,7 @@ impl Chunk for VoxelChunk {
     fn render(
         &self,
         parent_transform: &Matrix4<f32>,
-        camera: &Camera,
-        projection: &Projection,
+        view_projection: &Matrix4<f32>,
         shader: &Shader,
     ) {
         if let Some(mesh) = &self.mesh {
@@ -369,8 +367,7 @@ impl Chunk for VoxelChunk {
                 panic!("Mesh is not buffered");
             }
             shader.bind();
-            shader.set_uniform_mat4("view", &camera.get_matrix());
-            shader.set_uniform_mat4("projection", &projection.get_matrix());
+            shader.set_uniform_mat4("viewProjection", &view_projection);
             unsafe {
                 gl::Enable(gl::CULL_FACE);
             }

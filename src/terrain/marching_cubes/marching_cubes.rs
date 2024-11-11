@@ -7,14 +7,11 @@ use libnoise::prelude::*;
 use ndarray::ArrayBase;
 
 use crate::{
-    core::{
-        camera::{Camera, Projection},
-        renderer::{
+    core::renderer::{
             line::Line,
             shader::{Shader, VertexAttributes},
             texture::Texture,
         },
-    },
     terrain::{Chunk, ChunkBounds, CHUNK_SIZE_FLOAT},
 };
 
@@ -175,8 +172,7 @@ impl Chunk for MarchingCubesChunk {
     fn render(
         &self,
         parent_transform: &Matrix4<f32>,
-        camera: &Camera,
-        projection: &Projection,
+        view_projection: &Matrix4<f32>,
         shader: &Shader,
     ) {
         if let Some(mesh) = &self.mesh {
@@ -184,8 +180,7 @@ impl Chunk for MarchingCubesChunk {
                 panic!("Mesh is not buffered");
             }
             shader.bind();
-            shader.set_uniform_mat4("view", &camera.get_matrix());
-            shader.set_uniform_mat4("projection", &projection.get_matrix());
+            shader.set_uniform_mat4("viewProjection", &view_projection);
             unsafe {
                 gl::Enable(gl::CULL_FACE);
             }

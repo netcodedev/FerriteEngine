@@ -183,6 +183,7 @@ impl<T: Chunk + Send + 'static> Component for Terrain<T> {
         if let Some(camera_component) = scene.get_component::<CameraComponent>() {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();
+            let view_projection = projection.get_matrix() * camera.get_matrix();
             for (i, texture) in self.textures.iter().enumerate() {
                 unsafe {
                     gl::ActiveTexture(gl::TEXTURE0 + i as u32);
@@ -191,7 +192,7 @@ impl<T: Chunk + Send + 'static> Component for Terrain<T> {
             }
             for (_, chunk) in &self.chunks {
                 if ViewFrustum::is_bounds_in_frustum(projection, camera, chunk.get_bounds()) {
-                    chunk.render(parent_transform, camera, projection, &self.shader);
+                    chunk.render(parent_transform, &view_projection, &self.shader);
                 }
             }
             for (i, _) in self.textures.iter().enumerate() {

@@ -12,13 +12,12 @@ out vec2 TexCoords;
 out uint BlockType;
 
 uniform mat4 model;
-uniform mat4 view;
-uniform mat4 projection;
+uniform mat4 viewProjection;
 
 void main()
 {
     vec4 worldPosition = model * vec4(position, 1.0);
-    gl_Position = projection * view * worldPosition;
+    gl_Position = viewProjection * worldPosition;
     if (block_type == 1.0)
         outColor = vec4(0.3, 0.6, 0.4, 1.0);
     else if (block_type == 2.0)

@@ -4,7 +4,6 @@ use cgmath::Matrix4;
 use glfw::MouseButton;
 
 use crate::core::{
-    camera::{Camera, Projection},
     mouse_picker::MousePicker,
     renderer::{
         line::Line,
@@ -36,8 +35,7 @@ pub trait Chunk {
     fn render(
         &self,
         parent_transform: &Matrix4<f32>,
-        camera: &Camera,
-        projection: &Projection,
+        view_projection: &Matrix4<f32>,
         shader: &Shader,
     );
     fn buffer_data(&mut self);
