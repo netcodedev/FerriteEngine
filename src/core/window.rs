@@ -93,4 +93,10 @@ impl Window {
         }
         delta_time
     }
+
+    pub fn reset_viewport(&self) {
+        unsafe {
+            gl::Viewport(0, 0, self.width as i32, self.height as i32);
+        }
+    }
 }

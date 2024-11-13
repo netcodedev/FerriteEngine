@@ -55,9 +55,7 @@ impl Scene {
                     entity.render(self, &light_projection, parent_transform);
                 }
                 FrameBuffer::unbind();
-                unsafe {
-                    gl::Viewport(0, 0, window.width as i32, window.height as i32);
-                }
+                window.reset_viewport();
             }
         }
 
