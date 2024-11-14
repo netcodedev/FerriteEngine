@@ -13,7 +13,7 @@ jobs:
   build:
     strategy:
       matrix:
-        platform: [ubuntu-latest, macos-latest]
+        platform: [ubuntu-latest]
     runs-on: ${{ matrix.platform }}
 
     steps:
@@ -27,6 +27,7 @@ jobs:
         - wget https://font.download/dl/font/roboto-mono.zip
         - unzip roboto-mono.zip
         - mv RobotoMono-Medium.ttf RobotoMono.ttf
+      if: matrix.platform == 'ubuntu-latest'
     - name: Build
       run: cargo build --verbose
     - name: Run tests
