@@ -1,7 +1,7 @@
 use std::f32::consts::FRAC_PI_2;
 
 use cgmath::{
-    perspective, EuclideanSpace, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3,
+    perspective, EuclideanSpace, Euler, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3
 };
 use glfw::{Action, CursorMode, Key};
 
@@ -52,14 +52,7 @@ impl Camera {
     }
 
     pub fn calc_rotation_matrix(&self) -> Matrix4<f32> {
-        let (sin_pitch, cos_pitch) = self.pitch.0.sin_cos();
-        let (sin_yaw, cos_yaw) = self.yaw.0.sin_cos();
-
-        Matrix4::look_to_rh(
-            Point3::origin(),
-            Vector3::new(cos_pitch * cos_yaw, sin_pitch, cos_pitch * sin_yaw).normalize(),
-            Vector3::unit_y(),
-        )
+        Matrix4::from(Euler::new(-self.yaw, -self.pitch, Rad(0.0)))
     }
 
     pub fn update(&mut self, position: Point3<f32>, yaw: Rad<f32>, pitch: Rad<f32>) {
