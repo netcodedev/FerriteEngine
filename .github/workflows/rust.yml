@@ -24,7 +24,7 @@ jobs:
     - name: Download font file
       run: |
         sudo mkdir -p assets/font
-        sudo cd assets/font
+        cd assets/font
         sudo wget https://font.download/dl/font/roboto-mono.zip
         sudo unzip roboto-mono.zip
         sudo mv RobotoMono-Medium.ttf RobotoMono.ttf
