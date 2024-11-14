@@ -7,9 +7,9 @@ use crate::core::{
         Entity,
     },
     renderer::{
-        framebuffer::FrameBuffer,
+        framebuffer::{FrameBuffer, ShadowFrameBuffer},
         light::skylight::SkyLight,
-        texture::{Texture, TextureRenderer},
+        texture::TextureRenderer,
     },
     window::Window,
 };
@@ -26,12 +26,7 @@ impl Scene {
     }
 
     pub fn add_shadow_map(&mut self, width: u32, height: u32) {
-        let mut fbo = FrameBuffer::new(width, height);
-        let texture = Texture::new();
-        texture.set_as_depth_texture(width, height);
-        fbo.append_depth_texture(texture);
-        fbo.depth_only();
-        self.shadow_fbo = Some(fbo);
+        self.shadow_fbo = Some(ShadowFrameBuffer::new(width, height));
     }
 
     pub fn update(&mut self, delta_time: f64) {

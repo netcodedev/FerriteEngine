@@ -1,6 +1,6 @@
 use super::{
     entity::Entity,
-    renderer::{framebuffer::FrameBuffer, texture::TextureRenderer},
+    renderer::{framebuffer::ShadowFrameBuffer, texture::TextureRenderer},
 };
 
 mod scene;
@@ -8,7 +8,7 @@ mod scene;
 pub struct Scene {
     entities: Vec<Entity>,
 
-    shadow_fbo: Option<FrameBuffer>,
+    shadow_fbo: Option<ShadowFrameBuffer>,
 
     texture_renderer: TextureRenderer,
 }

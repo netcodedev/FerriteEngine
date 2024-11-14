@@ -76,3 +76,24 @@ impl Drop for FrameBuffer {
         }
     }
 }
+
+pub struct ShadowFrameBuffer(pub FrameBuffer);
+
+impl ShadowFrameBuffer {
+    pub fn new(width: u32, height: u32) -> Self {
+        let mut fbo = FrameBuffer::new(width, height);
+        let texture = Texture::new();
+        texture.set_as_depth_texture(width, height);
+        fbo.append_depth_texture(texture);
+        fbo.depth_only();
+        Self(fbo)
+    }
+
+    pub fn bind(&self) {
+        self.0.bind();
+    }
+
+    pub fn get_depth_texture(&self) -> Option<&Texture> {
+        self.0.get_depth_texture()
+    }
+}
