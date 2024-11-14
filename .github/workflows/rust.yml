@@ -23,7 +23,7 @@ jobs:
       if: matrix.platform == 'ubuntu-latest'
     - name: Download font file
       run: |
-        - sudo mkdirs assets/font
+        - sudo mkdir -p assets/font
         - wget https://font.download/dl/font/roboto-mono.zip
         - unzip roboto-mono.zip
         - mv RobotoMono-Medium.ttf RobotoMono.ttf
