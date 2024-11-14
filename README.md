@@ -30,3 +30,21 @@ applications of various types.
 - Water
 - Particles
 - Physics
+
+## Building
+
+The engine requires the following packages on Linux:
+
+- libxrandr-dev
+- libxinerama-dev
+- libxcursor-dev
+- libxi-dev
+- libassimp5
+
+### Install dependencies
+
+#### Ubuntu
+
+```shell
+apt install -y libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libassimp5
+```
