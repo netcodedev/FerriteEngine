@@ -16,6 +16,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install dependencies (Linux)
+      run: sudo apt-get install -y libxrandr-dev
+      if: matrix.platform == 'ubuntu-latest'
     - name: Build
       run: cargo build --verbose
     - name: Run tests
