@@ -23,11 +23,11 @@ jobs:
       if: matrix.platform == 'ubuntu-latest'
     - name: Download font file
       run: |
-        - sudo mkdir -p assets/font
-        - cd assets/font
-        - wget https://font.download/dl/font/roboto-mono.zip
-        - unzip roboto-mono.zip
-        - mv RobotoMono-Medium.ttf RobotoMono.ttf
+        sudo mkdir -p assets/font
+        cd assets/font
+        wget https://font.download/dl/font/roboto-mono.zip
+        unzip roboto-mono.zip
+        mv RobotoMono-Medium.ttf RobotoMono.ttf
       if: matrix.platform == 'ubuntu-latest'
     - name: Build
       run: cargo build --verbose
