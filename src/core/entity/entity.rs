@@ -34,7 +34,7 @@ impl Entity {
     ) {
         let transform = parent_transform * Matrix4::from_translation(self.position.to_vec());
         for component in self.components.iter() {
-            component.render(scene, view_projection, &transform);
+            component.render(scene, self, view_projection, &transform);
         }
 
         for child in self.children.iter() {

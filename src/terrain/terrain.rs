@@ -1,7 +1,8 @@
-use std::{collections::HashMap, sync::mpsc, thread};
+use std::{sync::mpsc, thread};
 
 use cgmath::{EuclideanSpace, Matrix4, Point3};
 use glfw::MouseButton;
+use rapier3d::prelude::*;
 
 use crate::core::{
     entity::{
@@ -9,6 +10,7 @@ use crate::core::{
         Entity,
     },
     mouse_picker::MousePicker,
+    physics::rigidbody::RigidBody,
     renderer::{
         light::skylight::SkyLight,
         line::Line,
@@ -78,7 +80,7 @@ impl ChunkBounds {
     }
 }
 
-impl<T: Chunk + Send + 'static> Terrain<T> {
+impl<T: Chunk + Component + Send + 'static> Terrain<T> {
     pub fn new(seed: u64) -> Self {
         let (tx, rx) = mpsc::channel();
         let origin = T::new(seed, (0.0, 0.0, 0.0), 0);
@@ -96,7 +98,6 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
         let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, -1, -1, tx4));
 
         Self {
-            chunks: HashMap::<ChunkBounds, T>::new(),
             chunk_receiver: rx,
             shader,
             textures: T::get_textures(),
@@ -104,16 +105,16 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
         }
     }
 
-    pub fn process_line(&mut self, line: Option<(Line, MouseButton)>) {
-        if let Some((line, button)) = line {
-            for chunk_bounds in ChunkBounds::get_chunk_bounds_on_line(&line) {
-                if let Some(chunk) = self.chunks.get_mut(&chunk_bounds) {
-                    if chunk.process_line(&line, &button) {
-                        break;
-                    }
-                }
-            }
-        }
+    pub fn process_line(&mut self, _line: Option<(Line, MouseButton)>) {
+        // if let Some((line, button)) = line {
+        //     for chunk_bounds in ChunkBounds::get_chunk_bounds_on_line(&line) {
+        //         if let Some(chunk) = self.chunks.get_mut(&chunk_bounds) {
+        //             if chunk.process_line(&line, &button) {
+        //                 break;
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     fn chunkloader(seed: u64, radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<T>) {
@@ -155,11 +156,15 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
     }
 
     pub fn get_triangle_count(&self) -> usize {
-        let mut count = 0;
-        for (_, chunk) in &self.chunks {
-            count += chunk.get_triangle_count();
-        }
+        let count = 0;
+        // for (_, chunk) in &self.chunks {
+        //     count += chunk.get_triangle_count();
+        // }
         count
+    }
+
+    pub fn get_shader(&self) -> &Shader {
+        &self.shader
     }
 
     pub fn get_mouse_picker(&self) -> &MousePicker {
@@ -167,11 +172,24 @@ impl<T: Chunk + Send + 'static> Terrain<T> {
     }
 }
 
-impl<T: Chunk + Send + 'static> Component for Terrain<T> {
-    fn update(&mut self, scene: &mut Scene, _: &mut Entity, _: f64) {
+impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
+    fn update(&mut self, scene: &mut Scene, entity: &mut Entity, _: f64) {
         if let Ok(mut chunk) = self.chunk_receiver.try_recv() {
             chunk.buffer_data();
-            self.chunks.insert(chunk.get_bounds(), chunk);
+            let mut chunk_entity = Entity::new();
+            let vertices: Vec<Point<f32>> = chunk
+                .get_vertices()
+                .iter()
+                .map(|v| Point::from(*v))
+                .collect();
+            let position = chunk.get_position();
+            let collider = ColliderBuilder::trimesh(vertices, chunk.get_indices())
+                .translation(vector![position.x, position.y, position.z])
+                .build();
+            scene.physics_engine.add_collider(collider, None);
+            chunk_entity.add_component(chunk);
+            chunk_entity.add_component(RigidBody::new(scene, &chunk_entity, None));
+            entity.add_child(chunk_entity);
         }
         if let Some(camera_component) = scene.get_component::<CameraComponent>() {
             let camera = camera_component.get_camera();
@@ -183,6 +201,7 @@ impl<T: Chunk + Send + 'static> Component for Terrain<T> {
     fn render(
         &self,
         scene: &Scene,
+        entity: &Entity,
         view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
     ) {
@@ -207,9 +226,12 @@ impl<T: Chunk + Send + 'static> Component for Terrain<T> {
                 );
                 self.shader
                     .set_uniform_mat4("lightProjection", &light_projection);
-                for (_, chunk) in &self.chunks {
-                    if ViewFrustum::is_bounds_in_frustum(projection, camera, chunk.get_bounds()) {
-                        chunk.render(parent_transform, &view_projection, &self.shader);
+                for chunk in entity.get_with_own_component::<T>() {
+                    if let Some(chunk) = chunk.get_component::<T>() {
+                        if ViewFrustum::is_bounds_in_frustum(projection, camera, chunk.get_bounds())
+                        {
+                            chunk.render(scene, entity, parent_transform, &view_projection);
+                        }
                     }
                 }
                 for (i, _) in self.textures.iter().enumerate() {

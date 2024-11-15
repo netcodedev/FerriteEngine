@@ -82,9 +82,13 @@ impl PhysicsEngine {
     pub fn add_collider(
         &mut self,
         collider: Collider,
-        rigid_body_handle: RigidBodyHandle,
+        rigid_body_handle: Option<RigidBodyHandle>,
     ) -> ColliderHandle {
-        self.colliders
-            .insert_with_parent(collider, rigid_body_handle, &mut self.rigid_bodies)
+        if let Some(rigid_body_handle) = rigid_body_handle {
+            self.colliders
+                .insert_with_parent(collider, rigid_body_handle, &mut self.rigid_bodies)
+        } else {
+            self.colliders.insert(collider)
+        }
     }
 }

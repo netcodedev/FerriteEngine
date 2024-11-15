@@ -61,7 +61,7 @@ impl WorldLayer {
         terrain_entity.add_component(Terrain::<DualContouringChunk>::new(2));
         terrain_entity.add_child(Player::new(
             &mut scene,
-            (0.0, 50.6, 0.0),
+            (0.0, 55.0, 0.0),
             create_animation_graph()?,
         )?);
 

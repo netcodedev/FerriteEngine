@@ -1,5 +1,6 @@
 use cgmath::{Point3, Vector3, Zero};
 use glfw::{Action, Glfw, Key, WindowEvent};
+use rapier3d::prelude::ColliderBuilder;
 
 use crate::core::{
     entity::{
@@ -30,8 +31,10 @@ impl Player {
 
         let animation_component = AnimationComponent::new(animation_graph);
 
+        let collider = ColliderBuilder::ball(1.0).build();
+
         entity.add_component(animation_component);
-        entity.add_component(RigidBody::new(scene, &entity));
+        entity.add_component(RigidBody::new(scene, &entity, Some(collider)));
         entity.add_component(ModelComponent::new(model));
         entity.add_component(PlayerController::new());
 

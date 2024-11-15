@@ -28,6 +28,7 @@ impl Component for ModelComponent {
     fn render(
         &self,
         scene: &Scene,
+        _: &Entity,
         view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
     ) {

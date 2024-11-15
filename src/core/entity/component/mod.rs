@@ -12,6 +12,7 @@ pub trait Component: AsAny {
     fn render(
         &self,
         _scene: &Scene,
+        _entity: &Entity,
         _view_projection: &Matrix4<f32>,
         _parent_transform: &Matrix4<f32>,
     ) {

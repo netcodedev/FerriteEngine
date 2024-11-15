@@ -12,15 +12,17 @@ pub struct RigidBody {
 }
 
 impl RigidBody {
-    pub fn new(scene: &mut Scene, entity: &Entity) -> Self {
+    pub fn new(scene: &mut Scene, entity: &Entity, collider: Option<Collider>) -> Self {
         let translation = entity.get_position();
         let rigid_body = RigidBodyBuilder::dynamic()
             .translation(vector![translation.x, translation.y, translation.z])
             .build();
         let rigid_body_handle = scene.physics_engine.add_rigid_body(rigid_body);
-        scene
-            .physics_engine
-            .add_collider(ColliderBuilder::ball(1.0).build(), rigid_body_handle);
+        if let Some(collider) = collider {
+            scene
+                .physics_engine
+                .add_collider(collider, Some(rigid_body_handle));
+        }
         RigidBody { rigid_body_handle }
     }
 

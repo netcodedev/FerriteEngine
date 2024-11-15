@@ -1,13 +1,16 @@
-use crate::core::renderer::{
-    line::Line,
-    shader::{Shader, VertexAttributes},
-    texture::Texture,
+use crate::terrain::{Chunk, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
+use crate::{
+    core::{
+        entity::{component::Component, Entity},
+        renderer::{line::Line, shader::VertexAttributes, texture::Texture},
+        scene::Scene,
+    },
+    terrain::{ChunkBounds, Terrain},
 };
-use crate::terrain::{Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
 
-use cgmath::{Matrix4, Vector3};
+use cgmath::{Matrix4, Point3, Vector3};
 use gl::types::GLuint;
-use libnoise::prelude::*;
+use libnoise::{Generator, Source};
 use ndarray::{Array3, ArrayBase, Dim};
 
 use super::{Block, BlockVertex, ChunkMesh, VoxelChunk};
@@ -356,37 +359,6 @@ impl Chunk for VoxelChunk {
         }
     }
 
-    fn render(
-        &self,
-        parent_transform: &Matrix4<f32>,
-        view_projection: &Matrix4<f32>,
-        shader: &Shader,
-    ) {
-        if let Some(mesh) = &self.mesh {
-            if !mesh.is_buffered() {
-                panic!("Mesh is not buffered");
-            }
-            shader.bind();
-            shader.set_uniform_mat4("viewProjection", &view_projection);
-            unsafe {
-                gl::Enable(gl::CULL_FACE);
-            }
-            mesh.render(
-                &shader,
-                &(parent_transform
-                    * Matrix4::from_translation(Vector3::new(
-                        self.position.0 * CHUNK_SIZE_FLOAT,
-                        self.position.1 * CHUNK_SIZE_FLOAT,
-                        self.position.2 * CHUNK_SIZE_FLOAT,
-                    ))),
-                None,
-            );
-            unsafe {
-                gl::Disable(gl::CULL_FACE);
-            }
-        }
-    }
-
     fn buffer_data(&mut self) {
         if let Some(mesh) = &mut self.mesh {
             mesh.buffer_data();
@@ -447,6 +419,14 @@ impl Chunk for VoxelChunk {
         modified
     }
 
+    fn get_position(&self) -> Point3<f32> {
+        Point3::new(
+            self.position.0 * CHUNK_SIZE_FLOAT,
+            self.position.1 * CHUNK_SIZE_FLOAT,
+            self.position.2 * CHUNK_SIZE_FLOAT,
+        )
+    }
+
     fn get_shader_source() -> (String, String) {
         (
             include_str!("vertex.glsl").to_string(),
@@ -470,4 +450,65 @@ impl Chunk for VoxelChunk {
             0
         }
     }
+
+    fn get_vertices(&self) -> Vec<[f32; 3]> {
+        if let Some(mesh) = &self.mesh {
+            mesh.vertices
+                .iter()
+                .map(|v| [v.position.0, v.position.1, v.position.2])
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn get_indices(&self) -> Vec<[u32; 3]> {
+        if let Some(mesh) = &self.mesh {
+            if let Some(indices) = &mesh.indices {
+                return indices.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+            }
+        }
+        Vec::new()
+    }
+}
+
+impl Component for VoxelChunk {
+    fn update(&mut self, _: &mut Scene, _: &mut Entity, _: f64) {}
+
+    fn render(
+        &self,
+        scene: &Scene,
+        _: &Entity,
+        view_projection: &Matrix4<f32>,
+        parent_transform: &Matrix4<f32>,
+    ) {
+        if let Some(terrain) = scene.get_component::<Terrain<VoxelChunk>>() {
+            let shader = terrain.get_shader();
+            if let Some(mesh) = &self.mesh {
+                if !mesh.is_buffered() {
+                    panic!("Mesh is not buffered");
+                }
+                shader.bind();
+                shader.set_uniform_mat4("viewProjection", &view_projection);
+                unsafe {
+                    gl::Enable(gl::CULL_FACE);
+                }
+                mesh.render(
+                    &shader,
+                    &(parent_transform
+                        * Matrix4::from_translation(Vector3::new(
+                            self.position.0 * CHUNK_SIZE_FLOAT,
+                            self.position.1 * CHUNK_SIZE_FLOAT,
+                            self.position.2 * CHUNK_SIZE_FLOAT,
+                        ))),
+                    None,
+                );
+                unsafe {
+                    gl::Disable(gl::CULL_FACE);
+                }
+            }
+        }
+    }
+
+    fn handle_event(&mut self, _: &mut glfw::Glfw, _: &mut glfw::Window, _: &glfw::WindowEvent) {}
 }

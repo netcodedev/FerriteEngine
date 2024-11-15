@@ -133,7 +133,7 @@ impl Component for DebugController {
         }
     }
 
-    fn render(&self, scene: &Scene, view_projection: &Matrix4<f32>, _: &Matrix4<f32>) {
+    fn render(&self, scene: &Scene, _: &Entity, view_projection: &Matrix4<f32>, _: &Matrix4<f32>) {
         if self.show_rays {
             if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
                 if let Some((line, _)) = &terrain.get_mouse_picker().ray {
