@@ -5,11 +5,14 @@ use crate::core::{
     entity::{
         component::{camera_component::CameraComponent, Component},
         Entity,
-    }, physics::physics_engine::PhysicsEngine, renderer::{
+    },
+    physics::physics_engine::PhysicsEngine,
+    renderer::{
         framebuffer::{FrameBuffer, ShadowFrameBuffer},
         light::skylight::SkyLight,
         texture::TextureRenderer,
-    }, window::Window
+    },
+    window::Window,
 };
 
 use super::Scene;

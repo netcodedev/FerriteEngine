@@ -2,7 +2,10 @@ use cgmath::Point3;
 use glfw::{Glfw, WindowEvent};
 use rapier3d::prelude::*;
 
-use crate::core::{entity::{component::Component, Entity}, scene::Scene};
+use crate::core::{
+    entity::{component::Component, Entity},
+    scene::Scene,
+};
 
 pub struct RigidBody {
     rigid_body_handle: RigidBodyHandle,
@@ -11,18 +14,23 @@ pub struct RigidBody {
 impl RigidBody {
     pub fn new(scene: &mut Scene, entity: &Entity) -> Self {
         let translation = entity.get_position();
-        let rigid_body = RigidBodyBuilder::dynamic().translation(vector![translation.x, translation.y, translation.z]).build();
+        let rigid_body = RigidBodyBuilder::dynamic()
+            .translation(vector![translation.x, translation.y, translation.z])
+            .build();
         let rigid_body_handle = scene.physics_engine.add_rigid_body(rigid_body);
-        scene.physics_engine.add_collider(ColliderBuilder::ball(1.0).build(), rigid_body_handle);
-        RigidBody {
-            rigid_body_handle,
-        }
+        scene
+            .physics_engine
+            .add_collider(ColliderBuilder::ball(1.0).build(), rigid_body_handle);
+        RigidBody { rigid_body_handle }
     }
 
     pub fn set_position<P: Into<Point3<f32>>>(&mut self, scene: &mut Scene, position: P) {
         let position = position.into();
         let rigid_body = &mut scene.physics_engine.rigid_bodies[self.rigid_body_handle];
-        rigid_body.set_position(Isometry::translation(position.x, position.y, position.z), true);
+        rigid_body.set_position(
+            Isometry::translation(position.x, position.y, position.z),
+            true,
+        );
     }
 }
 

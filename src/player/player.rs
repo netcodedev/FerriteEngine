@@ -8,7 +8,10 @@ use crate::core::{
             model_component::ModelComponent, Component,
         },
         Entity,
-    }, model::{animation_graph::AnimationGraph, ModelBuilder}, physics::rigidbody::RigidBody, scene::Scene
+    },
+    model::{animation_graph::AnimationGraph, ModelBuilder},
+    physics::rigidbody::RigidBody,
+    scene::Scene,
 };
 
 use super::{Player, PlayerController};

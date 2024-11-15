@@ -79,7 +79,12 @@ impl PhysicsEngine {
         self.rigid_bodies.insert(rigid_body)
     }
 
-    pub fn add_collider(&mut self, collider: Collider, rigid_body_handle: RigidBodyHandle) -> ColliderHandle {
-        self.colliders.insert_with_parent(collider, rigid_body_handle, &mut self.rigid_bodies)
+    pub fn add_collider(
+        &mut self,
+        collider: Collider,
+        rigid_body_handle: RigidBodyHandle,
+    ) -> ColliderHandle {
+        self.colliders
+            .insert_with_parent(collider, rigid_body_handle, &mut self.rigid_bodies)
     }
 }

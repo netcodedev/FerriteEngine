@@ -1,8 +1,16 @@
-use cgmath::{ortho, Angle, Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Transform, Vector2, Vector3, Vector4};
+use cgmath::{
+    ortho, Angle, Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Transform,
+    Vector2, Vector3, Vector4,
+};
 use glfw::{Glfw, WindowEvent};
 
 use crate::core::{
-    camera::{Camera, Projection}, entity::{component::{camera_component::CameraComponent, Component}, Entity}, scene::Scene
+    camera::{Camera, Projection},
+    entity::{
+        component::{camera_component::CameraComponent, Component},
+        Entity,
+    },
+    scene::Scene,
 };
 
 const OFFSET: f32 = 10.0;
@@ -26,13 +34,20 @@ impl SkyLight {
     }
 
     pub fn update_light_view(&mut self) {
-        let light_direction = Vector3::new(-self.position.x, -self.position.y, -self.position.z).normalize();
+        let light_direction =
+            Vector3::new(-self.position.x, -self.position.y, -self.position.z).normalize();
         let center = -self.shadow_box.get_center().to_vec();
         let mut light_view: Matrix4<f32> = Matrix4::identity();
-        let pitch = Vector2::new(light_direction.x, light_direction.z).magnitude().acos();
+        let pitch = Vector2::new(light_direction.x, light_direction.z)
+            .magnitude()
+            .acos();
         light_view = light_view * Matrix4::from_angle_x(Rad(pitch));
         let mut yaw = Deg(light_direction.x / light_direction.z);
-        yaw = if light_direction.z > 0.0 { yaw - Deg(180.0) } else { yaw };
+        yaw = if light_direction.z > 0.0 {
+            yaw - Deg(180.0)
+        } else {
+            yaw
+        };
         light_view = light_view * Matrix4::from_angle_y(yaw);
         self.light_view = light_view * Matrix4::from_translation(center);
     }
@@ -52,7 +67,8 @@ impl Component for SkyLight {
         if let Some(camera_component) = scene.get_component::<CameraComponent>() {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();
-            self.shadow_box.update(self.light_view, &camera, &projection);
+            self.shadow_box
+                .update(self.light_view, &camera, &projection);
             self.update_light_view();
         }
     }
@@ -110,7 +126,12 @@ impl ShadowBox {
         let center_near = camera_position + to_near;
         let center_far = camera_position + to_far;
 
-        let points = self.calculate_frustum_vertices(camera_rotation, forward_vector, center_near, center_far);
+        let points = self.calculate_frustum_vertices(
+            camera_rotation,
+            forward_vector,
+            center_near,
+            center_far,
+        );
         let mut first = true;
         for point in points {
             if first {
@@ -154,7 +175,9 @@ impl ShadowBox {
     }
 
     fn update_projection(&mut self) {
-        self.light_projection = ortho(self.min_x, self.max_x, self.min_y, self.max_y, self.min_z, self.max_z);
+        self.light_projection = ortho(
+            self.min_x, self.max_x, self.min_y, self.max_y, self.min_z, self.max_z,
+        );
     }
 
     fn update_widths_and_heights(&mut self, fov_y: Rad<f32>, aspect: f32) {
@@ -164,7 +187,13 @@ impl ShadowBox {
         self.near_height = self.near_width / aspect;
     }
 
-    fn calculate_frustum_vertices(&self, camera_rotation: Matrix4<f32>, forward_vector: Vector3<f32>, center_near: Point3<f32>, center_far: Point3<f32>) -> Vec<Vector4<f32>> {
+    fn calculate_frustum_vertices(
+        &self,
+        camera_rotation: Matrix4<f32>,
+        forward_vector: Vector3<f32>,
+        center_near: Point3<f32>,
+        center_far: Point3<f32>,
+    ) -> Vec<Vector4<f32>> {
         let up_vector = camera_rotation.transform_vector(Vector3::unit_y());
         let right_vector = forward_vector.cross(up_vector);
         let down_vector = -up_vector;
@@ -176,18 +205,23 @@ impl ShadowBox {
         let near_bottom = center_near + down_vector * self.near_height;
 
         vec![
-            self.calculate_light_space_frustum_corner(far_top,      right_vector,   self.far_width),
-            self.calculate_light_space_frustum_corner(far_top,      left_vector,    self.far_width),
-            self.calculate_light_space_frustum_corner(far_bottom,   right_vector,   self.far_width),
-            self.calculate_light_space_frustum_corner(far_bottom,   left_vector,    self.far_width),
-            self.calculate_light_space_frustum_corner(near_top,     right_vector,   self.near_width),
-            self.calculate_light_space_frustum_corner(near_top,     left_vector,    self.near_width),
-            self.calculate_light_space_frustum_corner(near_bottom,  right_vector,   self.near_width),
-            self.calculate_light_space_frustum_corner(near_bottom,  left_vector,    self.near_width),
+            self.calculate_light_space_frustum_corner(far_top, right_vector, self.far_width),
+            self.calculate_light_space_frustum_corner(far_top, left_vector, self.far_width),
+            self.calculate_light_space_frustum_corner(far_bottom, right_vector, self.far_width),
+            self.calculate_light_space_frustum_corner(far_bottom, left_vector, self.far_width),
+            self.calculate_light_space_frustum_corner(near_top, right_vector, self.near_width),
+            self.calculate_light_space_frustum_corner(near_top, left_vector, self.near_width),
+            self.calculate_light_space_frustum_corner(near_bottom, right_vector, self.near_width),
+            self.calculate_light_space_frustum_corner(near_bottom, left_vector, self.near_width),
         ]
     }
 
-    fn calculate_light_space_frustum_corner(&self, point: Point3<f32>, direction: Vector3<f32>, width: f32) -> Vector4<f32> {
+    fn calculate_light_space_frustum_corner(
+        &self,
+        point: Point3<f32>,
+        direction: Vector3<f32>,
+        width: f32,
+    ) -> Vector4<f32> {
         let corner = point + direction * width;
         self.light_view * Vector4::new(corner.x, corner.y, corner.z, 1.0)
     }
