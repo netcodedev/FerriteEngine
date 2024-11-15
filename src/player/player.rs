@@ -8,20 +8,19 @@ use crate::core::{
             model_component::ModelComponent, Component,
         },
         Entity,
-    },
-    model::{animation_graph::AnimationGraph, ModelBuilder},
-    scene::Scene,
+    }, model::{animation_graph::AnimationGraph, ModelBuilder}, physics::rigidbody::RigidBody, scene::Scene
 };
 
 use super::{Player, PlayerController};
 
 impl Player {
     pub fn new<P: Into<Point3<f32>>>(
+        scene: &mut Scene,
         position: P,
         animation_graph: AnimationGraph,
     ) -> Result<Entity, Box<dyn std::error::Error>> {
         let mut entity = Entity::new();
-        entity.set_position(position);
+        entity.set_position(scene, position);
 
         let mut model = ModelBuilder::new("Mannequin.fbx")?.build();
         model.init();
@@ -29,6 +28,7 @@ impl Player {
         let animation_component = AnimationComponent::new(animation_graph);
 
         entity.add_component(animation_component);
+        entity.add_component(RigidBody::new(scene, &entity));
         entity.add_component(ModelComponent::new(model));
         entity.add_component(PlayerController::new());
 
@@ -63,7 +63,7 @@ impl Component for PlayerController {
             let model = model_component.get_model_mut();
             position_delta += model.reset_position();
         }
-        entity.set_position(entity.get_position() + position_delta);
+        entity.set_position(scene, entity.get_position() + position_delta);
         let camera = scene
             .get_component_mut::<CameraComponent>()
             .unwrap()

@@ -5,13 +5,11 @@ use crate::core::{
     entity::{
         component::{camera_component::CameraComponent, Component},
         Entity,
-    },
-    renderer::{
+    }, physics::physics_engine::PhysicsEngine, renderer::{
         framebuffer::{FrameBuffer, ShadowFrameBuffer},
         light::skylight::SkyLight,
         texture::TextureRenderer,
-    },
-    window::Window,
+    }, window::Window
 };
 
 use super::Scene;
@@ -20,6 +18,7 @@ impl Scene {
     pub fn new() -> Self {
         Scene {
             entities: Vec::new(),
+            physics_engine: PhysicsEngine::new(),
             shadow_fbo: None,
             texture_renderer: TextureRenderer::new(),
         }
@@ -30,6 +29,7 @@ impl Scene {
     }
 
     pub fn update(&mut self, delta_time: f64) {
+        self.physics_engine.update();
         for i in 0..self.entities.len() {
             let mut entity = self.entities.remove(i);
             entity.update(self, delta_time);

@@ -3,6 +3,7 @@ pub mod camera;
 pub mod entity;
 pub mod model;
 pub mod mouse_picker;
+pub mod physics;
 pub mod renderer;
 pub mod scene;
 pub mod utils;

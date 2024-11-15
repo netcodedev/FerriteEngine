@@ -1,6 +1,6 @@
 use cgmath::{EuclideanSpace, Matrix4, Point3};
 
-use crate::core::scene::Scene;
+use crate::core::{physics::rigidbody::RigidBody, scene::Scene};
 
 use super::{component::Component, Entity};
 
@@ -114,7 +114,11 @@ impl Entity {
         self.position
     }
 
-    pub fn set_position<P: Into<Point3<f32>>>(&mut self, position: P) {
-        self.position = position.into();
+    pub fn set_position<P: Into<Point3<f32>>>(&mut self, scene: &mut Scene, position: P) {
+        let position = position.into();
+        self.position = position;
+        if let Some(rigid_body) = self.get_component_mut::<RigidBody>() {
+            rigid_body.set_position(scene, position);
+        }
     }
 }
