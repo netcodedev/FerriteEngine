@@ -1,4 +1,4 @@
-use std::{sync::mpsc, thread};
+use std::{cmp::max, sync::mpsc, thread};
 
 use cgmath::{EuclideanSpace, Matrix4, Point3};
 use glfw::MouseButton;
@@ -125,21 +125,12 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
             if x > radius {
                 break;
             }
-            let new_chunk: T;
-            if z_dir > 0 {
-                new_chunk = T::new(
-                    seed,
-                    ((x * x_dir) as f32, 0.0, z as f32),
-                    std::cmp::max(x.abs(), z.abs()) as usize,
-                );
+            let position = if z_dir > 0 {
+                ((x * x_dir) as f32, 0.0, z as f32)
             } else {
-                new_chunk = T::new(
-                    seed,
-                    ((z * z_dir) as f32, 0.0, (x * x_dir) as f32),
-                    std::cmp::max(x.abs(), z.abs()) as usize,
-                );
-            }
-
+                ((z * z_dir) as f32, 0.0, (x * x_dir) as f32)
+            };
+            let new_chunk = T::new(seed, position, max(x.abs(), z.abs()) as usize);
             let result = tx.send(new_chunk);
             if result.is_err() {
                 break;
