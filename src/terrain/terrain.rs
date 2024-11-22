@@ -146,11 +146,12 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         }
     }
 
-    pub fn get_triangle_count(&self) -> usize {
-        let count = 0;
-        // for (_, chunk) in &self.chunks {
-        //     count += chunk.get_triangle_count();
-        // }
+    pub fn get_triangle_count(&self, entity: &Entity) -> usize {
+        let mut count = 0;
+        for chunk in entity.get_with_own_component::<T>() {
+            let chunk = chunk.get_component::<T>().unwrap();
+            count += chunk.get_triangle_count();
+        }
         count
     }
 

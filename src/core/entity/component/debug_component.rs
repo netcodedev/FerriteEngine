@@ -96,10 +96,11 @@ impl Component for DebugController {
                     self.bounds.max.0, self.bounds.max.1, self.bounds.max.2
                 ));
             }
-            if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
-                self.triangle_count_text
-                    .set_content(format!("Triangles: {}", terrain.get_triangle_count()));
+            let mut triangle_count = 0;
+            for terrain in scene.get_entities_with_component::<Terrain<DualContouringChunk>>() {
+                triangle_count += terrain.get_component::<Terrain<DualContouringChunk>>().unwrap().get_triangle_count(&terrain);
             }
+            self.triangle_count_text.set_content(format!("Triangles: {}", triangle_count));
         }
     }
 
