@@ -34,21 +34,18 @@ impl SkyLight {
     }
 
     pub fn update_light_view(&mut self) {
-        let light_direction =
-            Vector3::new(-self.position.x, -self.position.y, -self.position.z).normalize();
+        let light_direction = -self.position.to_vec().normalize();
         let center = -self.shadow_box.get_center().to_vec();
         let mut light_view: Matrix4<f32> = Matrix4::identity();
         let pitch = Vector2::new(light_direction.x, light_direction.z)
             .magnitude()
             .acos();
         light_view = light_view * Matrix4::from_angle_x(Rad(pitch));
-        let mut yaw = Deg(light_direction.x / light_direction.z);
-        yaw = if light_direction.z > 0.0 {
-            yaw - Deg(180.0)
-        } else {
-            yaw
-        };
-        light_view = light_view * Matrix4::from_angle_y(yaw);
+        let mut yaw = Deg((light_direction.x / light_direction.z).atan());
+        if light_direction.z > 0.0 {
+            yaw = yaw - Deg(180.0)
+        }
+        light_view = light_view * Matrix4::from_angle_y(-yaw);
         self.light_view = light_view * Matrix4::from_translation(center);
     }
 
