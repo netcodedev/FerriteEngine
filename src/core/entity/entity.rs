@@ -1,4 +1,4 @@
-use cgmath::{EuclideanSpace, Matrix4, Point3};
+use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion};
 
 use crate::core::{physics::rigidbody::RigidBody, scene::Scene};
 
@@ -6,11 +6,13 @@ use super::{component::Component, Entity};
 
 #[allow(dead_code)]
 impl Entity {
-    pub fn new() -> Self {
+    pub fn new(name: &str) -> Self {
         Entity {
+            name: name.to_string(),
             children: Vec::new(),
             components: Vec::new(),
             position: Point3::new(0.0, 0.0, 0.0),
+            rotation: Quaternion::new(1.0, 0.0, 0.0, 0.0),
         }
     }
 
@@ -32,7 +34,7 @@ impl Entity {
         view_projection: &Matrix4<f32>,
         parent_transform: Matrix4<f32>,
     ) {
-        let transform = parent_transform * Matrix4::from_translation(self.position.to_vec());
+        let transform = parent_transform * Matrix4::from_translation(self.position.to_vec()) * Matrix4::from(self.rotation);
         for component in self.components.iter() {
             component.render(scene, self, view_projection, &transform);
         }
@@ -120,5 +122,20 @@ impl Entity {
         if let Some(rigid_body) = self.get_component_mut::<RigidBody>() {
             rigid_body.set_position(scene, position);
         }
+    }
+
+    pub fn set_rotation(&mut self, scene: &mut Scene, rotation: Quaternion<f32>) {
+        self.rotation = rotation;
+        if let Some(rigid_body) = self.get_component_mut::<RigidBody>() {
+            rigid_body.set_rotation(scene, rotation);
+        }
+    }
+
+    pub fn child_count(&self) -> usize {
+        self.children.len()
+    }
+
+    pub fn get_name(&self) -> String {
+        self.name.clone()
     }
 }

@@ -23,7 +23,7 @@ impl Player {
         position: P,
         animation_graph: AnimationGraph,
     ) -> Result<Entity, Box<dyn std::error::Error>> {
-        let mut entity = Entity::new();
+        let mut entity = Entity::new("player");
         entity.set_position(scene, position);
 
         let mut model = ModelBuilder::new("Mannequin.fbx")?.build();

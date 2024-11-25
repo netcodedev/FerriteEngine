@@ -47,17 +47,17 @@ impl WorldLayer {
         camera.set_relative_position((0.25, 1.33, -2.05));
         let projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
         let camera_controller = CameraController::new(10.0, 1.0);
-        let mut entity = Entity::new();
+        let mut entity = Entity::new("camera");
         entity.add_component(CameraComponent::new(camera, projection, camera_controller));
         scene.add_entity(entity);
 
-        let mut skylight = Entity::new();
+        let mut skylight = Entity::new("skylight");
         skylight.add_component(SkyLight::new((10.0, 600.0, 10.0)));
         scene.add_entity(skylight);
 
         let ui = UIRenderer::new();
 
-        let mut terrain_entity = Entity::new();
+        let mut terrain_entity = Entity::new("terrain");
         terrain_entity.add_component(Terrain::<DualContouringChunk>::new(2));
         terrain_entity.add_child(Player::new(
             &mut scene,
@@ -67,7 +67,7 @@ impl WorldLayer {
 
         scene.add_entity(terrain_entity);
 
-        let mut debug = Entity::new();
+        let mut debug = Entity::new("debug");
         debug.add_component(DebugController::new());
         scene.add_entity(debug);
 
