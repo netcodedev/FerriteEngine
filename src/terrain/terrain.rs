@@ -191,7 +191,7 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                     .build();
                 scene.physics_engine.add_collider(collider, None);
                 chunk_entity.add_component(chunk);
-                chunk_entity.add_component(RigidBody::new(scene, &chunk_entity, None));
+                chunk_entity.add_component(RigidBody::new(RigidBodyType::Fixed, scene, &chunk_entity, None));
                 entity.add_child(chunk_entity);
             }
         }

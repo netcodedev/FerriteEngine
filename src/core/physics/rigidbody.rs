@@ -13,9 +13,15 @@ pub struct RigidBody {
 }
 
 impl RigidBody {
-    pub fn new(scene: &mut Scene, entity: &Entity, collider: Option<Collider>) -> Self {
+    pub fn new(rigid_body_type: RigidBodyType, scene: &mut Scene, entity: &Entity, collider: Option<Collider>) -> Self {
         let translation = entity.get_position();
-        let rigid_body = RigidBodyBuilder::dynamic()
+        let rigid_body_builder = match rigid_body_type {
+            RigidBodyType::Fixed => RigidBodyBuilder::fixed(),
+            RigidBodyType::Dynamic => RigidBodyBuilder::dynamic(),
+            RigidBodyType::KinematicPositionBased => RigidBodyBuilder::kinematic_position_based(),
+            RigidBodyType::KinematicVelocityBased => RigidBodyBuilder::kinematic_velocity_based(),
+        };
+        let rigid_body = rigid_body_builder
             .translation(vector![translation.x, translation.y, translation.z])
             .build();
         let rigid_body_handle = scene.physics_engine.add_rigid_body(rigid_body);
