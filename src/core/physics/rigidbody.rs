@@ -1,5 +1,6 @@
 use cgmath::Point3;
 use glfw::{Glfw, WindowEvent};
+use nalgebra::UnitQuaternion;
 use rapier3d::prelude::*;
 
 use crate::core::{
@@ -34,12 +35,24 @@ impl RigidBody {
             true,
         );
     }
+
+    pub fn set_rotation(&mut self, scene: &mut Scene, rotation: cgmath::Quaternion<f32>) {
+        let rigid_body = &mut scene.physics_engine.rigid_bodies[self.rigid_body_handle];
+        rigid_body.set_rotation(
+            UnitQuaternion::new(vector![rotation.v.x, rotation.v.y, rotation.v.z]),
+            true,
+        );
+    }
 }
 
 impl Component for RigidBody {
     fn update(&mut self, scene: &mut Scene, entity: &mut Entity, _: f64) {
-        let translation = scene.physics_engine.rigid_bodies[self.rigid_body_handle].translation();
+        let rigidbody = &scene.physics_engine.rigid_bodies[self.rigid_body_handle];
+        let translation = rigidbody.translation();
+        let rotation = rigidbody.rotation();
+        let quat = cgmath::Quaternion::new(rotation.w, rotation.i, rotation.j, rotation.k);
         entity.set_position(scene, (translation.x, translation.y, translation.z));
+        entity.set_rotation(scene, quat);
     }
 
     fn handle_event(&mut self, _: &mut Glfw, _: &mut glfw::Window, _: &WindowEvent) {}
