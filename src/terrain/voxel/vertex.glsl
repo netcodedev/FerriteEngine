@@ -11,7 +11,7 @@ out vec3 toLightVector;
 out vec2 TexCoords;
 out uint BlockType;
 
-uniform vec4 lightPosition;
+uniform vec3 lightPosition;
 uniform mat4 model;
 uniform mat4 viewProjection;
 
