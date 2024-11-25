@@ -1,4 +1,4 @@
-use std::{cmp::max, sync::mpsc, thread};
+use std::{cmp::max, sync::mpsc::{self, Sender}, thread};
 
 use cgmath::{EuclideanSpace, Matrix4, Point3};
 use glfw::MouseButton;
@@ -105,19 +105,20 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         }
     }
 
-    pub fn process_line(&mut self, _line: Option<(Line, MouseButton)>) {
-        // if let Some((line, button)) = line {
-        //     for chunk_bounds in ChunkBounds::get_chunk_bounds_on_line(&line) {
-        //         if let Some(chunk) = self.chunks.get_mut(&chunk_bounds) {
-        //             if chunk.process_line(&line, &button) {
-        //                 break;
-        //             }
-        //         }
-        //     }
-        // }
+    pub fn process_line(&mut self, line: Option<(Line, MouseButton)>) {
+        if let Some((line, _button)) = line {
+            for _chunk_bounds in ChunkBounds::get_chunk_bounds_on_line(&line) {
+                // for chunk in entity.get_with_own_component_mut::<T>() {
+                //     let chunk = chunk.get_component_mut::<T>().unwrap();
+                //     if chunk.get_bounds() == chunk_bounds {
+                //         chunk.process_line(&line, &button);
+                //     }
+                // }
+            }
+        }
     }
 
-    fn chunkloader(seed: u64, radius: i32, x_dir: i32, z_dir: i32, tx: mpsc::Sender<T>) {
+    fn chunkloader(seed: u64, radius: i32, x_dir: i32, z_dir: i32, tx: Sender<T>) {
         let mut x: i32 = 1;
         let mut z: i32 = 0;
 
@@ -168,20 +169,31 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
     fn update(&mut self, scene: &mut Scene, entity: &mut Entity, _: f64) {
         if let Ok(mut chunk) = self.chunk_receiver.try_recv() {
             chunk.buffer_data();
-            let mut chunk_entity = Entity::new();
-            let vertices: Vec<Point<f32>> = chunk
-                .get_vertices()
-                .iter()
-                .map(|v| Point::from(*v))
-                .collect();
-            let position = chunk.get_position();
-            let collider = ColliderBuilder::trimesh(vertices, chunk.get_indices())
-                .translation(vector![position.x, position.y, position.z])
-                .build();
-            scene.physics_engine.add_collider(collider, None);
-            chunk_entity.add_component(chunk);
-            chunk_entity.add_component(RigidBody::new(scene, &chunk_entity, None));
-            entity.add_child(chunk_entity);
+            let mut chunk_exists = false;
+            for existing_chunk in entity.get_with_own_component::<T>() {
+                let existing_chunk = existing_chunk.get_component::<T>().unwrap();
+                if existing_chunk.get_position() == chunk.get_position() {
+                    chunk_exists = true;
+                    println!("chunk exists");
+                    break;
+                }
+            }
+            if !chunk_exists {
+                let mut chunk_entity = Entity::new(&format!("chunk-{}@{:?}", entity.child_count(), chunk.get_position()));
+                let vertices: Vec<Point<f32>> = chunk
+                    .get_vertices()
+                    .iter()
+                    .map(|v| Point::from(*v))
+                    .collect();
+                let position = chunk.get_position();
+                let collider = ColliderBuilder::trimesh(vertices, chunk.get_indices())
+                    .translation(vector![position.x, position.y, position.z])
+                    .build();
+                scene.physics_engine.add_collider(collider, None);
+                chunk_entity.add_component(chunk);
+                chunk_entity.add_component(RigidBody::new(scene, &chunk_entity, None));
+                entity.add_child(chunk_entity);
+            }
         }
         if let Some(camera_component) = scene.get_component::<CameraComponent>() {
             let camera = camera_component.get_camera();
