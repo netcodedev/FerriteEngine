@@ -523,6 +523,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrite"
+version = "0.1.0"
+dependencies = [
+ "as-any",
+ "cgmath",
+ "fast-surface-nets",
+ "gl",
+ "glfw",
+ "image",
+ "lazy_static",
+ "libnoise",
+ "ndarray",
+ "rand",
+ "rapier3d",
+ "russimp",
+ "rusttype",
+]
+
+[[package]]
+name = "ferrite-editor"
+version = "0.1.0"
+dependencies = [
+ "ferrite",
+]
+
+[[package]]
 name = "filetime"
 version = "0.2.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2017,6 +2043,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sandbox"
+version = "0.1.0"
+dependencies = [
+ "cgmath",
+ "ferrite",
+ "glfw",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2592,25 +2627,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "voxelengine"
-version = "0.1.0"
-dependencies = [
- "as-any",
- "cgmath",
- "fast-surface-nets",
- "gl",
- "glfw",
- "image",
- "lazy_static",
- "libnoise",
- "ndarray",
- "rand",
- "rapier3d",
- "russimp",
- "rusttype",
-]
 
 [[package]]
 name = "want"

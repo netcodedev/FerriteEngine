@@ -27,7 +27,7 @@ impl Fonts {
 
         match self {
             Fonts::RobotoMono => ROBOTO_MONO.get_or_init(|| {
-                Font::new(include_bytes!("../../../../assets/font/RobotoMono.ttf"))
+                Font::new(include_bytes!("RobotoMono.ttf"))
             }),
         }
     }

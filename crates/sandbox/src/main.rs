@@ -1,30 +1,29 @@
 use cgmath::Deg;
 use glfw::{Glfw, WindowEvent};
-use player::Player;
 
-mod core;
-mod player;
-mod terrain;
-use core::{
-    application::{Application, Layer},
-    camera::{Camera, CameraController, Projection},
-    entity::{
-        component::{camera_component::CameraComponent, debug_component::DebugController},
-        Entity,
+use ferrite::{
+    core::{
+        application::{Application, Layer},
+        camera::{Camera, CameraController, Projection},
+        entity::{
+            component::{camera_component::CameraComponent, debug_component::DebugController},
+            Entity,
+        },
+        model::{
+            animation_graph::{AnimationGraph, State},
+            Animation,
+        },
+        renderer::{
+            light::skylight::SkyLight,
+            ui::{UIRenderer, UI},
+        },
+        scene::Scene,
+        window::Window,
     },
-    model::{
-        animation_graph::{AnimationGraph, State},
-        Animation,
-    },
-    renderer::{
-        light::skylight::SkyLight,
-        ui::{UIRenderer, UI},
-    },
-    scene::Scene,
-    window::Window,
+    terrain::{dual_contouring::DualContouringChunk, Terrain},
+    player::Player,
 };
 use std::error::Error;
-use terrain::{dual_contouring::DualContouringChunk, Terrain};
 
 fn main() {
     let mut application = Application::new(1280, 720, "Engine");
