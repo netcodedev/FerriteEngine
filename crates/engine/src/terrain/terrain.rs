@@ -1,4 +1,8 @@
-use std::{cmp::max, sync::mpsc::{self, Sender}, thread};
+use std::{
+    cmp::max,
+    sync::mpsc::{self, Sender},
+    thread,
+};
 
 use cgmath::{EuclideanSpace, Matrix4, Point3};
 use glfw::MouseButton;
@@ -179,7 +183,11 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 }
             }
             if !chunk_exists {
-                let mut chunk_entity = Entity::new(&format!("chunk-{}@{:?}", entity.child_count(), chunk.get_position()));
+                let mut chunk_entity = Entity::new(&format!(
+                    "chunk-{}@{:?}",
+                    entity.child_count(),
+                    chunk.get_position()
+                ));
                 let vertices: Vec<Point<f32>> = chunk
                     .get_vertices()
                     .iter()
@@ -191,7 +199,12 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                     .build();
                 scene.physics_engine.add_collider(collider, None);
                 chunk_entity.add_component(chunk);
-                chunk_entity.add_component(RigidBody::new(RigidBodyType::Fixed, scene, &chunk_entity, None));
+                chunk_entity.add_component(RigidBody::new(
+                    RigidBodyType::Fixed,
+                    scene,
+                    &chunk_entity,
+                    None,
+                ));
                 entity.add_child(chunk_entity);
             }
         }

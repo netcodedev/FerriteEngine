@@ -26,9 +26,9 @@ impl Fonts {
         static ROBOTO_MONO: OnceLock<Font> = OnceLock::new();
 
         match self {
-            Fonts::RobotoMono => ROBOTO_MONO.get_or_init(|| {
-                Font::new(include_bytes!("RobotoMono.ttf"))
-            }),
+            Fonts::RobotoMono => {
+                ROBOTO_MONO.get_or_init(|| Font::new(include_bytes!("RobotoMono.ttf")))
+            }
         }
     }
 }

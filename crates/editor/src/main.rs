@@ -1,4 +1,9 @@
-use ferrite::core::{application::{Application, Layer}, renderer::ui::UIRenderer, scene::Scene, window::Window};
+use ferrite::core::{
+    application::{Application, Layer},
+    renderer::ui::UIRenderer,
+    scene::Scene,
+    window::Window,
+};
 use glfw::{Glfw, WindowEvent};
 
 fn main() {
@@ -9,7 +14,7 @@ fn main() {
 
 struct EditorLayer {
     scene: Scene,
-    ui: UIRenderer,   
+    ui: UIRenderer,
 }
 
 impl EditorLayer {
@@ -28,19 +33,14 @@ impl Layer for EditorLayer {
 
         self.ui.render(&mut self.scene);
     }
-    
-    fn on_event(
-        &mut self,
-        glfw: &mut Glfw,
-        window: &mut glfw::Window,
-        event: &WindowEvent,
-    ) {
+
+    fn on_event(&mut self, glfw: &mut Glfw, window: &mut glfw::Window, event: &WindowEvent) {
         if self.ui.handle_events(&mut self.scene, window, glfw, &event) {
             return;
         }
         self.scene.handle_event(glfw, window, event);
     }
-    
+
     fn get_name(&self) -> &str {
         "Editor"
     }

@@ -13,7 +13,12 @@ pub struct RigidBody {
 }
 
 impl RigidBody {
-    pub fn new(rigid_body_type: RigidBodyType, scene: &mut Scene, entity: &Entity, collider: Option<Collider>) -> Self {
+    pub fn new(
+        rigid_body_type: RigidBodyType,
+        scene: &mut Scene,
+        entity: &Entity,
+        collider: Option<Collider>,
+    ) -> Self {
         let translation = entity.get_position();
         let rigid_body_builder = match rigid_body_type {
             RigidBodyType::Fixed => RigidBodyBuilder::fixed(),

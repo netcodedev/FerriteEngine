@@ -34,7 +34,12 @@ impl Player {
         let collider = ColliderBuilder::ball(1.0).build();
 
         entity.add_component(animation_component);
-        entity.add_component(RigidBody::new(RigidBodyType::KinematicPositionBased, scene, &entity, Some(collider)));
+        entity.add_component(RigidBody::new(
+            RigidBodyType::KinematicPositionBased,
+            scene,
+            &entity,
+            Some(collider),
+        ));
         entity.add_component(ModelComponent::new(model));
         entity.add_component(PlayerController::new());
 

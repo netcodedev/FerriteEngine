@@ -98,9 +98,13 @@ impl Component for DebugController {
             }
             let mut triangle_count = 0;
             for terrain in scene.get_entities_with_component::<Terrain<DualContouringChunk>>() {
-                triangle_count += terrain.get_component::<Terrain<DualContouringChunk>>().unwrap().get_triangle_count(&terrain);
+                triangle_count += terrain
+                    .get_component::<Terrain<DualContouringChunk>>()
+                    .unwrap()
+                    .get_triangle_count(&terrain);
             }
-            self.triangle_count_text.set_content(format!("Triangles: {}", triangle_count));
+            self.triangle_count_text
+                .set_content(format!("Triangles: {}", triangle_count));
         }
     }
 

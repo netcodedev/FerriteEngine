@@ -20,8 +20,8 @@ use ferrite::{
         scene::Scene,
         window::Window,
     },
-    terrain::{dual_contouring::DualContouringChunk, Terrain},
     player::Player,
+    terrain::{dual_contouring::DualContouringChunk, Terrain},
 };
 use std::error::Error;
 
