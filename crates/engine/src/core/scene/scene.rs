@@ -58,18 +58,19 @@ impl Scene {
         }
 
         // Render Pass
-        let camera = self.get_component::<CameraComponent>().unwrap();
-        let view_projection = camera.get_view_projection();
-        if let Some(shadow_fbo) = &self.shadow_fbo {
-            if let Some(texture) = &shadow_fbo.get_depth_texture() {
-                unsafe {
-                    gl::ActiveTexture(gl::TEXTURE0);
+        if let Some(camera) = self.get_component::<CameraComponent>() {
+            let view_projection = camera.get_view_projection();
+            if let Some(shadow_fbo) = &self.shadow_fbo {
+                if let Some(texture) = &shadow_fbo.get_depth_texture() {
+                    unsafe {
+                        gl::ActiveTexture(gl::TEXTURE0);
+                    }
+                    texture.bind();
                 }
-                texture.bind();
             }
-        }
-        for entity in self.entities.iter() {
-            entity.render(self, &view_projection, parent_transform);
+            for entity in self.entities.iter() {
+                entity.render(self, &view_projection, parent_transform);
+            }
         }
 
         // Render Shadow Map
