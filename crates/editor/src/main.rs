@@ -37,7 +37,7 @@ impl EditorLayer {
                 self.ui.insert_to_with_id(
                     self.entity_panel.unwrap(),
                     handle,
-                    UI::text(&entity.get_name(), 16.0, |builder| builder),
+                    UI::collapsible(&entity.get_name(), |builder| builder),
                 );
             }
         }

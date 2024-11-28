@@ -126,7 +126,7 @@ impl UIElement for Panel {
 }
 
 impl Panel {
-    pub fn new(position: (f32, f32, f32), size: (f32, f32), title: String) -> Self {
+    pub fn new(title: String, position: (f32, f32, f32), size: (f32, f32)) -> Self {
         let mut content = ContainerBuilder::new()
             .position(0.0, 0.0)
             .size(size.0, size.1 - 40.0)
@@ -189,7 +189,7 @@ impl PanelBuilder {
     }
 
     pub fn build(self) -> Panel {
-        let mut panel = Panel::new(self.position, self.size, self.title.clone());
+        let mut panel = Panel::new(self.title.clone(), self.position, self.size);
         panel.add_children(self.children);
         panel
     }

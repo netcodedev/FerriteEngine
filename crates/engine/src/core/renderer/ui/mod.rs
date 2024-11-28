@@ -5,6 +5,7 @@ use rand::Rng;
 use crate::core::scene::Scene;
 
 pub mod button;
+pub mod collapsible;
 pub mod container;
 pub mod input;
 pub mod panel;

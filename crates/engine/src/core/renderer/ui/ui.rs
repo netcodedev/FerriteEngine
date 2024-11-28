@@ -4,6 +4,7 @@ use crate::core::scene::Scene;
 
 use super::{
     button::{Button, ButtonBuilder},
+    collapsible::Collapsible,
     input::{Input, InputBuilder},
     panel::{Panel, PanelBuilder},
     text::Text,
@@ -86,6 +87,15 @@ impl UI {
         let mut text = Text::new(text.to_string(), size);
         text = init_fn(text);
         Box::new(text)
+    }
+
+    pub fn collapsible<InitFn>(title: &str, init_fn: InitFn) -> Box<Collapsible>
+    where
+        InitFn: FnOnce(Collapsible) -> Collapsible + 'static,
+    {
+        let mut collapsible = Collapsible::new(title, (0.0, 0.0, 0.0), (190.0, 20.0));
+        collapsible = init_fn(collapsible);
+        Box::new(collapsible)
     }
 
     pub fn input<InitFn>(init_fn: InitFn) -> Box<Input>
