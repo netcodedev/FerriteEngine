@@ -1,6 +1,6 @@
 use crate::core::renderer::{plane::Plane, text::Text};
 
-use super::{container::Container, UIElement};
+use super::{container::Container, UIElement, UIElementHandle};
 
 pub mod panel;
 
@@ -16,11 +16,12 @@ pub struct Panel {
     is_hovering: bool,
     plane: Plane,
     header_plane: Plane,
+    internal_offset: (f32, f32),
 }
 
 pub struct PanelBuilder {
     pub position: (f32, f32, f32),
     pub size: (f32, f32),
     pub title: String,
-    pub children: Vec<Box<dyn UIElement>>,
+    pub children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>,
 }

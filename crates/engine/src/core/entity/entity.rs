@@ -1,4 +1,5 @@
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion};
+use rand::Rng;
 
 use crate::core::{physics::rigidbody::RigidBody, scene::Scene};
 
@@ -8,6 +9,7 @@ use super::{component::Component, Entity};
 impl Entity {
     pub fn new(name: &str) -> Self {
         Entity {
+            id: rand::thread_rng().gen(),
             name: name.to_string(),
             children: Vec::new(),
             components: Vec::new(),

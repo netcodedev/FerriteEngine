@@ -2,7 +2,7 @@ use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
         text::{Fonts, Text},
-        ui::UIElement,
+        ui::{UIElement, UIElementHandle},
     },
     scene::Scene,
 };
@@ -133,7 +133,9 @@ impl UIElement for Input {
         }
     }
 
-    fn add_children(&mut self, _: Vec<Box<dyn UIElement>>) {}
+    fn add_children(&mut self, _: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
+        panic!("Input cannot have children");
+    }
 
     fn set_offset(&mut self, offset: (f32, f32)) {
         self.offset = offset;
@@ -148,6 +150,14 @@ impl UIElement for Input {
 
     fn get_size(&self) -> (f32, f32) {
         self.size
+    }
+
+    fn contains_child(&self, _: &UIElementHandle) -> bool {
+        false
+    }
+
+    fn get_offset(&self) -> (f32, f32) {
+        self.offset
     }
 }
 

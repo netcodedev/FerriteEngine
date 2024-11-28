@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
-        ui::UIElement,
+        ui::{UIElement, UIElementHandle},
     },
     scene::Scene,
 };
@@ -11,7 +13,7 @@ use super::{Button, ButtonBuilder};
 impl UIElement for Button {
     fn render(&mut self, scene: &mut Scene) {
         PlaneRenderer::render(&self.plane);
-        for child in &mut self.children {
+        for child in self.children.values_mut() {
             child.render(scene);
         }
     }
@@ -23,7 +25,7 @@ impl UIElement for Button {
             self.offset.1 + self.position.1,
             0.0,
         ));
-        for child in &mut self.children {
+        for child in self.children.values_mut() {
             child.set_offset((
                 self.offset.0 + self.position.0,
                 self.offset.1 + self.position.1,
@@ -73,18 +75,35 @@ impl UIElement for Button {
         }
     }
 
-    fn add_children(&mut self, children: Vec<Box<dyn UIElement>>) {
-        for mut child in children {
+    fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
+        for (handle, mut child) in children {
             child.set_offset((
                 self.offset.0 + self.position.0,
                 self.offset.1 + self.position.1,
             ));
-            self.children.push(child);
+            let handle = handle.unwrap_or(UIElementHandle::new());
+            self.children.insert(handle, child);
         }
     }
 
     fn get_size(&self) -> (f32, f32) {
         self.size
+    }
+
+    fn contains_child(&self, handle: &UIElementHandle) -> bool {
+        if self.children.contains_key(handle) {
+            return true;
+        }
+        for child in self.children.values() {
+            if child.contains_child(handle) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn get_offset(&self) -> (f32, f32) {
+        self.offset
     }
 }
 
@@ -94,7 +113,7 @@ impl Button {
             position,
             size,
             on_click,
-            children: Vec::new(),
+            children: HashMap::new(),
             offset: (0.0, 0.0),
             is_hovering: false,
             plane: PlaneBuilder::new()
@@ -135,7 +154,7 @@ impl ButtonBuilder {
     }
 
     pub fn add_child(mut self, child: Box<dyn UIElement>) -> Self {
-        self.children.push(child);
+        self.children.push((None, child));
         self
     }
 

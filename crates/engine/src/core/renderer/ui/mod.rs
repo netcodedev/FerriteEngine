@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+use rand::Rng;
+
 use crate::core::scene::Scene;
 
 pub mod button;
@@ -9,8 +13,22 @@ pub mod ui;
 
 pub struct UI {}
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct UIElementHandle(u64);
+
+impl UIElementHandle {
+    pub fn new() -> Self {
+        Self {
+            0: rand::thread_rng().gen::<u64>(),
+        }
+    }
+    pub fn from(id: u64) -> Self {
+        Self { 0: id }
+    }
+}
+
 pub struct UIRenderer {
-    children: Vec<Box<dyn UIElement>>,
+    children: HashMap<UIElementHandle, Box<dyn UIElement>>,
 }
 
 pub trait UIElement {
@@ -22,7 +40,9 @@ pub trait UIElement {
         glfw: &mut glfw::Glfw,
         event: &glfw::WindowEvent,
     ) -> bool;
-    fn add_children(&mut self, children: Vec<Box<dyn UIElement>>);
+    fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>);
+    fn contains_child(&self, handle: &UIElementHandle) -> bool;
+    fn get_offset(&self) -> (f32, f32);
     fn set_offset(&mut self, offset: (f32, f32));
     fn get_size(&self) -> (f32, f32);
 }

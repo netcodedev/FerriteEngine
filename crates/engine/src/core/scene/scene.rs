@@ -143,4 +143,8 @@ impl Scene {
         }
         entities
     }
+
+    pub fn get_entities(&self) -> &Vec<Entity> {
+        &self.entities
+    }
 }

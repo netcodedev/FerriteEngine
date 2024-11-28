@@ -1,13 +1,15 @@
+use std::collections::HashMap;
+
 use crate::core::renderer::plane::Plane;
 
-use super::UIElement;
+use super::{UIElement, UIElementHandle};
 
 pub mod container;
 
 pub struct Container {
     pub position: (f32, f32),
     pub size: (f32, f32),
-    pub children: Vec<Box<dyn UIElement>>,
+    pub children: HashMap<UIElementHandle, Box<dyn UIElement>>,
     pub offset: (f32, f32),
     gap: f32,
     plane: Plane,
@@ -16,5 +18,5 @@ pub struct Container {
 pub struct ContainerBuilder {
     position: (f32, f32),
     size: (f32, f32),
-    children: Vec<Box<dyn UIElement>>,
+    children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>,
 }

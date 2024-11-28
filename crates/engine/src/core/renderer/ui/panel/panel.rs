@@ -2,7 +2,7 @@ use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
         text::{Fonts, Text},
-        ui::{container::ContainerBuilder, UIElement},
+        ui::{container::ContainerBuilder, UIElement, UIElementHandle},
     },
     scene::Scene,
 };
@@ -84,8 +84,14 @@ impl UIElement for Panel {
         self.content.handle_events(scene, window, glfw, event)
     }
 
-    fn add_children(&mut self, children: Vec<Box<dyn UIElement>>) {
-        self.content.add_children(children);
+    fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
+        println!("Adding children to panel");
+        for (handle, mut child) in children {
+            child.set_offset(self.internal_offset);
+            self.internal_offset.1 += child.get_size().1;
+            println!("internal offset: {:?}", self.internal_offset);
+            self.content.add_children(vec![(handle, child)]);
+        }
     }
 
     fn set_offset(&mut self, offset: (f32, f32)) {
@@ -108,6 +114,14 @@ impl UIElement for Panel {
 
     fn get_size(&self) -> (f32, f32) {
         self.size
+    }
+
+    fn contains_child(&self, handle: &UIElementHandle) -> bool {
+        self.content.contains_child(handle)
+    }
+
+    fn get_offset(&self) -> (f32, f32) {
+        self.offset
     }
 }
 
@@ -144,6 +158,7 @@ impl Panel {
             is_hovering: false,
             plane,
             header_plane,
+            internal_offset: (0.0, 0.0),
         }
     }
 }
@@ -168,8 +183,8 @@ impl PanelBuilder {
         self
     }
 
-    pub fn add_child(mut self, child: Box<dyn UIElement>) -> Self {
-        self.children.push(child);
+    pub fn add_child(mut self, id: Option<UIElementHandle>, child: Box<dyn UIElement>) -> Self {
+        self.children.push((id, child));
         self
     }
 

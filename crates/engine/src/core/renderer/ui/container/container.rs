@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
-        ui::UIElement,
+        ui::{UIElement, UIElementHandle},
     },
     scene::Scene,
 };
@@ -13,7 +15,7 @@ impl Container {
         Self {
             position,
             size,
-            children: Vec::new(),
+            children: HashMap::new(),
             offset: (0.0, 0.0),
             gap: 5.0,
             plane: PlaneBuilder::new()
@@ -29,7 +31,7 @@ impl Container {
 impl UIElement for Container {
     fn render(&mut self, scene: &mut Scene) {
         PlaneRenderer::render(&self.plane);
-        for child in &mut self.children {
+        for child in self.children.values_mut() {
             child.render(scene);
         }
     }
@@ -42,7 +44,7 @@ impl UIElement for Container {
             0.0,
         ));
         let mut current_y_offset = self.gap;
-        for child in &mut self.children {
+        for child in &mut self.children.values_mut() {
             child.set_offset((
                 self.offset.0 + self.position.0 + self.gap,
                 self.offset.1 + self.position.1 + current_y_offset,
@@ -67,7 +69,7 @@ impl UIElement for Container {
                     && y as f32 >= self.offset.1 + self.position.1
                     && y as f32 <= self.offset.1 + self.position.1 + self.size.1
                 {
-                    for child in &mut self.children {
+                    for child in &mut self.children.values_mut() {
                         if child.handle_events(scene, window, glfw, event) {
                             return true;
                         }
@@ -76,7 +78,7 @@ impl UIElement for Container {
             }
             _ => (),
         }
-        for child in &mut self.children {
+        for child in &mut self.children.values_mut() {
             if child.handle_events(scene, window, glfw, event) {
                 return true;
             }
@@ -84,20 +86,38 @@ impl UIElement for Container {
         false
     }
 
-    fn add_children(&mut self, children: Vec<Box<dyn UIElement>>) {
+    fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
         let mut current_y_offset = self.gap;
-        for mut child in children {
+        for (handle, mut child) in children {
+            let offset = child.get_offset();
             child.set_offset((
-                self.offset.0 + self.position.0 + self.gap,
-                self.offset.1 + self.position.1 + current_y_offset,
+                offset.0 + self.offset.0 + self.position.0 + self.gap,
+                offset.1 + self.offset.1 + self.position.1 + current_y_offset,
             ));
             current_y_offset += child.get_size().1 + self.gap;
-            self.children.push(child);
+            let handle = handle.unwrap_or(UIElementHandle::new());
+            self.children.insert(handle, child);
         }
     }
 
     fn get_size(&self) -> (f32, f32) {
         self.size
+    }
+
+    fn contains_child(&self, handle: &UIElementHandle) -> bool {
+        if self.children.contains_key(handle) {
+            return true;
+        }
+        for child in self.children.values() {
+            if child.contains_child(handle) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn get_offset(&self) -> (f32, f32) {
+        self.offset
     }
 }
 
@@ -122,7 +142,7 @@ impl ContainerBuilder {
 
     #[allow(dead_code)]
     pub fn add_child(mut self, child: Box<dyn UIElement>) -> Self {
-        self.children.push(child);
+        self.children.push((None, child));
         self
     }
 

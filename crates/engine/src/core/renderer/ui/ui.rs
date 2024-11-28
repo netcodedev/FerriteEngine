@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::core::scene::Scene;
 
 use super::{
@@ -5,22 +7,45 @@ use super::{
     input::{Input, InputBuilder},
     panel::{Panel, PanelBuilder},
     text::Text,
-    UIElement, UIRenderer, UI,
+    UIElement, UIElementHandle, UIRenderer, UI,
 };
 
 impl UIRenderer {
     pub fn new() -> Self {
         Self {
-            children: Vec::new(),
+            children: HashMap::new(),
         }
     }
 
-    pub fn add(&mut self, element: Box<dyn UIElement>) {
-        self.children.push(element);
+    pub fn add(&mut self, element: Box<dyn UIElement>) -> UIElementHandle {
+        let handle = UIElementHandle::new();
+        self.children.insert(handle, element);
+        handle
+    }
+
+    pub fn insert(&mut self, key: UIElementHandle, element: Box<dyn UIElement>) {
+        self.children.insert(key, element);
+    }
+
+    pub fn insert_to(&mut self, parent: UIElementHandle, element: Box<dyn UIElement>) {
+        if let Some(parent) = self.children.get_mut(&parent) {
+            parent.add_children(vec![(None, element)]);
+        }
+    }
+
+    pub fn insert_to_with_id(
+        &mut self,
+        parent: UIElementHandle,
+        id: UIElementHandle,
+        element: Box<dyn UIElement>,
+    ) {
+        if let Some(parent) = self.children.get_mut(&parent) {
+            parent.add_children(vec![(Some(id), element)]);
+        }
     }
 
     pub fn render(&mut self, scene: &mut Scene) {
-        for child in &mut self.children {
+        for (_, child) in &mut self.children {
             child.render(scene);
         }
     }
@@ -32,8 +57,20 @@ impl UIRenderer {
         glfw: &mut glfw::Glfw,
         event: &glfw::WindowEvent,
     ) -> bool {
-        for child in &mut self.children {
+        for (_, child) in &mut self.children {
             if child.handle_events(scene, window, glfw, event) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn contains_key(&self, key: &UIElementHandle) -> bool {
+        if self.children.contains_key(key) {
+            return true;
+        }
+        for (_, child) in &self.children {
+            if child.contains_child(key) {
                 return true;
             }
         }
