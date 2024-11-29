@@ -85,11 +85,9 @@ impl UIElement for Panel {
     }
 
     fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
-        println!("Adding children to panel");
         for (handle, mut child) in children {
             child.set_offset(self.internal_offset);
             self.internal_offset.1 += child.get_size().1;
-            println!("internal offset: {:?}", self.internal_offset);
             self.content.add_children(vec![(handle, child)]);
         }
     }

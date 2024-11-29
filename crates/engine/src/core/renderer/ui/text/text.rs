@@ -55,7 +55,6 @@ impl UIElement for Text {
     }
 
     fn set_offset(&mut self, offset: (f32, f32)) {
-        println!("Setting offset for {}: {:?}", self.content, offset);
         self.offset = offset;
     }
 
