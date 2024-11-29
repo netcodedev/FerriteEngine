@@ -16,6 +16,9 @@ pub struct Panel {
     is_hovering: bool,
     plane: Plane,
     header_plane: Plane,
+    collapsible: bool,
+    is_open: bool,
+    moved: bool,
 }
 
 pub struct PanelBuilder {
@@ -23,4 +26,6 @@ pub struct PanelBuilder {
     pub size: (f32, f32),
     pub title: String,
     pub children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>,
+    pub collapsible: bool,
+    pub open: bool,
 }

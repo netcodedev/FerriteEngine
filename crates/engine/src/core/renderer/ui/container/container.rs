@@ -96,8 +96,7 @@ impl UIElement for Container {
             ));
             self.y_offset += child.get_size().1 + self.gap;
             if self.y_offset > self.size.1 {
-                println!("Container overflowed {:?}", self.y_offset);
-                self.size.1 = self.y_offset;
+                self.size.1 = self.y_offset + self.gap;
                 self.plane.set_size((self.size.0, self.size.1));
             }
             let handle = handle.unwrap_or(UIElementHandle::new());

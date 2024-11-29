@@ -8,7 +8,7 @@ pub mod container;
 
 pub struct Container {
     pub position: (f32, f32),
-    pub size: (f32, f32),
+    size: (f32, f32),
     pub children: HashMap<UIElementHandle, Box<dyn UIElement>>,
     pub offset: (f32, f32),
     gap: f32,

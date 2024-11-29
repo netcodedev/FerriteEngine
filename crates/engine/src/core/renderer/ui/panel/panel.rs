@@ -11,8 +11,14 @@ use super::{Panel, PanelBuilder};
 
 impl UIElement for Panel {
     fn render(&mut self, scene: &mut Scene) {
-        let content_size = self.content.get_size();
-        self.set_size((content_size.0, content_size.1 + 20.0));
+        if !self.collapsible || self.is_open {
+            let content_size = self.content.get_size();
+            self.header_plane.border_radius = (0.0, 5.0, 0.0, 5.0);
+            self.set_size((content_size.0, content_size.1 + 20.0));
+        } else if self.collapsible {
+            self.set_size((self.size.0, 20.0));
+            self.header_plane.border_radius = (5.0, 5.0, 5.0, 5.0);
+        }
         PlaneRenderer::render(&self.plane);
         PlaneRenderer::render(&self.header_plane);
         self.text.set_content(self.title.clone());
@@ -20,7 +26,9 @@ impl UIElement for Panel {
             (self.offset.0 + self.position.0 + 8.0) as i32,
             (self.offset.1 + self.position.1 + 2.0) as i32,
         );
-        self.content.render(scene);
+        if !self.collapsible || self.is_open {
+            self.content.render(scene);
+        }
     }
 
     fn handle_events(
@@ -42,6 +50,7 @@ impl UIElement for Panel {
                     // Start dragging
                     self.drag_start = Some((x, y));
                     self.dragging = true;
+                    self.moved = false;
                     return true;
                 }
             }
@@ -51,8 +60,15 @@ impl UIElement for Panel {
                 _,
             ) => {
                 // Stop dragging
+                if self.collapsible && !self.moved && self.dragging {
+                    self.is_open = !self.is_open;
+                    if self.is_open {
+                        self.plane.set_size((100.0, 100.0));
+                    }
+                }
                 self.dragging = false;
                 self.drag_start = None;
+                self.moved = false;
             }
             glfw::WindowEvent::CursorPos(x, y) => {
                 if *x as f32 >= self.offset.0 + self.position.0
@@ -76,6 +92,7 @@ impl UIElement for Panel {
                         self.position.0 += (*x - start_x) as f32 - self.offset.0;
                         self.position.1 += (*y - start_y) as f32 - self.offset.1;
                         self.drag_start = Some((*x, *y));
+                        self.moved = true;
                         self.set_offset(self.offset); // update children
                     }
                     return true;
@@ -156,6 +173,9 @@ impl Panel {
             is_hovering: false,
             plane,
             header_plane,
+            collapsible: false,
+            is_open: true,
+            moved: false,
         }
     }
 
@@ -173,6 +193,8 @@ impl PanelBuilder {
             size: (0.0, 0.0),
             title: title.to_string(),
             children: Vec::new(),
+            collapsible: false,
+            open: true,
         }
     }
 
@@ -186,6 +208,21 @@ impl PanelBuilder {
         self
     }
 
+    pub fn collapsible(mut self) -> Self {
+        self.collapsible = !self.collapsible;
+        self
+    }
+
+    pub fn closed(mut self) -> Self {
+        self.open = false;
+        self
+    }
+
+    pub fn open(mut self) -> Self {
+        self.open = true;
+        self
+    }
+
     pub fn add_child(mut self, id: Option<UIElementHandle>, child: Box<dyn UIElement>) -> Self {
         self.children.push((id, child));
         self
@@ -193,6 +230,8 @@ impl PanelBuilder {
 
     pub fn build(self) -> Panel {
         let mut panel = Panel::new(self.title.clone(), self.position, self.size);
+        panel.collapsible = self.collapsible;
+        panel.is_open = self.open;
         panel.add_children(self.children);
         panel
     }
