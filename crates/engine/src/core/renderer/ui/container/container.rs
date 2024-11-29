@@ -32,9 +32,19 @@ impl Container {
 impl UIElement for Container {
     fn render(&mut self, scene: &mut Scene) {
         PlaneRenderer::render(&self.plane);
+        let mut y_offset = self.gap;
         for child in self.children.values_mut() {
+            let offset = (
+                self.offset.0 + self.position.0 + self.gap,
+                self.offset.1 + self.position.1 + y_offset,
+            );
+            if child.get_offset() != offset {
+                child.set_offset(offset);
+            }
+            y_offset += child.get_size().1 + self.gap;
             child.render(scene);
         }
+        self.y_offset = y_offset;
     }
 
     fn set_offset(&mut self, offset: (f32, f32)) {
