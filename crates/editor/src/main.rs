@@ -41,6 +41,7 @@ impl EditorLayer {
                         builder
                             .size(190.0, 40.0)
                             .closed()
+                            .movable(false)
                             .add_child(None, UI::text("Hello World", 16.0, |builder| builder))
                     }),
                 );

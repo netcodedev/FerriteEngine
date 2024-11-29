@@ -48,8 +48,10 @@ impl UIElement for Panel {
                     && y as f32 <= self.offset.1 + self.position.1 + 20.0
                 {
                     // Start dragging
-                    self.drag_start = Some((x, y));
                     self.dragging = true;
+                    if self.movable {
+                        self.drag_start = Some((x, y));
+                    }
                     self.moved = false;
                     return true;
                 }
@@ -174,6 +176,7 @@ impl Panel {
             plane,
             header_plane,
             collapsible: false,
+            movable: true,
             is_open: true,
             moved: false,
         }
@@ -194,6 +197,7 @@ impl PanelBuilder {
             title: title.to_string(),
             children: Vec::new(),
             collapsible: false,
+            movable: true,
             open: true,
         }
     }
@@ -223,6 +227,11 @@ impl PanelBuilder {
         self
     }
 
+    pub fn movable(mut self, movable: bool) -> Self {
+        self.movable = movable;
+        self
+    }
+
     pub fn add_child(mut self, id: Option<UIElementHandle>, child: Box<dyn UIElement>) -> Self {
         self.children.push((id, child));
         self
@@ -231,6 +240,7 @@ impl PanelBuilder {
     pub fn build(self) -> Panel {
         let mut panel = Panel::new(self.title.clone(), self.position, self.size);
         panel.collapsible = self.collapsible;
+        panel.movable = self.movable;
         panel.is_open = self.open;
         panel.add_children(self.children);
         panel
