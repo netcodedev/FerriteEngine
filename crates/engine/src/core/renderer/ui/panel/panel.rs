@@ -11,6 +11,8 @@ use super::{Panel, PanelBuilder};
 
 impl UIElement for Panel {
     fn render(&mut self, scene: &mut Scene) {
+        let content_size = self.content.get_size();
+        self.set_size((content_size.0, content_size.1 + 20.0));
         PlaneRenderer::render(&self.plane);
         PlaneRenderer::render(&self.header_plane);
         self.text.set_content(self.title.clone());
@@ -85,9 +87,7 @@ impl UIElement for Panel {
     }
 
     fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
-        for (handle, mut child) in children {
-            child.set_offset(self.internal_offset);
-            self.internal_offset.1 += child.get_size().1;
+        for (handle, child) in children {
             self.content.add_children(vec![(handle, child)]);
         }
     }
@@ -156,8 +156,13 @@ impl Panel {
             is_hovering: false,
             plane,
             header_plane,
-            internal_offset: (0.0, 0.0),
         }
+    }
+
+    pub fn set_size(&mut self, size: (f32, f32)) {
+        self.size = size;
+        self.plane.set_size(size);
+        self.header_plane.set_size((size.0, 20.0));
     }
 }
 

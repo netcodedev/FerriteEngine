@@ -126,7 +126,6 @@ impl PlaneBuilder {
     }
 }
 
-#[allow(dead_code)]
 impl Plane {
     pub fn new(
         position: (f32, f32, f32),

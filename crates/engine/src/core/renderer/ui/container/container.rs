@@ -24,6 +24,7 @@ impl Container {
                 .color((0.0, 0.0, 0.0, 0.0))
                 .border_color((0.0, 0.0, 0.0, 0.0))
                 .build(),
+            y_offset: 5.0,
         }
     }
 }
@@ -87,14 +88,18 @@ impl UIElement for Container {
     }
 
     fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
-        let mut current_y_offset = self.gap;
         for (handle, mut child) in children {
             let offset = child.get_offset();
             child.set_offset((
                 offset.0 + self.offset.0 + self.position.0 + self.gap,
-                offset.1 + self.offset.1 + self.position.1 + current_y_offset,
+                offset.1 + self.offset.1 + self.position.1 + self.y_offset,
             ));
-            current_y_offset += child.get_size().1 + self.gap;
+            self.y_offset += child.get_size().1 + self.gap;
+            if self.y_offset > self.size.1 {
+                println!("Container overflowed {:?}", self.y_offset);
+                self.size.1 = self.y_offset;
+                self.plane.set_size((self.size.0, self.size.1));
+            }
             let handle = handle.unwrap_or(UIElementHandle::new());
             self.children.insert(handle, child);
         }

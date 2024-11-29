@@ -16,7 +16,6 @@ pub struct Panel {
     is_hovering: bool,
     plane: Plane,
     header_plane: Plane,
-    internal_offset: (f32, f32),
 }
 
 pub struct PanelBuilder {

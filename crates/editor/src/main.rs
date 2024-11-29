@@ -58,9 +58,6 @@ impl Layer for EditorLayer {
                 ),
             )
         })));
-        self.ui.add(UI::panel("Components", |builder| {
-            builder.position(0.0, 200.0)
-        }));
     }
 
     fn on_update(&mut self, window: &Window, delta_time: f64) {

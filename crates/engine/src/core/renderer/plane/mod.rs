@@ -12,7 +12,7 @@ pub struct PlaneRenderer {
 
 pub struct Plane {
     position: (f32, f32, f32),
-    size: (f32, f32),
+    pub size: (f32, f32),
     color: (f32, f32, f32, f32),
     pub border_thickness: f32,
     pub border_color: (f32, f32, f32, f32),
