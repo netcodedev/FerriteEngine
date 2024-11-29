@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::core::{
     renderer::{
@@ -105,6 +105,24 @@ impl UIElement for Button {
     fn get_offset(&self) -> (f32, f32) {
         self.offset
     }
+
+    fn add_child_to(
+        &mut self,
+        parent: UIElementHandle,
+        id: Option<UIElementHandle>,
+        element: Box<dyn UIElement>,
+    ) {
+        if let Some(parent) = self.children.get_mut(&parent) {
+            parent.add_children(vec![(id, element)]);
+        } else {
+            for (_, child) in &mut self.children {
+                if child.contains_child(&parent) {
+                    child.add_child_to(parent, id, element);
+                    return;
+                }
+            }
+        }
+    }
 }
 
 impl Button {
@@ -113,7 +131,7 @@ impl Button {
             position,
             size,
             on_click,
-            children: HashMap::new(),
+            children: BTreeMap::new(),
             offset: (0.0, 0.0),
             is_hovering: false,
             plane: PlaneBuilder::new()

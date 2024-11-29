@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::core::scene::Scene;
 
 use super::{
     button::{Button, ButtonBuilder},
+    container::{Container, ContainerBuilder},
     input::{Input, InputBuilder},
     panel::{Panel, PanelBuilder},
     text::Text,
@@ -13,7 +14,7 @@ use super::{
 impl UIRenderer {
     pub fn new() -> Self {
         Self {
-            children: HashMap::new(),
+            children: BTreeMap::new(),
         }
     }
 
@@ -27,20 +28,21 @@ impl UIRenderer {
         self.children.insert(key, element);
     }
 
-    pub fn insert_to(&mut self, parent: UIElementHandle, element: Box<dyn UIElement>) {
-        if let Some(parent) = self.children.get_mut(&parent) {
-            parent.add_children(vec![(None, element)]);
-        }
-    }
-
-    pub fn insert_to_with_id(
+    pub fn insert_to(
         &mut self,
         parent: UIElementHandle,
-        id: UIElementHandle,
+        id: Option<UIElementHandle>,
         element: Box<dyn UIElement>,
     ) {
         if let Some(parent) = self.children.get_mut(&parent) {
-            parent.add_children(vec![(Some(id), element)]);
+            parent.add_children(vec![(id, element)]);
+        } else {
+            for (_, child) in &mut self.children {
+                if child.contains_child(&parent) {
+                    child.add_child_to(parent, id, element);
+                    return;
+                }
+            }
         }
     }
 
@@ -130,6 +132,15 @@ impl UI {
     {
         let mut builder = PanelBuilder::new(title);
         builder = builder.size(200.0, 200.0);
+        builder = init_fn(builder);
+        Box::new(builder.build())
+    }
+
+    pub fn container<InitFn>(init_fn: InitFn) -> Box<Container>
+    where
+        InitFn: FnOnce(ContainerBuilder) -> ContainerBuilder + 'static,
+    {
+        let mut builder = ContainerBuilder::new();
         builder = init_fn(builder);
         Box::new(builder.build())
     }

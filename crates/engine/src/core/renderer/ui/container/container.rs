@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::core::{
     renderer::{
@@ -15,7 +15,7 @@ impl Container {
         Self {
             position,
             size,
-            children: HashMap::new(),
+            children: BTreeMap::new(),
             offset: (0.0, 0.0),
             gap: 5.0,
             plane: PlaneBuilder::new()
@@ -133,6 +133,24 @@ impl UIElement for Container {
     fn get_offset(&self) -> (f32, f32) {
         self.offset
     }
+
+    fn add_child_to(
+        &mut self,
+        parent: UIElementHandle,
+        id: Option<UIElementHandle>,
+        element: Box<dyn UIElement>,
+    ) {
+        if let Some(parent) = self.children.get_mut(&parent) {
+            parent.add_children(vec![(id, element)]);
+        } else {
+            for (_, child) in &mut self.children {
+                if child.contains_child(&parent) {
+                    child.add_child_to(parent, id, element);
+                    return;
+                }
+            }
+        }
+    }
 }
 
 impl ContainerBuilder {
@@ -154,9 +172,8 @@ impl ContainerBuilder {
         self
     }
 
-    #[allow(dead_code)]
-    pub fn add_child(mut self, child: Box<dyn UIElement>) -> Self {
-        self.children.push((None, child));
+    pub fn add_child(mut self, handle: Option<UIElementHandle>, child: Box<dyn UIElement>) -> Self {
+        self.children.push((handle, child));
         self
     }
 

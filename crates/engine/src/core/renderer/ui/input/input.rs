@@ -1,3 +1,5 @@
+use core::panic;
+
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
@@ -158,6 +160,15 @@ impl UIElement for Input {
 
     fn get_offset(&self) -> (f32, f32) {
         self.offset
+    }
+
+    fn add_child_to(
+        &mut self,
+        _: UIElementHandle,
+        _: Option<UIElementHandle>,
+        _: Box<dyn UIElement>,
+    ) {
+        panic!("Input cannot have children");
     }
 }
 

@@ -34,12 +34,12 @@ impl EditorLayer {
         for entity in entities {
             let handle = UIElementHandle::from(entity.id);
             if !self.ui.contains_key(&handle) {
-                self.ui.insert_to_with_id(
+                self.ui.insert_to(
                     self.entity_panel.unwrap(),
-                    handle,
+                    Some(handle),
                     UI::collapsible(&entity.get_name(), |builder| {
                         builder
-                            .size(190.0, 40.0)
+                            .size(180.0, 40.0)
                             .closed()
                             .movable(false)
                             .add_child(None, UI::text("Hello World", 16.0, |builder| builder))
@@ -52,8 +52,13 @@ impl EditorLayer {
 
 impl Layer for EditorLayer {
     fn on_attach(&mut self) {
-        self.entity_panel = Some(self.ui.add(UI::panel("Entities", |builder| {
-            builder.size(200.0, 200.0).add_child(
+        let handles = [UIElementHandle::new(), UIElementHandle::new()];
+        let (controls_handle, entities_handle) = (
+            std::cmp::min(handles[0], handles[1]),
+            std::cmp::max(handles[0], handles[1]),
+        );
+        let controls = UI::container(|builder| {
+            builder.size(200.0, 0.0).add_child(
                 None,
                 UI::button(
                     "Add Entity",
@@ -63,7 +68,15 @@ impl Layer for EditorLayer {
                     |builder| builder,
                 ),
             )
-        })));
+        });
+        let entities = UI::container(|b| b);
+        self.ui.add(UI::panel("Entities", move |builder| {
+            builder
+                .size(200.0, 200.0)
+                .add_child(Some(controls_handle), controls)
+                .add_child(Some(entities_handle), entities)
+        }));
+        self.entity_panel = Some(entities_handle);
     }
 
     fn on_update(&mut self, window: &Window, delta_time: f64) {

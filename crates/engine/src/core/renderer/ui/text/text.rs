@@ -69,4 +69,13 @@ impl UIElement for Text {
     fn get_offset(&self) -> (f32, f32) {
         self.offset
     }
+
+    fn add_child_to(
+        &mut self,
+        _: UIElementHandle,
+        _: Option<UIElementHandle>,
+        _: Box<dyn UIElement>,
+    ) {
+        panic!("Text cannot have children");
+    }
 }

@@ -140,6 +140,24 @@ impl UIElement for Panel {
     fn get_offset(&self) -> (f32, f32) {
         self.offset
     }
+
+    fn add_child_to(
+        &mut self,
+        parent: UIElementHandle,
+        id: Option<UIElementHandle>,
+        element: Box<dyn UIElement>,
+    ) {
+        if let Some(parent) = self.content.children.get_mut(&parent) {
+            parent.add_children(vec![(id, element)]);
+        } else {
+            for (_, child) in &mut self.content.children {
+                if child.contains_child(&parent) {
+                    child.add_child_to(parent, id, element);
+                    return;
+                }
+            }
+        }
+    }
 }
 
 impl Panel {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::core::{renderer::plane::Plane, scene::Scene};
 
@@ -10,7 +10,7 @@ pub struct Button {
     pub position: (f32, f32),
     pub size: (f32, f32),
     pub on_click: Box<dyn Fn(&mut Scene)>,
-    pub children: HashMap<UIElementHandle, Box<dyn UIElement>>,
+    pub children: BTreeMap<UIElementHandle, Box<dyn UIElement>>,
     pub offset: (f32, f32),
     pub is_hovering: bool,
     plane: Plane,
