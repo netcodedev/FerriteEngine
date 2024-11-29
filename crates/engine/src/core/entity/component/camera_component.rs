@@ -14,7 +14,6 @@ pub struct CameraComponent {
     camera_controller: CameraController,
 }
 
-#[allow(dead_code)]
 impl CameraComponent {
     pub fn new(
         camera: Camera,

@@ -14,7 +14,6 @@ pub struct VoxelChunk {
     pub mesh: Option<ChunkMesh<BlockVertex>>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct BlockVertex {

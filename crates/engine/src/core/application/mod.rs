@@ -7,7 +7,6 @@ pub struct Application {
     layers: Vec<Box<dyn Layer>>,
 }
 
-#[allow(dead_code)]
 pub trait Layer {
     fn on_attach(&mut self) {}
     fn on_detach(&mut self) {}

@@ -282,7 +282,6 @@ impl ModelBuilder {
         })
     }
 
-    #[allow(dead_code)]
     pub fn with_position<P: Into<Point3<f32>>>(mut self, position: P) -> ModelBuilder {
         self.model.position = position.into();
         self

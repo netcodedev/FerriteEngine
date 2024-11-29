@@ -212,7 +212,6 @@ impl InputBuilder {
         }
     }
 
-    #[allow(dead_code)]
     pub fn position(mut self, x: f32, y: f32) -> Self {
         self.position = (x, y);
         self

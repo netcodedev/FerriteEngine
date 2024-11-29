@@ -8,7 +8,6 @@ pub struct Texture {
     pub id: GLuint,
 }
 
-#[allow(dead_code)]
 pub struct TextureRenderer {
     shader: Shader,
 }

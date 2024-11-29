@@ -118,7 +118,6 @@ impl Drop for Texture {
     }
 }
 
-#[allow(dead_code)]
 impl TextureRenderer {
     pub fn new() -> Self {
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));

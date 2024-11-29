@@ -13,7 +13,6 @@ pub struct MarchingCubesChunk {
 }
 
 #[derive(Clone, Copy)]
-#[warn(dead_code)]
 #[repr(C)]
 pub struct Vertex {
     position: [f32; 3],

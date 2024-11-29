@@ -5,7 +5,6 @@ use crate::core::{physics::rigidbody::RigidBody, scene::Scene};
 
 use super::{component::Component, Entity};
 
-#[allow(dead_code)]
 impl Entity {
     pub fn new(name: &str) -> Self {
         Entity {
