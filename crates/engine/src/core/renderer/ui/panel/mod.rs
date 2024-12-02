@@ -1,4 +1,7 @@
-use crate::core::renderer::{plane::Plane, text::Text};
+use crate::core::{
+    renderer::{plane::Plane, text::Text},
+    utils::DataSource,
+};
 
 use super::{
     container::Container,
@@ -14,6 +17,7 @@ pub struct Panel {
     size: Size,
 
     title: String,
+    title_source: Option<DataSource<String>>,
     content: Container,
 
     drag_start: Option<Position>,
@@ -33,6 +37,7 @@ pub struct PanelBuilder {
     pub position: Position,
     pub size: Size,
     pub title: String,
+    pub title_source: Option<DataSource<String>>,
     pub children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>,
     pub collapsible: bool,
     pub movable: bool,

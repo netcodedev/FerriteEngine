@@ -1,15 +1,14 @@
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion};
-use rand::Rng;
 
-use crate::core::{physics::rigidbody::RigidBody, scene::Scene};
+use crate::core::{physics::rigidbody::RigidBody, scene::Scene, utils::DataSource};
 
-use super::{component::Component, Entity};
+use super::{component::Component, Entity, EntityHandle};
 
 impl Entity {
     pub fn new(name: &str) -> Self {
         Entity {
-            id: rand::thread_rng().gen(),
-            name: name.to_string(),
+            id: EntityHandle::new(),
+            name: DataSource::new(name.to_string()),
             children: Vec::new(),
             components: Vec::new(),
             position: Point3::new(0.0, 0.0, 0.0),
@@ -49,6 +48,30 @@ impl Entity {
 
     pub fn add_child(&mut self, child: Entity) {
         self.children.push(child);
+    }
+
+    pub fn get_child(&self, id: &EntityHandle) -> Option<&Entity> {
+        for child in self.children.iter() {
+            if child.id == *id {
+                return Some(child);
+            }
+            if let Some(entity) = child.get_child(id) {
+                return Some(entity);
+            }
+        }
+        None
+    }
+
+    pub fn get_child_mut(&mut self, id: &EntityHandle) -> Option<&mut Entity> {
+        for child in self.children.iter_mut() {
+            if child.id == *id {
+                return Some(child);
+            }
+            if let Some(entity) = child.get_child_mut(id) {
+                return Some(entity);
+            }
+        }
+        None
     }
 
     pub fn handle_event(
@@ -139,6 +162,14 @@ impl Entity {
     }
 
     pub fn get_name(&self) -> String {
+        self.name.read()
+    }
+
+    pub fn set_name(&mut self, name: String) {
+        self.name.write(name);
+    }
+
+    pub fn get_name_ref(&self) -> DataSource<String> {
         self.name.clone()
     }
 }

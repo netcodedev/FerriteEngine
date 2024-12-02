@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::core::scene::Scene;
+use crate::core::{entity::EntityHandle, scene::Scene, utils::DataSource};
 
 use super::{
     button::{Button, ButtonBuilder},
@@ -100,11 +100,24 @@ impl UI {
         Box::new(builder.build())
     }
 
-    pub fn input<InitFn>(init_fn: InitFn) -> Box<Input>
+    pub fn collapsible_dyn<InitFn>(title: DataSource<String>, init_fn: InitFn) -> Box<Panel>
+    where
+        InitFn: FnOnce(PanelBuilder) -> PanelBuilder + 'static,
+    {
+        let mut builder = PanelBuilder::new("").title_source(title);
+        builder = builder.size(200.0, 200.0).collapsible();
+        builder = init_fn(builder);
+        Box::new(builder.build())
+    }
+
+    pub fn input<InitFn>(entity_handle: Option<EntityHandle>, init_fn: InitFn) -> Box<Input>
     where
         InitFn: FnOnce(InputBuilder) -> InputBuilder + 'static,
     {
         let mut builder = InputBuilder::new("");
+        if let Some(entity_handle) = entity_handle {
+            builder = builder.entity_handle(entity_handle);
+        }
         builder = init_fn(builder);
         Box::new(builder.build())
     }

@@ -1,6 +1,7 @@
 use core::panic;
 
 use crate::core::{
+    entity::EntityHandle,
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
         text::{Fonts, Text},
@@ -39,12 +40,12 @@ impl UIElement for Input {
             gl::DepthMask(gl::TRUE);
 
             if let Some(get_fn) = &self.get_fn {
-                self.content = get_fn(scene);
+                self.content = get_fn(&self.entity_handle, scene);
             }
             self.text.set_content(self.content.clone());
             self.text.render_at(
                 (self.offset.x + self.position.x + 5.0) as i32,
-                (self.offset.y + self.position.y + 5.0) as i32,
+                (self.offset.y + self.position.y + 2.0) as i32,
             );
             gl::Disable(gl::STENCIL_TEST);
             gl::StencilMask(0xFF);
@@ -107,7 +108,7 @@ impl UIElement for Input {
                 if self.is_focused {
                     self.content.push(*character);
                     if let Some(set_fn) = &mut self.set_fn {
-                        set_fn(scene, self.content.clone());
+                        set_fn(&self.entity_handle, scene, self.content.clone());
                     }
                     return true;
                 }
@@ -122,7 +123,7 @@ impl UIElement for Input {
                 if self.is_focused {
                     self.content.pop();
                     if let Some(set_fn) = &mut self.set_fn {
-                        set_fn(scene, self.content.clone());
+                        set_fn(&self.entity_handle, scene, self.content.clone());
                     }
                     return true;
                 }
@@ -176,12 +177,16 @@ impl Input {
         position: Position,
         size: Size,
         content: String,
-        get_fn: Option<Box<dyn Fn(&mut Scene) -> String>>,
-        set_fn: Option<Box<dyn FnMut(&mut Scene, String)>>,
+        get_fn: Option<Box<dyn Fn(&Option<EntityHandle>, &mut Scene) -> String>>,
+        set_fn: Option<Box<dyn FnMut(&Option<EntityHandle>, &mut Scene, String)>>,
+        entity_handle: Option<EntityHandle>,
     ) -> Self {
         let plane = PlaneBuilder::new()
             .position(position)
-            .size(size)
+            .size(Size {
+                width: size.width - 10.0,
+                height: size.height,
+            })
             .border_radius_uniform(5.0)
             .border_thickness(1.0);
         Self {
@@ -197,10 +202,11 @@ impl Input {
             plane: plane.build(),
             stencil_plane: plane
                 .size(Size {
-                    width: size.width - 5.0,
+                    width: size.width - 12.0,
                     height: size.height,
                 })
                 .build(),
+            entity_handle,
         }
     }
 }
@@ -213,6 +219,7 @@ impl InputBuilder {
             content: content.to_string(),
             get_fn: None,
             set_fn: None,
+            entity_handle: None,
         }
     }
 
@@ -226,6 +233,11 @@ impl InputBuilder {
         self
     }
 
+    pub fn entity_handle(mut self, entity_handle: EntityHandle) -> Self {
+        self.entity_handle = Some(entity_handle);
+        self
+    }
+
     pub fn build(self) -> Input {
         Input::new(
             self.position,
@@ -233,12 +245,13 @@ impl InputBuilder {
             self.content,
             self.get_fn,
             self.set_fn,
+            self.entity_handle,
         )
     }
 
     pub fn get_fn<F>(mut self, get_fn: F) -> Self
     where
-        F: Fn(&mut Scene) -> String + 'static,
+        F: Fn(&Option<EntityHandle>, &mut Scene) -> String + 'static,
     {
         self.get_fn = Some(Box::new(get_fn));
         self
@@ -246,7 +259,7 @@ impl InputBuilder {
 
     pub fn set_fn<F>(mut self, set_fn: F) -> Self
     where
-        F: FnMut(&mut Scene, String) + 'static,
+        F: FnMut(&Option<EntityHandle>, &mut Scene, String) + 'static,
     {
         self.set_fn = Some(Box::new(set_fn));
         self

@@ -9,6 +9,7 @@ use crate::core::{
         },
     },
     scene::Scene,
+    utils::DataSource,
 };
 
 use super::{Panel, PanelBuilder};
@@ -31,6 +32,10 @@ impl UIElement for Panel {
         }
         PlaneRenderer::render(&self.plane);
         PlaneRenderer::render(&self.header_plane);
+        if let Some(source) = &self.title_source {
+            let title = source.read();
+            self.title = title.clone();
+        }
         self.text.set_content(self.title.clone());
         self.text.render_at(
             (self.offset.x + self.position.x + 8.0) as i32,
@@ -202,6 +207,7 @@ impl Panel {
             position,
             size,
             title: title.clone(),
+            title_source: None,
             content,
             text: Text::new(Fonts::RobotoMono, 0, 0, 16.0, title),
             offset: Offset::default(),
@@ -233,6 +239,7 @@ impl PanelBuilder {
             position: Position::default(),
             size: Size::default(),
             title: title.to_string(),
+            title_source: None,
             children: Vec::new(),
             collapsible: false,
             movable: true,
@@ -270,6 +277,11 @@ impl PanelBuilder {
         self
     }
 
+    pub fn title_source(mut self, source: DataSource<String>) -> Self {
+        self.title_source = Some(source);
+        self
+    }
+
     pub fn add_child(mut self, id: Option<UIElementHandle>, child: Box<dyn UIElement>) -> Self {
         self.children.push((id, child));
         self
@@ -277,6 +289,7 @@ impl PanelBuilder {
 
     pub fn build(self) -> Panel {
         let mut panel = Panel::new(self.title.clone(), self.position, self.size);
+        panel.title_source = self.title_source;
         panel.collapsible = self.collapsible;
         panel.movable = self.movable;
         panel.is_open = self.open;

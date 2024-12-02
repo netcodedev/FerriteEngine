@@ -4,7 +4,7 @@ use glfw::{Glfw, WindowEvent};
 use crate::core::{
     entity::{
         component::{camera_component::CameraComponent, Component},
-        Entity,
+        Entity, EntityHandle,
     },
     physics::physics_engine::PhysicsEngine,
     renderer::{
@@ -146,5 +146,29 @@ impl Scene {
 
     pub fn get_entities(&self) -> &Vec<Entity> {
         &self.entities
+    }
+
+    pub fn get_entity(&self, id: &EntityHandle) -> Option<&Entity> {
+        for entity in self.entities.iter() {
+            if entity.id == *id {
+                return Some(entity);
+            }
+            if let Some(entity) = entity.get_child(id) {
+                return Some(entity);
+            }
+        }
+        None
+    }
+
+    pub fn get_entity_mut(&mut self, id: &EntityHandle) -> Option<&mut Entity> {
+        for entity in self.entities.iter_mut() {
+            if entity.id == *id {
+                return Some(entity);
+            }
+            if let Some(entity) = entity.get_child_mut(id) {
+                return Some(entity);
+            }
+        }
+        None
     }
 }

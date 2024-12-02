@@ -82,10 +82,10 @@ impl Layer for WorldLayer {
                 .add_child(None, UI::text("Camera Speed", 16.0, |b| b))
                 .add_child(
                     None,
-                    UI::input(|input| {
+                    UI::input(None, |input| {
                         input
                             .size(190.0, 26.0)
-                            .get_fn(|scene| {
+                            .get_fn(|_, scene| {
                                 if let Some(camera_component) =
                                     scene.get_component::<CameraComponent>()
                                 {
@@ -97,7 +97,7 @@ impl Layer for WorldLayer {
                                     "".to_string()
                                 }
                             })
-                            .set_fn(move |scene, v| {
+                            .set_fn(move |_, scene, v| {
                                 if let Some(camera_component) =
                                     scene.get_component_mut::<CameraComponent>()
                                 {

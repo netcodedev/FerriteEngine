@@ -7,6 +7,10 @@ use ferrite::core::{
 };
 use glfw::{Glfw, WindowEvent};
 
+mod ui;
+
+use ui::entity::EntityUI;
+
 fn main() {
     let mut application = Application::new(1280, 720, "Ferrite Editor");
     application.add_layer(Box::new(EditorLayer::new()));
@@ -32,18 +36,12 @@ impl EditorLayer {
     fn update_entity_ui_elements(&mut self) {
         let entities = self.scene.get_entities();
         for entity in entities {
-            let handle = UIElementHandle::from(entity.id);
+            let handle = UIElementHandle::from(entity.id.into());
             if !self.ui.contains_key(&handle) {
                 self.ui.insert_to(
                     self.entity_panel.unwrap(),
                     Some(handle),
-                    UI::collapsible(&entity.get_name(), |builder| {
-                        builder
-                            .size(180.0, 40.0)
-                            .closed()
-                            .movable(false)
-                            .add_child(None, UI::text("Hello World", 16.0, |builder| builder))
-                    }),
+                    Box::new(EntityUI::new(&self.scene, entity.id)),
                 );
             }
         }
