@@ -4,7 +4,10 @@ use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
         text::{Fonts, Text},
-        ui::{UIElement, UIElementHandle},
+        ui::{
+            primitives::{Offset, Position, Size},
+            UIElement, UIElementHandle,
+        },
     },
     scene::Scene,
 };
@@ -40,8 +43,8 @@ impl UIElement for Input {
             }
             self.text.set_content(self.content.clone());
             self.text.render_at(
-                (self.offset.0 + self.position.0 + 5.0) as i32,
-                (self.offset.1 + self.position.1 + 5.0) as i32,
+                (self.offset.x + self.position.x + 5.0) as i32,
+                (self.offset.y + self.position.y + 5.0) as i32,
             );
             gl::Disable(gl::STENCIL_TEST);
             gl::StencilMask(0xFF);
@@ -59,10 +62,10 @@ impl UIElement for Input {
         match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
                 let (x, y) = window.get_cursor_pos();
-                if x as f32 >= self.offset.0 + self.position.0
-                    && x as f32 <= self.offset.0 + self.position.0 + self.size.0
-                    && y as f32 >= self.offset.1 + self.position.1
-                    && y as f32 <= self.offset.1 + self.position.1 + self.size.1
+                if x as f32 >= self.offset.x + self.position.x
+                    && x as f32 <= self.offset.x + self.position.x + self.size.width
+                    && y as f32 >= self.offset.y + self.position.y
+                    && y as f32 <= self.offset.y + self.position.y + self.size.height
                 {
                     if !self.is_focused {
                         self.is_focused = true;
@@ -78,10 +81,10 @@ impl UIElement for Input {
                 false
             }
             glfw::WindowEvent::CursorPos(x, y) => {
-                if *x as f32 >= self.offset.0 + self.position.0
-                    && *x as f32 <= self.offset.0 + self.position.0 + self.size.0
-                    && *y as f32 >= self.offset.1 + self.position.1
-                    && *y as f32 <= self.offset.1 + self.position.1 + self.size.1
+                if *x as f32 >= self.offset.x + self.position.x
+                    && *x as f32 <= self.offset.x + self.position.x + self.size.width
+                    && *y as f32 >= self.offset.y + self.position.y
+                    && *y as f32 <= self.offset.y + self.position.y + self.size.height
                 {
                     if !self.is_hovering {
                         self.is_hovering = true;
@@ -139,18 +142,14 @@ impl UIElement for Input {
         panic!("Input cannot have children");
     }
 
-    fn set_offset(&mut self, offset: (f32, f32)) {
+    fn set_offset(&mut self, offset: Offset) {
         self.offset = offset;
-        self.plane
-            .set_position((self.position.0 + offset.0, self.position.1 + offset.1, 0.0));
-        self.stencil_plane.set_position((
-            self.position.0 + offset.0,
-            self.position.1 + offset.1,
-            0.0,
-        ));
+        self.plane.set_position(self.position + &self.offset);
+        self.stencil_plane
+            .set_position(self.position + &self.offset);
     }
 
-    fn get_size(&self) -> (f32, f32) {
+    fn get_size(&self) -> Size {
         self.size
     }
 
@@ -158,7 +157,7 @@ impl UIElement for Input {
         false
     }
 
-    fn get_offset(&self) -> (f32, f32) {
+    fn get_offset(&self) -> Offset {
         self.offset
     }
 
@@ -174,21 +173,21 @@ impl UIElement for Input {
 
 impl Input {
     pub fn new(
-        position: (f32, f32),
-        size: (f32, f32),
+        position: Position,
+        size: Size,
         content: String,
         get_fn: Option<Box<dyn Fn(&mut Scene) -> String>>,
         set_fn: Option<Box<dyn FnMut(&mut Scene, String)>>,
     ) -> Self {
         let plane = PlaneBuilder::new()
-            .position((position.0, position.1, 0.0))
-            .size((size.0, size.1))
+            .position(position)
+            .size(size)
             .border_radius_uniform(5.0)
             .border_thickness(1.0);
         Self {
             position,
             size,
-            offset: (0.0, 0.0),
+            offset: Offset::default(),
             is_hovering: false,
             is_focused: false,
             content: content.clone(),
@@ -196,7 +195,12 @@ impl Input {
             set_fn,
             text: Text::new(Fonts::RobotoMono, 0, 0, 16.0, content),
             plane: plane.build(),
-            stencil_plane: plane.size((size.0 - 5.0, size.1)).build(),
+            stencil_plane: plane
+                .size(Size {
+                    width: size.width - 5.0,
+                    height: size.height,
+                })
+                .build(),
         }
     }
 }
@@ -204,8 +208,8 @@ impl Input {
 impl InputBuilder {
     pub fn new(content: &str) -> Self {
         Self {
-            position: (0.0, 0.0),
-            size: (0.0, 0.0),
+            position: Position::default(),
+            size: Size::default(),
             content: content.to_string(),
             get_fn: None,
             set_fn: None,
@@ -213,12 +217,12 @@ impl InputBuilder {
     }
 
     pub fn position(mut self, x: f32, y: f32) -> Self {
-        self.position = (x, y);
+        self.position = Position { x, y };
         self
     }
 
     pub fn size(mut self, width: f32, height: f32) -> Self {
-        self.size = (width, height);
+        self.size = Size { width, height };
         self
     }
 

@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
-        ui::{UIElement, UIElementHandle},
+        ui::{
+            primitives::{Offset, Position, Size},
+            UIElement, UIElementHandle,
+        },
     },
     scene::Scene,
 };
@@ -18,18 +21,11 @@ impl UIElement for Button {
         }
     }
 
-    fn set_offset(&mut self, offset: (f32, f32)) {
+    fn set_offset(&mut self, offset: Offset) {
         self.offset = offset;
-        self.plane.set_position((
-            self.offset.0 + self.position.0,
-            self.offset.1 + self.position.1,
-            0.0,
-        ));
+        self.plane.set_position(self.position + &self.offset);
         for child in self.children.values_mut() {
-            child.set_offset((
-                self.offset.0 + self.position.0,
-                self.offset.1 + self.position.1,
-            ));
+            child.set_offset(self.offset + &self.position);
         }
     }
 
@@ -43,10 +39,10 @@ impl UIElement for Button {
         match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
                 let (x, y) = window.get_cursor_pos();
-                if x as f32 >= self.offset.0 + self.position.0
-                    && x as f32 <= self.offset.0 + self.position.0 + self.size.0
-                    && y as f32 >= self.offset.1 + self.position.1
-                    && y as f32 <= self.offset.1 + self.position.1 + self.size.1
+                if x as f32 >= self.offset.x + self.position.x
+                    && x as f32 <= self.offset.x + self.position.x + self.size.width
+                    && y as f32 >= self.offset.y + self.position.y
+                    && y as f32 <= self.offset.y + self.position.y + self.size.height
                 {
                     (self.on_click)(scene);
                     return true;
@@ -54,10 +50,10 @@ impl UIElement for Button {
                 false
             }
             glfw::WindowEvent::CursorPos(x, y) => {
-                if *x as f32 >= self.offset.0 + self.position.0
-                    && *x as f32 <= self.offset.0 + self.position.0 + self.size.0
-                    && *y as f32 >= self.offset.1 + self.position.1
-                    && *y as f32 <= self.offset.1 + self.position.1 + self.size.1
+                if *x as f32 >= self.offset.x + self.position.x
+                    && *x as f32 <= self.offset.x + self.position.x + self.size.width
+                    && *y as f32 >= self.offset.y + self.position.y
+                    && *y as f32 <= self.offset.y + self.position.y + self.size.height
                 {
                     if !self.is_hovering {
                         window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
@@ -77,16 +73,13 @@ impl UIElement for Button {
 
     fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
         for (handle, mut child) in children {
-            child.set_offset((
-                self.offset.0 + self.position.0,
-                self.offset.1 + self.position.1,
-            ));
+            child.set_offset(self.offset + &self.position);
             let handle = handle.unwrap_or(UIElementHandle::new());
             self.children.insert(handle, child);
         }
     }
 
-    fn get_size(&self) -> (f32, f32) {
+    fn get_size(&self) -> Size {
         self.size
     }
 
@@ -102,7 +95,7 @@ impl UIElement for Button {
         false
     }
 
-    fn get_offset(&self) -> (f32, f32) {
+    fn get_offset(&self) -> Offset {
         self.offset
     }
 
@@ -126,17 +119,17 @@ impl UIElement for Button {
 }
 
 impl Button {
-    pub fn new(position: (f32, f32), size: (f32, f32), on_click: Box<dyn Fn(&mut Scene)>) -> Self {
+    pub fn new(position: Position, size: Size, on_click: Box<dyn Fn(&mut Scene)>) -> Self {
         Self {
             position,
             size,
             on_click,
             children: BTreeMap::new(),
-            offset: (0.0, 0.0),
+            offset: Offset::default(),
             is_hovering: false,
             plane: PlaneBuilder::new()
-                .position((position.0, position.1, 0.0))
-                .size((size.0, size.1))
+                .position(position)
+                .size(size)
                 .border_radius_uniform(5.0)
                 .border_thickness(1.0)
                 .color((0.2, 0.3, 0.5, 1.0))
@@ -148,20 +141,20 @@ impl Button {
 impl ButtonBuilder {
     pub fn new() -> Self {
         Self {
-            position: (0.0, 0.0),
-            size: (0.0, 0.0),
+            position: Position::default(),
+            size: Size::default(),
             on_click: Box::new(|_| {}),
             children: Vec::new(),
         }
     }
 
     pub fn position(mut self, x: f32, y: f32) -> Self {
-        self.position = (x, y);
+        self.position = Position { x, y };
         self
     }
 
     pub fn size(mut self, width: f32, height: f32) -> Self {
-        self.size = (width, height);
+        self.size = Size { width, height };
         self
     }
 

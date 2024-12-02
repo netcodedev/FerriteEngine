@@ -1,6 +1,7 @@
-use std::{cmp::Ordering, collections::BTreeMap};
+use std::collections::BTreeMap;
 
-use rand::Rng;
+use glfw::{Glfw, Window, WindowEvent};
+use primitives::{Offset, Size, UIElementHandle};
 
 use crate::core::scene::Scene;
 
@@ -8,30 +9,11 @@ pub mod button;
 pub mod container;
 pub mod input;
 pub mod panel;
+pub mod primitives;
 pub mod text;
 pub mod ui;
 
 pub struct UI {}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd)]
-pub struct UIElementHandle(u64);
-
-impl UIElementHandle {
-    pub fn new() -> Self {
-        Self {
-            0: rand::thread_rng().gen::<u64>(),
-        }
-    }
-    pub fn from(id: u64) -> Self {
-        Self { 0: id }
-    }
-}
-
-impl Ord for UIElementHandle {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.cmp(&other.0)
-    }
-}
 
 pub struct UIRenderer {
     children: BTreeMap<UIElementHandle, Box<dyn UIElement>>,
@@ -42,9 +24,9 @@ pub trait UIElement {
     fn handle_events(
         &mut self,
         scene: &mut Scene,
-        window: &mut glfw::Window,
-        glfw: &mut glfw::Glfw,
-        event: &glfw::WindowEvent,
+        window: &mut Window,
+        glfw: &mut Glfw,
+        event: &WindowEvent,
     ) -> bool;
     fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>);
     fn add_child_to(
@@ -54,7 +36,7 @@ pub trait UIElement {
         element: Box<dyn UIElement>,
     );
     fn contains_child(&self, handle: &UIElementHandle) -> bool;
-    fn get_offset(&self) -> (f32, f32);
-    fn set_offset(&mut self, offset: (f32, f32));
-    fn get_size(&self) -> (f32, f32);
+    fn get_offset(&self) -> Offset;
+    fn set_offset(&mut self, offset: Offset);
+    fn get_size(&self) -> Size;
 }

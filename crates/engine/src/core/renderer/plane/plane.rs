@@ -1,4 +1,7 @@
-use crate::core::renderer::shader::{DynamicVertexArray, Shader, VertexAttributes};
+use crate::core::renderer::{
+    shader::{DynamicVertexArray, Shader, VertexAttributes},
+    ui::primitives::{Position, Size},
+};
 
 use super::{Plane, PlaneBuilder, PlaneRenderer, PlaneVertex};
 use lazy_static::lazy_static;
@@ -73,19 +76,19 @@ impl PlaneRenderer {
 impl PlaneBuilder {
     pub fn new() -> Self {
         Self {
-            position: (0.0, 0.0, 0.0),
-            size: (0.0, 0.0),
+            position: Position::default(),
+            size: Size::default(),
             color: (0.0, 0.0, 0.0, 0.0),
             border_thickness: 0.0,
             border_color: (0.0, 0.0, 0.0, 1.0),
             border_radius: (0.0, 0.0, 0.0, 0.0),
         }
     }
-    pub fn position(mut self, position: (f32, f32, f32)) -> Self {
+    pub fn position(mut self, position: Position) -> Self {
         self.position = position;
         self
     }
-    pub fn size(mut self, size: (f32, f32)) -> Self {
+    pub fn size(mut self, size: Size) -> Self {
         self.size = size;
         self
     }
@@ -128,8 +131,8 @@ impl PlaneBuilder {
 
 impl Plane {
     pub fn new(
-        position: (f32, f32, f32),
-        size: (f32, f32),
+        position: Position,
+        size: Size,
         color: (f32, f32, f32, f32),
         border_thickness: f32,
         border_color: (f32, f32, f32, f32),
@@ -154,48 +157,60 @@ impl Plane {
     fn get_vertices(&self) -> Vec<PlaneVertex> {
         vec![
             PlaneVertex {
-                position: (
-                    self.position.0,
-                    self.position.1 + self.size.1,
-                    self.position.2,
-                ),
+                position: (self.position.x, self.position.y + self.size.height, 0.0),
                 color: self.color,
-                dimensions: (self.size.0, self.size.1, self.position.0, self.position.1),
+                dimensions: (
+                    self.size.width,
+                    self.size.height,
+                    self.position.x,
+                    self.position.y,
+                ),
             },
             PlaneVertex {
                 position: (
-                    self.position.0 + self.size.0,
-                    self.position.1 + self.size.1,
-                    self.position.2,
+                    self.position.x + self.size.width,
+                    self.position.y + self.size.height,
+                    0.0,
                 ),
                 color: self.color,
-                dimensions: (self.size.0, self.size.1, self.position.0, self.position.1),
-            },
-            PlaneVertex {
-                position: (
-                    self.position.0 + self.size.0,
-                    self.position.1,
-                    self.position.2,
+                dimensions: (
+                    self.size.width,
+                    self.size.height,
+                    self.position.x,
+                    self.position.y,
                 ),
-                color: self.color,
-                dimensions: (self.size.0, self.size.1, self.position.0, self.position.1),
             },
             PlaneVertex {
-                position: (self.position.0, self.position.1, self.position.2),
+                position: (self.position.x + self.size.width, self.position.y, 0.0),
                 color: self.color,
-                dimensions: (self.size.0, self.size.1, self.position.0, self.position.1),
+                dimensions: (
+                    self.size.width,
+                    self.size.height,
+                    self.position.x,
+                    self.position.y,
+                ),
+            },
+            PlaneVertex {
+                position: (self.position.x, self.position.y, 0.0),
+                color: self.color,
+                dimensions: (
+                    self.size.width,
+                    self.size.height,
+                    self.position.x,
+                    self.position.y,
+                ),
             },
         ]
     }
 
-    pub fn set_position(&mut self, position: (f32, f32, f32)) {
+    pub fn set_position(&mut self, position: Position) {
         self.position = position;
         let vertices = self.get_vertices();
         let indices: Vec<u32> = vec![0, 1, 2, 2, 3, 0];
         self.vertex_array.buffer_data(&vertices, &Some(indices));
     }
 
-    pub fn set_size(&mut self, size: (f32, f32)) {
+    pub fn set_size(&mut self, size: Size) {
         self.size = size;
         let vertices = self.get_vertices();
         let indices: Vec<u32> = vec![0, 1, 2, 2, 3, 0];

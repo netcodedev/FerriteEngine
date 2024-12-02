@@ -1,7 +1,7 @@
 use ferrite::core::{
     application::{Application, Layer},
     entity::Entity,
-    renderer::ui::{UIElementHandle, UIRenderer, UI},
+    renderer::ui::{primitives::UIElementHandle, UIRenderer, UI},
     scene::Scene,
     window::Window,
 };

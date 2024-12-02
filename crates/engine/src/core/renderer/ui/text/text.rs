@@ -1,7 +1,7 @@
 use crate::core::{
     renderer::{
         text::Fonts,
-        ui::{UIElement, UIElementHandle},
+        ui::{Offset, Size, UIElement, UIElementHandle},
     },
     scene::Scene,
 };
@@ -20,7 +20,7 @@ impl Text {
                 size,
                 text.to_string(),
             ),
-            offset: (0.0, 0.0),
+            offset: Offset::default(),
             width: size * text.len() as f32, // initial estimate (will be too high)
         }
     }
@@ -31,7 +31,7 @@ impl UIElement for Text {
         self.text.set_content(self.content.clone());
         let (width, height) = self
             .text
-            .render_at(self.offset.0 as i32 + 5, self.offset.1 as i32 + 2);
+            .render_at(self.offset.x as i32 + 5, self.offset.y as i32 + 2);
         if width as f32 != self.width {
             self.width = width as f32;
         }
@@ -54,19 +54,22 @@ impl UIElement for Text {
         panic!("Text cannot have children");
     }
 
-    fn set_offset(&mut self, offset: (f32, f32)) {
+    fn set_offset(&mut self, offset: Offset) {
         self.offset = offset;
     }
 
-    fn get_size(&self) -> (f32, f32) {
-        (self.width, self.size)
+    fn get_size(&self) -> Size {
+        Size {
+            width: self.width,
+            height: self.size,
+        }
     }
 
     fn contains_child(&self, _: &UIElementHandle) -> bool {
         false
     }
 
-    fn get_offset(&self) -> (f32, f32) {
+    fn get_offset(&self) -> Offset {
         self.offset
     }
 

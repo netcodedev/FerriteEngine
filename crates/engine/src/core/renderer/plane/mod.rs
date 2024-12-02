@@ -1,6 +1,9 @@
 use crate::core::renderer::shader::Shader;
 
-use super::shader::DynamicVertexArray;
+use super::{
+    shader::DynamicVertexArray,
+    ui::primitives::{Position, Size},
+};
 
 pub mod plane;
 
@@ -11,8 +14,8 @@ pub struct PlaneRenderer {
 }
 
 pub struct Plane {
-    position: (f32, f32, f32),
-    pub size: (f32, f32),
+    position: Position,
+    pub size: Size,
     color: (f32, f32, f32, f32),
     pub border_thickness: f32,
     pub border_color: (f32, f32, f32, f32),
@@ -22,8 +25,8 @@ pub struct Plane {
 
 #[derive(Clone, Copy)]
 pub struct PlaneBuilder {
-    position: (f32, f32, f32),
-    size: (f32, f32),
+    position: Position,
+    size: Size,
     color: (f32, f32, f32, f32),
     border_thickness: f32,
     border_color: (f32, f32, f32, f32),

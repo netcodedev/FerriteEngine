@@ -3,15 +3,17 @@ use crate::core::{
     scene::Scene,
 };
 
+use super::primitives::{Offset, Position, Size};
+
 pub mod input;
 
 type GetFn = dyn Fn(&mut Scene) -> String;
 type SetFn = dyn FnMut(&mut Scene, String);
 
 pub struct Input {
-    position: (f32, f32),
-    size: (f32, f32),
-    offset: (f32, f32),
+    position: Position,
+    size: Size,
+    offset: Offset,
     pub is_hovering: bool,
     pub is_focused: bool,
     pub content: String,
@@ -23,8 +25,8 @@ pub struct Input {
 }
 
 pub struct InputBuilder {
-    position: (f32, f32),
-    size: (f32, f32),
+    position: Position,
+    size: Size,
     content: String,
     get_fn: Option<Box<GetFn>>,
     set_fn: Option<Box<SetFn>>,
