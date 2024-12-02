@@ -1,4 +1,8 @@
-use std::sync::{Arc, RwLock};
+use core::panic;
+use std::{
+    str::FromStr,
+    sync::{Arc, RwLock},
+};
 
 use russimp::Matrix4x4;
 
@@ -15,11 +19,11 @@ impl ToMatrix4 for Matrix4x4 {
     }
 }
 
-pub struct DataSource<T> {
+pub struct DataSource<T: Clone + ToString> {
     data: Arc<RwLock<T>>,
 }
 
-impl<T: Clone> DataSource<T> {
+impl<T: Clone + ToString + FromStr> DataSource<T> {
     pub fn new(data: T) -> Self {
         Self {
             data: Arc::new(RwLock::new(data)),
@@ -30,8 +34,21 @@ impl<T: Clone> DataSource<T> {
         self.data.read().unwrap().clone()
     }
 
+    pub fn to_string(&self) -> String {
+        self.read().to_string()
+    }
+
     pub fn write(&self, data: T) {
         *self.data.write().unwrap() = data;
+    }
+
+    pub fn write_from_string(&self, data: String) {
+        match data.parse() {
+            Ok(data) => self.write(data),
+            Err(_) => {
+                panic!("Failed to parse string to data type");
+            }
+        }
     }
 
     pub fn clone(&self) -> Self {

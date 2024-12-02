@@ -80,37 +80,7 @@ impl Layer for WorldLayer {
             builder
                 .position(10.0, 130.0)
                 .add_child(None, UI::text("Camera Speed", 16.0, |b| b))
-                .add_child(
-                    None,
-                    UI::input(None, |input| {
-                        input
-                            .size(190.0, 26.0)
-                            .get_fn(|_, scene| {
-                                if let Some(camera_component) =
-                                    scene.get_component::<CameraComponent>()
-                                {
-                                    camera_component
-                                        .get_camera_controller()
-                                        .get_speed()
-                                        .to_string()
-                                } else {
-                                    "".to_string()
-                                }
-                            })
-                            .set_fn(move |_, scene, v| {
-                                if let Some(camera_component) =
-                                    scene.get_component_mut::<CameraComponent>()
-                                {
-                                    match v.parse::<f32>() {
-                                        Ok(v) => camera_component
-                                            .get_camera_controller_mut()
-                                            .set_speed(v),
-                                        Err(_) => {}
-                                    }
-                                }
-                            })
-                    }),
-                )
+                // .add_child(None, UI::input(None, |input| input.size(190.0, 26.0)))
                 .add_child(
                     None,
                     UI::button(

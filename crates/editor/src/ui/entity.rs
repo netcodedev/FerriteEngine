@@ -65,25 +65,7 @@ impl EntityUI {
         let entity = scene.get_entity(&entity_handle);
         match entity {
             Some(entity) => {
-                let input = UI::input(Some(entity_handle), |builder| {
-                    builder
-                        .size(180.0, 20.0)
-                        .get_fn(|handle, scene| {
-                            if let Some(handle) = handle {
-                                if let Some(entity) = scene.get_entity(handle) {
-                                    return entity.get_name();
-                                }
-                            }
-                            panic!("Entity handle is None");
-                        })
-                        .set_fn(|handle, scene, value| {
-                            if let Some(handle) = handle {
-                                if let Some(entity) = scene.get_entity_mut(handle) {
-                                    entity.set_name(value);
-                                }
-                            }
-                        })
-                });
+                let input = UI::input(entity.get_name_ref(), |builder| builder.size(180.0, 20.0));
                 let panel = UI::collapsible_dyn(entity.get_name_ref(), |builder| {
                     builder
                         .size(180.0, 40.0)

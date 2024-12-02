@@ -1,7 +1,7 @@
 use core::panic;
+use std::str::FromStr;
 
 use crate::core::{
-    entity::EntityHandle,
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
         text::{Fonts, Text},
@@ -11,12 +11,13 @@ use crate::core::{
         },
     },
     scene::Scene,
+    utils::DataSource,
 };
 
 use super::{Input, InputBuilder};
 
-impl UIElement for Input {
-    fn render(&mut self, scene: &mut Scene) {
+impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
+    fn render(&mut self, _: &mut Scene) {
         PlaneRenderer::render(&self.plane);
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
@@ -39,10 +40,10 @@ impl UIElement for Input {
             gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
             gl::DepthMask(gl::TRUE);
 
-            if let Some(get_fn) = &self.get_fn {
-                self.content = get_fn(&self.entity_handle, scene);
+            if let Some(data_source) = &self.data_source {
+                self.content = data_source.to_string();
             }
-            self.text.set_content(self.content.clone());
+            self.text.set_content(self.content.to_string());
             self.text.render_at(
                 (self.offset.x + self.position.x + 5.0) as i32,
                 (self.offset.y + self.position.y + 2.0) as i32,
@@ -55,7 +56,7 @@ impl UIElement for Input {
 
     fn handle_events(
         &mut self,
-        scene: &mut Scene,
+        _: &mut Scene,
         window: &mut glfw::Window,
         _: &mut glfw::Glfw,
         event: &glfw::WindowEvent,
@@ -107,8 +108,8 @@ impl UIElement for Input {
             glfw::WindowEvent::Char(character) => {
                 if self.is_focused {
                     self.content.push(*character);
-                    if let Some(set_fn) = &mut self.set_fn {
-                        set_fn(&self.entity_handle, scene, self.content.clone());
+                    if let Some(data_source) = &self.data_source {
+                        data_source.write_from_string(self.content.clone());
                     }
                     return true;
                 }
@@ -122,8 +123,8 @@ impl UIElement for Input {
             ) => {
                 if self.is_focused {
                     self.content.pop();
-                    if let Some(set_fn) = &mut self.set_fn {
-                        set_fn(&self.entity_handle, scene, self.content.clone());
+                    if let Some(data_source) = &mut self.data_source {
+                        data_source.write_from_string(self.content.clone());
                     }
                     return true;
                 }
@@ -172,14 +173,12 @@ impl UIElement for Input {
     }
 }
 
-impl Input {
+impl<T: Clone + ToString> Input<T> {
     pub fn new(
         position: Position,
         size: Size,
-        content: String,
-        get_fn: Option<Box<dyn Fn(&Option<EntityHandle>, &mut Scene) -> String>>,
-        set_fn: Option<Box<dyn FnMut(&Option<EntityHandle>, &mut Scene, String)>>,
-        entity_handle: Option<EntityHandle>,
+        content: T,
+        data_source: Option<DataSource<T>>,
     ) -> Self {
         let plane = PlaneBuilder::new()
             .position(position)
@@ -195,10 +194,8 @@ impl Input {
             offset: Offset::default(),
             is_hovering: false,
             is_focused: false,
-            content: content.clone(),
-            get_fn,
-            set_fn,
-            text: Text::new(Fonts::RobotoMono, 0, 0, 16.0, content),
+            content: content.to_string(),
+            text: Text::new(Fonts::RobotoMono, 0, 0, 16.0, content.to_string()),
             plane: plane.build(),
             stencil_plane: plane
                 .size(Size {
@@ -206,20 +203,18 @@ impl Input {
                     height: size.height,
                 })
                 .build(),
-            entity_handle,
+            data_source,
         }
     }
 }
 
-impl InputBuilder {
-    pub fn new(content: &str) -> Self {
+impl<T: Clone + ToString> InputBuilder<T> {
+    pub fn new(content: T) -> Self {
         Self {
             position: Position::default(),
             size: Size::default(),
-            content: content.to_string(),
-            get_fn: None,
-            set_fn: None,
-            entity_handle: None,
+            content,
+            data_source: None,
         }
     }
 
@@ -233,35 +228,12 @@ impl InputBuilder {
         self
     }
 
-    pub fn entity_handle(mut self, entity_handle: EntityHandle) -> Self {
-        self.entity_handle = Some(entity_handle);
+    pub fn data_source(mut self, data_source: Option<DataSource<T>>) -> Self {
+        self.data_source = data_source;
         self
     }
 
-    pub fn build(self) -> Input {
-        Input::new(
-            self.position,
-            self.size,
-            self.content,
-            self.get_fn,
-            self.set_fn,
-            self.entity_handle,
-        )
-    }
-
-    pub fn get_fn<F>(mut self, get_fn: F) -> Self
-    where
-        F: Fn(&Option<EntityHandle>, &mut Scene) -> String + 'static,
-    {
-        self.get_fn = Some(Box::new(get_fn));
-        self
-    }
-
-    pub fn set_fn<F>(mut self, set_fn: F) -> Self
-    where
-        F: FnMut(&Option<EntityHandle>, &mut Scene, String) + 'static,
-    {
-        self.set_fn = Some(Box::new(set_fn));
-        self
+    pub fn build(self) -> Input<T> {
+        Input::new(self.position, self.size, self.content, self.data_source)
     }
 }

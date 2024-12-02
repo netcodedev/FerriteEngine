@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, str::FromStr};
 
-use crate::core::{entity::EntityHandle, scene::Scene, utils::DataSource};
+use crate::core::{scene::Scene, utils::DataSource};
 
 use super::{
     button::{Button, ButtonBuilder},
@@ -110,14 +110,14 @@ impl UI {
         Box::new(builder.build())
     }
 
-    pub fn input<InitFn>(entity_handle: Option<EntityHandle>, init_fn: InitFn) -> Box<Input>
+    pub fn input<T: Clone + ToString + FromStr, InitFn>(
+        data_source: DataSource<T>,
+        init_fn: InitFn,
+    ) -> Box<Input<T>>
     where
-        InitFn: FnOnce(InputBuilder) -> InputBuilder + 'static,
+        InitFn: FnOnce(InputBuilder<T>) -> InputBuilder<T> + 'static,
     {
-        let mut builder = InputBuilder::new("");
-        if let Some(entity_handle) = entity_handle {
-            builder = builder.entity_handle(entity_handle);
-        }
+        let mut builder = InputBuilder::new(data_source.read()).data_source(Some(data_source));
         builder = init_fn(builder);
         Box::new(builder.build())
     }
