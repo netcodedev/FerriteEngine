@@ -19,6 +19,7 @@ pub struct Panel {
     title: String,
     title_source: Option<DataSource<String>>,
     content: Container,
+    controls: Container,
 
     drag_start: Option<Position>,
     dragging: bool,
@@ -39,6 +40,7 @@ pub struct PanelBuilder {
     pub title: String,
     pub title_source: Option<DataSource<String>>,
     pub children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>,
+    pub controls: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>,
     pub collapsible: bool,
     pub movable: bool,
     pub open: bool,

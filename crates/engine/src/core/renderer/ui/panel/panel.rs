@@ -36,12 +36,13 @@ impl UIElement for Panel {
             let title = source.read();
             self.title = title.clone();
         }
-        self.text.set_content(self.title.clone());
+        self.text.set_content(&self.title);
         self.text.render_at(
             (self.offset.x + self.position.x + 8.0) as i32,
             (self.offset.y + self.position.y + 2.0) as i32,
         );
         if !self.collapsible || self.is_open {
+            self.controls.render(scene);
             self.content.render(scene);
         }
     }
@@ -62,6 +63,9 @@ impl UIElement for Panel {
                     && y as f32 >= self.offset.y + self.position.y
                     && y as f32 <= self.offset.y + self.position.y + 20.0
                 {
+                    if self.controls.handle_events(scene, window, glfw, event) {
+                        return true;
+                    }
                     // Start dragging
                     self.dragging = true;
                     if self.movable {
@@ -79,6 +83,9 @@ impl UIElement for Panel {
                 glfw::Action::Release,
                 _,
             ) => {
+                if self.controls.handle_events(scene, window, glfw, event) {
+                    return true;
+                }
                 // Stop dragging
                 if self.collapsible && !self.moved && self.dragging {
                     self.is_open = !self.is_open;
@@ -99,6 +106,10 @@ impl UIElement for Panel {
                     && *y as f32 >= self.offset.y + self.position.y
                     && *y as f32 <= self.offset.y + self.position.y + 20.0
                 {
+                    // check if cursor is within controls
+                    if self.controls.handle_events(scene, window, glfw, event) {
+                        return true;
+                    }
                     if !self.is_hovering {
                         window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
                         self.is_hovering = true;
@@ -186,6 +197,10 @@ impl Panel {
             x: position.x,
             y: position.y + 20.0,
         });
+        let controls = ContainerBuilder::new()
+            .position(size.width - 24.0, -2.0)
+            .size(size.width, 20.0)
+            .build();
         let plane = PlaneBuilder::new()
             .position(position)
             .size(size)
@@ -209,6 +224,7 @@ impl Panel {
             title: title.clone(),
             title_source: None,
             content,
+            controls,
             text: Text::new(Fonts::RobotoMono, 0, 0, 16.0, title),
             offset: Offset::default(),
             drag_start: None,
@@ -231,6 +247,10 @@ impl Panel {
             height: 20.0,
         });
     }
+
+    pub fn add_controls(&mut self, controls: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
+        self.controls.add_children(controls);
+    }
 }
 
 impl PanelBuilder {
@@ -241,6 +261,7 @@ impl PanelBuilder {
             title: title.to_string(),
             title_source: None,
             children: Vec::new(),
+            controls: Vec::new(),
             collapsible: false,
             movable: true,
             open: true,
@@ -287,6 +308,11 @@ impl PanelBuilder {
         self
     }
 
+    pub fn add_control(mut self, id: Option<UIElementHandle>, control: Box<dyn UIElement>) -> Self {
+        self.controls.push((id, control));
+        self
+    }
+
     pub fn build(self) -> Panel {
         let mut panel = Panel::new(self.title.clone(), self.position, self.size);
         panel.title_source = self.title_source;
@@ -294,6 +320,7 @@ impl PanelBuilder {
         panel.movable = self.movable;
         panel.is_open = self.open;
         panel.add_children(self.children);
+        panel.add_controls(self.controls);
         panel
     }
 }

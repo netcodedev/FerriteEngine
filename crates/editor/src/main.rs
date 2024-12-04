@@ -50,28 +50,21 @@ impl EditorLayer {
 
 impl Layer for EditorLayer {
     fn on_attach(&mut self) {
-        let handles = [UIElementHandle::new(), UIElementHandle::new()];
-        let (controls_handle, entities_handle) = (
-            std::cmp::min(handles[0], handles[1]),
-            std::cmp::max(handles[0], handles[1]),
-        );
-        let controls = UI::container(|builder| {
-            builder.size(200.0, 0.0).add_child(
-                None,
-                UI::button(
-                    "Add Entity",
-                    Box::new(move |scene| {
-                        scene.add_entity(Entity::new("Entity"));
-                    }),
-                    |builder| builder,
-                ),
-            )
-        });
+        let entities_handle = UIElementHandle::new();
         let entities = UI::container(|b| b);
         self.ui.add(UI::panel("Entities", move |builder| {
             builder
                 .size(200.0, 200.0)
-                .add_child(Some(controls_handle), controls)
+                .add_control(
+                    None,
+                    UI::button(
+                        "+",
+                        Box::new(move |scene| {
+                            scene.add_entity(Entity::new("Entity"));
+                        }),
+                        |builder| builder.size(16.0, 16.0),
+                    ),
+                )
                 .add_child(Some(entities_handle), entities)
         }));
         self.entity_container = Some(entities_handle);

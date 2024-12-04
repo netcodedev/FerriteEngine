@@ -28,7 +28,7 @@ impl Text {
 
 impl UIElement for Text {
     fn render(&mut self, _: &mut Scene) {
-        self.text.set_content(self.content.clone());
+        self.text.set_content(&self.content);
         let (width, height) = self
             .text
             .render_at(self.offset.x as i32 + 5, self.offset.y as i32 + 2);

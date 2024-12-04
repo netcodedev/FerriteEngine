@@ -65,11 +65,11 @@ impl Text {
         self.render()
     }
 
-    pub fn set_content(&mut self, content: String) {
+    pub fn set_content(&mut self, content: &str) {
         if self.content == content {
             return;
         }
-        self.content = content;
+        self.content = content.to_owned();
         self.dirty = true;
         self.layout(TextRenderer::get_size().0);
     }

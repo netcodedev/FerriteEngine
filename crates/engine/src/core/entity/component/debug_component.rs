@@ -64,7 +64,7 @@ impl Component for DebugController {
         self.delta_time = delta_time;
 
         let fps = 1.0 / self.delta_time;
-        self.fps_text.set_content(format!(
+        self.fps_text.set_content(&format!(
             "{:.2} FPS ({:.2}ms)",
             fps,
             self.delta_time * 1000.0
@@ -78,20 +78,20 @@ impl Component for DebugController {
                 let rel_pos = camera.get_relative_position();
                 self.bounds = ChunkBounds::parse(pos.to_vec());
 
-                self.pos_text.set_content(format!(
+                self.pos_text.set_content(&format!(
                     "x: {:.2} ({:.2}) y: {:.2} ({:.2}) z: {:.2} ({:.2})",
                     pos.x, rel_pos.x, pos.y, rel_pos.y, pos.z, rel_pos.z
                 ));
-                self.cam_text.set_content(format!(
+                self.cam_text.set_content(&format!(
                     "yaw: {:?} pitch {:?}",
                     Deg::from(camera.get_yaw()),
                     Deg::from(camera.get_pitch())
                 ));
-                self.chunk_min_text.set_content(format!(
+                self.chunk_min_text.set_content(&format!(
                     "Chunk: xMin: {} yMin: {} zMin: {}",
                     self.bounds.min.0, self.bounds.min.1, self.bounds.min.2
                 ));
-                self.chunk_max_text.set_content(format!(
+                self.chunk_max_text.set_content(&format!(
                     "       xMax: {} yMax: {} zMax: {}",
                     self.bounds.max.0, self.bounds.max.1, self.bounds.max.2
                 ));
@@ -104,7 +104,7 @@ impl Component for DebugController {
                     .get_triangle_count(&terrain);
             }
             self.triangle_count_text
-                .set_content(format!("Triangles: {}", triangle_count));
+                .set_content(&format!("Triangles: {}", triangle_count));
         }
     }
 

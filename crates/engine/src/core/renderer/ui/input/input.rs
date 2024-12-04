@@ -43,7 +43,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
             if let Some(data_source) = &self.data_source {
                 self.content = data_source.to_string();
             }
-            self.text.set_content(self.content.to_string());
+            self.text.set_content(&self.content);
             self.text.render_at(
                 (self.offset.x + self.position.x + 5.0) as i32,
                 (self.offset.y + self.position.y + 2.0) as i32,
