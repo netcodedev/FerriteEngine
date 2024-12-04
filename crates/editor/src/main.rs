@@ -21,7 +21,7 @@ struct EditorLayer {
     scene: Scene,
     ui: UIRenderer,
 
-    entity_panel: Option<UIElementHandle>,
+    entity_container: Option<UIElementHandle>,
 }
 
 impl EditorLayer {
@@ -29,7 +29,7 @@ impl EditorLayer {
         Self {
             scene: Scene::new(),
             ui: UIRenderer::new(),
-            entity_panel: None,
+            entity_container: None,
         }
     }
 
@@ -39,7 +39,7 @@ impl EditorLayer {
             let handle = UIElementHandle::from(entity.id.into());
             if !self.ui.contains_key(&handle) {
                 self.ui.insert_to(
-                    self.entity_panel.unwrap(),
+                    self.entity_container.unwrap(),
                     Some(handle),
                     Box::new(EntityUI::new(&self.scene, entity.id)),
                 );
@@ -74,7 +74,7 @@ impl Layer for EditorLayer {
                 .add_child(Some(controls_handle), controls)
                 .add_child(Some(entities_handle), entities)
         }));
-        self.entity_panel = Some(entities_handle);
+        self.entity_container = Some(entities_handle);
     }
 
     fn on_update(&mut self, window: &Window, delta_time: f64) {
