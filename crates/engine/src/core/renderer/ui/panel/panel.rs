@@ -101,10 +101,11 @@ impl UIElement for Panel {
                 self.moved = false;
             }
             glfw::WindowEvent::CursorPos(x, y) => {
-                if *x as f32 >= self.offset.x + self.position.x
-                    && *x as f32 <= self.offset.x + self.position.x + self.size.width
-                    && *y as f32 >= self.offset.y + self.position.y
-                    && *y as f32 <= self.offset.y + self.position.y + 20.0
+                let (x, y) = (*x as f32, *y as f32);
+                if x >= self.offset.x + self.position.x
+                    && x <= self.offset.x + self.position.x + self.size.width
+                    && y >= self.offset.y + self.position.y
+                    && y <= self.offset.y + self.position.y + 20.0
                 {
                     // check if cursor is within controls
                     if self.controls.handle_events(scene, window, glfw, event) {
@@ -123,12 +124,9 @@ impl UIElement for Panel {
                 if self.dragging {
                     // Update panel position while dragging
                     if let Some(position) = self.drag_start {
-                        self.position.x += (*x as f32 - position.x) as f32 - self.offset.x;
-                        self.position.y += (*y as f32 - position.y) as f32 - self.offset.y;
-                        self.drag_start = Some(Position {
-                            x: *x as f32,
-                            y: *y as f32,
-                        });
+                        self.position.x += x - position.x - self.offset.x;
+                        self.position.y += y - position.y - self.offset.y;
+                        self.drag_start = Some(Position { x, y });
                         self.moved = true;
                         self.set_offset(self.offset); // update children
                     }
@@ -150,6 +148,7 @@ impl UIElement for Panel {
         self.offset = offset;
         self.plane.set_position(self.position + &self.offset);
         self.header_plane.set_position(self.position + &self.offset);
+        self.controls.set_offset(self.offset + &self.position);
         self.content.set_offset(Offset {
             x: self.offset.x + self.position.x,
             y: self.offset.y + self.position.y + 20.0,
