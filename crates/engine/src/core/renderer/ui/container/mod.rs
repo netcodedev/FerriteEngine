@@ -13,7 +13,6 @@ pub struct Container {
     pub offset: Offset,
     gap: f32,
     plane: Plane,
-    y_offset: f32,
 }
 
 pub struct ContainerBuilder {

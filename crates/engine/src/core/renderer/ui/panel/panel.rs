@@ -19,8 +19,11 @@ impl UIElement for Panel {
             let content_size = self.content.get_size();
             self.header_plane.border_radius = (0.0, 5.0, 0.0, 5.0);
             self.set_size(content_size + (0.0, 20.0));
-        } else if self.collapsible {
-            self.set_size(&self.size + (0.0, 20.0));
+        } else if self.collapsible && !self.is_open {
+            self.set_size(Size {
+                width: self.size.width,
+                height: 20.0,
+            });
             self.header_plane.border_radius = (5.0, 5.0, 5.0, 5.0);
         }
         PlaneRenderer::render(&self.plane);

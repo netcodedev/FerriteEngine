@@ -24,7 +24,6 @@ impl Container {
                 .color((0.0, 0.0, 0.0, 0.0))
                 .border_color((0.0, 0.0, 0.0, 0.0))
                 .build(),
-            y_offset: 5.0,
         }
     }
 }
@@ -41,7 +40,7 @@ impl UIElement for Container {
             y_offset += child.get_size().height + self.gap;
             child.render(scene);
         }
-        self.y_offset = y_offset;
+        self.size.height = y_offset;
     }
 
     fn set_offset(&mut self, offset: Offset) {
@@ -90,12 +89,11 @@ impl UIElement for Container {
     fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
         for (handle, mut child) in children {
             let offset = child.get_offset();
-            child.set_offset(&(offset + &self.offset) + &self.position + (self.gap, self.y_offset));
-            self.y_offset += child.get_size().height + self.gap;
-            if self.y_offset > self.size.height {
-                self.size.height = self.y_offset + self.gap;
-                self.plane.set_size(self.size);
-            }
+            child.set_offset(
+                &(offset + &self.offset) + &self.position + (self.gap, self.size.height),
+            );
+            self.size.height += child.get_size().height + self.gap;
+            self.plane.set_size(self.size);
             let handle = handle.unwrap_or(UIElementHandle::new());
             self.children.insert(handle, child);
         }
