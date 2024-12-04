@@ -24,7 +24,12 @@ impl Container {
                 .color((0.0, 0.0, 0.0, 0.0))
                 .border_color((0.0, 0.0, 0.0, 0.0))
                 .build(),
+            with_end_gap: true,
         }
+    }
+
+    pub fn with_end_gap(&mut self, with_end_gap: bool) {
+        self.with_end_gap = with_end_gap;
     }
 }
 
@@ -41,6 +46,9 @@ impl UIElement for Container {
             child.render(scene);
         }
         self.size.height = y_offset;
+        if !self.with_end_gap {
+            self.size.height -= self.gap;
+        }
     }
 
     fn set_offset(&mut self, offset: Offset) {
@@ -144,6 +152,7 @@ impl ContainerBuilder {
             position: Position::default(),
             size: Size::default(),
             children: Vec::new(),
+            with_end_gap: true,
         }
     }
 
@@ -162,8 +171,14 @@ impl ContainerBuilder {
         self
     }
 
+    pub fn with_end_gap(mut self, with_end_gap: bool) -> Self {
+        self.with_end_gap = with_end_gap;
+        self
+    }
+
     pub fn build(self) -> Container {
         let mut container = Container::new(self.position, self.size);
+        container.with_end_gap = self.with_end_gap;
         container.add_children(self.children);
         container
     }

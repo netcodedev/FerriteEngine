@@ -256,6 +256,7 @@ impl PanelBuilder {
             collapsible: false,
             movable: true,
             open: true,
+            with_end_gap: true,
         }
     }
 
@@ -304,12 +305,18 @@ impl PanelBuilder {
         self
     }
 
+    pub fn with_end_gap(mut self, with_end_gap: bool) -> Self {
+        self.with_end_gap = with_end_gap;
+        self
+    }
+
     pub fn build(self) -> Panel {
         let mut panel = Panel::new(self.title.clone(), self.position, self.size);
         panel.title_source = self.title_source;
         panel.collapsible = self.collapsible;
         panel.movable = self.movable;
         panel.is_open = self.open;
+        panel.content.with_end_gap(self.with_end_gap);
         panel.add_children(self.children);
         panel.add_controls(self.controls);
         panel

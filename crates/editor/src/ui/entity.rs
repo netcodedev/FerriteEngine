@@ -99,6 +99,7 @@ impl EntityUI {
                             Box::new(AddEntityButton::new(Some(entity_handle.clone())))
                                 as Box<dyn UIElement>,
                         )
+                        .with_end_gap(false)
                 });
                 panel.add_children(
                     entity

@@ -13,10 +13,13 @@ pub struct Container {
     pub offset: Offset,
     gap: f32,
     plane: Plane,
+
+    with_end_gap: bool,
 }
 
 pub struct ContainerBuilder {
     position: Position,
     size: Size,
     children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>,
+    with_end_gap: bool,
 }

@@ -43,4 +43,5 @@ pub struct PanelBuilder {
     pub collapsible: bool,
     pub movable: bool,
     pub open: bool,
+    pub with_end_gap: bool,
 }
