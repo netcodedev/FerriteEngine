@@ -3,6 +3,7 @@ use rusttype::{point, PositionedGlyph, Rect, Scale};
 
 use crate::core::renderer::shader::{DynamicVertexArray, VertexAttributes};
 use crate::core::renderer::text::Fonts;
+use crate::core::renderer::ui::position::Position;
 
 use super::{Font, Shader, Text, TextMesh, TextRenderer, TextVertex, Texture};
 
@@ -55,7 +56,8 @@ impl Text {
         TextRenderer::render(self)
     }
 
-    pub fn render_at(&mut self, x: i32, y: i32) -> (i32, i32) {
+    pub fn render_at(&mut self, position: Position) -> (i32, i32) {
+        let (x, y) = (position.x as i32, position.y as i32);
         if self.x == x && self.y == y {
             return self.render();
         }

@@ -3,9 +3,8 @@ use crate::core::{
         plane::{PlaneBuilder, PlaneRenderer},
         text::{Fonts, Text},
         ui::{
-            container::ContainerBuilder,
-            primitives::{Offset, Position, Size},
-            UIElement, UIElementHandle,
+            container::ContainerBuilder, offset::Offset, position::Position, size::Size, UIElement,
+            UIElementHandle,
         },
     },
     scene::Scene,
@@ -19,15 +18,9 @@ impl UIElement for Panel {
         if !self.collapsible || self.is_open {
             let content_size = self.content.get_size();
             self.header_plane.border_radius = (0.0, 5.0, 0.0, 5.0);
-            self.set_size(Size {
-                width: content_size.width,
-                height: content_size.height + 20.0,
-            });
+            self.set_size(content_size + (0.0, 20.0));
         } else if self.collapsible {
-            self.set_size(Size {
-                width: self.size.width,
-                height: 20.0,
-            });
+            self.set_size(&self.size + (0.0, 20.0));
             self.header_plane.border_radius = (5.0, 5.0, 5.0, 5.0);
         }
         PlaneRenderer::render(&self.plane);
@@ -37,10 +30,8 @@ impl UIElement for Panel {
             self.title = title.clone();
         }
         self.text.set_content(&self.title);
-        self.text.render_at(
-            (self.offset.x + self.position.x + 8.0) as i32,
-            (self.offset.y + self.position.y + 2.0) as i32,
-        );
+        self.text
+            .render_at(&(&self.position + &self.offset) + (8.0, 2.0));
         if !self.collapsible || self.is_open {
             self.controls.render(scene);
             self.content.render(scene);
@@ -146,25 +137,26 @@ impl UIElement for Panel {
 
     fn set_offset(&mut self, offset: Offset) {
         self.offset = offset;
-        self.plane.set_position(self.position + &self.offset);
-        self.header_plane.set_position(self.position + &self.offset);
-        self.controls.set_offset(self.offset + &self.position);
+        self.plane.set_position(&self.position + &self.offset);
+        self.header_plane
+            .set_position(&self.position + &self.offset);
+        self.controls.set_offset(&self.offset + &self.position);
         self.content.set_offset(Offset {
             x: self.offset.x + self.position.x,
             y: self.offset.y + self.position.y + 20.0,
         });
     }
 
-    fn get_size(&self) -> Size {
-        self.size
+    fn get_size(&self) -> &Size {
+        &self.size
     }
 
     fn contains_child(&self, handle: &UIElementHandle) -> bool {
         self.content.contains_child(handle)
     }
 
-    fn get_offset(&self) -> Offset {
-        self.offset
+    fn get_offset(&self) -> &Offset {
+        &self.offset
     }
 
     fn add_child_to(
@@ -192,10 +184,7 @@ impl Panel {
             .position(0.0, 0.0)
             .size(size.width, size.height - 40.0)
             .build();
-        content.set_offset(Offset {
-            x: position.x,
-            y: position.y + 20.0,
-        });
+        content.set_offset((&position + (0.0, 20.0)).into());
         let controls = ContainerBuilder::new()
             .position(size.width - 24.0, -2.0)
             .size(size.width, 20.0)

@@ -4,9 +4,8 @@ use crate::core::{
 };
 
 use super::{
-    container::Container,
-    primitives::{Offset, Position, Size},
-    UIElement, UIElementHandle,
+    container::Container, offset::Offset, position::Position, size::Size, UIElement,
+    UIElementHandle,
 };
 
 pub mod panel;

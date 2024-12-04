@@ -3,10 +3,7 @@ use std::collections::BTreeMap;
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
-        ui::{
-            primitives::{Offset, Position, Size},
-            UIElement, UIElementHandle,
-        },
+        ui::{offset::Offset, position::Position, size::Size, UIElement, UIElementHandle},
     },
     scene::Scene,
 };
@@ -23,9 +20,9 @@ impl UIElement for Button {
 
     fn set_offset(&mut self, offset: Offset) {
         self.offset = offset;
-        self.plane.set_position(self.position + &self.offset);
+        self.plane.set_position(&self.position + &self.offset);
         for child in self.children.values_mut() {
-            child.set_offset(self.offset + &self.position);
+            child.set_offset(&self.offset + &self.position);
         }
     }
 
@@ -73,14 +70,14 @@ impl UIElement for Button {
 
     fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
         for (handle, mut child) in children {
-            child.set_offset(self.offset + &self.position);
+            child.set_offset(&self.offset + &self.position);
             let handle = handle.unwrap_or(UIElementHandle::new());
             self.children.insert(handle, child);
         }
     }
 
-    fn get_size(&self) -> Size {
-        self.size
+    fn get_size(&self) -> &Size {
+        &self.size
     }
 
     fn contains_child(&self, handle: &UIElementHandle) -> bool {
@@ -95,8 +92,8 @@ impl UIElement for Button {
         false
     }
 
-    fn get_offset(&self) -> Offset {
-        self.offset
+    fn get_offset(&self) -> &Offset {
+        &self.offset
     }
 
     fn add_child_to(

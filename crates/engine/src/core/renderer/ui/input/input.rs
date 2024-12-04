@@ -5,10 +5,7 @@ use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
         text::{Fonts, Text},
-        ui::{
-            primitives::{Offset, Position, Size},
-            UIElement, UIElementHandle,
-        },
+        ui::{offset::Offset, position::Position, size::Size, UIElement, UIElementHandle},
     },
     scene::Scene,
     utils::DataSource,
@@ -44,10 +41,8 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 self.content = data_source.to_string();
             }
             self.text.set_content(&self.content);
-            self.text.render_at(
-                (self.offset.x + self.position.x + 5.0) as i32,
-                (self.offset.y + self.position.y + 2.0) as i32,
-            );
+            self.text
+                .render_at(&(&self.position + &self.offset) + (5.0, 2.0));
             gl::Disable(gl::STENCIL_TEST);
             gl::StencilMask(0xFF);
             gl::StencilFunc(gl::ALWAYS, 0, 0xFF);
@@ -146,21 +141,21 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
 
     fn set_offset(&mut self, offset: Offset) {
         self.offset = offset;
-        self.plane.set_position(self.position + &self.offset);
+        self.plane.set_position(&self.position + &self.offset);
         self.stencil_plane
-            .set_position(self.position + &self.offset);
+            .set_position(&self.position + &self.offset);
     }
 
-    fn get_size(&self) -> Size {
-        self.size
+    fn get_size(&self) -> &Size {
+        &self.size
     }
 
     fn contains_child(&self, _: &UIElementHandle) -> bool {
         false
     }
 
-    fn get_offset(&self) -> Offset {
-        self.offset
+    fn get_offset(&self) -> &Offset {
+        &self.offset
     }
 
     fn add_child_to(

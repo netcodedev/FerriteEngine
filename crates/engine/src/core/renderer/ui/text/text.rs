@@ -1,7 +1,7 @@
 use crate::core::{
     renderer::{
         text::Fonts,
-        ui::{Offset, Size, UIElement, UIElementHandle},
+        ui::{offset::Offset, size::Size, UIElement, UIElementHandle},
     },
     scene::Scene,
 };
@@ -11,7 +11,10 @@ use super::Text;
 impl Text {
     pub fn new(text: String, size: f32) -> Self {
         Self {
-            size,
+            size: Size {
+                width: size * text.len() as f32, // initial estimate (will be too high)
+                height: size,
+            },
             content: text.clone(),
             text: crate::core::renderer::text::Text::new(
                 Fonts::RobotoMono,
@@ -21,7 +24,6 @@ impl Text {
                 text.to_string(),
             ),
             offset: Offset::default(),
-            width: size * text.len() as f32, // initial estimate (will be too high)
         }
     }
 }
@@ -29,14 +31,12 @@ impl Text {
 impl UIElement for Text {
     fn render(&mut self, _: &mut Scene) {
         self.text.set_content(&self.content);
-        let (width, height) = self
-            .text
-            .render_at(self.offset.x as i32 + 5, self.offset.y as i32 + 2);
-        if width as f32 != self.width {
-            self.width = width as f32;
+        let (width, height) = self.text.render_at((&self.offset + (5.0, 2.0)).into());
+        if width as f32 != self.size.width {
+            self.size.width = width as f32;
         }
-        if height as f32 != self.size {
-            self.size = height as f32;
+        if height as f32 != self.size.height {
+            self.size.height = height as f32;
         }
     }
 
@@ -58,19 +58,16 @@ impl UIElement for Text {
         self.offset = offset;
     }
 
-    fn get_size(&self) -> Size {
-        Size {
-            width: self.width,
-            height: self.size,
-        }
+    fn get_size(&self) -> &Size {
+        &self.size
     }
 
     fn contains_child(&self, _: &UIElementHandle) -> bool {
         false
     }
 
-    fn get_offset(&self) -> Offset {
-        self.offset
+    fn get_offset(&self) -> &Offset {
+        &self.offset
     }
 
     fn add_child_to(

@@ -3,10 +3,7 @@ use std::collections::BTreeMap;
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
-        ui::{
-            primitives::{Offset, Position, Size},
-            UIElement, UIElementHandle,
-        },
+        ui::{offset::Offset, position::Position, size::Size, UIElement, UIElementHandle},
     },
     scene::Scene,
 };
@@ -37,11 +34,8 @@ impl UIElement for Container {
         PlaneRenderer::render(&self.plane);
         let mut y_offset = self.gap;
         for child in self.children.values_mut() {
-            let offset = Offset {
-                x: self.offset.x + self.position.x + self.gap,
-                y: self.offset.y + self.position.y + y_offset,
-            };
-            if child.get_offset() != offset {
+            let offset = &self.offset + &self.position + (self.gap, y_offset);
+            if offset != *child.get_offset() {
                 child.set_offset(offset);
             }
             y_offset += child.get_size().height + self.gap;
@@ -52,13 +46,10 @@ impl UIElement for Container {
 
     fn set_offset(&mut self, offset: Offset) {
         self.offset = offset;
-        self.plane.set_position(self.position + &self.offset);
+        self.plane.set_position(&self.position + &self.offset);
         let mut current_y_offset = self.gap;
         for child in &mut self.children.values_mut() {
-            child.set_offset(Offset {
-                x: self.offset.x + self.position.x + self.gap,
-                y: self.offset.y + self.position.y + current_y_offset,
-            });
+            child.set_offset(&self.offset + &self.position + (self.gap, current_y_offset));
             current_y_offset += child.get_size().height + self.gap;
         }
     }
@@ -99,10 +90,7 @@ impl UIElement for Container {
     fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
         for (handle, mut child) in children {
             let offset = child.get_offset();
-            child.set_offset(Offset {
-                x: offset.x + self.offset.x + self.position.x + self.gap,
-                y: offset.y + self.offset.y + self.position.y + self.y_offset,
-            });
+            child.set_offset(&(offset + &self.offset) + &self.position + (self.gap, self.y_offset));
             self.y_offset += child.get_size().height + self.gap;
             if self.y_offset > self.size.height {
                 self.size.height = self.y_offset + self.gap;
@@ -113,8 +101,8 @@ impl UIElement for Container {
         }
     }
 
-    fn get_size(&self) -> Size {
-        self.size
+    fn get_size(&self) -> &Size {
+        &self.size
     }
 
     fn contains_child(&self, handle: &UIElementHandle) -> bool {
@@ -129,8 +117,8 @@ impl UIElement for Container {
         false
     }
 
-    fn get_offset(&self) -> Offset {
-        self.offset
+    fn get_offset(&self) -> &Offset {
+        &self.offset
     }
 
     fn add_child_to(

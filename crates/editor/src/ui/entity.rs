@@ -3,9 +3,7 @@ use core::panic;
 use ferrite::core::{
     entity::{Entity, EntityHandle},
     renderer::ui::{
-        button::Button,
-        panel::Panel,
-        primitives::{Offset, Size, UIElementHandle},
+        button::Button, offset::Offset, panel::Panel, primitives::UIElementHandle, size::Size,
         UIElement, UI,
     },
     scene::Scene,
@@ -69,7 +67,7 @@ impl UIElement for EntityUI {
         self.panel.contains_child(handle)
     }
 
-    fn get_offset(&self) -> Offset {
+    fn get_offset(&self) -> &Offset {
         self.panel.get_offset()
     }
 
@@ -77,7 +75,7 @@ impl UIElement for EntityUI {
         self.panel.set_offset(offset);
     }
 
-    fn get_size(&self) -> Size {
+    fn get_size(&self) -> &Size {
         self.panel.get_size()
     }
 }
@@ -184,7 +182,7 @@ impl UIElement for AddEntityButton {
         self.button.contains_child(handle)
     }
 
-    fn get_offset(&self) -> Offset {
+    fn get_offset(&self) -> &Offset {
         self.button.get_offset()
     }
 
@@ -192,7 +190,7 @@ impl UIElement for AddEntityButton {
         self.button.set_offset(offset);
     }
 
-    fn get_size(&self) -> Size {
+    fn get_size(&self) -> &Size {
         self.button.get_size()
     }
 }

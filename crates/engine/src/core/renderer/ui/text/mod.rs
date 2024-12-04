@@ -1,11 +1,10 @@
-use super::Offset;
+use super::{size::Size, Offset};
 
 pub mod text;
 
 pub struct Text {
     pub content: String,
     text: crate::core::renderer::text::Text,
-    pub size: f32,
+    pub size: Size,
     pub offset: Offset,
-    pub width: f32,
 }

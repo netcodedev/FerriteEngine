@@ -2,7 +2,7 @@ use crate::core::renderer::shader::Shader;
 
 use super::{
     shader::DynamicVertexArray,
-    ui::primitives::{Position, Size},
+    ui::{position::Position, size::Size},
 };
 
 pub mod plane;

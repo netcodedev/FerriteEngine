@@ -3,7 +3,7 @@ use crate::core::{
     utils::DataSource,
 };
 
-use super::primitives::{Offset, Position, Size};
+use super::{offset::Offset, position::Position, size::Size};
 
 pub mod input;
 
