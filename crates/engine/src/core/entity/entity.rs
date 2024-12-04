@@ -62,6 +62,10 @@ impl Entity {
         None
     }
 
+    pub fn get_children(&self) -> &Vec<Entity> {
+        &self.children
+    }
+
     pub fn get_child_mut(&mut self, id: &EntityHandle) -> Option<&mut Entity> {
         for child in self.children.iter_mut() {
             if child.id == *id {

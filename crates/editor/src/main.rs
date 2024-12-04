@@ -1,15 +1,13 @@
 use ferrite::core::{
     application::{Application, Layer},
-    entity::Entity,
     renderer::ui::{primitives::UIElementHandle, UIRenderer, UI},
     scene::Scene,
     window::Window,
 };
 use glfw::{Glfw, WindowEvent};
+use ui::entity::{AddEntityButton, EntityUI};
 
 mod ui;
-
-use ui::entity::EntityUI;
 
 fn main() {
     let mut application = Application::new(1280, 720, "Ferrite Editor");
@@ -41,7 +39,7 @@ impl EditorLayer {
                 self.ui.insert_to(
                     self.entity_container.unwrap(),
                     Some(handle),
-                    Box::new(EntityUI::new(&self.scene, entity.id)),
+                    Box::new(EntityUI::new(&self.scene, entity.id, 180.0)),
                 );
             }
         }
@@ -55,16 +53,7 @@ impl Layer for EditorLayer {
         self.ui.add(UI::panel("Entities", move |builder| {
             builder
                 .size(200.0, 200.0)
-                .add_control(
-                    None,
-                    UI::button(
-                        "+",
-                        Box::new(move |scene| {
-                            scene.add_entity(Entity::new("Entity"));
-                        }),
-                        |builder| builder.size(16.0, 16.0),
-                    ),
-                )
+                .add_control(None, Box::new(AddEntityButton::new(None)))
                 .add_child(Some(entities_handle), entities)
         }));
         self.entity_container = Some(entities_handle);
