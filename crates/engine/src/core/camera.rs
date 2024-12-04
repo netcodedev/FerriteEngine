@@ -5,6 +5,8 @@ use cgmath::{
 };
 use glfw::{Action, CursorMode, Key};
 
+use super::utils::DataSource;
+
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = Matrix4::new(
     1.0, 0.0, 0.0, 0.0,
@@ -145,7 +147,7 @@ pub struct CameraController {
     amount_down: f32,
     rotate_horizontal: f32,
     rotate_vertical: f32,
-    speed: f32,
+    speed: DataSource<f32>,
     sensitivity: f32,
     is_active: bool,
 }
@@ -161,20 +163,24 @@ impl CameraController {
             amount_down: 0.0,
             rotate_horizontal: 0.0,
             rotate_vertical: 0.0,
-            speed,
+            speed: DataSource::new(speed),
             sensitivity,
             is_active: false,
         }
     }
 
     pub fn get_speed(&self) -> f32 {
-        self.speed
+        self.speed.read()
+    }
+
+    pub fn get_speed_ref(&self) -> DataSource<f32> {
+        self.speed.clone()
     }
 
     pub fn set_speed(&mut self, speed: f32) {
-        self.speed = speed;
-        if self.speed < 0.0 {
-            self.speed = 0.0;
+        self.speed.write(speed);
+        if self.speed.read() < 0.0 {
+            self.speed.write(0.0);
         }
     }
 
@@ -272,7 +278,7 @@ impl CameraController {
                 _ => {}
             },
             glfw::WindowEvent::Scroll(_, y) => {
-                self.set_speed(self.speed + (*y as f32 * 10.0));
+                self.set_speed(self.speed.read() + (*y as f32 * 10.0));
             }
             _ => {}
         }
@@ -288,13 +294,14 @@ impl CameraController {
         let mut yaw = camera.yaw;
         let mut pitch = camera.pitch;
 
-        position +=
-            forward * (self.amount_forward - self.amount_backward) * self.speed * delta_time;
-        position += right * (self.amount_right - self.amount_left) * self.speed * delta_time;
+        let speed = self.speed.read();
+
+        position += forward * (self.amount_forward - self.amount_backward) * speed * delta_time;
+        position += right * (self.amount_right - self.amount_left) * speed * delta_time;
 
         // Move up/down. Since we don't use roll, we can just
         // modify the y coordinate directly.
-        position.y += (self.amount_up - self.amount_down) * self.speed * delta_time;
+        position.y += (self.amount_up - self.amount_down) * speed * delta_time;
 
         // Rotate
         yaw += Rad(self.rotate_horizontal) * self.sensitivity * delta_time;

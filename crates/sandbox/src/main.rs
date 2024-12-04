@@ -15,7 +15,7 @@ use ferrite::{
         },
         renderer::{
             light::skylight::SkyLight,
-            ui::{UIRenderer, UI},
+            ui::{primitives::UIElementHandle, UIRenderer, UI},
         },
         scene::Scene,
         window::Window,
@@ -76,13 +76,25 @@ impl WorldLayer {
 
 impl Layer for WorldLayer {
     fn on_attach(&mut self) {
+        let camera_speed_ref = self
+            .scene
+            .get_component::<CameraComponent>()
+            .unwrap()
+            .get_camera_controller()
+            .get_speed_ref();
         self.ui.add(UI::panel("Camera controls", |builder| {
             builder
                 .position(10.0, 130.0)
-                .add_child(None, UI::text("Camera Speed", 16.0, |b| b))
-                // .add_child(None, UI::input(None, |input| input.size(190.0, 26.0)))
                 .add_child(
-                    None,
+                    Some(UIElementHandle::from(1)),
+                    UI::text("Camera Speed", 16.0, |b| b),
+                )
+                .add_child(
+                    Some(UIElementHandle::from(2)),
+                    UI::input(camera_speed_ref, |input| input.size(190.0, 26.0)),
+                )
+                .add_child(
+                    Some(UIElementHandle::from(3)),
                     UI::button(
                         "Reset Speed",
                         Box::new(move |scene| {

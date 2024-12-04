@@ -19,6 +19,7 @@ impl ToMatrix4 for Matrix4x4 {
     }
 }
 
+#[derive(Debug)]
 pub struct DataSource<T: Clone + ToString> {
     data: Arc<RwLock<T>>,
 }
