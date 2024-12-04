@@ -106,7 +106,7 @@ impl UI {
     where
         InitFn: FnOnce(PanelBuilder) -> PanelBuilder + 'static,
     {
-        let mut builder = PanelBuilder::new("").title_source(title);
+        let mut builder = PanelBuilder::new(&title.read()).title_source(title);
         builder = builder.size(200.0, 200.0).collapsible();
         builder = init_fn(builder);
         Box::new(builder.build())
