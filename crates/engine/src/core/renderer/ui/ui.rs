@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, str::FromStr};
 
+use glfw::{Glfw, WindowEvent};
+
 use crate::core::{scene::Scene, utils::DataSource};
 
 use super::{
@@ -56,8 +58,8 @@ impl UIRenderer {
         &mut self,
         scene: &mut Scene,
         window: &mut glfw::Window,
-        glfw: &mut glfw::Glfw,
-        event: &glfw::WindowEvent,
+        glfw: &mut Glfw,
+        event: &WindowEvent,
     ) -> bool {
         for (_, child) in &mut self.children {
             if child.handle_events(scene, window, glfw, event) {

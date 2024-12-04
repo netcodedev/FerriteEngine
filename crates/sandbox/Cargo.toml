@@ -6,4 +6,4 @@ edition = "2021"
 [dependencies]
 ferrite = { path = "../engine" }
 cgmath = "0.18.0"
-glfw = "0.58.0"
+glfw = "0.59.0"

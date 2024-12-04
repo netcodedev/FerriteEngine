@@ -8,12 +8,12 @@ as-any = "0.3.1"
 cgmath = "0.18.0"
 fast-surface-nets = "0.2.0"
 gl = "0.14.0"
-glfw = "0.58.0"
+glfw = "0.59.0"
 image = "0.25.5"
 lazy_static = "1.5.0"
 libnoise = "1.1.2"
 ndarray = "0.16.1"
 rand = "0.8.5"
-rapier3d = { version = "0.22.0", features = [ "simd-stable" ] }
+rapier3d = { version = "0.22.0", features = ["simd-stable"] }
 russimp = "3.2.0"
 rusttype = { version = "0.9.3", features = ["gpu_cache"] }
