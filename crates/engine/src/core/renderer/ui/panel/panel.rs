@@ -191,11 +191,12 @@ impl Panel {
             .size(size.width, size.height - 40.0)
             .build();
         content.set_offset((&position + (0.0, 20.0)).into());
-        let controls = ContainerBuilder::new()
+        let mut controls = ContainerBuilder::new()
             .position(size.width - 2.0, -2.0)
             .size(0.0, 20.0)
             .direction(Direction::Horizontal)
             .build();
+        controls.set_offset(position.into());
         let plane = PlaneBuilder::new()
             .position(position)
             .size(size)
