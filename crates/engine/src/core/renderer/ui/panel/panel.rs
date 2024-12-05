@@ -3,8 +3,9 @@ use crate::core::{
         plane::{PlaneBuilder, PlaneRenderer},
         text::{Fonts, Text},
         ui::{
-            container::ContainerBuilder, offset::Offset, position::Position, size::Size, UIElement,
-            UIElementHandle,
+            container::{ContainerBuilder, Direction},
+            primitives::{Position, Region},
+            Offset, Size, UIElement, UIElementHandle,
         },
     },
     scene::Scene,
@@ -22,9 +23,15 @@ impl UIElement for Panel {
         } else if self.collapsible && !self.is_open {
             self.set_size(Size {
                 width: self.size.width,
-                height: 20.0,
+                height: if self.has_controls { 24.0 } else { 20.0 },
             });
             self.header_plane.border_radius = (5.0, 5.0, 5.0, 5.0);
+        }
+        if self.has_controls {
+            self.header_plane.set_size(Size {
+                width: self.size.width,
+                height: if self.has_controls { 24.0 } else { 20.0 },
+            });
         }
         PlaneRenderer::render(&self.plane);
         PlaneRenderer::render(&self.header_plane);
@@ -33,10 +40,11 @@ impl UIElement for Panel {
             self.title = title.clone();
         }
         self.text.set_content(&self.title);
-        self.text
-            .render_at(&(&self.position + &self.offset) + (8.0, 2.0));
+        self.text.render_at(
+            &(&self.position + &self.offset) + (8.0, if self.has_controls { 4.0 } else { 2.0 }),
+        );
+        self.controls.render(scene);
         if !self.collapsible || self.is_open {
-            self.controls.render(scene);
             self.content.render(scene);
         }
     }
@@ -48,18 +56,22 @@ impl UIElement for Panel {
         glfw: &mut glfw::Glfw,
         event: &glfw::WindowEvent,
     ) -> bool {
+        if self.controls.handle_events(scene, window, glfw, event) {
+            return true;
+        }
         // test if click is within bounds
         match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
                 let (x, y) = window.get_cursor_pos();
-                if x as f32 >= self.offset.x + self.position.x
-                    && x as f32 <= self.offset.x + self.position.x + self.size.width
-                    && y as f32 >= self.offset.y + self.position.y
-                    && y as f32 <= self.offset.y + self.position.y + 20.0
-                {
-                    if self.controls.handle_events(scene, window, glfw, event) {
-                        return true;
-                    }
+                let region = Region::new_with_offset(
+                    self.position,
+                    Size {
+                        width: self.size.width,
+                        height: 20.0,
+                    },
+                    self.offset,
+                );
+                if region.contains(x as f32, y as f32) {
                     // Start dragging
                     self.dragging = true;
                     if self.movable {
@@ -77,9 +89,6 @@ impl UIElement for Panel {
                 glfw::Action::Release,
                 _,
             ) => {
-                if self.controls.handle_events(scene, window, glfw, event) {
-                    return true;
-                }
                 // Stop dragging
                 if self.collapsible && !self.moved && self.dragging {
                     self.is_open = !self.is_open;
@@ -96,15 +105,15 @@ impl UIElement for Panel {
             }
             glfw::WindowEvent::CursorPos(x, y) => {
                 let (x, y) = (*x as f32, *y as f32);
-                if x >= self.offset.x + self.position.x
-                    && x <= self.offset.x + self.position.x + self.size.width
-                    && y >= self.offset.y + self.position.y
-                    && y <= self.offset.y + self.position.y + 20.0
-                {
-                    // check if cursor is within controls
-                    if self.controls.handle_events(scene, window, glfw, event) {
-                        return true;
-                    }
+                let region = Region::new_with_offset(
+                    self.position,
+                    Size {
+                        width: self.size.width,
+                        height: 20.0,
+                    },
+                    self.offset,
+                );
+                if region.contains(x, y) {
                     if !self.is_hovering {
                         window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
                         self.is_hovering = true;
@@ -189,8 +198,9 @@ impl Panel {
             .build();
         content.set_offset((&position + (0.0, 20.0)).into());
         let controls = ContainerBuilder::new()
-            .position(size.width - 24.0, -2.0)
-            .size(size.width, 20.0)
+            .position(size.width - 2.0, -2.0)
+            .size(0.0, 20.0)
+            .direction(Direction::Horizontal)
             .build();
         let plane = PlaneBuilder::new()
             .position(position)
@@ -227,6 +237,7 @@ impl Panel {
             movable: true,
             is_open: true,
             moved: false,
+            has_controls: false,
         }
     }
 
@@ -241,6 +252,11 @@ impl Panel {
 
     pub fn add_controls(&mut self, controls: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
         self.controls.add_children(controls);
+        self.controls.set_position(Position {
+            x: self.size.width - self.controls.get_size().width - 2.5,
+            y: -2.0,
+        });
+        self.has_controls = true;
     }
 }
 

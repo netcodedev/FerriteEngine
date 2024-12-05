@@ -1,12 +1,6 @@
 use std::ops::Add;
 
-use super::position::Position;
-
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub struct Offset {
-    pub x: f32,
-    pub y: f32,
-}
+use super::{Offset, Position};
 
 impl From<Position> for Offset {
     fn from(position: Position) -> Offset {

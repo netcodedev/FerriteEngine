@@ -3,10 +3,7 @@ use crate::core::{
     utils::DataSource,
 };
 
-use super::{
-    container::Container, offset::Offset, position::Position, size::Size, UIElement,
-    UIElementHandle,
-};
+use super::{container::Container, primitives::Position, Offset, Size, UIElement, UIElementHandle};
 
 pub mod panel;
 
@@ -27,6 +24,7 @@ pub struct Panel {
     movable: bool,
     is_open: bool,
     moved: bool,
+    has_controls: bool,
 
     text: Text,
     plane: Plane,

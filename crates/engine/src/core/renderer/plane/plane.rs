@@ -1,6 +1,6 @@
 use crate::core::renderer::{
     shader::{DynamicVertexArray, Shader, VertexAttributes},
-    ui::{position::Position, size::Size},
+    ui::primitives::{Position, Size},
 };
 
 use super::{Plane, PlaneBuilder, PlaneRenderer, PlaneVertex};

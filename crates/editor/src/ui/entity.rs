@@ -3,10 +3,14 @@ use core::panic;
 use ferrite::core::{
     entity::{Entity, EntityHandle},
     renderer::ui::{
-        button::Button, offset::Offset, panel::Panel, primitives::UIElementHandle, size::Size,
+        button::Button,
+        panel::Panel,
+        popup::Popup,
+        primitives::{Offset, Size, UIElementHandle},
         UIElement, UI,
     },
     scene::Scene,
+    utils::DataSource,
 };
 use glfw::{Glfw, Window, WindowEvent};
 
@@ -85,17 +89,18 @@ impl EntityUI {
         let entity = scene.get_entity(&entity_handle);
         match entity {
             Some(entity) => {
-                let input = UI::input(entity.get_name_ref(), move |builder| {
-                    builder.size(width, 20.0)
-                });
-                let mut panel = UI::collapsible_dyn(entity.get_name_ref(), move |builder| {
+                let name_ref = entity.get_name_ref();
+                let mut panel = UI::collapsible_dyn(name_ref.clone(), move |builder| {
                     builder
                         .size(width, 40.0)
                         .closed()
                         .movable(false)
-                        .add_child(Some(UIElementHandle::from(0)), input)
                         .add_control(
-                            None,
+                            Some(UIElementHandle::from(0)),
+                            Box::new(EditEntityButton::new(name_ref)) as Box<dyn UIElement>,
+                        )
+                        .add_control(
+                            Some(UIElementHandle::from(1)),
                             Box::new(AddEntityButton::new(Some(entity_handle.clone())))
                                 as Box<dyn UIElement>,
                         )
@@ -145,7 +150,7 @@ impl AddEntityButton {
                         scene.add_entity(Entity::new("Entity"));
                     }
                 }),
-                |builder| builder.size(16.0, 16.0),
+                |builder| builder.size(18.0, 18.0),
             ),
         }
     }
@@ -181,6 +186,92 @@ impl UIElement for AddEntityButton {
 
     fn contains_child(&self, handle: &UIElementHandle) -> bool {
         self.button.contains_child(handle)
+    }
+
+    fn get_offset(&self) -> &Offset {
+        self.button.get_offset()
+    }
+
+    fn set_offset(&mut self, offset: Offset) {
+        self.button.set_offset(offset);
+    }
+
+    fn get_size(&self) -> &Size {
+        self.button.get_size()
+    }
+}
+
+pub struct EditEntityButton {
+    button: Box<Button>,
+    show_popup: DataSource<bool>,
+    popup: Popup,
+}
+
+impl EditEntityButton {
+    pub fn new(entity_name_ref: DataSource<String>) -> Self {
+        let show_popup = DataSource::new(false);
+        let clone = show_popup.clone();
+        Self {
+            button: UI::button(
+                "Edit",
+                Box::new(move |_| {
+                    clone.write(true);
+                }),
+                |builder| builder.size(40.0, 18.0),
+            ),
+            show_popup: show_popup.clone(),
+            popup: *UI::popup(
+                "Edit Entity",
+                show_popup.clone(),
+                vec![
+                    (
+                        Some(UIElementHandle::from(1)),
+                        UI::text("Edit Entity name", 16.0, |b| b),
+                    ),
+                    (
+                        Some(UIElementHandle::from(2)),
+                        UI::input(entity_name_ref, |b| b.size(200.0, 20.0)),
+                    ),
+                ],
+            ),
+        }
+    }
+}
+
+impl UIElement for EditEntityButton {
+    fn render(&mut self, scene: &mut Scene) {
+        self.button.render(scene);
+        if self.show_popup.read() {
+            self.popup.render(scene);
+        }
+    }
+
+    fn handle_events(
+        &mut self,
+        scene: &mut Scene,
+        window: &mut Window,
+        glfw: &mut Glfw,
+        event: &WindowEvent,
+    ) -> bool {
+        self.button.handle_events(scene, window, glfw, event)
+            || (self.show_popup.read() && self.popup.handle_events(scene, window, glfw, event))
+    }
+
+    fn add_children(&mut self, _: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
+        panic!("EditEntityButton cannot have children");
+    }
+
+    fn add_child_to(
+        &mut self,
+        _: UIElementHandle,
+        _: Option<UIElementHandle>,
+        _: Box<dyn UIElement>,
+    ) {
+        panic!("EditEntityButton cannot have children");
+    }
+
+    fn contains_child(&self, _: &UIElementHandle) -> bool {
+        false
     }
 
     fn get_offset(&self) -> &Offset {

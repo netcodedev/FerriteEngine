@@ -3,7 +3,7 @@ use rusttype::{point, PositionedGlyph, Rect, Scale};
 
 use crate::core::renderer::shader::{DynamicVertexArray, VertexAttributes};
 use crate::core::renderer::text::Fonts;
-use crate::core::renderer::ui::position::Position;
+use crate::core::renderer::ui::primitives::Position;
 
 use super::{Font, Shader, Text, TextMesh, TextRenderer, TextVertex, Texture};
 

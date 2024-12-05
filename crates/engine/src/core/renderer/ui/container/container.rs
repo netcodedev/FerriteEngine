@@ -3,12 +3,12 @@ use std::collections::BTreeMap;
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
-        ui::{offset::Offset, position::Position, size::Size, UIElement, UIElementHandle},
+        ui::{primitives::Position, Offset, Size, UIElement, UIElementHandle},
     },
     scene::Scene,
 };
 
-use super::{Container, ContainerBuilder};
+use super::{Container, ContainerBuilder, Direction};
 
 impl Container {
     pub fn new(position: Position, size: Size) -> Self {
@@ -25,39 +25,75 @@ impl Container {
                 .border_color((0.0, 0.0, 0.0, 0.0))
                 .build(),
             with_end_gap: true,
+            direction: Direction::Vertical,
         }
     }
 
     pub fn with_end_gap(&mut self, with_end_gap: bool) {
         self.with_end_gap = with_end_gap;
     }
+
+    pub fn set_position(&mut self, position: Position) {
+        self.position = position;
+        self.plane.set_position(&self.position + &self.offset);
+    }
 }
 
 impl UIElement for Container {
     fn render(&mut self, scene: &mut Scene) {
         PlaneRenderer::render(&self.plane);
-        let mut y_offset = self.gap;
-        for child in self.children.values_mut() {
-            let offset = &self.offset + &self.position + (self.gap, y_offset);
-            if offset != *child.get_offset() {
-                child.set_offset(offset);
+        match self.direction {
+            Direction::Horizontal => {
+                let mut x_offset = self.gap;
+                for child in self.children.values_mut() {
+                    let offset = &self.offset + &self.position + (x_offset, self.gap);
+                    if offset != *child.get_offset() {
+                        child.set_offset(offset);
+                    }
+                    x_offset += child.get_size().width + self.gap;
+                    child.render(scene);
+                }
+                self.size.width = x_offset;
+                if !self.with_end_gap {
+                    self.size.width -= self.gap;
+                }
             }
-            y_offset += child.get_size().height + self.gap;
-            child.render(scene);
-        }
-        self.size.height = y_offset;
-        if !self.with_end_gap {
-            self.size.height -= self.gap;
+            Direction::Vertical => {
+                let mut y_offset = self.gap;
+                for child in self.children.values_mut() {
+                    let offset = &self.offset + &self.position + (self.gap, y_offset);
+                    if offset != *child.get_offset() {
+                        child.set_offset(offset);
+                    }
+                    y_offset += child.get_size().height + self.gap;
+                    child.render(scene);
+                }
+                self.size.height = y_offset;
+                if !self.with_end_gap {
+                    self.size.height -= self.gap;
+                }
+            }
         }
     }
 
     fn set_offset(&mut self, offset: Offset) {
         self.offset = offset;
         self.plane.set_position(&self.position + &self.offset);
-        let mut current_y_offset = self.gap;
-        for child in &mut self.children.values_mut() {
-            child.set_offset(&self.offset + &self.position + (self.gap, current_y_offset));
-            current_y_offset += child.get_size().height + self.gap;
+        match self.direction {
+            Direction::Horizontal => {
+                let mut current_x_offset = self.gap;
+                for child in &mut self.children.values_mut() {
+                    child.set_offset(&self.offset + &self.position + (current_x_offset, self.gap));
+                    current_x_offset += child.get_size().width + self.gap;
+                }
+            }
+            Direction::Vertical => {
+                let mut current_y_offset = self.gap;
+                for child in &mut self.children.values_mut() {
+                    child.set_offset(&self.offset + &self.position + (self.gap, current_y_offset));
+                    current_y_offset += child.get_size().height + self.gap;
+                }
+            }
         }
     }
 
@@ -96,11 +132,24 @@ impl UIElement for Container {
 
     fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
         for (handle, mut child) in children {
-            let offset = child.get_offset();
-            child.set_offset(
-                &(offset + &self.offset) + &self.position + (self.gap, self.size.height),
-            );
-            self.size.height += child.get_size().height + self.gap;
+            match self.direction {
+                Direction::Horizontal => {
+                    child.set_offset(
+                        &(child.get_offset() + &self.offset)
+                            + &self.position
+                            + (self.size.width, 0.0),
+                    );
+                    self.size.width += child.get_size().width + self.gap;
+                }
+                Direction::Vertical => {
+                    child.set_offset(
+                        &(child.get_offset() + &self.offset)
+                            + &self.position
+                            + (0.0, self.size.height),
+                    );
+                    self.size.height += child.get_size().height + self.gap;
+                }
+            }
             self.plane.set_size(self.size);
             let handle = handle.unwrap_or(UIElementHandle::new());
             self.children.insert(handle, child);
@@ -153,6 +202,7 @@ impl ContainerBuilder {
             size: Size::default(),
             children: Vec::new(),
             with_end_gap: true,
+            direction: Direction::Vertical,
         }
     }
 
@@ -176,9 +226,15 @@ impl ContainerBuilder {
         self
     }
 
+    pub fn direction(mut self, direction: Direction) -> Self {
+        self.direction = direction;
+        self
+    }
+
     pub fn build(self) -> Container {
         let mut container = Container::new(self.position, self.size);
         container.with_end_gap = self.with_end_gap;
+        container.direction = self.direction;
         container.add_children(self.children);
         container
     }

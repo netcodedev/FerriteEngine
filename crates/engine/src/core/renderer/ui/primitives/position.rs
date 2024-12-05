@@ -1,12 +1,6 @@
 use std::ops::Add;
 
-use super::offset::Offset;
-
-#[derive(Clone, Copy, Debug, PartialOrd, Default)]
-pub struct Position {
-    pub x: f32,
-    pub y: f32,
-}
+use super::{Offset, Position, Size};
 
 impl PartialEq for Position {
     fn eq(&self, other: &Self) -> bool {
@@ -35,11 +29,27 @@ impl Add<(f32, f32)> for &Position {
         }
     }
 }
+
+impl From<(f32, f32)> for Position {
+    fn from((x, y): (f32, f32)) -> Position {
+        Position { x, y }
+    }
+}
+
 impl From<Offset> for Position {
     fn from(offset: Offset) -> Position {
         Position {
             x: offset.x,
             y: offset.y,
+        }
+    }
+}
+
+impl From<Size> for Position {
+    fn from(size: Size) -> Position {
+        Position {
+            x: size.width,
+            y: size.height,
         }
     }
 }

@@ -1,7 +1,7 @@
 use crate::core::{
     renderer::{
         text::Fonts,
-        ui::{offset::Offset, size::Size, UIElement, UIElementHandle},
+        ui::{Offset, Size, UIElement, UIElementHandle},
     },
     scene::Scene,
 };

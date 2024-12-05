@@ -7,6 +7,7 @@ use super::{Application, Layer};
 
 impl Application {
     pub fn new(width: u32, height: u32, title: &str) -> Self {
+        env_logger::init();
         let mut window = Window::new(width, height, title);
 
         TextRenderer::resize(width, height);

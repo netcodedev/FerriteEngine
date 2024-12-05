@@ -9,6 +9,7 @@ use super::{
     container::{Container, ContainerBuilder},
     input::{Input, InputBuilder},
     panel::{Panel, PanelBuilder},
+    popup::Popup,
     text::Text,
     UIElement, UIElementHandle, UIRenderer, UI,
 };
@@ -158,5 +159,13 @@ impl UI {
         let mut builder = ContainerBuilder::new();
         builder = init_fn(builder);
         Box::new(builder.build())
+    }
+
+    pub fn popup(
+        title: &str,
+        close_ref: DataSource<bool>,
+        children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>,
+    ) -> Box<Popup> {
+        Box::new(Popup::new(title, close_ref, children))
     }
 }

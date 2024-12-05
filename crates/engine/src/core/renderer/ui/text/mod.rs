@@ -1,4 +1,4 @@
-use super::{size::Size, Offset};
+use super::{Offset, Size};
 
 pub mod text;
 

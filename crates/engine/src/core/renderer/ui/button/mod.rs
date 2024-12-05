@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::core::{renderer::plane::Plane, scene::Scene};
 
-use super::{offset::Offset, position::Position, size::Size, UIElement, UIElementHandle};
+use super::{primitives::Position, Offset, Size, UIElement, UIElementHandle};
 
 pub mod button;
 

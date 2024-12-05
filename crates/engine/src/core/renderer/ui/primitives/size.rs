@@ -1,10 +1,6 @@
 use std::ops::Add;
 
-#[derive(Clone, Copy, Debug, PartialOrd, Default)]
-pub struct Size {
-    pub width: f32,
-    pub height: f32,
-}
+use super::Size;
 
 impl PartialEq for Size {
     fn eq(&self, other: &Self) -> bool {
@@ -20,5 +16,11 @@ impl Add<(f32, f32)> for &Size {
             width: self.width + rhs.0,
             height: self.height + rhs.1,
         }
+    }
+}
+
+impl From<(f32, f32)> for Size {
+    fn from((width, height): (f32, f32)) -> Size {
+        Size { width, height }
     }
 }

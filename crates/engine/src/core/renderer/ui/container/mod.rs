@@ -2,9 +2,14 @@ use std::collections::BTreeMap;
 
 use crate::core::renderer::plane::Plane;
 
-use super::{offset::Offset, position::Position, size::Size, UIElement, UIElementHandle};
+use super::{primitives::Position, Offset, Size, UIElement, UIElementHandle};
 
 pub mod container;
+
+pub enum Direction {
+    Horizontal,
+    Vertical,
+}
 
 pub struct Container {
     pub position: Position,
@@ -13,6 +18,7 @@ pub struct Container {
     pub offset: Offset,
     gap: f32,
     plane: Plane,
+    direction: Direction,
 
     with_end_gap: bool,
 }
@@ -22,4 +28,5 @@ pub struct ContainerBuilder {
     size: Size,
     children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>,
     with_end_gap: bool,
+    direction: Direction,
 }

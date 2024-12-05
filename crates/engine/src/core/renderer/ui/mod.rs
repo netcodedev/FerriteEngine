@@ -1,20 +1,16 @@
 use std::collections::BTreeMap;
 
 use glfw::{Glfw, Window, WindowEvent};
-use offset::Offset;
-use primitives::UIElementHandle;
-use size::Size;
+use primitives::{Offset, Size, UIElementHandle};
 
 use crate::core::scene::Scene;
 
 pub mod button;
 pub mod container;
 pub mod input;
-pub mod offset;
 pub mod panel;
-pub mod position;
+pub mod popup;
 pub mod primitives;
-pub mod size;
 pub mod text;
 pub mod ui;
 

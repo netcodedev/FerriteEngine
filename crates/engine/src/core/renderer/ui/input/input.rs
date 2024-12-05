@@ -5,7 +5,7 @@ use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
         text::{Fonts, Text},
-        ui::{offset::Offset, position::Position, size::Size, UIElement, UIElementHandle},
+        ui::{primitives::Position, Offset, Size, UIElement, UIElementHandle},
     },
     scene::Scene,
     utils::DataSource,

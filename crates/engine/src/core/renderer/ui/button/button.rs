@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
-        ui::{offset::Offset, position::Position, size::Size, UIElement, UIElementHandle},
+        ui::{primitives::Position, Offset, Size, UIElement, UIElementHandle},
     },
     scene::Scene,
 };
