@@ -27,12 +27,6 @@ impl UIElement for Panel {
             });
             self.header_plane.border_radius = (5.0, 5.0, 5.0, 5.0);
         }
-        if self.has_controls {
-            self.header_plane.set_size(Size {
-                width: self.size.width,
-                height: if self.has_controls { 24.0 } else { 20.0 },
-            });
-        }
         PlaneRenderer::render(&self.plane);
         PlaneRenderer::render(&self.header_plane);
         if let Some(source) = &self.title_source {
@@ -246,7 +240,7 @@ impl Panel {
         self.plane.set_size(size);
         self.header_plane.set_size(Size {
             width: size.width,
-            height: 20.0,
+            height: if self.has_controls { 24.0 } else { 20.0 },
         });
     }
 
