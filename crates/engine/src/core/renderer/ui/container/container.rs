@@ -105,23 +105,6 @@ impl UIElement for Container {
         event: &glfw::WindowEvent,
     ) -> bool {
         // test if click is within bounds
-        match event {
-            glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
-                let (x, y) = window.get_cursor_pos();
-                if x as f32 >= self.offset.x + self.position.x
-                    && x as f32 <= self.offset.x + self.position.x + self.size.width
-                    && y as f32 >= self.offset.y + self.position.y
-                    && y as f32 <= self.offset.y + self.position.y + self.size.height
-                {
-                    for child in &mut self.children.values_mut() {
-                        if child.handle_events(scene, window, glfw, event) {
-                            return true;
-                        }
-                    }
-                }
-            }
-            _ => (),
-        }
         for child in &mut self.children.values_mut() {
             if child.handle_events(scene, window, glfw, event) {
                 return true;
