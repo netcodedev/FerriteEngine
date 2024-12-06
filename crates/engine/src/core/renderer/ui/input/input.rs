@@ -5,7 +5,10 @@ use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
         text::{Fonts, Text},
-        ui::{primitives::Position, Offset, Size, UIElement, UIElementHandle},
+        ui::{
+            primitives::{Position, Region},
+            Offset, Size, UIElement, UIElementHandle,
+        },
     },
     scene::Scene,
     utils::DataSource,
@@ -56,14 +59,12 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
         _: &mut glfw::Glfw,
         event: &glfw::WindowEvent,
     ) -> bool {
+        let region = Region::new_with_offset(self.position, self.size, self.offset);
         match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
                 let (x, y) = window.get_cursor_pos();
-                if x as f32 >= self.offset.x + self.position.x
-                    && x as f32 <= self.offset.x + self.position.x + self.size.width
-                    && y as f32 >= self.offset.y + self.position.y
-                    && y as f32 <= self.offset.y + self.position.y + self.size.height
-                {
+                let (x, y) = (x as f32, y as f32);
+                if region.contains(x, y) {
                     if !self.is_focused {
                         self.is_focused = true;
                         self.plane.set_color((0.3, 0.3, 0.3, 1.0));
@@ -78,11 +79,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 false
             }
             glfw::WindowEvent::CursorPos(x, y) => {
-                if *x as f32 >= self.offset.x + self.position.x
-                    && *x as f32 <= self.offset.x + self.position.x + self.size.width
-                    && *y as f32 >= self.offset.y + self.position.y
-                    && *y as f32 <= self.offset.y + self.position.y + self.size.height
-                {
+                if region.contains(*x as f32, *y as f32) {
                     if !self.is_hovering {
                         self.is_hovering = true;
                         self.plane.set_color((0.3, 0.3, 0.3, 1.0));

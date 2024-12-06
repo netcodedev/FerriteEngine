@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
-        ui::{primitives::Position, Offset, Size, UIElement, UIElementHandle},
+        ui::{
+            primitives::{Position, Region},
+            Offset, Size, UIElement, UIElementHandle,
+        },
     },
     scene::Scene,
 };
@@ -33,25 +36,19 @@ impl UIElement for Button {
         _: &mut glfw::Glfw,
         event: &glfw::WindowEvent,
     ) -> bool {
+        let region = Region::new_with_offset(self.position, self.size, self.offset);
         match event {
             glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
                 let (x, y) = window.get_cursor_pos();
-                if x as f32 >= self.offset.x + self.position.x
-                    && x as f32 <= self.offset.x + self.position.x + self.size.width
-                    && y as f32 >= self.offset.y + self.position.y
-                    && y as f32 <= self.offset.y + self.position.y + self.size.height
-                {
+                let (x, y) = (x as f32, y as f32);
+                if region.contains(x, y) {
                     (self.on_click)(scene);
                     return true;
                 }
                 false
             }
             glfw::WindowEvent::CursorPos(x, y) => {
-                if *x as f32 >= self.offset.x + self.position.x
-                    && *x as f32 <= self.offset.x + self.position.x + self.size.width
-                    && *y as f32 >= self.offset.y + self.position.y
-                    && *y as f32 <= self.offset.y + self.position.y + self.size.height
-                {
+                if region.contains(*x as f32, *y as f32) {
                     if !self.is_hovering {
                         window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
                         self.is_hovering = true;
