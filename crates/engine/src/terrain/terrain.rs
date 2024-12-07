@@ -178,7 +178,6 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 let existing_chunk = existing_chunk.get_component::<T>().unwrap();
                 if existing_chunk.get_position() == chunk.get_position() {
                     chunk_exists = true;
-                    println!("chunk exists");
                     break;
                 }
             }
