@@ -39,7 +39,7 @@ impl EditorLayer {
                 self.ui.insert_to(
                     self.entity_container.unwrap(),
                     Some(handle),
-                    Box::new(EntityUI::new(&self.scene, entity.id, 180.0)),
+                    Box::new(EntityUI::new(&self.scene, entity.id, 280.0)),
                 );
             }
         }
@@ -52,7 +52,7 @@ impl Layer for EditorLayer {
         let entities = UI::container(|b| b);
         self.ui.add(UI::panel("Entities", move |builder| {
             builder
-                .size(200.0, 200.0)
+                .size(300.0, 200.0)
                 .add_control(None, Box::new(AddEntityButton::new(None)))
                 .add_child(Some(entities_handle), entities)
         }));
