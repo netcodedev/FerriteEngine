@@ -1,8 +1,6 @@
 use core::panic;
 use std::str::FromStr;
 
-use log::debug;
-
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
@@ -23,7 +21,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
         PlaneRenderer::render(&self.plane);
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
-            gl::Disable(gl::STENCIL_TEST);
+            gl::Enable(gl::STENCIL_TEST);
             gl::Clear(gl::STENCIL_BUFFER_BIT);
             gl::StencilFunc(gl::ALWAYS, 1, 0xFF);
             gl::StencilOp(gl::KEEP, gl::KEEP, gl::REPLACE);
@@ -36,11 +34,11 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
             PlaneRenderer::render(&self.stencil_plane);
             gl::StencilFunc(gl::EQUAL, 1, 0xFF);
             gl::StencilMask(0x00);
-            gl::Disable(gl::DEPTH_TEST);
 
             // Enable writing to the color and depth buffer
             gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
             gl::DepthMask(gl::TRUE);
+            gl::DepthFunc(gl::LEQUAL);
 
             if let Some(data_source) = &self.data_source {
                 self.content = data_source.to_string();
@@ -167,7 +165,6 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
     }
 
     fn set_z_index(&mut self, z_index: f32) {
-        debug!("Setting z index of input to {}", z_index);
         self.position.z = z_index;
         self.plane.set_z_index(z_index);
         self.stencil_plane.set_z_index(z_index + 1.0);
