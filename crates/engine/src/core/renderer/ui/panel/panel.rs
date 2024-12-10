@@ -35,7 +35,8 @@ impl UIElement for Panel {
         }
         self.text.set_content(&self.title);
         self.text.render_at(
-            &(&self.position + &self.offset) + (8.0, if self.has_controls { 4.0 } else { 2.0 }),
+            &(&self.position + &self.offset)
+                + (8.0, if self.has_controls { 4.0 } else { 2.0 }, 3.0),
         );
         self.controls.render(scene);
         if !self.collapsible || self.is_open {
@@ -72,6 +73,7 @@ impl UIElement for Panel {
                         self.drag_start = Some(Position {
                             x: x as f32,
                             y: y as f32,
+                            z: self.position.z,
                         });
                     }
                     self.moved = false;
@@ -123,7 +125,11 @@ impl UIElement for Panel {
                     if let Some(position) = self.drag_start {
                         self.position.x += x - position.x - self.offset.x;
                         self.position.y += y - position.y - self.offset.y;
-                        self.drag_start = Some(Position { x, y });
+                        self.drag_start = Some(Position {
+                            x,
+                            y,
+                            z: position.z,
+                        });
                         self.moved = true;
                         self.set_offset(self.offset); // update children
                     }
@@ -136,16 +142,16 @@ impl UIElement for Panel {
     }
 
     fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
-        for (handle, child) in children {
-            self.content.add_children(vec![(handle, child)]);
-        }
+        self.content.add_children(children);
     }
 
     fn set_offset(&mut self, offset: Offset) {
         self.offset = offset;
         self.plane.set_position(&self.position + &self.offset);
         self.header_plane
-            .set_position(&self.position + &self.offset);
+            .set_position(&(&self.position + &self.offset) + (0.0, 0.0, 1.0));
+        self.text
+            .set_z_index((&(&self.position + &self.offset) + (0.0, 0.0, 2.0)).z);
         self.controls.set_offset(&self.offset + &self.position);
         self.content.set_offset(Offset {
             x: self.offset.x + self.position.x,
@@ -182,17 +188,26 @@ impl UIElement for Panel {
             }
         }
     }
+
+    fn set_z_index(&mut self, z_index: f32) {
+        self.position.z = z_index;
+        self.plane.set_z_index(z_index);
+        self.header_plane.set_z_index(z_index + 1.0);
+        self.text.set_z_index(z_index + 2.0);
+        self.content.set_z_index(z_index + 1.0);
+        self.controls.set_z_index(z_index + 3.0);
+    }
 }
 
 impl Panel {
     pub fn new(title: String, position: Position, size: Size) -> Self {
         let mut content = ContainerBuilder::new()
-            .position(0.0, 0.0)
+            .position(0.0, 0.0, &position.z + 1.0)
             .size(size.width, size.height - 40.0)
             .build();
         content.set_offset((&position + (0.0, 20.0)).into());
         let mut controls = ContainerBuilder::new()
-            .position(size.width - 2.0, -2.0)
+            .position(size.width - 2.0, -2.0, &position.z + 1.0)
             .size(0.0, 20.0)
             .direction(Direction::Horizontal)
             .build();
@@ -205,7 +220,7 @@ impl Panel {
             .border_thickness(1.0)
             .build();
         let header_plane = PlaneBuilder::new()
-            .position(position)
+            .position(&position + (0.0, 0.0, 1.0))
             .size(Size {
                 width: size.width,
                 height: 20.0,
@@ -214,14 +229,14 @@ impl Panel {
             .border_radius((5.0, 5.0, 0.0, 0.0))
             .border_thickness(1.0)
             .build();
-        Self {
+        let mut panel = Self {
             position,
             size,
             title: title.clone(),
             title_source: None,
             content,
             controls,
-            text: Text::new(Fonts::RobotoMono, 0, 0, 16.0, title),
+            text: Text::new(Fonts::RobotoMono, 0, 0, 0, 16.0, title),
             offset: Offset::default(),
             drag_start: None,
             dragging: false,
@@ -233,7 +248,9 @@ impl Panel {
             is_open: true,
             moved: false,
             has_controls: false,
-        }
+        };
+        panel.set_z_index(position.z);
+        panel
     }
 
     pub fn set_size(&mut self, size: Size) {
@@ -250,6 +267,7 @@ impl Panel {
         self.controls.set_position(Position {
             x: self.size.width - self.controls.get_size().width - 2.5,
             y: -2.0,
+            z: self.position.z + 1.0,
         });
         self.has_controls = true;
     }
@@ -271,8 +289,8 @@ impl PanelBuilder {
         }
     }
 
-    pub fn position(mut self, x: f32, y: f32) -> Self {
-        self.position = Position { x, y };
+    pub fn position(mut self, x: f32, y: f32, z: f32) -> Self {
+        self.position = Position { x, y, z };
         self
     }
 

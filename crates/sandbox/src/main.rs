@@ -84,7 +84,7 @@ impl Layer for WorldLayer {
             .get_speed_ref();
         self.ui.add(UI::panel("Camera controls", |builder| {
             builder
-                .position(10.0, 130.0)
+                .position(10.0, 130.0, 0.0)
                 .add_child(
                     Some(UIElementHandle::from(1)),
                     UI::text("Camera Speed", 16.0, |b| b),

@@ -68,6 +68,7 @@ impl UIElement for Button {
     fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
         for (handle, mut child) in children {
             child.set_offset(&self.offset + &self.position);
+            child.set_z_index(self.position.z + 1.0);
             let handle = handle.unwrap_or(UIElementHandle::new());
             self.children.insert(handle, child);
         }
@@ -110,6 +111,14 @@ impl UIElement for Button {
             }
         }
     }
+
+    fn set_z_index(&mut self, z_index: f32) {
+        self.position.z = z_index;
+        self.plane.set_z_index(z_index);
+        for child in self.children.values_mut() {
+            child.set_z_index(z_index + 1.0);
+        }
+    }
 }
 
 impl Button {
@@ -143,7 +152,7 @@ impl ButtonBuilder {
     }
 
     pub fn position(mut self, x: f32, y: f32) -> Self {
-        self.position = Position { x, y };
+        self.position = Position { x, y, z: 0.0 };
         self
     }
 

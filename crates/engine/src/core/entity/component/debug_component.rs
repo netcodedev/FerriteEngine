@@ -49,12 +49,12 @@ impl DebugController {
                 max: (0, 0, 0),
             },
 
-            fps_text: Text::new(Fonts::RobotoMono, 5, 5, 26.0, String::from("FPS: 0.0")),
-            pos_text: Text::new(Fonts::RobotoMono, 5, 30, 16.0, String::from("")),
-            cam_text: Text::new(Fonts::RobotoMono, 5, 50, 16.0, String::from("")),
-            chunk_min_text: Text::new(Fonts::RobotoMono, 5, 70, 16.0, String::from("")),
-            chunk_max_text: Text::new(Fonts::RobotoMono, 5, 90, 16.0, String::from("")),
-            triangle_count_text: Text::new(Fonts::RobotoMono, 5, 110, 16.0, String::from("")),
+            fps_text: Text::new(Fonts::RobotoMono, 5, 5, 0, 26.0, String::from("FPS: 0.0")),
+            pos_text: Text::new(Fonts::RobotoMono, 5, 30, 0, 16.0, String::from("")),
+            cam_text: Text::new(Fonts::RobotoMono, 5, 50, 0, 16.0, String::from("")),
+            chunk_min_text: Text::new(Fonts::RobotoMono, 5, 70, 0, 16.0, String::from("")),
+            chunk_max_text: Text::new(Fonts::RobotoMono, 5, 90, 0, 16.0, String::from("")),
+            triangle_count_text: Text::new(Fonts::RobotoMono, 5, 110, 0, 16.0, String::from("")),
         }
     }
 }

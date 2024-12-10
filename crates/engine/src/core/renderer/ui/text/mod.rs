@@ -7,4 +7,5 @@ pub struct Text {
     text: crate::core::renderer::text::Text,
     pub size: Size,
     pub offset: Offset,
+    z: f32,
 }

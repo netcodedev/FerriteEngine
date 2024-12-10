@@ -40,4 +40,5 @@ pub trait UIElement {
     fn get_offset(&self) -> &Offset;
     fn set_offset(&mut self, offset: Offset);
     fn get_size(&self) -> &Size;
+    fn set_z_index(&mut self, z_index: f32);
 }

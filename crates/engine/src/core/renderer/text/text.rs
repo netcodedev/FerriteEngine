@@ -35,7 +35,7 @@ impl Fonts {
 }
 
 impl Text {
-    pub fn new(font: Fonts, x: i32, y: i32, size: f32, content: String) -> Text {
+    pub fn new(font: Fonts, x: i32, y: i32, z: i32, size: f32, content: String) -> Text {
         let mut text = Text {
             content,
             font,
@@ -44,6 +44,7 @@ impl Text {
             dirty: true,
             x,
             y,
+            z,
             mesh: TextMesh::new(),
             max_x: x,
             max_y: y,
@@ -57,12 +58,13 @@ impl Text {
     }
 
     pub fn render_at(&mut self, position: Position) -> (i32, i32) {
-        let (x, y) = (position.x as i32, position.y as i32);
-        if self.x == x && self.y == y {
+        let (x, y, z) = (position.x as i32, position.y as i32, position.z as i32);
+        if self.x == x && self.y == y && self.z == z {
             return self.render();
         }
         self.x = x;
         self.y = y;
+        self.z = z;
         self.layout(TextRenderer::get_size().0);
         self.render()
     }
@@ -72,6 +74,15 @@ impl Text {
             return;
         }
         self.content = content.to_owned();
+        self.dirty = true;
+        self.layout(TextRenderer::get_size().0);
+    }
+
+    pub fn set_z_index(&mut self, z_index: f32) {
+        if self.z == z_index as i32 {
+            return;
+        }
+        self.z = z_index as i32;
         self.dirty = true;
         self.layout(TextRenderer::get_size().0);
     }
@@ -108,27 +119,27 @@ impl Text {
                 };
                 vec![
                     TextVertex {
-                        position: (gl_rect.min.x, gl_rect.max.y),
+                        position: (gl_rect.min.x, gl_rect.max.y, self.z as f32),
                         texture_coords: (uv_rect.min.x, uv_rect.max.y),
                     },
                     TextVertex {
-                        position: (gl_rect.min.x, gl_rect.min.y),
+                        position: (gl_rect.min.x, gl_rect.min.y, self.z as f32),
                         texture_coords: (uv_rect.min.x, uv_rect.min.y),
                     },
                     TextVertex {
-                        position: (gl_rect.max.x, gl_rect.min.y),
+                        position: (gl_rect.max.x, gl_rect.min.y, self.z as f32),
                         texture_coords: (uv_rect.max.x, uv_rect.min.y),
                     },
                     TextVertex {
-                        position: (gl_rect.max.x, gl_rect.min.y),
+                        position: (gl_rect.max.x, gl_rect.min.y, self.z as f32),
                         texture_coords: (uv_rect.max.x, uv_rect.min.y),
                     },
                     TextVertex {
-                        position: (gl_rect.max.x, gl_rect.max.y),
+                        position: (gl_rect.max.x, gl_rect.max.y, self.z as f32),
                         texture_coords: (uv_rect.max.x, uv_rect.max.y),
                     },
                     TextVertex {
-                        position: (gl_rect.min.x, gl_rect.max.y),
+                        position: (gl_rect.min.x, gl_rect.max.y, self.z as f32),
                         texture_coords: (uv_rect.min.x, uv_rect.max.y),
                     },
                 ]
@@ -215,7 +226,7 @@ impl TextRenderer {
             renderer.width as f32,
             renderer.height as f32,
             0.0,
-            -1.0,
+            -100.0,
             100.0,
         );
         renderer.shader.set_uniform_mat4("projection", &projection);
@@ -223,7 +234,7 @@ impl TextRenderer {
 
         unsafe {
             // draw text
-            gl::Disable(gl::DEPTH_TEST);
+            gl::Enable(gl::DEPTH_TEST);
             gl::Disable(gl::CULL_FACE);
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
@@ -312,7 +323,7 @@ impl TextMesh {
 
 impl VertexAttributes for TextVertex {
     fn get_vertex_attributes() -> Vec<(usize, gl::types::GLuint)> {
-        vec![(2, gl::FLOAT), (2, gl::FLOAT)]
+        vec![(3, gl::FLOAT), (2, gl::FLOAT)]
     }
 }
 

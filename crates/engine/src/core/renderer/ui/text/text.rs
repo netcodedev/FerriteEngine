@@ -1,7 +1,7 @@
 use crate::core::{
     renderer::{
         text::Fonts,
-        ui::{Offset, Size, UIElement, UIElementHandle},
+        ui::{primitives::Position, Offset, Size, UIElement, UIElementHandle},
     },
     scene::Scene,
 };
@@ -20,10 +20,12 @@ impl Text {
                 Fonts::RobotoMono,
                 0,
                 0,
+                0,
                 size,
                 text.to_string(),
             ),
             offset: Offset::default(),
+            z: 0.0,
         }
     }
 }
@@ -31,7 +33,11 @@ impl Text {
 impl UIElement for Text {
     fn render(&mut self, _: &mut Scene) {
         self.text.set_content(&self.content);
-        let (width, height) = self.text.render_at((&self.offset + (5.0, 2.0)).into());
+        let (width, height) = self.text.render_at(Position {
+            x: self.offset.x + 5.0,
+            y: self.offset.y + 2.0,
+            z: self.z,
+        });
         if width as f32 != self.size.width {
             self.size.width = width as f32;
         }
@@ -77,5 +83,10 @@ impl UIElement for Text {
         _: Box<dyn UIElement>,
     ) {
         panic!("Text cannot have children");
+    }
+
+    fn set_z_index(&mut self, z_index: f32) {
+        self.z = z_index;
+        self.text.set_z_index(z_index);
     }
 }

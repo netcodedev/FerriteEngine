@@ -31,6 +31,7 @@ pub struct Text {
     dirty: bool,
     x: i32,
     y: i32,
+    z: i32,
     pub mesh: TextMesh,
     pub max_x: i32,
     pub max_y: i32,
@@ -44,7 +45,7 @@ pub struct TextMesh {
 #[derive(Clone)]
 #[repr(C)]
 pub struct TextVertex {
-    position: (f32, f32),
+    position: (f32, f32, f32),
     texture_coords: (f32, f32),
 }
 

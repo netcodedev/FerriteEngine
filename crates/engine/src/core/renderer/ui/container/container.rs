@@ -36,6 +36,9 @@ impl Container {
     pub fn set_position(&mut self, position: Position) {
         self.position = position;
         self.plane.set_position(&self.position + &self.offset);
+        for child in self.children.values_mut() {
+            child.set_offset(&self.offset + &self.position);
+        }
     }
 }
 
@@ -115,6 +118,7 @@ impl UIElement for Container {
 
     fn add_children(&mut self, children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
         for (handle, mut child) in children {
+            child.set_z_index(self.position.z + 1.0);
             match self.direction {
                 Direction::Horizontal => {
                     child.set_offset(
@@ -176,6 +180,14 @@ impl UIElement for Container {
             }
         }
     }
+
+    fn set_z_index(&mut self, z_index: f32) {
+        self.position.z = z_index;
+        self.plane.set_z_index(z_index);
+        for child in self.children.values_mut() {
+            child.set_z_index(z_index + 1.0);
+        }
+    }
 }
 
 impl ContainerBuilder {
@@ -189,8 +201,8 @@ impl ContainerBuilder {
         }
     }
 
-    pub fn position(mut self, x: f32, y: f32) -> Self {
-        self.position = Position { x, y };
+    pub fn position(mut self, x: f32, y: f32, z: f32) -> Self {
+        self.position = Position { x, y, z };
         self
     }
 

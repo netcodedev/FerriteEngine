@@ -25,7 +25,7 @@ impl PlaneRenderer {
 
         plane.vertex_array.bind();
         renderer.shader.bind();
-        let ortho = cgmath::ortho(0.0, renderer.width, renderer.height, 0.0, -1.0, 100.0);
+        let ortho = cgmath::ortho(0.0, renderer.width, renderer.height, 0.0, -100.0, 100.0);
         renderer.shader.set_uniform_mat4("projection", &ortho);
         renderer
             .shader
@@ -45,7 +45,7 @@ impl PlaneRenderer {
             plane.border_color.3,
         );
         unsafe {
-            gl::Disable(gl::DEPTH_TEST);
+            gl::Enable(gl::DEPTH_TEST);
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             gl::DrawElements(
@@ -157,7 +157,11 @@ impl Plane {
     fn get_vertices(&self) -> Vec<PlaneVertex> {
         vec![
             PlaneVertex {
-                position: (self.position.x, self.position.y + self.size.height, 0.0),
+                position: (
+                    self.position.x,
+                    self.position.y + self.size.height,
+                    self.position.z,
+                ),
                 color: self.color,
                 dimensions: (
                     self.size.width,
@@ -170,7 +174,7 @@ impl Plane {
                 position: (
                     self.position.x + self.size.width,
                     self.position.y + self.size.height,
-                    0.0,
+                    self.position.z,
                 ),
                 color: self.color,
                 dimensions: (
@@ -181,7 +185,11 @@ impl Plane {
                 ),
             },
             PlaneVertex {
-                position: (self.position.x + self.size.width, self.position.y, 0.0),
+                position: (
+                    self.position.x + self.size.width,
+                    self.position.y,
+                    self.position.z,
+                ),
                 color: self.color,
                 dimensions: (
                     self.size.width,
@@ -191,7 +199,7 @@ impl Plane {
                 ),
             },
             PlaneVertex {
-                position: (self.position.x, self.position.y, 0.0),
+                position: (self.position.x, self.position.y, self.position.z),
                 color: self.color,
                 dimensions: (
                     self.size.width,
@@ -205,20 +213,25 @@ impl Plane {
 
     pub fn set_position(&mut self, position: Position) {
         self.position = position;
-        let vertices = self.get_vertices();
-        let indices: Vec<u32> = vec![0, 1, 2, 2, 3, 0];
-        self.vertex_array.buffer_data(&vertices, &Some(indices));
+        self.recalculate_vertices();
+    }
+
+    pub fn set_z_index(&mut self, z_index: f32) {
+        self.position.z = z_index;
+        self.recalculate_vertices();
     }
 
     pub fn set_size(&mut self, size: Size) {
         self.size = size;
-        let vertices = self.get_vertices();
-        let indices: Vec<u32> = vec![0, 1, 2, 2, 3, 0];
-        self.vertex_array.buffer_data(&vertices, &Some(indices));
+        self.recalculate_vertices();
     }
 
     pub fn set_color(&mut self, color: (f32, f32, f32, f32)) {
         self.color = color;
+        self.recalculate_vertices();
+    }
+
+    fn recalculate_vertices(&mut self) {
         let vertices = self.get_vertices();
         let indices: Vec<u32> = vec![0, 1, 2, 2, 3, 0];
         self.vertex_array.buffer_data(&vertices, &Some(indices));

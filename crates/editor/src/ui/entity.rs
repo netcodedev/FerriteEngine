@@ -82,6 +82,10 @@ impl UIElement for EntityUI {
     fn get_size(&self) -> &Size {
         self.panel.get_size()
     }
+
+    fn set_z_index(&mut self, z_index: f32) {
+        self.panel.set_z_index(z_index);
+    }
 }
 
 impl EntityUI {
@@ -199,6 +203,10 @@ impl UIElement for AddEntityButton {
     fn get_size(&self) -> &Size {
         self.button.get_size()
     }
+
+    fn set_z_index(&mut self, z_index: f32) {
+        self.button.set_z_index(z_index);
+    }
 }
 
 pub struct EditEntityButton {
@@ -284,5 +292,9 @@ impl UIElement for EditEntityButton {
 
     fn get_size(&self) -> &Size {
         self.button.get_size()
+    }
+
+    fn set_z_index(&mut self, z_index: f32) {
+        self.button.set_z_index(z_index);
     }
 }

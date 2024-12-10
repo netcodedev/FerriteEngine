@@ -31,6 +31,7 @@ impl Ord for UIElementHandle {
 pub struct Position {
     pub x: f32,
     pub y: f32,
+    pub z: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]

@@ -16,7 +16,7 @@ impl Popup {
         children: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>,
     ) -> Self {
         let mut panel = PanelBuilder::new(title)
-            .position(400.0, 300.0)
+            .position(400.0, 300.0, 51.0)
             .size(200.0, 150.0)
             .add_control(
                 None,
@@ -31,7 +31,7 @@ impl Popup {
             .build();
         panel.add_children(children);
         let background = PlaneBuilder::new()
-            .position((0.0, 0.0).into())
+            .position((0.0, 0.0, 50.0).into())
             .size((5000.0, 5000.0).into())
             .color((0.0, 0.0, 0.0, 0.6))
             .build();
@@ -83,5 +83,9 @@ impl UIElement for Popup {
 
     fn get_size(&self) -> &Size {
         self.panel.get_size()
+    }
+
+    fn set_z_index(&mut self, z_index: f32) {
+        self.panel.set_z_index(z_index);
     }
 }

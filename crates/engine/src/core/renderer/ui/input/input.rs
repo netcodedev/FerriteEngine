@@ -1,6 +1,8 @@
 use core::panic;
 use std::str::FromStr;
 
+use log::debug;
+
 use crate::core::{
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
@@ -21,7 +23,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
         PlaneRenderer::render(&self.plane);
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
-            gl::Enable(gl::STENCIL_TEST);
+            gl::Disable(gl::STENCIL_TEST);
             gl::Clear(gl::STENCIL_BUFFER_BIT);
             gl::StencilFunc(gl::ALWAYS, 1, 0xFF);
             gl::StencilOp(gl::KEEP, gl::KEEP, gl::REPLACE);
@@ -45,7 +47,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
             }
             self.text.set_content(&self.content);
             self.text
-                .render_at(&(&self.position + &self.offset) + (5.0, 2.0));
+                .render_at(&(&self.position + &self.offset) + (5.0, 2.0, 1.0));
             gl::Disable(gl::STENCIL_TEST);
             gl::StencilMask(0xFF);
             gl::StencilFunc(gl::ALWAYS, 0, 0xFF);
@@ -163,6 +165,14 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
     ) {
         panic!("Input cannot have children");
     }
+
+    fn set_z_index(&mut self, z_index: f32) {
+        debug!("Setting z index of input to {}", z_index);
+        self.position.z = z_index;
+        self.plane.set_z_index(z_index);
+        self.stencil_plane.set_z_index(z_index + 1.0);
+        self.text.set_z_index(z_index + 1.0);
+    }
 }
 
 impl<T: Clone + ToString> Input<T> {
@@ -187,7 +197,7 @@ impl<T: Clone + ToString> Input<T> {
             is_hovering: false,
             is_focused: false,
             content: content.to_string(),
-            text: Text::new(Fonts::RobotoMono, 0, 0, 16.0, content.to_string()),
+            text: Text::new(Fonts::RobotoMono, 0, 0, 0, 16.0, content.to_string()),
             plane: plane.build(),
             stencil_plane: plane
                 .size(Size {
@@ -211,7 +221,7 @@ impl<T: Clone + ToString> InputBuilder<T> {
     }
 
     pub fn position(mut self, x: f32, y: f32) -> Self {
-        self.position = Position { x, y };
+        self.position = Position { x, y, z: 0.0 };
         self
     }
 
