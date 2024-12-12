@@ -3,9 +3,6 @@ use core::panic;
 use ferrite::core::{
     entity::{Entity, EntityHandle},
     renderer::ui::{
-        button::Button,
-        panel::Panel,
-        popup::Popup,
         primitives::{Offset, Size, UIElementHandle},
         UIElement, UI,
     },
@@ -14,10 +11,7 @@ use ferrite::core::{
 };
 use glfw::{Glfw, Window, WindowEvent};
 
-pub struct EntityUI {
-    entity_handle: EntityHandle,
-    panel: Panel,
-}
+use super::{AddEntityButton, EditEntityButton, EntityUI};
 
 impl UIElement for EntityUI {
     fn render(&mut self, scene: &mut Scene) {
@@ -135,10 +129,6 @@ impl EntityUI {
     }
 }
 
-pub struct AddEntityButton {
-    button: Box<Button>,
-}
-
 impl AddEntityButton {
     pub fn new(entity_handle: Option<EntityHandle>) -> Self {
         Self {
@@ -207,12 +197,6 @@ impl UIElement for AddEntityButton {
     fn set_z_index(&mut self, z_index: f32) {
         self.button.set_z_index(z_index);
     }
-}
-
-pub struct EditEntityButton {
-    button: Box<Button>,
-    show_popup: DataSource<bool>,
-    popup: Popup,
 }
 
 impl EditEntityButton {
