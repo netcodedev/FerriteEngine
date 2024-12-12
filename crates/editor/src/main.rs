@@ -2,7 +2,7 @@ mod ui;
 
 use ferrite::core::{
     application::{Application, Layer},
-    renderer::ui::{primitives::UIElementHandle, UIRenderer},
+    renderer::ui::UIRenderer,
     scene::Scene,
     window::Window,
 };
@@ -18,18 +18,15 @@ fn main() {
 struct EditorLayer {
     scene: Scene,
     ui: UIRenderer,
-
-    ecs_panel_handle: UIElementHandle,
 }
 
 impl EditorLayer {
     fn new() -> Self {
         let mut ui = UIRenderer::new();
-        let ecs_panel_handle = ui.add(Box::new(EntityComponentsPanel::new()));
+        ui.add(Box::new(EntityComponentsPanel::new()));
         Self {
             scene: Scene::new(),
             ui,
-            ecs_panel_handle,
         }
     }
 }
