@@ -19,6 +19,17 @@ impl Add<(f32, f32)> for &Size {
     }
 }
 
+impl Add<&Size> for &Size {
+    type Output = Size;
+
+    fn add(self, rhs: &Size) -> Size {
+        Size {
+            width: self.width + rhs.width,
+            height: self.height + rhs.height,
+        }
+    }
+}
+
 impl From<(f32, f32)> for Size {
     fn from((width, height): (f32, f32)) -> Size {
         Size { width, height }
