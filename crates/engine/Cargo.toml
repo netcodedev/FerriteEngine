@@ -16,6 +16,6 @@ libnoise = "1.1.2"
 log = "0.4.22"
 ndarray = "0.16.1"
 rand = "0.8.5"
-rapier3d = { version = "0.22.0", features = ["simd-stable"] }
+rapier3d = { version = "0.23.0", features = ["simd-stable"] }
 russimp = "3.2.0"
 rusttype = { version = "0.9.3", features = ["gpu_cache"] }
