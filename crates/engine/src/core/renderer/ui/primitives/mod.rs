@@ -13,7 +13,7 @@ pub struct UIElementHandle(u64);
 impl UIElementHandle {
     pub fn new() -> Self {
         Self {
-            0: rand::thread_rng().gen::<u64>(),
+            0: rand::rng().random::<u64>(),
         }
     }
     pub fn from(id: u64) -> Self {

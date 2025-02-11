@@ -4,7 +4,7 @@ use super::EntityHandle;
 
 impl EntityHandle {
     pub fn new() -> Self {
-        EntityHandle(rand::thread_rng().gen())
+        EntityHandle(rand::rng().random())
     }
 
     pub fn from(id: u64) -> Self {

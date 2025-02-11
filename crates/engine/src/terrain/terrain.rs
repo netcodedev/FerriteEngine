@@ -193,7 +193,7 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                     .map(|v| Point::from(*v))
                     .collect();
                 let position = chunk.get_position();
-                let collider = ColliderBuilder::trimesh(vertices, chunk.get_indices())
+                let collider = ColliderBuilder::trimesh(vertices, chunk.get_indices()).expect("Failed to create collider")
                     .translation(vector![position.x, position.y, position.z])
                     .build();
                 scene.physics_engine.add_collider(collider, None);
