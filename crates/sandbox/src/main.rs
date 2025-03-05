@@ -1,4 +1,5 @@
 use cgmath::Deg;
+use ferrite_ui::ui::{UIElement, UI};
 use glfw::{Glfw, WindowEvent};
 
 use ferrite::{
@@ -13,10 +14,8 @@ use ferrite::{
             animation_graph::{AnimationGraph, State},
             Animation,
         },
-        renderer::{
-            light::skylight::SkyLight,
-            ui::{primitives::UIElementHandle, UIRenderer, UI},
-        },
+        primitives::{Position, Size},
+        renderer::light::skylight::SkyLight,
         scene::Scene,
         window::Window,
     },
@@ -35,7 +34,7 @@ fn main() {
 
 struct WorldLayer {
     scene: Scene,
-    ui: UIRenderer,
+    ui: UI,
 }
 
 impl WorldLayer {
@@ -54,7 +53,7 @@ impl WorldLayer {
         skylight.add_component(SkyLight::new((10.0, 600.0, 10.0)));
         scene.add_entity(skylight);
 
-        let ui = UIRenderer::new();
+        let ui = UI::new();
 
         let mut terrain_entity = Entity::new("terrain");
         terrain_entity.add_component(Terrain::<DualContouringChunk>::new(2));
@@ -82,39 +81,41 @@ impl Layer for WorldLayer {
             .unwrap()
             .get_camera_controller()
             .get_speed_ref();
-        self.ui.add(UI::panel("Camera controls", |builder| {
-            builder
-                .position(10.0, 130.0, 0.0)
-                .add_child(
-                    Some(UIElementHandle::from(1)),
-                    UI::text("Camera Speed", 16.0, |b| b),
-                )
-                .add_child(
-                    Some(UIElementHandle::from(2)),
-                    UI::input(camera_speed_ref, |input| input.size(190.0, 26.0)),
-                )
-                .add_child(
-                    Some(UIElementHandle::from(3)),
-                    UI::button(
-                        "Reset Speed",
-                        Box::new(move |scene| {
-                            let camera_controller = scene
-                                .get_component_mut::<CameraComponent>()
-                                .unwrap()
-                                .get_camera_controller_mut();
-                            camera_controller.set_speed(10.0);
-                        }),
-                        |b| b,
-                    ),
-                )
-        }));
+        let mut panel = UI::panel(
+            "Camera controls",
+            Position {
+                x: 10.0,
+                y: 130.0,
+                z: 0.0,
+            },
+            Size::default(),
+        );
+        panel.add_child(UI::text("Camera Speed", 16.0));
+        let mut input = UI::input(camera_speed_ref.clone());
+        input.set_size(Size {
+            width: 190.0,
+            height: 26.0,
+        });
+        panel.add_child(input);
+        panel.add_child(UI::button(
+            "Reset Speed",
+            Box::new(move |scene| {
+                let camera_controller = scene
+                    .get_component_mut::<CameraComponent>()
+                    .unwrap()
+                    .get_camera_controller_mut();
+                camera_controller.set_speed(10.0);
+            }),
+        ));
+        self.ui.add(panel);
     }
 
     fn on_update(&mut self, window: &Window, delta_time: f64) {
         self.scene.update(delta_time);
         self.scene.render(window);
 
-        self.ui.render(&mut self.scene);
+        self.ui.update(&mut self.scene);
+        self.ui.render();
     }
 
     fn on_event(&mut self, glfw: &mut Glfw, window: &mut glfw::Window, event: &WindowEvent) {

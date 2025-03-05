@@ -1,6 +1,6 @@
-use crate::core::renderer::{
-    shader::{DynamicVertexArray, Shader, VertexAttributes},
-    ui::primitives::{Position, Size},
+use crate::core::{
+    primitives::{Position, Region, Size},
+    renderer::shader::{DynamicVertexArray, Shader, VertexAttributes},
 };
 
 use super::{Plane, PlaneBuilder, PlaneRenderer, PlaneVertex};
@@ -141,8 +141,7 @@ impl Plane {
         let indices: Vec<u32> = vec![0, 1, 2, 2, 3, 0];
         let vertex_array = DynamicVertexArray::<PlaneVertex>::new();
         let mut plane = Self {
-            position,
-            size,
+            region: Region::new(position, size),
             color,
             border_thickness,
             border_color,
@@ -154,75 +153,87 @@ impl Plane {
         plane
     }
 
+    pub fn render(&self) {
+        PlaneRenderer::render(self);
+    }
+
+    pub fn get_region(&self) -> &Region {
+        &self.region
+    }
+
     fn get_vertices(&self) -> Vec<PlaneVertex> {
         vec![
             PlaneVertex {
                 position: (
-                    self.position.x,
-                    self.position.y + self.size.height,
-                    self.position.z,
+                    self.region.position.x,
+                    self.region.position.y + self.region.size.height,
+                    self.region.position.z,
                 ),
                 color: self.color,
                 dimensions: (
-                    self.size.width,
-                    self.size.height,
-                    self.position.x,
-                    self.position.y,
+                    self.region.size.width,
+                    self.region.size.height,
+                    self.region.position.x,
+                    self.region.position.y,
                 ),
             },
             PlaneVertex {
                 position: (
-                    self.position.x + self.size.width,
-                    self.position.y + self.size.height,
-                    self.position.z,
+                    self.region.position.x + self.region.size.width,
+                    self.region.position.y + self.region.size.height,
+                    self.region.position.z,
                 ),
                 color: self.color,
                 dimensions: (
-                    self.size.width,
-                    self.size.height,
-                    self.position.x,
-                    self.position.y,
+                    self.region.size.width,
+                    self.region.size.height,
+                    self.region.position.x,
+                    self.region.position.y,
                 ),
             },
             PlaneVertex {
                 position: (
-                    self.position.x + self.size.width,
-                    self.position.y,
-                    self.position.z,
+                    self.region.position.x + self.region.size.width,
+                    self.region.position.y,
+                    self.region.position.z,
                 ),
                 color: self.color,
                 dimensions: (
-                    self.size.width,
-                    self.size.height,
-                    self.position.x,
-                    self.position.y,
+                    self.region.size.width,
+                    self.region.size.height,
+                    self.region.position.x,
+                    self.region.position.y,
                 ),
             },
             PlaneVertex {
-                position: (self.position.x, self.position.y, self.position.z),
+                position: (
+                    self.region.position.x,
+                    self.region.position.y,
+                    self.region.position.z,
+                ),
                 color: self.color,
                 dimensions: (
-                    self.size.width,
-                    self.size.height,
-                    self.position.x,
-                    self.position.y,
+                    self.region.size.width,
+                    self.region.size.height,
+                    self.region.position.x,
+                    self.region.position.y,
                 ),
             },
         ]
     }
 
     pub fn set_position(&mut self, position: Position) {
-        self.position = position;
+        self.region.position = position;
         self.recalculate_vertices();
     }
 
     pub fn set_z_index(&mut self, z_index: f32) {
-        self.position.z = z_index;
+        self.region.position.z = z_index;
         self.recalculate_vertices();
     }
 
     pub fn set_size(&mut self, size: Size) {
-        self.size = size;
+        self.region.size = size;
         self.recalculate_vertices();
     }
 

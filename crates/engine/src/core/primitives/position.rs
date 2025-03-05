@@ -2,6 +2,12 @@ use std::ops::Add;
 
 use super::{Offset, Position, Size};
 
+impl Position {
+    pub fn new(x: f32, y: f32, z: f32) -> Self {
+        Position { x, y, z }
+    }
+}
+
 impl PartialEq for Position {
     fn eq(&self, other: &Self) -> bool {
         self.x == other.x && self.y == other.y

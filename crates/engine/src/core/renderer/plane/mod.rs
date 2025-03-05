@@ -1,9 +1,9 @@
-use crate::core::renderer::shader::Shader;
-
-use super::{
-    shader::DynamicVertexArray,
-    ui::primitives::{Position, Size},
+use crate::core::{
+    primitives::{Position, Region, Size},
+    renderer::shader::Shader,
 };
+
+use super::shader::DynamicVertexArray;
 
 pub mod plane;
 
@@ -14,8 +14,7 @@ pub struct PlaneRenderer {
 }
 
 pub struct Plane {
-    position: Position,
-    pub size: Size,
+    region: Region,
     color: (f32, f32, f32, f32),
     pub border_thickness: f32,
     pub border_color: (f32, f32, f32, f32),

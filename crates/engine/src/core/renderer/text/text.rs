@@ -1,9 +1,9 @@
 use rusttype::gpu_cache::Cache;
 use rusttype::{point, PositionedGlyph, Rect, Scale};
 
+use crate::core::primitives::{Position, Size};
 use crate::core::renderer::shader::{DynamicVertexArray, VertexAttributes};
 use crate::core::renderer::text::Fonts;
-use crate::core::renderer::ui::primitives::Position;
 
 use super::{Font, Shader, Text, TextMesh, TextRenderer, TextVertex, Texture};
 
@@ -57,16 +57,15 @@ impl Text {
         TextRenderer::render(self)
     }
 
-    pub fn render_at(&mut self, position: Position) -> (i32, i32) {
+    pub fn prepare_render_at(&mut self, position: Position) {
         let (x, y, z) = (position.x as i32, position.y as i32, position.z as i32);
         if self.x == x && self.y == y && self.z == z {
-            return self.render();
+            return;
         }
         self.x = x;
         self.y = y;
         self.z = z;
         self.layout(TextRenderer::get_size().0);
-        self.render()
     }
 
     pub fn set_content(&mut self, content: &str) {
@@ -85,6 +84,13 @@ impl Text {
         self.z = z_index as i32;
         self.dirty = true;
         self.layout(TextRenderer::get_size().0);
+    }
+
+    pub fn get_size(&self) -> Size {
+        Size {
+            width: self.max_x as f32,
+            height: self.max_y as f32,
+        }
     }
 
     fn layout(&mut self, width: u32) {

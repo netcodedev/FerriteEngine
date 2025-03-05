@@ -1,11 +1,9 @@
 mod ui;
 
 use ferrite::core::{
-    application::{Application, Layer},
-    renderer::ui::UIRenderer,
-    scene::Scene,
-    window::Window,
+    application::{Application, Layer}, scene::Scene, window::Window
 };
+use ferrite_ui::ui::UI;
 use glfw::{Glfw, WindowEvent};
 use ui::ecs::EntityComponentsPanel;
 
@@ -17,12 +15,12 @@ fn main() {
 
 struct EditorLayer {
     scene: Scene,
-    ui: UIRenderer,
+    ui: UI,
 }
 
 impl EditorLayer {
     fn new() -> Self {
-        let mut ui = UIRenderer::new();
+        let mut ui = UI::new();
         ui.add(Box::new(EntityComponentsPanel::new()));
         Self {
             scene: Scene::new(),
@@ -36,7 +34,8 @@ impl Layer for EditorLayer {
         self.scene.update(delta_time);
         self.scene.render(window);
 
-        self.ui.render(&mut self.scene);
+        self.ui.update(&mut self.scene);
+        self.ui.render();
     }
 
     fn on_event(&mut self, glfw: &mut Glfw, window: &mut glfw::Window, event: &WindowEvent) {

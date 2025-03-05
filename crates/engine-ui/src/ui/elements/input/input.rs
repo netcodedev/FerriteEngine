@@ -1,23 +1,76 @@
 use core::panic;
 use std::str::FromStr;
 
-use crate::core::{
+use ferrite::core::{
+    primitives::{Offset, Position, Region, Size},
     renderer::{
         plane::{PlaneBuilder, PlaneRenderer},
         text::{Fonts, Text},
-        ui::{
-            primitives::{Position, Region},
-            Offset, Size, UIElement, UIElementHandle,
-        },
     },
     scene::Scene,
     utils::DataSource,
 };
+use glfw::Action::{Press, Repeat};
+use glfw::Key::Backspace;
+use glfw::WindowEvent::{Char, CursorPos, Key, MouseButton};
 
-use super::{Input, InputBuilder};
+use crate::ui::{element_handle::UIElementHandle, UIElement};
+
+use super::Input;
+
+impl<T: Clone + ToString> Input<T> {
+    pub fn new(
+        position: Position,
+        size: Size,
+        content: T,
+        data_source: Option<DataSource<T>>,
+    ) -> Self {
+        let plane = PlaneBuilder::new()
+            .position(position)
+            .size(size)
+            .border_radius_uniform(5.0)
+            .border_thickness(1.0);
+        Self {
+            handle: UIElementHandle::new(),
+            region: Region::new(position, size),
+            is_hovering: false,
+            is_focused: false,
+            content: content.to_string(),
+            text: Text::new(Fonts::RobotoMono, 0, 0, 0, 16.0, content.to_string()),
+            plane: plane.build(),
+            stencil_plane: plane.size(&size - (2.0, 0.0)).build(),
+            data_source,
+        }
+    }
+
+    pub fn set_handle(&mut self, handle: UIElementHandle) {
+        self.handle = handle;
+    }
+
+    pub fn set_size(&mut self, size: Size) {
+        self.region.size = size;
+        self.plane.set_size(Size {
+            width: size.width,
+            height: size.height,
+        });
+        self.stencil_plane.set_size(Size {
+            width: size.width - 2.0,
+            height: size.height,
+        });
+    }
+}
 
 impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
-    fn render(&mut self, _: &mut Scene) {
+    fn update(&mut self, _scene: &mut Scene) {
+        if let Some(data_source) = &self.data_source {
+            self.content = data_source.to_string();
+        }
+        self.text.set_content(&self.content);
+        self.text
+            .prepare_render_at(&(&self.region.position + &self.region.offset) + (5.0, 2.0, 1.0));
+    }
+
+    fn render(&self) {
         PlaneRenderer::render(&self.plane);
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
@@ -40,12 +93,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
             gl::DepthMask(gl::TRUE);
             gl::DepthFunc(gl::LEQUAL);
 
-            if let Some(data_source) = &self.data_source {
-                self.content = data_source.to_string();
-            }
-            self.text.set_content(&self.content);
-            self.text
-                .render_at(&(&self.position + &self.offset) + (5.0, 2.0, 1.0));
+            self.text.render();
             gl::Disable(gl::STENCIL_TEST);
             gl::StencilMask(0xFF);
             gl::StencilFunc(gl::ALWAYS, 0, 0xFF);
@@ -59,12 +107,11 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
         _: &mut glfw::Glfw,
         event: &glfw::WindowEvent,
     ) -> bool {
-        let region = Region::new_with_offset(self.position, self.size, self.offset);
         match event {
-            glfw::WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
+            MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _) => {
                 let (x, y) = window.get_cursor_pos();
                 let (x, y) = (x as f32, y as f32);
-                if region.contains(x, y) {
+                if self.region.contains(x, y) {
                     if !self.is_focused {
                         self.is_focused = true;
                         self.plane.set_color((0.3, 0.3, 0.3, 1.0));
@@ -78,8 +125,8 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 }
                 false
             }
-            glfw::WindowEvent::CursorPos(x, y) => {
-                if region.contains(*x as f32, *y as f32) {
+            CursorPos(x, y) => {
+                if self.region.contains(*x as f32, *y as f32) {
                     if !self.is_hovering {
                         self.is_hovering = true;
                         self.plane.set_color((0.3, 0.3, 0.3, 1.0));
@@ -97,7 +144,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 }
                 false
             }
-            glfw::WindowEvent::Char(character) => {
+            Char(character) => {
                 if self.is_focused {
                     self.content.push(*character);
                     if let Some(data_source) = &self.data_source {
@@ -107,12 +154,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 }
                 false
             }
-            glfw::WindowEvent::Key(
-                glfw::Key::Backspace,
-                _,
-                glfw::Action::Press | glfw::Action::Repeat,
-                _,
-            ) => {
+            Key(Backspace, _, Press | Repeat, _) => {
                 if self.is_focused {
                     self.content.pop();
                     if let Some(data_source) = &mut self.data_source {
@@ -122,7 +164,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 }
                 false
             }
-            glfw::WindowEvent::Key(_, _, glfw::Action::Press | glfw::Action::Repeat, _) => {
+            Key(_, _, Press | Repeat, _) => {
                 if self.is_focused {
                     return true;
                 }
@@ -132,107 +174,50 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
         }
     }
 
-    fn add_children(&mut self, _: Vec<(Option<UIElementHandle>, Box<dyn UIElement>)>) {
+    fn add_child(&mut self, _: Box<dyn UIElement>) {
         panic!("Input cannot have children");
     }
 
+    fn get_handle(&self) -> &UIElementHandle {
+        &self.handle
+    }
+
     fn set_offset(&mut self, offset: Offset) {
-        self.offset = offset;
-        self.plane.set_position(&self.position + &self.offset);
+        self.region.offset = offset;
+        self.plane
+            .set_position(&self.region.position + &self.region.offset);
         self.stencil_plane
-            .set_position(&self.position + &self.offset);
+            .set_position(&self.region.position + &self.region.offset);
     }
 
     fn get_size(&self) -> &Size {
-        &self.size
+        &self.region.size
     }
 
     fn contains_child(&self, _: &UIElementHandle) -> bool {
         false
     }
 
-    fn get_offset(&self) -> &Offset {
-        &self.offset
+    fn get_child(&self, _handle: &UIElementHandle) -> Option<&Box<dyn UIElement>> {
+        None
     }
 
-    fn add_child_to(
-        &mut self,
-        _: UIElementHandle,
-        _: Option<UIElementHandle>,
-        _: Box<dyn UIElement>,
-    ) {
+    fn get_child_mut(&mut self, _handle: &UIElementHandle) -> Option<&mut Box<dyn UIElement>> {
+        None
+    }
+
+    fn get_offset(&self) -> &Offset {
+        &self.region.offset
+    }
+
+    fn add_child_to(&mut self, _: UIElementHandle, _: Box<dyn UIElement>) {
         panic!("Input cannot have children");
     }
 
     fn set_z_index(&mut self, z_index: f32) {
-        self.position.z = z_index;
+        self.region.position.z = z_index;
         self.plane.set_z_index(z_index);
         self.stencil_plane.set_z_index(z_index + 1.0);
         self.text.set_z_index(z_index + 1.0);
-    }
-}
-
-impl<T: Clone + ToString> Input<T> {
-    pub fn new(
-        position: Position,
-        size: Size,
-        content: T,
-        data_source: Option<DataSource<T>>,
-    ) -> Self {
-        let plane = PlaneBuilder::new()
-            .position(position)
-            .size(Size {
-                width: size.width - 10.0,
-                height: size.height,
-            })
-            .border_radius_uniform(5.0)
-            .border_thickness(1.0);
-        Self {
-            position,
-            size,
-            offset: Offset::default(),
-            is_hovering: false,
-            is_focused: false,
-            content: content.to_string(),
-            text: Text::new(Fonts::RobotoMono, 0, 0, 0, 16.0, content.to_string()),
-            plane: plane.build(),
-            stencil_plane: plane
-                .size(Size {
-                    width: size.width - 12.0,
-                    height: size.height,
-                })
-                .build(),
-            data_source,
-        }
-    }
-}
-
-impl<T: Clone + ToString> InputBuilder<T> {
-    pub fn new(content: T) -> Self {
-        Self {
-            position: Position::default(),
-            size: Size::default(),
-            content,
-            data_source: None,
-        }
-    }
-
-    pub fn position(mut self, x: f32, y: f32) -> Self {
-        self.position = Position { x, y, z: 0.0 };
-        self
-    }
-
-    pub fn size(mut self, width: f32, height: f32) -> Self {
-        self.size = Size { width, height };
-        self
-    }
-
-    pub fn data_source(mut self, data_source: Option<DataSource<T>>) -> Self {
-        self.data_source = data_source;
-        self
-    }
-
-    pub fn build(self) -> Input<T> {
-        Input::new(self.position, self.size, self.content, self.data_source)
     }
 }
