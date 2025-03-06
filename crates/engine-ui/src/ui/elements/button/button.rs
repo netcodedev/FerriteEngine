@@ -22,6 +22,7 @@ impl Button {
             handle: UIElementHandle::new(),
 
             region: Region::new_with_offset(position, size, Offset::default()),
+            padding: Offset { x: 5.0, y: 1.0 },
 
             on_click,
             children: BTreeMap::new(),
@@ -158,7 +159,7 @@ impl UIElement for Button {
         self.region.offset = offset;
         self.plane.set_position(&self.region.position + &self.region.offset);
         for child in self.children.values_mut() {
-            child.set_offset(&self.region.offset + &self.region.position);
+            child.set_offset(&(&self.region.offset + &self.padding) + &self.region.position);
         }
     }
 

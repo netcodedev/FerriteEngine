@@ -161,7 +161,7 @@ impl AddEntityButton {
             }),
         );
         button.set_size(Size {
-            width: 40.0,
+            width: 18.0,
             height: 18.0,
         });
         Self {

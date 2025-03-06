@@ -54,7 +54,7 @@ impl Text {
 impl UIElement for Text {
     fn update(&mut self, _scene: &mut Scene) {
         self.text.set_content(&self.content);
-        self.text.prepare_render_at(self.region.position);
+        self.text.prepare_render_at(self.region.get_absolute_position());
         self.region.size = self.text.get_size();
     }
 

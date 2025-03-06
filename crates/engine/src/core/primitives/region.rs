@@ -26,4 +26,12 @@ impl Region {
             && y >= self.offset.y
             && y <= self.offset.y + self.size.height
     }
+
+    pub fn get_absolute_position(self) -> Position {
+        Position {
+            x: self.position.x + self.offset.x,
+            y: self.position.y + self.offset.y,
+            z: self.position.z,
+        }
+    }
 }

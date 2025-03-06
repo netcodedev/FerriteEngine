@@ -30,6 +30,8 @@ impl Panel {
         controls.set_direction(Direction::Horizontal);
         controls.set_offset(position.into());
 
+        title.set_position(&position + (8.0, 2.0, 3.0));
+
         let plane = PlaneBuilder::new()
             .position(position)
             .size(size)
@@ -114,6 +116,7 @@ impl Panel {
             width: self.region.size.width,
             height: 24.0,
         });
+        self.title.set_position(&self.region.position + (8.0, 4.0, 3.0));
     }
 }
 
