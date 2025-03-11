@@ -167,9 +167,8 @@ impl UIElement for Panel {
                 if self.is_collapsible && !self.is_moved && self.is_dragging {
                     self.is_open = !self.is_open;
                     if self.is_open {
-                        let content_size = self.content.get_size();
                         self.header_plane.border_radius = (0.0, 5.0, 0.0, 5.0);
-                        self.set_size(content_size + (0.0, 20.0));
+                        self.set_size(self.content.get_size() + (0.0, 20.0));
                     } else {
                         self.set_size(Size {
                             width: self.region.size.width,
@@ -216,11 +215,17 @@ impl UIElement for Panel {
 
     fn add_child(&mut self, child: Box<dyn UIElement>) {
         self.content.add_child(child);
+        if self.is_open {
+            self.set_size(self.content.get_size() + (0.0, 20.0));
+        }
     }
 
     fn add_child_to(&mut self, parent: UIElementHandle, child: Box<dyn UIElement>) {
         if self.content.contains_child(&parent) {
             self.content.add_child_to(parent, child);
+        }
+        if self.is_open {
+            self.set_size(self.content.get_size() + (0.0, 20.0));
         }
     }
 
