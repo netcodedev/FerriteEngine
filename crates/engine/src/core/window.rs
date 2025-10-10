@@ -1,4 +1,5 @@
 use glfw::{Context, GlfwReceiver};
+use std::ptr;
 
 pub struct Window {
     window: glfw::PWindow,
@@ -31,7 +32,11 @@ impl Window {
         // window.set_cursor_mode(glfw::CursorMode::Disabled);
         window.set_cursor_pos(0.0, 0.0);
 
-        gl::load_with(|symbol| window.get_proc_address(symbol) as *const _);
+        gl::load_with(|symbol| {
+            window
+                .get_proc_address(symbol)
+                .map_or(ptr::null(), |f| f as *const _)
+        });
         unsafe {
             gl::Enable(gl::MULTISAMPLE);
         }
