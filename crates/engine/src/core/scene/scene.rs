@@ -47,8 +47,12 @@ impl Scene {
         if let Some(shadow_fbo) = &self.shadow_fbo {
             if let Some(skylight) = self.get_component::<SkyLight>() {
                 let light_projection = skylight.get_projection();
+                unsafe {
+                    gl::ActiveTexture(gl::TEXTURE15);
+                    gl::BindTexture(gl::TEXTURE_2D, 0); // Unbind to prevent read/write feedback loop
+                }
                 shadow_fbo.bind();
-                window.clear_mask(gl::DEPTH_BUFFER_BIT);
+                window.clear_mask(gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT);
                 for entity in self.entities.iter() {
                     entity.render(self, &light_projection, parent_transform);
                 }
@@ -63,7 +67,7 @@ impl Scene {
             if let Some(shadow_fbo) = &self.shadow_fbo {
                 if let Some(texture) = &shadow_fbo.get_depth_texture() {
                     unsafe {
-                        gl::ActiveTexture(gl::TEXTURE0);
+                        gl::ActiveTexture(gl::TEXTURE15);
                     }
                     texture.bind();
                 }
@@ -73,10 +77,15 @@ impl Scene {
             }
         }
 
-        // Render Shadow Map
+        // Render Shadow Map Debug Views
         if let Some(shadow_fbo) = &self.shadow_fbo {
+            // Depth map on top right
             if let Some(texture) = &shadow_fbo.get_depth_texture() {
-                self.texture_renderer.render(texture);
+                self.texture_renderer.render(texture, 0.6, 0.5, 0.4, 0.5);
+            }
+            // Color map on bottom right
+            if let Some(texture) = shadow_fbo.get_color_texture() {
+                self.texture_renderer.render(texture, 0.6, 0.0, 0.4, 0.5);
             }
         }
     }

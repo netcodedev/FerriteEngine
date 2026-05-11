@@ -50,7 +50,7 @@ impl WorldLayer {
         scene.add_entity(entity);
 
         let mut skylight = Entity::new("skylight");
-        skylight.add_component(SkyLight::new((10.0, 60.0, 10.0)));
+        skylight.add_component(SkyLight::new((30.0, 20.0, 10.0)));
         scene.add_entity(skylight);
 
         let ui = UI::new();

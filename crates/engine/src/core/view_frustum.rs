@@ -88,4 +88,35 @@ impl ViewFrustum {
 
         result
     }
+
+    pub fn is_bounds_in_frustum_matrix(
+        view_projection: &cgmath::Matrix4<f32>,
+        bounds: ChunkBounds,
+    ) -> bool {
+        let clip: [Vector4<f32>; 8] = [
+            Vector4::new(bounds.min.0 as f32, bounds.min.1 as f32, bounds.min.2 as f32, 1.0),
+            Vector4::new(bounds.min.0 as f32, bounds.min.1 as f32, bounds.max.2 as f32, 1.0),
+            Vector4::new(bounds.min.0 as f32, bounds.max.1 as f32, bounds.min.2 as f32, 1.0),
+            Vector4::new(bounds.min.0 as f32, bounds.max.1 as f32, bounds.max.2 as f32, 1.0),
+            Vector4::new(bounds.max.0 as f32, bounds.min.1 as f32, bounds.min.2 as f32, 1.0),
+            Vector4::new(bounds.max.0 as f32, bounds.min.1 as f32, bounds.max.2 as f32, 1.0),
+            Vector4::new(bounds.max.0 as f32, bounds.max.1 as f32, bounds.min.2 as f32, 1.0),
+            Vector4::new(bounds.max.0 as f32, bounds.max.1 as f32, bounds.max.2 as f32, 1.0),
+        ];
+
+        for point in clip {
+            let point = view_projection * point;
+            if point.x <= point.w
+                && point.x >= -point.w
+                && point.y <= point.w
+                && point.y >= -point.w
+                && point.z <= point.w
+                && point.z >= -point.w
+            {
+                return true;
+            }
+        }
+
+        false
+    }
 }

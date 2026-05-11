@@ -5,6 +5,7 @@ pub struct FrameBuffer {
     width: u32,
     height: u32,
     depth_texture: Option<Texture>,
+    color_texture: Option<Texture>,
 }
 
 impl FrameBuffer {
@@ -13,13 +14,14 @@ impl FrameBuffer {
         unsafe {
             gl::GenFramebuffers(1, &mut id);
             gl::BindFramebuffer(gl::FRAMEBUFFER, id);
-            gl::DrawBuffer(gl::NONE);
+            gl::DrawBuffer(gl::COLOR_ATTACHMENT0);
         }
         Self {
             id,
             width,
             height,
             depth_texture: None,
+            color_texture: None,
         }
     }
 
@@ -35,6 +37,23 @@ impl FrameBuffer {
             );
         }
         self.depth_texture = Some(texture);
+        FrameBuffer::unbind();
+    }
+
+    pub fn append_color_texture(&mut self, texture: Texture) {
+        self.bind();
+        unsafe {
+            gl::FramebufferTexture2D(
+                gl::FRAMEBUFFER,
+                gl::COLOR_ATTACHMENT0,
+                gl::TEXTURE_2D,
+                texture.id,
+                0,
+            );
+            gl::DrawBuffer(gl::COLOR_ATTACHMENT0);
+            gl::ReadBuffer(gl::COLOR_ATTACHMENT0);
+        }
+        self.color_texture = Some(texture);
         FrameBuffer::unbind();
     }
 
@@ -67,6 +86,10 @@ impl FrameBuffer {
     pub fn get_depth_texture(&self) -> Option<&Texture> {
         self.depth_texture.as_ref()
     }
+    
+    pub fn get_color_texture(&self) -> Option<&Texture> {
+        self.color_texture.as_ref()
+    }
 }
 
 impl Drop for FrameBuffer {
@@ -85,7 +108,11 @@ impl ShadowFrameBuffer {
         let texture = Texture::new();
         texture.set_as_depth_texture(width, height);
         fbo.append_depth_texture(texture);
-        fbo.depth_only();
+        
+        let color_texture = Texture::new();
+        color_texture.set_as_color_texture(width, height);
+        fbo.append_color_texture(color_texture);
+        
         Self(fbo)
     }
 
@@ -95,5 +122,9 @@ impl ShadowFrameBuffer {
 
     pub fn get_depth_texture(&self) -> Option<&Texture> {
         self.0.get_depth_texture()
+    }
+    
+    pub fn get_color_texture(&self) -> Option<&Texture> {
+        self.0.get_color_texture()
     }
 }

@@ -82,6 +82,10 @@ impl Camera {
         self.relative_position
     }
 
+    pub fn get_eye_position(&self) -> Point3<f32> {
+        self.position + self.relative_position.to_vec()
+    }
+
     pub fn get_yaw(&self) -> Rad<f32> {
         self.yaw
     }

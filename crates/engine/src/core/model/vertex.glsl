@@ -33,5 +33,5 @@ void main()
     gl_Position = viewProjection * worldPosition;
     Normal = (BoneTransform * vec4(normals, 0.0)).xyz;
     TexCoords = texCoords;
-    toLightVector = lightPosition - worldPosition.xyz;
+    toLightVector = lightPosition;
 }

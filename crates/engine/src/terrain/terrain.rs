@@ -193,7 +193,8 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                     .map(|v| Point::from(*v))
                     .collect();
                 let position = chunk.get_position();
-                let collider = ColliderBuilder::trimesh(vertices, chunk.get_indices()).expect("Failed to create collider")
+                let collider = ColliderBuilder::trimesh(vertices, chunk.get_indices())
+                    .expect("Failed to create collider")
                     .translation(vector![position.x, position.y, position.z])
                     .build();
                 scene.physics_engine.add_collider(collider, None);
@@ -221,40 +222,45 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
     ) {
-        if let Some(camera_component) = scene.get_component::<CameraComponent>() {
-            if let Some(skylight) = scene.get_component::<SkyLight>() {
-                let light_position = skylight.get_position();
-                let light_projection = skylight.get_projection();
-                let camera = camera_component.get_camera();
-                let projection = camera_component.get_projection();
-                for (i, texture) in self.textures.iter().enumerate() {
-                    unsafe {
-                        gl::ActiveTexture(gl::TEXTURE0 + i as u32);
-                    }
-                    texture.bind();
+        if let Some(skylight) = scene.get_component::<SkyLight>() {
+            let light_position = skylight.get_position();
+            let light_projection = skylight.get_projection();
+            for (i, texture) in self.textures.iter().enumerate() {
+                unsafe {
+                    gl::ActiveTexture(gl::TEXTURE0 + i as u32);
                 }
-                self.shader.bind();
-                self.shader.set_uniform_3f(
-                    "lightPosition",
-                    light_position.x,
-                    light_position.y,
-                    light_position.z,
-                );
-                self.shader
-                    .set_uniform_mat4("lightProjection", &light_projection);
-                for chunk in entity.get_with_own_component::<T>() {
-                    if let Some(chunk) = chunk.get_component::<T>() {
-                        if ViewFrustum::is_bounds_in_frustum(projection, camera, chunk.get_bounds())
-                        {
-                            chunk.render(scene, entity, parent_transform, &view_projection);
-                        }
+                texture.bind();
+            }
+            self.shader.bind();
+            self.shader.set_uniform_3f(
+                "lightPosition",
+                light_position.x,
+                light_position.y,
+                light_position.z,
+            );
+            self.shader
+                .set_uniform_mat4("lightProjection", &light_projection);
+            self.shader.set_uniform_1i("shadowMap", 15);
+
+            let mut bound_fbo = 0;
+            unsafe {
+                gl::GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut bound_fbo);
+            }
+            self.shader
+                .set_uniform_1i("isShadowPass", if bound_fbo != 0 { 1 } else { 0 });
+
+            for chunk in entity.get_with_own_component::<T>() {
+                if let Some(chunk) = chunk.get_component::<T>() {
+                    if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_bounds())
+                    {
+                        chunk.render(scene, entity, parent_transform, &view_projection);
                     }
                 }
-                for (i, _) in self.textures.iter().enumerate() {
-                    unsafe {
-                        gl::ActiveTexture(gl::TEXTURE0 + i as u32);
-                        gl::BindTexture(gl::TEXTURE_2D, 0);
-                    }
+            }
+            for (i, _) in self.textures.iter().enumerate() {
+                unsafe {
+                    gl::ActiveTexture(gl::TEXTURE0 + i as u32);
+                    gl::BindTexture(gl::TEXTURE_2D, 0);
                 }
             }
         }

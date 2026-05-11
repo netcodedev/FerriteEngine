@@ -49,6 +49,27 @@ impl Texture {
         }
     }
 
+    pub fn set_as_color_texture(&self, width: u32, height: u32) {
+        self.bind();
+        unsafe {
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                gl::RGBA8 as GLint,
+                width as GLsizei,
+                height as GLsizei,
+                0,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                std::ptr::null(),
+            );
+        }
+    }
+
     pub fn load_from_file(&self, path: &Path) {
         self.bind();
         let img = image::open(path)
@@ -124,13 +145,13 @@ impl TextureRenderer {
         Self { shader }
     }
 
-    pub fn render(&self, texture: &Texture) {
+    pub fn render(&self, texture: &Texture, x: f32, y: f32, w: f32, h: f32) {
         #[rustfmt::skip]
         let vertices: Vec<f32> = vec![
-            0.5, 0.5, 0.0, 0.0,
-            1.0, 0.5, 1.0, 0.0,
-            1.0, 1.0, 1.0, 1.0,
-            0.5, 1.0, 0.0, 1.0,
+            x, y, 0.0, 0.0,
+            x + w, y, 1.0, 0.0,
+            x + w, y + h, 1.0, 1.0,
+            x, y + h, 0.0, 1.0,
         ];
         let indices = vec![0, 1, 2, 2, 3, 0];
 

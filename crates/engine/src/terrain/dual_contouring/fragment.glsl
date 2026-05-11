@@ -8,6 +8,7 @@ in vec4 fragPosLightSpace;
 out vec4 FragColor;
 
 uniform sampler2D shadowMap;
+uniform int isShadowPass;
 
 float ShadowCalculation(vec4 fragPosLightSpace, vec3 toLightVector, vec3 normal) {
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
@@ -31,6 +32,11 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 toLightVector, vec3 normal)
 }
 
 void main() {
+    if (isShadowPass == 1) {
+        FragColor = vec4(Color, 1.0);
+        return;
+    }
+
     vec3 unitNormal = normalize(Normal);
     vec3 normal = unitNormal;
 

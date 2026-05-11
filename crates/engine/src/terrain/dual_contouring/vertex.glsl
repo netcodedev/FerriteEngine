@@ -31,5 +31,5 @@ void main()
         Color = color;
     }
     fragPosLightSpace = lightProjection * worldPosition;
-    toLightVector = lightPosition - worldPosition.xyz;
+    toLightVector = lightPosition;
 }
