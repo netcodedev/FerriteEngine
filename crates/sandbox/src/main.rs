@@ -50,7 +50,7 @@ impl WorldLayer {
         scene.add_entity(entity);
 
         let mut skylight = Entity::new("skylight");
-        skylight.add_component(SkyLight::new((10.0, 600.0, 10.0)));
+        skylight.add_component(SkyLight::new((10.0, 60.0, 10.0)));
         scene.add_entity(skylight);
 
         let ui = UI::new();
@@ -59,7 +59,7 @@ impl WorldLayer {
         terrain_entity.add_component(Terrain::<DualContouringChunk>::new(2));
         terrain_entity.add_child(Player::new(
             &mut scene,
-            (0.0, 55.0, 0.0),
+            (0.0, 52.0, 0.0),
             create_animation_graph()?,
         )?);
 

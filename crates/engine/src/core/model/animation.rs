@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use russimp::scene::Scene;
+use russimp_ng::scene::Scene;
 
 use super::{Animation, Channel, Pose};
 
 impl Animation {
-    pub fn new(animation: &russimp::animation::Animation) -> Animation {
+    pub fn new(animation: &russimp_ng::animation::Animation) -> Animation {
         let mut channels = HashMap::<String, Channel>::new();
         for channel in &animation.channels {
             let channel = Channel::new(channel);

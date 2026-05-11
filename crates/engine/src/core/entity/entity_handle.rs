@@ -1,10 +1,10 @@
-use rand::Rng;
+use rand::prelude::*;
 
 use super::EntityHandle;
 
 impl EntityHandle {
     pub fn new() -> Self {
-        EntityHandle(rand::rng().random())
+        EntityHandle(rand::rng().random::<u64>())
     }
 
     pub fn from(id: u64) -> Self {

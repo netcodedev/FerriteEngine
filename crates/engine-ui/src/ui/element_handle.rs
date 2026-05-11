@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::prelude::*;
 use std::cmp::Ordering;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd)]

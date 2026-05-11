@@ -1,5 +1,5 @@
 use cgmath::{Quaternion, Vector3};
-use russimp::animation::NodeAnim;
+use russimp_ng::animation::NodeAnim;
 
 use super::{Channel, LocalTransform};
 

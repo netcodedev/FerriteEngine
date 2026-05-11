@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use cgmath::{Matrix4, Point3, Quaternion, Vector3};
-use russimp::{material::TextureType, scene::Scene};
+use russimp_ng::{material::TextureType, scene::Scene};
 
 use crate::core::renderer::{
     shader::{DynamicVertexArray, Shader},

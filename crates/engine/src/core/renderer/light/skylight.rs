@@ -33,20 +33,33 @@ impl SkyLight {
         }
     }
 
-    pub fn update_light_view(&mut self) {
+    pub fn update_light_view(&mut self, camera: &Camera, projection: &Projection) {
+        // Calculate the frustum center in world space
+        let camera_pos = camera.get_position();
+        let camera_rot = camera.calc_rotation_matrix();
+        let fov = projection.fovy.0;
+        let aspect = projection.aspect;
+        let near = projection.znear;
+        let far = SHADOW_DISTANCE;
+
+        let forward = camera_rot.transform_vector(Vector3::unit_z()).normalize();
+        let up = camera_rot.transform_vector(Vector3::unit_y()).normalize();
+        let right = forward.cross(up).normalize();
+
+        let nc = camera_pos + forward * near;
+        let fc = camera_pos + forward * far;
+
+        let far_height = 2.0 * (fov / 2.0).tan() * far;
+        let far_width = far_height * aspect;
+
+        // Frustum center is the center of the far plane
+        let center = fc;
+
+        // Light direction
         let light_direction = -self.position.to_vec().normalize();
-        let center = -self.shadow_box.get_center().to_vec();
-        let mut light_view: Matrix4<f32> = Matrix4::identity();
-        let pitch = Vector2::new(light_direction.x, light_direction.z)
-            .magnitude()
-            .acos();
-        light_view = light_view * Matrix4::from_angle_x(Rad(pitch));
-        let mut yaw = Deg((light_direction.x / light_direction.z).atan());
-        if light_direction.z > 0.0 {
-            yaw = yaw - Deg(180.0)
-        }
-        light_view = light_view * Matrix4::from_angle_y(-yaw);
-        self.light_view = light_view * Matrix4::from_translation(center);
+        let distance = SHADOW_DISTANCE;
+        let light_pos = center - light_direction * distance;
+        self.light_view = Matrix4::look_at_rh(light_pos, center, up);
     }
 
     pub fn get_position(&self) -> Point3<f32> {
@@ -64,9 +77,8 @@ impl Component for SkyLight {
         if let Some(camera_component) = scene.get_component::<CameraComponent>() {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();
-            self.shadow_box
-                .update(self.light_view, &camera, &projection);
-            self.update_light_view();
+            self.update_light_view(&camera, &projection);
+            self.shadow_box.update(self.light_view, &camera, &projection);
         }
     }
 
@@ -113,51 +125,70 @@ impl ShadowBox {
     fn update(&mut self, light_view: Matrix4<f32>, camera: &Camera, projection: &Projection) {
         self.light_view = light_view;
 
-        let camera_rotation = camera.calc_rotation_matrix();
-        let camera_position = camera.get_position();
-        self.update_widths_and_heights(projection.fovy, projection.aspect);
+        // Camera parameters
+        let camera_pos = camera.get_position();
+        let camera_rot = camera.calc_rotation_matrix();
+        let fov = projection.fovy.0;
+        let aspect = projection.aspect;
+        let near = projection.znear;
+        let far = SHADOW_DISTANCE;
 
-        let forward_vector = camera_rotation.transform_vector(Vector3::unit_z());
-        let to_far = forward_vector * SHADOW_DISTANCE;
-        let to_near = forward_vector * projection.znear;
-        let center_near = camera_position + to_near;
-        let center_far = camera_position + to_far;
+        // Calculate up, right, forward
+        let forward = camera_rot.transform_vector(Vector3::unit_z()).normalize();
+        let up = camera_rot.transform_vector(Vector3::unit_y()).normalize();
+        let right = forward.cross(up).normalize();
 
-        let points = self.calculate_frustum_vertices(
-            camera_rotation,
-            forward_vector,
-            center_near,
-            center_far,
-        );
-        let mut first = true;
-        for point in points {
-            if first {
-                self.min_x = point.x;
-                self.max_x = point.x;
-                self.min_y = point.y;
-                self.max_y = point.y;
-                self.min_z = point.z;
-                self.max_z = point.z;
-                first = false;
-                continue;
-            }
-            if point.x > self.max_x {
-                self.max_x = point.x;
-            } else if point.x < self.min_x {
-                self.min_x = point.x;
-            }
-            if point.y > self.max_y {
-                self.max_y = point.y;
-            } else if point.y < self.min_y {
-                self.min_y = point.y;
-            }
-            if point.z > self.max_z {
-                self.max_z = point.z;
-            } else if point.z < self.min_z {
-                self.min_z = point.z;
-            }
+        // Near and far plane centers
+        let nc = camera_pos + forward * near;
+        let fc = camera_pos + forward * far;
+
+        // Near and far plane sizes
+        let near_height = 2.0 * (fov / 2.0).tan() * near;
+        let near_width = near_height * aspect;
+        let far_height = 2.0 * (fov / 2.0).tan() * far;
+        let far_width = far_height * aspect;
+
+        // 8 frustum corners in world space
+        let frustum_corners = vec![
+            // Near plane
+            nc + (up * (near_height / 2.0)) - (right * (near_width / 2.0)), // ntl
+            nc + (up * (near_height / 2.0)) + (right * (near_width / 2.0)), // ntr
+            nc - (up * (near_height / 2.0)) - (right * (near_width / 2.0)), // nbl
+            nc - (up * (near_height / 2.0)) + (right * (near_width / 2.0)), // nbr
+            // Far plane
+            fc + (up * (far_height / 2.0)) - (right * (far_width / 2.0)), // ftl
+            fc + (up * (far_height / 2.0)) + (right * (far_width / 2.0)), // ftr
+            fc - (up * (far_height / 2.0)) - (right * (far_width / 2.0)), // fbl
+            fc - (up * (far_height / 2.0)) + (right * (far_width / 2.0)), // fbr
+        ];
+
+        // Transform all corners to light space
+        let light_space_corners: Vec<_> = frustum_corners
+            .iter()
+            .map(|corner| {
+                let v = light_view * Vector4::new(corner.x, corner.y, corner.z, 1.0);
+                v.truncate()
+            })
+            .collect();
+
+        // Find min/max bounds
+        let mut min = light_space_corners[0];
+        let mut max = light_space_corners[0];
+        for v in &light_space_corners[1..] {
+            min.x = min.x.min(v.x);
+            min.y = min.y.min(v.y);
+            min.z = min.z.min(v.z);
+            max.x = max.x.max(v.x);
+            max.y = max.y.max(v.y);
+            max.z = max.z.max(v.z);
         }
-        self.max_z += OFFSET;
+
+        self.min_x = min.x;
+        self.max_x = max.x;
+        self.min_y = min.y;
+        self.max_y = max.y;
+        self.min_z = min.z;
+        self.max_z = max.z + OFFSET;
 
         self.update_projection();
     }

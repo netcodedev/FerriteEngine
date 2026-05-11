@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3, Vector4, Zero};
-use russimp::{
+use russimp_ng::{
     material::{DataContent, TextureType},
     node::Node,
     scene::{PostProcess, Scene},
@@ -220,7 +220,7 @@ impl Model {
     fn get_child_bones(
         &self,
         node: &Rc<Node>,
-        bones: &Vec<russimp::bone::Bone>,
+        bones: &Vec<russimp_ng::bone::Bone>,
         offset_matrix: Matrix4<f32>,
     ) -> Option<Vec<Bone>> {
         if node.children.borrow().len() == 0 {

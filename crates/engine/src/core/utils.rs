@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use russimp::Matrix4x4;
+use russimp_ng::Matrix4x4;
 
 pub trait ToMatrix4 {
     fn to_matrix_4(&self) -> cgmath::Matrix4<f32>;
