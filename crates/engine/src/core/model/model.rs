@@ -85,7 +85,7 @@ impl Model {
                                 .iter()
                                 .map(|w| (w.vertex_id, w.weight))
                                 .collect(),
-                            children: self.get_child_bones(node, &mesh.bones, Matrix4::identity()),
+                            children: self.get_child_bones(node, &mesh.bones),
                             last_translation: Vector3::zero(),
                         });
                     }
@@ -132,11 +132,16 @@ impl Model {
             self.shader
                 .set_uniform_mat4("viewProjection", &camera_projection);
             if let Some(root_bone) = &mesh.root_bone {
-                let mut bone_transforms =
+                let bone_transforms =
                     Model::get_bone_transformations(root_bone, Matrix4::identity());
-                bone_transforms.sort_by(|a, b| a.0.cmp(&b.0));
-                let sorted_bone_transforms = bone_transforms.iter().map(|(_, m)| m);
-                let sorted: Vec<Matrix4<f32>> = Vec::from_iter(sorted_bone_transforms.cloned());
+                let max_id = bone_transforms.iter().map(|(id, _)| *id).max().unwrap_or(0);
+                let array_size = std::cmp::min(max_id + 1, 100);
+                let mut sorted = vec![Matrix4::identity(); array_size];
+                for (id, transform) in bone_transforms {
+                    if id < sorted.len() {
+                        sorted[id] = transform;
+                    }
+                }
                 self.shader
                     .set_uniform_mat4_array("boneTransforms", &sorted);
             }
@@ -221,39 +226,38 @@ impl Model {
         &self,
         node: &Rc<Node>,
         bones: &Vec<russimp_ng::bone::Bone>,
-        offset_matrix: Matrix4<f32>,
     ) -> Option<Vec<Bone>> {
         if node.children.borrow().len() == 0 {
             return None;
         }
         let mut children = Vec::<Bone>::new();
         for child in node.children.borrow().iter() {
-            if bones.iter().any(|b| b.name == child.name) {
-                for (id, bone) in bones.iter().enumerate() {
-                    if bone.name != child.name {
-                        continue;
-                    }
-                    children.push(Bone {
-                        id,
-                        name: bone.name.clone(),
-                        current_transform: offset_matrix * child.transformation.to_matrix_4(),
-                        offset_matrix: bone.offset_matrix.to_matrix_4(),
-                        weights: bone
-                            .weights
-                            .iter()
-                            .map(|w| (w.vertex_id, w.weight))
-                            .collect(),
-                        children: self.get_child_bones(child, bones, Matrix4::identity()),
-                        last_translation: Vector3::zero(),
-                    });
+            let mut bone_id = usize::MAX;
+            let mut bone_offset_matrix = Matrix4::identity();
+            let mut weights = Vec::new();
+
+            for (id, bone) in bones.iter().enumerate() {
+                if bone.name == child.name {
+                    bone_id = id;
+                    bone_offset_matrix = bone.offset_matrix.to_matrix_4();
+                    weights = bone
+                        .weights
+                        .iter()
+                        .map(|w| (w.vertex_id, w.weight))
+                        .collect();
+                    break;
                 }
-            } else if let Some(child_bones) = self.get_child_bones(
-                child,
-                bones,
-                offset_matrix * child.transformation.to_matrix_4(),
-            ) {
-                children.extend(child_bones);
             }
+
+            children.push(Bone {
+                id: bone_id,
+                name: child.name.clone(),
+                current_transform: child.transformation.to_matrix_4(),
+                offset_matrix: bone_offset_matrix,
+                weights,
+                children: self.get_child_bones(child, bones),
+                last_translation: Vector3::zero(),
+            });
         }
         Some(children)
     }
@@ -264,7 +268,11 @@ impl Model {
     ) -> Vec<(usize, Matrix4<f32>)> {
         let mut transformations = Vec::<(usize, Matrix4<f32>)>::new();
         let global_transformation = parent_transform * bone.current_transform;
-        transformations.push((bone.id, global_transformation * bone.offset_matrix));
+
+        if bone.id != usize::MAX {
+            transformations.push((bone.id, global_transformation * bone.offset_matrix));
+        }
+
         if let Some(children) = &bone.children {
             for child in children {
                 transformations

@@ -12,6 +12,9 @@ pub struct AnimationGraph {
     previous_state: Option<String>,
     transition_progress: f32,
     transition_speed: f32,
+    delta_progress: f32,
+    just_finished_transition: bool,
+    cumulative_translation_error: HashMap<String, cgmath::Vector3<f32>>,
 }
 
 pub struct State {

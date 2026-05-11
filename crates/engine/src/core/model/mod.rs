@@ -67,6 +67,8 @@ pub struct LocalTransform {
 pub struct Pose {
     transforms: HashMap<String, LocalTransform>,
     pub cycle_completed: bool,
+    pub transition_finished: bool,
+    pub translation_errors: HashMap<String, Vector3<f32>>,
 }
 
 #[derive(Clone)]

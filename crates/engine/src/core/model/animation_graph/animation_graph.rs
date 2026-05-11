@@ -14,15 +14,23 @@ impl AnimationGraph {
             previous_state: None,
             transition_progress: 1.0,
             transition_speed: 1.0,
+            delta_progress: 0.0,
+            just_finished_transition: false,
+            cumulative_translation_error: HashMap::new(),
         }
     }
 
     pub fn update(&mut self, delta_time: f32) {
-        self.transition_progress += delta_time * self.transition_speed;
-        if self.transition_progress > 1.0 {
+        self.delta_progress = delta_time * self.transition_speed;
+        self.transition_progress += self.delta_progress;
+        
+        self.just_finished_transition = false;
+        if self.transition_progress >= 1.0 && self.previous_state.is_some() {
             self.transition_progress = 1.0;
             self.previous_state = None;
+            self.just_finished_transition = true;
         }
+
         if let Some(previous_state) = &self.previous_state {
             if let Some(state) = self.states.get_mut(previous_state) {
                 state.update(delta_time);
@@ -37,6 +45,8 @@ impl AnimationGraph {
                         self.current_state = transitions.to_state.clone();
                         self.transition_progress = 0.0;
                         self.transition_speed = 1.0 / transitions.transition_time;
+                        self.cumulative_translation_error.clear();
+                        self.delta_progress = delta_time * self.transition_speed;
                         transition = true;
                         break;
                     }
@@ -62,7 +72,7 @@ impl AnimationGraph {
         self.current_state = name;
     }
 
-    pub fn get_pose(&self) -> Option<Pose> {
+    pub fn get_pose(&mut self) -> Option<Pose> {
         let mut final_pose: Option<Pose> = None;
         if let Some(state) = self.states.get(&self.current_state) {
             if let Some(new_pose) = state.get_pose() {
@@ -73,13 +83,31 @@ impl AnimationGraph {
             if let Some(state) = self.states.get(previous_state) {
                 if let Some(new_pose) = state.get_pose() {
                     if let Some(pose) = final_pose {
-                        final_pose =
-                            Some(pose.interpolate(&new_pose, 1.0 - self.transition_progress));
+                        let mut interpolated_pose =
+                            pose.interpolate(&new_pose, 1.0 - self.transition_progress);
+                        
+                        if self.transition_progress > 0.0 {
+                            for (key, transform_b) in &new_pose.transforms {
+                                if let Some(transform_a) = pose.transforms.get(key) {
+                                    let error = (transform_a.translation - transform_b.translation) * self.delta_progress;
+                                    let e_cum = self.cumulative_translation_error.entry(key.clone()).or_insert(cgmath::Vector3::new(0.0, 0.0, 0.0));
+                                    *e_cum += error;
+                                }
+                            }
+                        }
+                        interpolated_pose.translation_errors = self.cumulative_translation_error.clone();
+                        
+                        final_pose = Some(interpolated_pose);
                     } else {
                         final_pose = Some(new_pose);
                     }
                 }
             }
+        } else if self.just_finished_transition {
+            if let Some(pose) = &mut final_pose {
+                pose.transition_finished = true;
+            }
+            self.just_finished_transition = false;
         }
         final_pose
     }

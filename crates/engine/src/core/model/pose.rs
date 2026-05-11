@@ -7,9 +7,9 @@ use super::{LocalTransform, Pose};
 impl LocalTransform {
     pub fn interpolate(&self, other: &LocalTransform, factor: f32) -> LocalTransform {
         LocalTransform {
-            translation: (self.translation * factor) + (&other.translation * (1.0 - factor)),
+            translation: (self.translation * (1.0 - factor)) + (other.translation * factor),
             rotation: self.rotation.slerp(other.rotation, factor),
-            scale: (self.scale * factor) + (&other.scale * (1.0 - factor)),
+            scale: (self.scale * (1.0 - factor)) + (other.scale * factor),
         }
     }
 
@@ -30,6 +30,8 @@ impl Pose {
         Pose {
             transforms: HashMap::new(),
             cycle_completed: false,
+            transition_finished: false,
+            translation_errors: HashMap::new(),
         }
     }
 
@@ -39,6 +41,11 @@ impl Pose {
             if let Some(other_transform) = other.transforms.get(key) {
                 pose.add_transform(key.clone(), transform.interpolate(other_transform, factor));
             } else {
+                pose.add_transform(key.clone(), transform.clone());
+            }
+        }
+        for (key, transform) in &other.transforms {
+            if !self.transforms.contains_key(key) {
                 pose.add_transform(key.clone(), transform.clone());
             }
         }
