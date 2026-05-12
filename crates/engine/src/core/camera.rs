@@ -1,9 +1,7 @@
-use std::f32::consts::FRAC_PI_2;
-
 use cgmath::{
     perspective, EuclideanSpace, Euler, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3,
 };
-use glfw::{Action, CursorMode, Key};
+use glfw::{Action, Key};
 
 use super::utils::DataSource;
 
@@ -15,7 +13,6 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = Matrix4::new(
     0.0, 0.0, 0.0, 1.0,
 );
 
-const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
 #[derive(Debug)]
 pub struct Camera {
@@ -66,6 +63,12 @@ impl Camera {
 
     pub fn set_position<P: Into<Point3<f32>>>(&mut self, position: P) {
         self.position = position.into();
+        self.calc_matrix();
+    }
+
+    pub fn set_yaw_pitch(&mut self, yaw: Rad<f32>, pitch: Rad<f32>) {
+        self.yaw = yaw;
+        self.pitch = pitch;
         self.calc_matrix();
     }
 
@@ -149,15 +152,13 @@ pub struct CameraController {
     amount_backward: f32,
     amount_up: f32,
     amount_down: f32,
-    rotate_horizontal: f32,
-    rotate_vertical: f32,
     speed: DataSource<f32>,
-    sensitivity: f32,
-    is_active: bool,
+    /// Set by PlayerController each frame; when false this controller is a no-op.
+    pub is_free: bool,
 }
 
 impl CameraController {
-    pub fn new(speed: f32, sensitivity: f32) -> Self {
+    pub fn new(speed: f32, _sensitivity: f32) -> Self {
         Self {
             amount_left: 0.0,
             amount_right: 0.0,
@@ -165,11 +166,8 @@ impl CameraController {
             amount_backward: 0.0,
             amount_up: 0.0,
             amount_down: 0.0,
-            rotate_horizontal: 0.0,
-            rotate_vertical: 0.0,
             speed: DataSource::new(speed),
-            sensitivity,
-            is_active: false,
+            is_free: false,
         }
     }
 
@@ -190,136 +188,88 @@ impl CameraController {
 
     pub fn process_keyboard(
         &mut self,
-        window: &mut glfw::Window,
+        _window: &mut glfw::Window,
         event: &glfw::WindowEvent,
     ) -> bool {
+        if !self.is_free {
+            return false;
+        }
         match event {
-            glfw::WindowEvent::Key(Key::I | Key::Up, _, action, _) => {
-                let amount = match action {
+            glfw::WindowEvent::Key(Key::Up, _, action, _) => {
+                self.amount_forward = match action {
                     Action::Press => 1.0,
                     Action::Release => 0.0,
                     _ => return false,
                 };
-                self.amount_forward = amount;
                 true
             }
-            glfw::WindowEvent::Key(Key::K | Key::Down, _, action, _) => {
-                let amount = match action {
+            glfw::WindowEvent::Key(Key::Down, _, action, _) => {
+                self.amount_backward = match action {
                     Action::Press => 1.0,
                     Action::Release => 0.0,
                     _ => return false,
                 };
-                self.amount_backward = amount;
                 true
             }
-            glfw::WindowEvent::Key(Key::J | Key::Left, _, action, _) => {
-                let amount = match action {
+            glfw::WindowEvent::Key(Key::Left, _, action, _) => {
+                self.amount_left = match action {
                     Action::Press => 1.0,
                     Action::Release => 0.0,
                     _ => return false,
                 };
-                self.amount_left = amount;
                 true
             }
-            glfw::WindowEvent::Key(Key::L | Key::Right, _, action, _) => {
-                let amount = match action {
+            glfw::WindowEvent::Key(Key::Right, _, action, _) => {
+                self.amount_right = match action {
                     Action::Press => 1.0,
                     Action::Release => 0.0,
                     _ => return false,
                 };
-                self.amount_right = amount;
                 true
             }
             glfw::WindowEvent::Key(Key::Space, _, action, _) => {
-                let amount = match action {
+                self.amount_up = match action {
                     Action::Press => 1.0,
                     Action::Release => 0.0,
                     _ => return false,
                 };
-                self.amount_up = amount;
                 true
             }
             glfw::WindowEvent::Key(Key::LeftShift, _, action, _) => {
-                let amount = match action {
+                self.amount_down = match action {
                     Action::Press => 1.0,
                     Action::Release => 0.0,
                     _ => return false,
                 };
-                self.amount_down = amount;
-                true
-            }
-            glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
-                match window.get_cursor_mode() {
-                    CursorMode::Disabled => window.set_cursor_mode(CursorMode::Normal),
-                    CursorMode::Normal => window.set_cursor_mode(CursorMode::Disabled),
-                    _ => {}
-                }
-                self.is_active = !self.is_active;
                 true
             }
             _ => false,
         }
     }
 
-    pub fn process_mouse(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) {
-        match event {
-            glfw::WindowEvent::CursorPos(xpos, ypos) => match window.get_cursor_mode() {
-                CursorMode::Disabled => {
-                    if self.is_active {
-                        self.rotate_horizontal = *xpos as f32;
-                        self.rotate_vertical = *ypos as f32;
-
-                        if self.rotate_horizontal.abs() > 250.0 {
-                            self.rotate_horizontal = 0.0;
-                        }
-                        if self.rotate_vertical.abs() > 250.0 {
-                            self.rotate_vertical = 0.0;
-                        }
-
-                        window.set_cursor_pos(0.0, 0.0);
-                    }
-                }
-                _ => {}
-            },
-            glfw::WindowEvent::Scroll(_, y) => {
-                self.set_speed(self.speed.read() + (*y as f32 * 10.0));
-            }
-            _ => {}
+    pub fn process_mouse(&mut self, _window: &mut glfw::Window, event: &glfw::WindowEvent) {
+        if let glfw::WindowEvent::Scroll(_, y) = event {
+            self.set_speed(self.speed.read() + (*y as f32 * 10.0));
         }
     }
 
     pub fn update_camera(&mut self, camera: &mut Camera, delta_time: f32) {
-        // Move forward/backward and left/right
+        if !self.is_free {
+            return;
+        }
+
         let (yaw_sin, yaw_cos) = camera.yaw.0.sin_cos();
         let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
         let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
 
         let mut position = camera.relative_position;
-        let mut yaw = camera.yaw;
-        let mut pitch = camera.pitch;
-
+        let yaw = camera.yaw;
+        let pitch = camera.pitch;
         let speed = self.speed.read();
 
         position += forward * (self.amount_forward - self.amount_backward) * speed * delta_time;
         position += right * (self.amount_right - self.amount_left) * speed * delta_time;
-
-        // Move up/down. Since we don't use roll, we can just
-        // modify the y coordinate directly.
         position.y += (self.amount_up - self.amount_down) * speed * delta_time;
-
-        // Rotate
-        yaw += Rad(self.rotate_horizontal) * self.sensitivity * delta_time;
-        pitch += Rad(-self.rotate_vertical) * self.sensitivity * delta_time;
-
-        self.rotate_horizontal = 0.0;
-        self.rotate_vertical = 0.0;
-
-        // Keep the camera's angle from going too high/low.
-        if pitch < -Rad(SAFE_FRAC_PI_2) {
-            pitch = -Rad(SAFE_FRAC_PI_2);
-        } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
-            pitch = Rad(SAFE_FRAC_PI_2);
-        }
 
         camera.update(position, yaw, pitch);
     }
