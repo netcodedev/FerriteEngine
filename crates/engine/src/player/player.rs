@@ -21,6 +21,7 @@ use super::{BoneColliders, Player, PlayerController};
 
 const CAPSULE_HALF_HEIGHT: f32 = 0.5;
 const CAPSULE_RADIUS: f32 = 0.5;
+const JUMP_VELOCITY: f32 = 4.0;
 
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
@@ -78,6 +79,9 @@ impl PlayerController {
             backward: 0.0,
             left: 0.0,
             right: 0.0,
+            sprint: 0.0,
+            jump: 0.0,
+            jump_impulse_pending: false,
             dirty: false,
             rigid_body_handle,
             // Start facing roughly +Z (camera looks into the scene).
@@ -112,8 +116,7 @@ impl Component for PlayerController {
         // from_angle_y(θ) maps local +Z to world (sin θ, 0, cos θ).
         // Camera look direction = (cos yaw, 0, sin yaw).
         // We need sin(θ) = cos(yaw) → θ = π/2 - yaw.
-        let model_rotation: Quaternion<f32> =
-            Quaternion::from_angle_y(Rad(FRAC_PI_2) - self.yaw);
+        let model_rotation: Quaternion<f32> = Quaternion::from_angle_y(Rad(FRAC_PI_2) - self.yaw);
         entity.set_rotation(scene, model_rotation);
 
         // --- Animation inputs ---
@@ -123,6 +126,8 @@ impl Component for PlayerController {
                 anim.set_input("backward", self.backward);
                 anim.set_input("left", self.left);
                 anim.set_input("right", self.right);
+                anim.set_input("sprint", self.sprint);
+                anim.set_input("jump", self.jump);
             }
         }
 
@@ -148,6 +153,12 @@ impl Component for PlayerController {
             let rb = &scene.physics_engine.rigid_bodies[self.rigid_body_handle];
             rb.linvel().y
         };
+        let vy = if self.jump_impulse_pending {
+            self.jump_impulse_pending = false;
+            JUMP_VELOCITY
+        } else {
+            current_vy
+        };
         let hvel = if dt > 0.0 {
             world_rm / dt as f32
         } else {
@@ -155,16 +166,11 @@ impl Component for PlayerController {
         };
         {
             let rb = &mut scene.physics_engine.rigid_bodies[self.rigid_body_handle];
-            rb.set_linvel(
-                rapier3d::prelude::Vector::new(hvel.x, current_vy, hvel.z),
-                true,
-            );
+            rb.set_linvel(rapier3d::prelude::Vector::new(hvel.x, vy, hvel.z), true);
         }
 
         // --- Camera sync ---
-        let camera_component = scene
-            .get_component_mut::<CameraComponent>()
-            .unwrap();
+        let camera_component = scene.get_component_mut::<CameraComponent>().unwrap();
         camera_component.get_camera_controller_mut().is_free = self.is_free_camera;
 
         if !self.is_free_camera {
@@ -254,6 +260,31 @@ impl Component for PlayerController {
                 }
                 Action::Release => {
                     self.right = 0.0;
+                    self.dirty = true;
+                }
+                _ => {}
+            },
+            WindowEvent::Key(Key::LeftShift, _, action, _) if !self.is_free_camera => {
+                match action {
+                    Action::Press => {
+                        self.sprint = 1.0;
+                        self.dirty = true;
+                    }
+                    Action::Release => {
+                        self.sprint = 0.0;
+                        self.dirty = true;
+                    }
+                    _ => {}
+                }
+            }
+            WindowEvent::Key(Key::Space, _, action, _) if !self.is_free_camera => match action {
+                Action::Press => {
+                    self.jump = 1.0;
+                    self.jump_impulse_pending = true;
+                    self.dirty = true;
+                }
+                Action::Release => {
+                    self.jump = 0.0;
                     self.dirty = true;
                 }
                 _ => {}

@@ -12,6 +12,9 @@ pub struct PlayerController {
     backward: f32,
     left: f32,
     right: f32,
+    sprint: f32,
+    jump: f32,
+    jump_impulse_pending: bool,
     dirty: bool,
     rigid_body_handle: RigidBodyHandle,
     /// Player facing yaw (radians). Camera look direction = (cos yaw, 0, sin yaw).
