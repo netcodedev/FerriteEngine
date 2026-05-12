@@ -1,5 +1,5 @@
 use cgmath::{Matrix4, SquareMatrix};
-use glfw::{Glfw, WindowEvent};
+use glfw::{Action, Glfw, Key, WindowEvent};
 
 use crate::core::{
     entity::{
@@ -24,6 +24,7 @@ impl Scene {
             physics_engine: PhysicsEngine::new(),
             shadow_fbo: None,
             texture_renderer: TextureRenderer::new(),
+            show_shadow_debug: false,
         }
     }
 
@@ -78,14 +79,16 @@ impl Scene {
         }
 
         // Render Shadow Map Debug Views
-        if let Some(shadow_fbo) = &self.shadow_fbo {
-            // Depth map on top right
-            if let Some(texture) = &shadow_fbo.get_depth_texture() {
-                self.texture_renderer.render(texture, 0.6, 0.5, 0.4, 0.5);
-            }
-            // Color map on bottom right
-            if let Some(texture) = shadow_fbo.get_color_texture() {
-                self.texture_renderer.render(texture, 0.6, 0.0, 0.4, 0.5);
+        if self.show_shadow_debug {
+            if let Some(shadow_fbo) = &self.shadow_fbo {
+                // Depth map on top right
+                if let Some(texture) = &shadow_fbo.get_depth_texture() {
+                    self.texture_renderer.render(texture, 0.6, 0.5, 0.4, 0.5);
+                }
+                // Color map on bottom right
+                if let Some(texture) = shadow_fbo.get_color_texture() {
+                    self.texture_renderer.render(texture, 0.6, 0.0, 0.4, 0.5);
+                }
             }
         }
     }
@@ -100,6 +103,9 @@ impl Scene {
         window: &mut glfw::Window,
         event: &WindowEvent,
     ) {
+        if let WindowEvent::Key(Key::F10, _, Action::Press, _) = event {
+            self.show_shadow_debug = !self.show_shadow_debug;
+        }
         for entity in self.entities.iter_mut() {
             entity.handle_event(glfw, window, event);
         }

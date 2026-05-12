@@ -11,4 +11,5 @@ pub struct Scene {
     pub physics_engine: PhysicsEngine,
     shadow_fbo: Option<ShadowFrameBuffer>,
     texture_renderer: TextureRenderer,
+    show_shadow_debug: bool,
 }
