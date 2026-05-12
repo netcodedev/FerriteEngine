@@ -54,7 +54,8 @@ impl PhysicsEngine {
         }
     }
 
-    pub fn update(&mut self) {
+    pub fn update(&mut self, delta_time: f32) {
+        self.integration_parameters.dt = delta_time;
         self.physics_pipeline.step(
             self.gravity,
             &self.integration_parameters,

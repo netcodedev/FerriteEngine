@@ -33,7 +33,7 @@ impl Scene {
     }
 
     pub fn update(&mut self, delta_time: f64) {
-        self.physics_engine.update();
+        self.physics_engine.update((delta_time as f32).min(1.0 / 20.0));
         for i in 0..self.entities.len() {
             let mut entity = self.entities.remove(i);
             entity.update(self, delta_time);

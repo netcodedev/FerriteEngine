@@ -29,6 +29,9 @@ pub struct DebugController {
     wireframe: bool,
     vsync: bool,
     show_rays: bool,
+    show_colliders: bool,
+    f3_held: bool,
+    f3_used_as_modifier: bool,
     delta_time: f64,
 
     bounds: ChunkBounds,
@@ -53,6 +56,9 @@ impl DebugController {
             wireframe: false,
             vsync: true,
             show_rays: false,
+            show_colliders: false,
+            f3_held: false,
+            f3_used_as_modifier: false,
             delta_time: 0.0,
 
             bounds: ChunkBounds {
@@ -179,7 +185,7 @@ impl Component for DebugController {
             fps,
             self.delta_time * 1000.0
         ));
-        if self.debug_ui {
+        if self.debug_ui && self.show_colliders {
             // Cache trimesh geometry for any colliders we haven't seen yet.
             // Terrain is static so world-space positions are computed once.
             for (handle, collider) in scene.physics_engine.colliders.iter() {
@@ -265,7 +271,19 @@ impl Component for DebugController {
                 }
             }
             glfw::WindowEvent::Key(Key::F3, _, Action::Press, _) => {
-                self.debug_ui = !self.debug_ui;
+                self.f3_held = true;
+                self.f3_used_as_modifier = false;
+            }
+            glfw::WindowEvent::Key(Key::F3, _, Action::Release, _) => {
+                if !self.f3_used_as_modifier {
+                    self.debug_ui = !self.debug_ui;
+                }
+                self.f3_held = false;
+                self.f3_used_as_modifier = false;
+            }
+            glfw::WindowEvent::Key(Key::C, _, Action::Press, _) if self.f3_held => {
+                self.show_colliders = !self.show_colliders;
+                self.f3_used_as_modifier = true;
             }
             glfw::WindowEvent::Key(Key::F4, _, Action::Press, _) => {
                 self.show_rays = !self.show_rays;
@@ -327,7 +345,8 @@ impl Component for DebugController {
             );
 
             for entity in scene.get_entities_with_component::<ModelComponent>() {
-                let transform = Matrix4::from_translation(entity.get_position().to_vec());
+                let rot: Matrix4<f32> = entity.get_rotation().into();
+                let transform = Matrix4::from_translation(entity.get_position().to_vec()) * rot;
                 if let Some(model_component) = entity.get_component::<ModelComponent>() {
                     model_component
                         .get_model()
@@ -335,7 +354,11 @@ impl Component for DebugController {
                 }
             }
 
-            // Collider wireframes
+            // Collider wireframes (toggled separately with F3+C)
+            if !self.show_colliders {
+                return;
+            }
+
             let camera_pos = scene
                 .get_component::<camera_component::CameraComponent>()
                 .map(|cc| cc.get_camera().get_position())
