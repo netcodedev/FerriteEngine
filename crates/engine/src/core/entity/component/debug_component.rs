@@ -1,4 +1,7 @@
 use glfw::{Action, Glfw, Key};
+use rapier3d::prelude::{ColliderHandle, TypedShape};
+use std::collections::HashMap;
+use std::f32::consts::PI;
 
 use crate::{
     core::{
@@ -14,9 +17,12 @@ use crate::{
     },
     terrain::{dual_contouring::DualContouringChunk, ChunkBounds, Terrain, CHUNK_SIZE},
 };
-use cgmath::{Deg, EuclideanSpace, Matrix4, Point3, Vector3};
+use cgmath::{Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, Vector3};
 
 use super::model_component::ModelComponent;
+
+const CIRCLE_SEGMENTS: usize = 16;
+const TRIMESH_DRAW_DISTANCE: f32 = 96.0;
 
 pub struct DebugController {
     pub debug_ui: bool,
@@ -33,6 +39,11 @@ pub struct DebugController {
     chunk_min_text: Text,
     chunk_max_text: Text,
     triangle_count_text: Text,
+
+    // Pre-built per-collider geometry: (centroid, va, vb, vc) in world space.
+    // Terrain trimeshes are static so this is computed once per handle.
+    trimesh_cache:
+        HashMap<ColliderHandle, Vec<(Point3<f32>, Point3<f32>, Point3<f32>, Point3<f32>)>>,
 }
 
 impl DebugController {
@@ -55,9 +66,108 @@ impl DebugController {
             chunk_min_text: Text::new(Fonts::RobotoMono, 5, 70, 0, 16.0, String::from("")),
             chunk_max_text: Text::new(Fonts::RobotoMono, 5, 90, 0, 16.0, String::from("")),
             triangle_count_text: Text::new(Fonts::RobotoMono, 5, 110, 0, 16.0, String::from("")),
+
+            trimesh_cache: HashMap::new(),
         }
     }
 }
+
+// --- wireframe helpers ---
+
+fn seg(a: Point3<f32>, b: Point3<f32>) -> Line {
+    let dir = b - a;
+    let len = dir.magnitude();
+    Line {
+        position: a,
+        direction: if len > 0.001 {
+            dir / len
+        } else {
+            Vector3::new(0.0, 1.0, 0.0)
+        },
+        length: len,
+    }
+}
+
+fn apply_pose(
+    pos: &rapier3d::math::Vector,
+    rot: &rapier3d::math::Rotation,
+    local: Vector3<f32>,
+) -> Point3<f32> {
+    use cgmath::Rotation as _;
+    let q = cgmath::Quaternion::new(rot.w, rot.x, rot.y, rot.z);
+    let r = q.rotate_vector(local);
+    Point3::new(pos.x + r.x, pos.y + r.y, pos.z + r.z)
+}
+
+fn perp_basis(axis: Vector3<f32>) -> (Vector3<f32>, Vector3<f32>) {
+    let n = axis.normalize();
+    let right = if n.x.abs() < 0.9 {
+        n.cross(Vector3::new(1.0, 0.0, 0.0)).normalize()
+    } else {
+        n.cross(Vector3::new(0.0, 1.0, 0.0)).normalize()
+    };
+    (right, n.cross(right).normalize())
+}
+
+fn circle_lines(
+    center: Point3<f32>,
+    right: Vector3<f32>,
+    up: Vector3<f32>,
+    radius: f32,
+) -> Vec<Line> {
+    (0..CIRCLE_SEGMENTS)
+        .map(|i| {
+            let a = 2.0 * PI * i as f32 / CIRCLE_SEGMENTS as f32;
+            let b = 2.0 * PI * (i + 1) as f32 / CIRCLE_SEGMENTS as f32;
+            let pa = center + right * (radius * a.cos()) + up * (radius * a.sin());
+            let pb = center + right * (radius * b.cos()) + up * (radius * b.sin());
+            seg(pa, pb)
+        })
+        .collect()
+}
+
+fn ball_wires(pos: &rapier3d::math::Vector, radius: f32) -> Vec<Line> {
+    let c = Point3::new(pos.x, pos.y, pos.z);
+    let mut lines = Vec::new();
+    lines.extend(circle_lines(
+        c,
+        Vector3::new(1.0, 0.0, 0.0),
+        Vector3::new(0.0, 0.0, 1.0),
+        radius,
+    ));
+    lines.extend(circle_lines(
+        c,
+        Vector3::new(1.0, 0.0, 0.0),
+        Vector3::new(0.0, 1.0, 0.0),
+        radius,
+    ));
+    lines.extend(circle_lines(
+        c,
+        Vector3::new(0.0, 0.0, 1.0),
+        Vector3::new(0.0, 1.0, 0.0),
+        radius,
+    ));
+    lines
+}
+
+fn capsule_wires(a: Point3<f32>, b: Point3<f32>, r: f32) -> Vec<Line> {
+    let axis = (b - a).normalize();
+    let (right, up) = perp_basis(axis);
+    let mid = a + (b - a) * 0.5;
+
+    let mut lines = Vec::new();
+    lines.extend(circle_lines(a, right, up, r));
+    lines.extend(circle_lines(b, right, up, r));
+    lines.extend(circle_lines(mid, right, up, r));
+    for i in 0..4 {
+        let angle = PI * 0.5 * i as f32;
+        let offset = right * (r * angle.cos()) + up * (r * angle.sin());
+        lines.push(seg(a + offset, b + offset));
+    }
+    lines
+}
+
+// --- component impl ---
 
 impl Component for DebugController {
     fn update(&mut self, scene: &mut Scene, _: &mut Entity, delta_time: f64) {
@@ -70,6 +180,32 @@ impl Component for DebugController {
             self.delta_time * 1000.0
         ));
         if self.debug_ui {
+            // Cache trimesh geometry for any colliders we haven't seen yet.
+            // Terrain is static so world-space positions are computed once.
+            for (handle, collider) in scene.physics_engine.colliders.iter() {
+                if self.trimesh_cache.contains_key(&handle) {
+                    continue;
+                }
+                if let TypedShape::TriMesh(mesh) = collider.shape().as_typed_shape() {
+                    let pos = collider.translation();
+                    let rot = collider.rotation();
+                    let tris = mesh
+                        .triangles()
+                        .map(|tri| {
+                            let va =
+                                apply_pose(&pos, &rot, Vector3::new(tri.a.x, tri.a.y, tri.a.z));
+                            let vb =
+                                apply_pose(&pos, &rot, Vector3::new(tri.b.x, tri.b.y, tri.b.z));
+                            let vc =
+                                apply_pose(&pos, &rot, Vector3::new(tri.c.x, tri.c.y, tri.c.z));
+                            let centroid = va + (vb - va) * (1.0 / 3.0) + (vc - va) * (1.0 / 3.0);
+                            (centroid, va, vb, vc)
+                        })
+                        .collect();
+                    self.trimesh_cache.insert(handle, tris);
+                }
+            }
+
             if let Some(camera_component) =
                 scene.get_component::<camera_component::CameraComponent>()
             {
@@ -198,6 +334,89 @@ impl Component for DebugController {
                         .render_bones(view_projection, &transform);
                 }
             }
+
+            // Collider wireframes
+            let camera_pos = scene
+                .get_component::<camera_component::CameraComponent>()
+                .map(|cc| cc.get_camera().get_position())
+                .unwrap_or_else(|| Point3::new(0.0, 0.0, 0.0));
+
+            let mut collider_lines: Vec<Line> = Vec::new();
+            let mut terrain_lines: Vec<Line> = Vec::new();
+
+            for (handle, collider) in scene.physics_engine.colliders.iter() {
+                // Skip colliders on dynamic bodies — those are the main physics proxy
+                // (e.g. the player capsule). Bone capsules use kinematic bodies.
+                if let Some(parent_handle) = collider.parent() {
+                    if let Some(rb) = scene.physics_engine.rigid_bodies.get(parent_handle) {
+                        if rb.is_dynamic() {
+                            continue;
+                        }
+                    }
+                }
+
+                let pos = collider.translation();
+                let rot = collider.rotation();
+                match collider.shape().as_typed_shape() {
+                    TypedShape::Ball(ball) => {
+                        collider_lines.extend(ball_wires(&pos, ball.radius));
+                    }
+                    TypedShape::Capsule(capsule) => {
+                        let r = capsule.radius;
+                        let sa = capsule.segment.a;
+                        let sb = capsule.segment.b;
+                        let a = apply_pose(&pos, &rot, Vector3::new(sa.x, sa.y, sa.z));
+                        let b = apply_pose(&pos, &rot, Vector3::new(sb.x, sb.y, sb.z));
+                        collider_lines.extend(capsule_wires(a, b, r));
+                    }
+                    TypedShape::ConvexPolyhedron(poly) => {
+                        let pts = poly.points();
+                        for edge in poly.edges() {
+                            let i0 = edge.vertices[0] as usize;
+                            let i1 = edge.vertices[1] as usize;
+                            let va = apply_pose(
+                                &pos,
+                                &rot,
+                                Vector3::new(pts[i0].x, pts[i0].y, pts[i0].z),
+                            );
+                            let vb = apply_pose(
+                                &pos,
+                                &rot,
+                                Vector3::new(pts[i1].x, pts[i1].y, pts[i1].z),
+                            );
+                            collider_lines.push(seg(va, vb));
+                        }
+                    }
+                    TypedShape::TriMesh(_) => {
+                        if let Some(tris) = self.trimesh_cache.get(&handle) {
+                            for (centroid, va, vb, vc) in tris {
+                                if (*centroid - camera_pos).magnitude() > TRIMESH_DRAW_DISTANCE {
+                                    continue;
+                                }
+                                terrain_lines.push(seg(*va, *vb));
+                                terrain_lines.push(seg(*vb, *vc));
+                                terrain_lines.push(seg(*vc, *va));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Bone capsules in cyan (always on top so they show through the mesh).
+            // Terrain trimesh in green, depth-tested so it stays grounded visually.
+            LineRenderer::render_lines(
+                view_projection,
+                &collider_lines,
+                Vector3::new(0.0, 1.0, 1.0),
+                true,
+            );
+            LineRenderer::render_lines(
+                view_projection,
+                &terrain_lines,
+                Vector3::new(0.2, 0.8, 0.2),
+                false,
+            );
         }
     }
 }

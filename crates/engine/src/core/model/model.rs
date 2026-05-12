@@ -188,6 +188,54 @@ impl Model {
         );
     }
 
+    /// Returns (bone_name, parent_world_pos, bone_world_pos) for every bone, in world space.
+    /// `entity_transform` should be the entity's translation * rotation matrix.
+    pub fn get_bone_segments(
+        &self,
+        entity_transform: &Matrix4<f32>,
+    ) -> Vec<(String, Point3<f32>, Point3<f32>)> {
+        let root = entity_transform
+            * Matrix4::from_translation(self.position.to_vec())
+            * Matrix4::from_scale(self.scale);
+        let mut out = Vec::new();
+        for mesh in self.meshes.values() {
+            if let Some(bone) = &mesh.root_bone {
+                self.collect_bone_segments(bone, root, &mut out);
+            }
+        }
+        out
+    }
+
+    fn collect_bone_segments(
+        &self,
+        bone: &Bone,
+        parent_transform: Matrix4<f32>,
+        out: &mut Vec<(String, Point3<f32>, Point3<f32>)>,
+    ) {
+        use cgmath::Transform;
+        let bone_transform = parent_transform * bone.current_transform;
+        let parent_pos = parent_transform.transform_point(Point3::new(0.0, 0.0, 0.0));
+        let bone_pos = bone_transform.transform_point(Point3::new(0.0, 0.0, 0.0));
+        out.push((bone.name.clone(), parent_pos, bone_pos));
+        if let Some(children) = &bone.children {
+            for child in children {
+                self.collect_bone_segments(child, bone_transform, out);
+            }
+        }
+    }
+
+    pub fn get_vertices_scaled(&self) -> Vec<[f32; 3]> {
+        self.model
+            .meshes
+            .iter()
+            .flat_map(|mesh| {
+                mesh.vertices
+                    .iter()
+                    .map(|v| [v.x * self.scale, v.y * self.scale, v.z * self.scale])
+            })
+            .collect()
+    }
+
     pub fn reset_position(&mut self) -> Vector3<f32> {
         let position = self.position;
         self.position = Point3::new(0.0, 0.0, 0.0);

@@ -8,13 +8,12 @@ pub struct PhysicsEngine {
 
     physics_pipeline: PhysicsPipeline,
 
-    gravity: Vector<Real>,
+    gravity: Vector,
     integration_parameters: IntegrationParameters,
     island_manager: IslandManager,
     broad_phase: DefaultBroadPhase,
     narrow_phase: NarrowPhase,
     ccd_solver: CCDSolver,
-    query_pipeline: QueryPipeline,
 
     physics_hooks: (),
     physics_events: (),
@@ -22,7 +21,7 @@ pub struct PhysicsEngine {
 
 impl PhysicsEngine {
     pub fn new() -> Self {
-        let gravity = vector![0.0, -9.81, 0.0];
+        let gravity = Vector::new(0.0, -9.81, 0.0);
         let integration_parameters = IntegrationParameters::default();
         let physics_pipeline = PhysicsPipeline::new();
         let island_manager = IslandManager::new();
@@ -33,7 +32,6 @@ impl PhysicsEngine {
         let impulse_joints = ImpulseJointSet::new();
         let multibody_joints = MultibodyJointSet::new();
         let ccd_solver = CCDSolver::new();
-        let query_pipeline = QueryPipeline::new();
         let physics_hooks = ();
         let physics_events = ();
 
@@ -50,7 +48,6 @@ impl PhysicsEngine {
             broad_phase,
             narrow_phase,
             ccd_solver,
-            query_pipeline,
 
             physics_hooks,
             physics_events,
@@ -59,7 +56,7 @@ impl PhysicsEngine {
 
     pub fn update(&mut self) {
         self.physics_pipeline.step(
-            &self.gravity,
+            self.gravity,
             &self.integration_parameters,
             &mut self.island_manager,
             &mut self.broad_phase,
@@ -69,13 +66,12 @@ impl PhysicsEngine {
             &mut self.impulse_joints,
             &mut self.multibody_joints,
             &mut self.ccd_solver,
-            Some(&mut self.query_pipeline),
             &self.physics_hooks,
             &self.physics_events,
         );
     }
 
-    pub fn add_rigid_body(&mut self, rigid_body: RigidBody) -> RigidBodyHandle {
+    pub fn add_rigid_body(&mut self, rigid_body: rapier3d::dynamics::RigidBody) -> RigidBodyHandle {
         self.rigid_bodies.insert(rigid_body)
     }
 

@@ -146,6 +146,10 @@ impl Entity {
         self.position
     }
 
+    pub fn get_rotation(&self) -> Quaternion<f32> {
+        self.rotation
+    }
+
     pub fn set_position<P: Into<Point3<f32>>>(&mut self, scene: &mut Scene, position: P) {
         let position = position.into();
         self.position = position;
@@ -155,10 +159,8 @@ impl Entity {
     }
 
     pub fn set_rotation(&mut self, scene: &mut Scene, rotation: Quaternion<f32>) {
+        let _ = scene;
         self.rotation = rotation;
-        if let Some(rigid_body) = self.get_component_mut::<RigidBody>() {
-            rigid_body.set_rotation(scene, rotation);
-        }
     }
 
     pub fn child_count(&self) -> usize {

@@ -187,15 +187,15 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                     entity.child_count(),
                     chunk.get_position()
                 ));
-                let vertices: Vec<Point<f32>> = chunk
+                let vertices: Vec<Vector> = chunk
                     .get_vertices()
                     .iter()
-                    .map(|v| Point::from(*v))
+                    .map(|v| Vector::new(v[0], v[1], v[2]))
                     .collect();
                 let position = chunk.get_position();
                 let collider = ColliderBuilder::trimesh(vertices, chunk.get_indices())
                     .expect("Failed to create collider")
-                    .translation(vector![position.x, position.y, position.z])
+                    .translation(Vector::new(position.x, position.y, position.z))
                     .build();
                 scene.physics_engine.add_collider(collider, None);
                 chunk_entity.add_component(chunk);

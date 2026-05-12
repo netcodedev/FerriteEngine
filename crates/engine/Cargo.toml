@@ -16,6 +16,6 @@ libnoise = "1.1.2"
 log = "0.4.25"
 ndarray = "0.17.2"
 rand = "0.10.1"
-rapier3d = { version = "0.23.0", features = ["parallel"] }
+rapier3d = { version = "0.32.0", features = ["parallel"] }
 russimp-ng = { version = "3.2.1" }
 rusttype = { version = "0.9.3", features = ["gpu_cache"] }

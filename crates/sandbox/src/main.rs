@@ -26,9 +26,13 @@ use std::error::Error;
 
 fn main() {
     let mut application = Application::new(1280, 720, "Engine");
-    if let Ok(layer) = WorldLayer::new(1280, 720) {
-        application.add_layer(Box::new(layer));
-        application.start();
+    match WorldLayer::new(1280, 720) {
+        Ok(layer) => {
+            application.add_layer(Box::new(layer));
+            println!("Application started");
+            application.start();
+        }
+        Err(e) => eprintln!("Failed to initialize world: {e}"),
     }
 }
 
