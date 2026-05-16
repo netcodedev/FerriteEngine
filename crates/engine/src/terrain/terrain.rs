@@ -265,21 +265,29 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 }
             }
 
-            // Transparent pass — water and other overlays.
-            // Runs after every chunk's terrain is in the depth buffer so that
-            // adjacent chunks' landmass correctly occludes water quads.
-            for chunk in entity.get_with_own_component::<T>() {
-                if let Some(chunk) = chunk.get_component::<T>() {
-                    if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_bounds())
-                    {
-                        chunk.render_transparent(scene, view_projection, parent_transform);
-                    }
-                }
-            }
             for (i, _) in self.textures.iter().enumerate() {
                 unsafe {
                     gl::ActiveTexture(gl::TEXTURE0 + i as u32);
                     gl::BindTexture(gl::TEXTURE_2D, 0);
+                }
+            }
+        }
+    }
+
+    fn render_transparent(
+        &self,
+        scene: &Scene,
+        entity: &Entity,
+        view_projection: &Matrix4<f32>,
+        parent_transform: &Matrix4<f32>,
+    ) {
+        // Transparent pass — water and other overlays. Runs after every
+        // entity's opaque geometry is in the depth buffer (terrain, player,
+        // props), so water correctly depth-tests against all of them.
+        for chunk in entity.get_with_own_component::<T>() {
+            if let Some(chunk) = chunk.get_component::<T>() {
+                if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_bounds()) {
+                    Chunk::render_transparent(chunk, scene, view_projection, parent_transform);
                 }
             }
         }

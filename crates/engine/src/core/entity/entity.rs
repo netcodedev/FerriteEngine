@@ -46,6 +46,24 @@ impl Entity {
         }
     }
 
+    pub fn render_transparent(
+        &self,
+        scene: &Scene,
+        view_projection: &Matrix4<f32>,
+        parent_transform: Matrix4<f32>,
+    ) {
+        let transform = parent_transform
+            * Matrix4::from_translation(self.position.to_vec())
+            * Matrix4::from(self.rotation);
+        for component in self.components.iter() {
+            component.render_transparent(scene, self, view_projection, &transform);
+        }
+
+        for child in self.children.iter() {
+            child.render_transparent(scene, view_projection, transform);
+        }
+    }
+
     pub fn add_child(&mut self, child: Entity) {
         self.children.push(child);
     }

@@ -117,6 +117,12 @@ impl Scene {
             for entity in self.entities.iter() {
                 entity.render(self, &view_projection, parent_transform);
             }
+            // Transparent pass — runs after every entity's opaque geometry is
+            // in the depth buffer, so water with depth-write enabled correctly
+            // depth-tests against the player and other dynamic geometry.
+            for entity in self.entities.iter() {
+                entity.render_transparent(self, &view_projection, parent_transform);
+            }
         }
 
         // ── Debug overlay (F10) ───────────────────────────────────────────
@@ -143,6 +149,9 @@ impl Scene {
                 window.clear_mask(gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT);
                 for entity in self.entities.iter() {
                     entity.render(self, &vp, parent_transform);
+                }
+                for entity in self.entities.iter() {
+                    entity.render_transparent(self, &vp, parent_transform);
                 }
                 FrameBuffer::unbind();
                 window.reset_viewport();

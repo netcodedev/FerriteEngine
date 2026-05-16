@@ -17,6 +17,18 @@ pub trait Component: AsAny {
         _parent_transform: &Matrix4<f32>,
     ) {
     }
+    /// Second render phase. Runs after every entity's opaque `render` has
+    /// finished, so the depth buffer already contains all opaque geometry
+    /// (terrain, player, props). Use this for transparency that needs to
+    /// write depth without occluding the player or other dynamic geometry.
+    fn render_transparent(
+        &self,
+        _scene: &Scene,
+        _entity: &Entity,
+        _view_projection: &Matrix4<f32>,
+        _parent_transform: &Matrix4<f32>,
+    ) {
+    }
     fn handle_event(&mut self, glfw: &mut Glfw, window: &mut Window, event: &glfw::WindowEvent);
 }
 

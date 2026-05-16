@@ -369,7 +369,7 @@ impl Chunk for DualContouringChunk {
                         // of the terrain depth buffer, does not overwrite depth.
                         gl::Enable(gl::BLEND);
                         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-                        gl::DepthMask(gl::FALSE);
+                        gl::DepthMask(gl::TRUE);
                         gl::DepthFunc(gl::LESS);
                     }
                 }
