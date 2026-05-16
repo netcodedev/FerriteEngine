@@ -29,7 +29,6 @@ fn main() {
     match WorldLayer::new(1280, 720) {
         Ok(layer) => {
             application.add_layer(Box::new(layer));
-            println!("Application started");
             application.start();
         }
         Err(e) => eprintln!("Failed to initialize world: {e}"),
