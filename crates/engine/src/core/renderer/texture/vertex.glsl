@@ -1,6 +1,6 @@
 #version 460 core
-in vec2 position;
-in vec2 vertexTexCoord;
+layout(location = 0) in vec2 position;
+layout(location = 1) in vec2 vertexTexCoord;
 
 out vec2 texCoord;
 

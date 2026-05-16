@@ -23,6 +23,8 @@ impl Scene {
             entities: Vec::new(),
             physics_engine: PhysicsEngine::new(),
             shadow_fbo: None,
+            terrain_debug_fbo: None,
+            water_debug_fbo: None,
             texture_renderer: TextureRenderer::new(),
             show_shadow_debug: false,
         }
@@ -30,6 +32,45 @@ impl Scene {
 
     pub fn add_shadow_map(&mut self, width: u32, height: u32) {
         self.shadow_fbo = Some(ShadowFrameBuffer::new(width, height));
+    }
+
+    /// Create the camera-perspective debug FBOs used by F10.
+    /// `width`/`height` should match the window dimensions.
+    pub fn add_debug_maps(&mut self, width: u32, height: u32) {
+        self.terrain_debug_fbo = Some(ShadowFrameBuffer::new(width, height));
+        self.water_debug_fbo   = Some(ShadowFrameBuffer::new(width, height));
+    }
+
+    /// Returns whether the currently-bound framebuffer allows water rendering.
+    /// Water is allowed on the default framebuffer (FBO 0) and on the
+    /// dedicated water-debug FBO only.  All other FBOs (shadow map,
+    /// terrain-debug) should skip the transparent water pass.
+    pub fn is_water_render_allowed(&self) -> bool {
+        let mut bound: gl::types::GLint = 0;
+        unsafe { gl::GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut bound); }
+        let bound = bound as u32;
+        if bound == 0 {
+            return true;
+        }
+        if let Some(wfbo) = &self.water_debug_fbo {
+            if bound == wfbo.get_id() {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Returns true when rendering into the water depth-capture FBO.
+    /// In this mode `render_transparent` writes depth (DepthMask=TRUE,
+    /// GL_ALWAYS) instead of blending colour, so the depth texture shows
+    /// exactly where the water surface sits in clip-space.
+    pub fn is_water_depth_capture(&self) -> bool {
+        let mut bound: gl::types::GLint = 0;
+        unsafe { gl::GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut bound); }
+        let bound = bound as u32;
+        self.water_debug_fbo
+            .as_ref()
+            .map_or(false, |fbo| fbo.get_id() == bound)
     }
 
     pub fn update(&mut self, delta_time: f64) {
@@ -78,16 +119,62 @@ impl Scene {
             }
         }
 
-        // Render Shadow Map Debug Views
+        // ── Debug overlay (F10) ───────────────────────────────────────────
         if self.show_shadow_debug {
-            if let Some(shadow_fbo) = &self.shadow_fbo {
-                // Depth map on top right
-                if let Some(texture) = &shadow_fbo.get_depth_texture() {
-                    self.texture_renderer.render(texture, 0.6, 0.5, 0.4, 0.5);
+            // Retrieve the camera view-projection once.
+            let vp = self
+                .get_component::<CameraComponent>()
+                .map(|c| c.get_view_projection());
+
+            // ── Terrain depth capture (camera POV, no water) ─────────────
+            if let (Some(tfbo), Some(vp)) = (&self.terrain_debug_fbo, vp) {
+                tfbo.bind();
+                window.clear_mask(gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT);
+                for entity in self.entities.iter() {
+                    entity.render(self, &vp, parent_transform);
                 }
-                // Color map on bottom right
-                if let Some(texture) = shadow_fbo.get_color_texture() {
-                    self.texture_renderer.render(texture, 0.6, 0.0, 0.4, 0.5);
+                FrameBuffer::unbind();
+                window.reset_viewport();
+            }
+
+            // ── Water depth capture (camera POV, terrain depth + water) ──
+            if let (Some(wfbo), Some(vp)) = (&self.water_debug_fbo, vp) {
+                wfbo.bind();
+                window.clear_mask(gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT);
+                for entity in self.entities.iter() {
+                    entity.render(self, &vp, parent_transform);
+                }
+                FrameBuffer::unbind();
+                window.reset_viewport();
+            }
+
+            // ── 2 × 2 panel layout on the right half of the screen ───────
+            //
+            //   x = 0.5 … 0.75           x = 0.75 … 1.0
+            //  ┌────────────────────┬────────────────────┐  y = 0.5
+            //  │  terrain depth     │  shadow depth      │
+            //  │  (camera POV)      │  (light POV)       │
+            //  ├────────────────────┼────────────────────┤  y = 0.0
+            //  │  water depth       │  shadow colour     │
+            //  │  (camera POV)      │                    │
+            //  └────────────────────┴────────────────────┘
+            //
+            if let Some(tfbo) = &self.terrain_debug_fbo {
+                if let Some(tex) = tfbo.get_depth_texture() {
+                    self.texture_renderer.render_depth(tex, 0.5, 0.5, 0.25, 0.5);
+                }
+            }
+            if let Some(wfbo) = &self.water_debug_fbo {
+                if let Some(tex) = wfbo.get_depth_texture() {
+                    self.texture_renderer.render_depth(tex, 0.5, 0.0, 0.25, 0.5);
+                }
+            }
+            if let Some(sfbo) = &self.shadow_fbo {
+                if let Some(tex) = sfbo.get_depth_texture() {
+                    self.texture_renderer.render_depth(tex, 0.75, 0.5, 0.25, 0.5);
+                }
+                if let Some(tex) = sfbo.get_color_texture() {
+                    self.texture_renderer.render_color(tex, 0.75, 0.0, 0.25, 0.5);
                 }
             }
         }

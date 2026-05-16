@@ -1,6 +1,6 @@
 use std::sync::mpsc;
 
-use cgmath::Point3;
+use cgmath::{Matrix4, Point3};
 use glfw::MouseButton;
 
 use crate::core::{
@@ -10,6 +10,7 @@ use crate::core::{
         shader::{DynamicVertexArray, Shader, VertexAttributes},
         texture::Texture,
     },
+    scene::Scene,
 };
 
 pub const CHUNK_RADIUS: usize = 5;
@@ -40,6 +41,15 @@ pub trait Chunk {
     fn get_triangle_count(&self) -> usize;
     fn get_vertices(&self) -> Vec<[f32; 3]>;
     fn get_indices(&self) -> Vec<[u32; 3]>;
+
+    /// Optional transparent/overlay pass rendered after ALL chunks' opaque geometry.
+    /// Override this to render water, glass, etc. Default is a no-op.
+    fn render_transparent(
+        &self,
+        _scene: &Scene,
+        _view_projection: &Matrix4<f32>,
+        _parent_transform: &Matrix4<f32>,
+    ) {}
 }
 
 pub struct ChunkMesh<T: VertexAttributes> {

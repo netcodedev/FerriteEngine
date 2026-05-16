@@ -86,9 +86,13 @@ impl FrameBuffer {
     pub fn get_depth_texture(&self) -> Option<&Texture> {
         self.depth_texture.as_ref()
     }
-    
+
     pub fn get_color_texture(&self) -> Option<&Texture> {
         self.color_texture.as_ref()
+    }
+
+    pub fn get_id(&self) -> u32 {
+        self.id
     }
 }
 
@@ -123,8 +127,12 @@ impl ShadowFrameBuffer {
     pub fn get_depth_texture(&self) -> Option<&Texture> {
         self.0.get_depth_texture()
     }
-    
+
     pub fn get_color_texture(&self) -> Option<&Texture> {
         self.0.get_color_texture()
+    }
+
+    pub fn get_id(&self) -> u32 {
+        self.0.get_id()
     }
 }

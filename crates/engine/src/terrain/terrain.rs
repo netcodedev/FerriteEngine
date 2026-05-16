@@ -255,11 +255,24 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             self.shader
                 .set_uniform_1i("isShadowPass", if bound_fbo != 0 { 1 } else { 0 });
 
+            // Opaque pass — all terrain geometry
             for chunk in entity.get_with_own_component::<T>() {
                 if let Some(chunk) = chunk.get_component::<T>() {
                     if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_bounds())
                     {
                         chunk.render(scene, entity, parent_transform, &view_projection);
+                    }
+                }
+            }
+
+            // Transparent pass — water and other overlays.
+            // Runs after every chunk's terrain is in the depth buffer so that
+            // adjacent chunks' landmass correctly occludes water quads.
+            for chunk in entity.get_with_own_component::<T>() {
+                if let Some(chunk) = chunk.get_component::<T>() {
+                    if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_bounds())
+                    {
+                        chunk.render_transparent(scene, view_projection, parent_transform);
                     }
                 }
             }

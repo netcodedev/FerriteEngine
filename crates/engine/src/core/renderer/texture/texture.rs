@@ -145,13 +145,27 @@ impl TextureRenderer {
         Self { shader }
     }
 
+    pub fn render_depth(&self, texture: &Texture, x: f32, y: f32, w: f32, h: f32) {
+        self.render_inner(texture, x, y, w, h, true);
+    }
+
+    pub fn render_color(&self, texture: &Texture, x: f32, y: f32, w: f32, h: f32) {
+        self.render_inner(texture, x, y, w, h, false);
+    }
+
+    /// Kept for compatibility — defaults to colour mode.
     pub fn render(&self, texture: &Texture, x: f32, y: f32, w: f32, h: f32) {
+        self.render_inner(texture, x, y, w, h, false);
+    }
+
+    fn render_inner(&self, texture: &Texture, x: f32, y: f32, w: f32, h: f32, is_depth: bool) {
+        // Standard UV layout: (0,0) = bottom-left, (1,1) = top-right.
         #[rustfmt::skip]
         let vertices: Vec<f32> = vec![
-            x, y, 0.0, 0.0,
-            x + w, y, 1.0, 0.0,
-            x + w, y + h, 1.0, 1.0,
-            x, y + h, 0.0, 1.0,
+            x,       y,       0.0, 0.0,
+            x + w,   y,       1.0, 0.0,
+            x + w,   y + h,   1.0, 1.0,
+            x,       y + h,   0.0, 1.0,
         ];
         let indices = vec![0, 1, 2, 2, 3, 0];
 
@@ -192,12 +206,13 @@ impl TextureRenderer {
                 gl::FLOAT,
                 gl::FALSE,
                 4 * std::mem::size_of::<f32>() as GLsizei,
-                (indices.len() * std::mem::size_of::<f32>()) as *const GLvoid,
+                (2 * std::mem::size_of::<f32>()) as *const GLvoid,
             );
             gl::EnableVertexAttribArray(1);
             gl::ActiveTexture(gl::TEXTURE0);
             texture.bind();
             self.shader.bind();
+            self.shader.set_uniform_1i("isDepth", if is_depth { 1 } else { 0 });
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             gl::Enable(gl::BLEND);
             gl::Disable(gl::DEPTH_TEST);
