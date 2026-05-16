@@ -10,7 +10,7 @@ use crate::core::{
     scene::Scene,
 };
 
-const OFFSET: f32 = 50.0;
+const OFFSET: f32 = 150.0;
 const SHADOW_DISTANCE: f32 = 50.0;
 
 pub struct SkyLight {
