@@ -193,8 +193,14 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                     .map(|v| Vector::new(v[0], v[1], v[2]))
                     .collect();
                 let position = chunk.get_position();
-                let collider = ColliderBuilder::trimesh(vertices, chunk.get_indices())
-                    .expect("Failed to create collider")
+                let collider = ColliderBuilder::trimesh_with_flags(
+                    vertices,
+                    chunk.get_indices(),
+                    // FIX_INTERNAL_EDGES computes pseudo-normals on shared triangle edges,
+                    // preventing ghost-collision impulses that launch the player into the air.
+                    TriMeshFlags::FIX_INTERNAL_EDGES,
+                )
+                .expect("Failed to create collider")
                     .translation(Vector::new(position.x, position.y, position.z))
                     .build();
                 scene.physics_engine.add_collider(collider, None);

@@ -151,7 +151,9 @@ impl Component for PlayerController {
 
         let current_vy = {
             let rb = &scene.physics_engine.rigid_bodies[self.rigid_body_handle];
-            rb.linvel().y
+            // Clamp upward velocity: ghost collisions from trimesh edges can inject a large
+            // positive vy that gets preserved here and compounds across frames.
+            rb.linvel().y.min(JUMP_VELOCITY)
         };
         let vy = if self.jump_impulse_pending {
             self.jump_impulse_pending = false;
