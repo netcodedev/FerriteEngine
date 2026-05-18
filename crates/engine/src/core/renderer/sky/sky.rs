@@ -2,8 +2,13 @@ use cgmath::{Point3, Vector3};
 use gl::types::*;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
+use std::time::Instant;
 
 use crate::core::renderer::shader::Shader;
+
+lazy_static! {
+    static ref START: Instant = Instant::now();
+}
 
 pub struct SkyRenderer {
     shader: Shader,
@@ -61,7 +66,7 @@ impl SkyRenderer {
     /// any matrix inversion in the shader by reconstructing each ray as
     /// `forward + right * x_ndc * tanHalfFovX + up * y_ndc * tanHalfFovY`.
     pub fn render(
-        _camera_pos: Point3<f32>,
+        camera_pos: Point3<f32>,
         cam_forward: Vector3<f32>,
         cam_right: Vector3<f32>,
         cam_up: Vector3<f32>,
@@ -91,6 +96,14 @@ impl SkyRenderer {
                 sun_direction.z,
             );
             r.shader.set_uniform_1f("timeOfDay", time_of_day);
+            r.shader.set_uniform_3f(
+                "camPos",
+                camera_pos.x,
+                camera_pos.y,
+                camera_pos.z,
+            );
+            let t = START.elapsed().as_secs_f32();
+            r.shader.set_uniform_1f("uTime", t);
 
             gl::BindVertexArray(r.vao);
             gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
