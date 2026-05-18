@@ -16,8 +16,13 @@ void main()
     vec3 unitNormal = normalize(Normal * texture(texture_normals, TexCoords).rgb);
     vec3 unitToLightVector = normalize(toLightVector);
     float intensity = dot(unitNormal, unitToLightVector);
-    float brightness = max(intensity, 0.5);
-    vec3 diffuse = brightness * texture(texture_diffuse, TexCoords).rgb;
 
-    FragColor = vec4(diffuse, 1.0);
+    float sunAlt = unitToLightVector.y;
+    float dayFactor = smoothstep(-0.10, 0.20, sunAlt);
+    float ambient = mix(0.08, 0.5, dayFactor);
+    float diffuse = max(intensity, 0.0) * dayFactor;
+    float brightness = ambient + diffuse * 0.6;
+    vec3 color = brightness * texture(texture_diffuse, TexCoords).rgb;
+
+    FragColor = vec4(color, 1.0);
 }

@@ -46,7 +46,11 @@ impl WorldLayer {
         scene.add_shadow_map(4096, 4096);
         scene.add_debug_maps(width, height);
         let camera = Camera::new((0.0, 0.0, 0.0), Deg(0.0), Deg(0.0));
-        let projection: Projection = Projection::new(width, height, Deg(45.0), 0.1, 100.0);
+        // FOV and far plane chosen to match the look the engine had under the
+        // old projection: ~64° vertical FOV (vs nominal 45° before, which the
+        // broken wgpu adjustment was silently widening) and a 1000m far plane
+        // (the old matrix effectively extended the far clip to infinity).
+        let projection: Projection = Projection::new(width, height, Deg(64.0), 0.1, 1000.0);
         let camera_controller = CameraController::new(10.0, 1.0);
         let mut entity = Entity::new("camera");
         entity.add_component(CameraComponent::new(camera, projection, camera_controller));

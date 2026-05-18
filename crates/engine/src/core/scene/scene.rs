@@ -1,4 +1,4 @@
-use cgmath::{Matrix4, SquareMatrix};
+use cgmath::{InnerSpace, Matrix4, SquareMatrix, Vector3};
 use glfw::{Action, Glfw, Key, WindowEvent};
 
 use crate::core::{
@@ -10,6 +10,7 @@ use crate::core::{
     renderer::{
         framebuffer::{FrameBuffer, ShadowFrameBuffer},
         light::skylight::SkyLight,
+        sky::SkyRenderer,
         texture::TextureRenderer,
     },
     window::Window,
@@ -106,6 +107,34 @@ impl Scene {
         // Render Pass
         if let Some(camera) = self.get_component::<CameraComponent>() {
             let view_projection = camera.get_view_projection();
+
+            // Sky pass — runs before opaque geometry so terrain/water overdraw
+            // it naturally via the depth test. Depth write is disabled inside
+            // the renderer so the sky never blocks scene geometry.
+            if let Some(skylight) = self.get_component::<SkyLight>() {
+                let cam = camera.get_camera();
+                let proj = camera.get_projection();
+                let eye = cam.get_eye_position();
+                let (sin_p, cos_p) = cam.get_pitch().0.sin_cos();
+                let (sin_y, cos_y) = cam.get_yaw().0.sin_cos();
+                let forward = Vector3::new(cos_p * cos_y, sin_p, cos_p * sin_y).normalize();
+                let world_up = Vector3::unit_y();
+                let right = forward.cross(world_up).normalize();
+                let up = right.cross(forward).normalize();
+                let tan_half_y = (proj.fovy.0 * 0.5).tan();
+                let tan_half_x = tan_half_y * proj.aspect;
+                SkyRenderer::render(
+                    eye,
+                    forward,
+                    right,
+                    up,
+                    tan_half_x,
+                    tan_half_y,
+                    skylight.get_sun_direction(),
+                    skylight.get_time_of_day(),
+                );
+            }
+
             if let Some(shadow_fbo) = &self.shadow_fbo {
                 if let Some(texture) = &shadow_fbo.get_depth_texture() {
                     unsafe {

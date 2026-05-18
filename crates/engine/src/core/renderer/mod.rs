@@ -3,5 +3,6 @@ pub mod light;
 pub mod line;
 pub mod plane;
 pub mod shader;
+pub mod sky;
 pub mod text;
 pub mod texture;

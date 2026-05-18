@@ -13,21 +13,102 @@ use crate::core::{
 const OFFSET: f32 = 150.0;
 const SHADOW_DISTANCE: f32 = 50.0;
 
+/// Default real-time length of one in-game day, in seconds.
+const DEFAULT_DAY_LENGTH_SECONDS: f32 = 240.0;
+/// Sun radius used to position the directional light away from the scene
+/// origin. The exact value doesn't matter — only the direction is used for
+/// lighting — but keeping it large avoids precision issues in the shadow
+/// matrix when the light passes near the zenith.
+const SUN_DISTANCE: f32 = 200.0;
+
 pub struct SkyLight {
     position: Point3<f32>,
     light_view: Matrix4<f32>,
     shadow_box: ShadowBox,
+
+    /// Current time of day, in [0, 1). 0.0 == midnight, 0.5 == solar noon.
+    time_of_day: f32,
+    /// Seconds of real time per one full simulated day.
+    day_length_seconds: f32,
+    /// When true the cycle is frozen — manual F5/F6 steps still apply.
+    paused: bool,
 }
 
 impl SkyLight {
+    /// Construct a sky light. The initial direction is derived from the
+    /// supplied `position` vector (only its direction matters; magnitude is
+    /// normalised). The time-of-day defaults to morning (~8 AM).
     pub fn new<P: Into<Point3<f32>>>(position: P) -> Self {
-        let position = position.into();
+        let p: Point3<f32> = position.into();
+        // Recover an initial time-of-day from the seed position so a caller
+        // can still hint at "morning sun in the east" with `(30, 20, 10)`.
+        let dir = p.to_vec();
+        let initial_time = if dir.x.abs() + dir.y.abs() < 0.0001 {
+            8.0 / 24.0
+        } else {
+            // angle = time*2π - π/2  →  time = (atan2(y, x) + π/2) / 2π
+            let angle = dir.y.atan2(dir.x);
+            let mut t = (angle + std::f32::consts::FRAC_PI_2) / std::f32::consts::TAU;
+            if t < 0.0 {
+                t += 1.0;
+            }
+            t
+        };
+
         let light_view = Matrix4::identity();
-        Self {
-            position: position.clone(),
+        let mut sl = Self {
+            position: p,
             light_view,
             shadow_box: ShadowBox::new(light_view),
-        }
+            time_of_day: initial_time,
+            day_length_seconds: DEFAULT_DAY_LENGTH_SECONDS,
+            paused: false,
+        };
+        sl.position = Point3::from_vec(sl.compute_sun_direction() * SUN_DISTANCE);
+        sl
+    }
+
+    /// Returns the world-space unit vector pointing from the origin toward
+    /// the sun. At t=0.25 (sunrise) it points along +X; at t=0.5 (noon) it
+    /// points along +Y; at t=0.75 (sunset) it points along -X.
+    pub fn compute_sun_direction(&self) -> Vector3<f32> {
+        let angle = self.time_of_day * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+        Vector3::new(angle.cos(), angle.sin(), 0.0).normalize()
+    }
+
+    pub fn get_sun_direction(&self) -> Vector3<f32> {
+        self.compute_sun_direction()
+    }
+
+    pub fn get_time_of_day(&self) -> f32 {
+        self.time_of_day
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
+    pub fn toggle_paused(&mut self) {
+        self.paused = !self.paused;
+    }
+
+    /// Advance (or rewind) the clock by `delta` of a day. `delta = 1/24`
+    /// equals one hour. Wraps within [0, 1).
+    pub fn advance_time(&mut self, delta: f32) {
+        let mut t = self.time_of_day + delta;
+        t = t.rem_euclid(1.0);
+        self.time_of_day = t;
+        self.position = Point3::from_vec(self.compute_sun_direction() * SUN_DISTANCE);
+    }
+
+    /// (hours, minutes) in 24-hour clock representation.
+    pub fn get_clock(&self) -> (u32, u32) {
+        let total_minutes = (self.time_of_day * 24.0 * 60.0) as u32;
+        ((total_minutes / 60) % 24, total_minutes % 60)
     }
 
     pub fn update_light_view(&mut self, camera: &Camera, projection: &Projection) {
@@ -117,7 +198,12 @@ impl SkyLight {
 }
 
 impl Component for SkyLight {
-    fn update(&mut self, scene: &mut Scene, _: &mut Entity, _: f64) {
+    fn update(&mut self, scene: &mut Scene, _: &mut Entity, delta_time: f64) {
+        if !self.paused && self.day_length_seconds > 0.0 {
+            let dt_day = (delta_time as f32) / self.day_length_seconds;
+            self.advance_time(dt_day);
+        }
+
         if let Some(camera_component) = scene.get_component::<CameraComponent>() {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();

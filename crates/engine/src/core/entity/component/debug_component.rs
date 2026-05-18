@@ -10,6 +10,7 @@ use crate::{
             Entity,
         },
         renderer::{
+            light::skylight::SkyLight,
             line::{Line, LineRenderer},
             text::{Fonts, Text},
         },
@@ -42,6 +43,13 @@ pub struct DebugController {
     chunk_min_text: Text,
     chunk_max_text: Text,
     triangle_count_text: Text,
+    time_text: Text,
+
+    /// Pending time-of-day delta (in fractions of a day) accumulated from F5/F6
+    /// keypresses, applied in `update` where we have a `&mut Scene`.
+    pending_time_delta: f32,
+    /// Pending request to toggle the day/night cycle pause (F7).
+    pending_toggle_cycle: bool,
 
     // Pre-built per-collider geometry: (centroid, va, vb, vc) in world space.
     // Terrain trimeshes are static so this is computed once per handle.
@@ -72,6 +80,10 @@ impl DebugController {
             chunk_min_text: Text::new(Fonts::RobotoMono, 5, 70, 0, 16.0, String::from("")),
             chunk_max_text: Text::new(Fonts::RobotoMono, 5, 90, 0, 16.0, String::from("")),
             triangle_count_text: Text::new(Fonts::RobotoMono, 5, 110, 0, 16.0, String::from("")),
+            time_text: Text::new(Fonts::RobotoMono, 5, 130, 0, 16.0, String::from("")),
+
+            pending_time_delta: 0.0,
+            pending_toggle_cycle: false,
 
             trimesh_cache: HashMap::new(),
         }
@@ -179,12 +191,33 @@ impl Component for DebugController {
     fn update(&mut self, scene: &mut Scene, _: &mut Entity, delta_time: f64) {
         self.delta_time = delta_time;
 
+        // Apply pending sky/time mutations queued from the event handler.
+        if let Some(skylight) = scene.get_component_mut::<SkyLight>() {
+            if self.pending_toggle_cycle {
+                skylight.toggle_paused();
+                self.pending_toggle_cycle = false;
+            }
+            if self.pending_time_delta != 0.0 {
+                skylight.advance_time(self.pending_time_delta);
+                self.pending_time_delta = 0.0;
+            }
+        }
+
         let fps = 1.0 / self.delta_time;
         self.fps_text.set_content(&format!(
             "{:.2} FPS ({:.2}ms)",
             fps,
             self.delta_time * 1000.0
         ));
+
+        if self.debug_ui {
+            if let Some(skylight) = scene.get_component::<SkyLight>() {
+                let (h, m) = skylight.get_clock();
+                let suffix = if skylight.is_paused() { " (paused)" } else { "" };
+                self.time_text
+                    .set_content(&format!("Time: {:02}:{:02}{}", h, m, suffix));
+            }
+        }
         if self.debug_ui && self.show_colliders {
             // Cache trimesh geometry for any colliders we haven't seen yet.
             // Terrain is static so world-space positions are computed once.
@@ -288,6 +321,18 @@ impl Component for DebugController {
             glfw::WindowEvent::Key(Key::F4, _, Action::Press, _) => {
                 self.show_rays = !self.show_rays;
             }
+            // F5: step time backwards by one in-game hour (1/24 of a day).
+            glfw::WindowEvent::Key(Key::F5, _, Action::Press, _) => {
+                self.pending_time_delta -= 1.0 / 24.0;
+            }
+            // F6: step time forwards by one in-game hour.
+            glfw::WindowEvent::Key(Key::F6, _, Action::Press, _) => {
+                self.pending_time_delta += 1.0 / 24.0;
+            }
+            // F7: pause/resume the day/night cycle.
+            glfw::WindowEvent::Key(Key::F7, _, Action::Press, _) => {
+                self.pending_toggle_cycle = true;
+            }
             _ => {}
         }
     }
@@ -313,6 +358,7 @@ impl Component for DebugController {
             self.chunk_min_text.render();
             self.chunk_max_text.render();
             self.triangle_count_text.render();
+            self.time_text.render();
 
             let mut lines: Vec<Line> = Vec::new();
             let mut corner_lines: Vec<Line> = Vec::new();

@@ -44,9 +44,15 @@ void main() {
 
     vec3 unitToLightVector = normalize(toLightVector);
     float intensity = dot(normal, unitToLightVector);
+
+    // Sun altitude drives the whole day/night response.
+    float sunAlt = unitToLightVector.y;
+    float dayFactor = smoothstep(-0.10, 0.20, sunAlt);
+
     // Wrap lighting slightly so north-facing slopes aren't pitch-black
-    float diffuseFactor = max(intensity * 0.9 + 0.1, 0.0);
-    float ambient = 0.35;
+    float diffuseFactor = max(intensity * 0.9 + 0.1, 0.0) * dayFactor;
+    // Ambient floor drops to a faint moonlight at night.
+    float ambient = mix(0.05, 0.35, dayFactor);
     float shadow = ShadowCalculation(fragPosLightSpace, unitToLightVector, normal);
     float lit = ambient + (1.0 - shadow) * diffuseFactor;
     FragColor = vec4(lit * Color, 1.0);

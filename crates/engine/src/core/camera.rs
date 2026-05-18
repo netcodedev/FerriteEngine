@@ -5,13 +5,13 @@ use glfw::{Action, Key};
 
 use super::utils::DataSource;
 
-#[rustfmt::skip]
-pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = Matrix4::new(
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 0.5, 0.5,
-    0.0, 0.0, 0.0, 1.0,
-);
+// Previously this multiplied the perspective by a wgpu-style depth remap
+// matrix (z: [-1,1] → [0,1]). That matrix was authored row-major but cgmath's
+// Matrix4::new takes column-major args, so the 0.5s ended up in the wrong
+// cells and the resulting projection had a non-standard, distance-dependent
+// FOV. OpenGL natively maps NDC z [-1,1] to depth [0,1] via glDepthRange, so
+// the wgpu adjustment isn't needed here — using a plain perspective matrix
+// gives a correct, standards-compliant projection.
 
 
 #[derive(Debug)]
@@ -135,8 +135,7 @@ impl Projection {
     }
 
     fn calc_matrix(&mut self) {
-        self.matrix =
-            OPENGL_TO_WGPU_MATRIX * perspective(self.fovy, self.aspect, self.znear, self.zfar);
+        self.matrix = perspective(self.fovy, self.aspect, self.znear, self.zfar);
     }
 
     pub fn get_matrix(&self) -> Matrix4<f32> {
