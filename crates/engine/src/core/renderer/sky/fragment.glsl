@@ -15,6 +15,7 @@ uniform vec3 sunDirection; // normalized, world-space, points from origin toward
 uniform float timeOfDay;   // 0..1
 uniform vec3 camPos;
 uniform float uTime;       // monotonic seconds for wind drift
+uniform float uCoverage;   // 0..1 — fraction of sky covered in clouds
 
 float hash13(vec3 p) {
     p = fract(p * 0.1031);
@@ -70,84 +71,194 @@ float fbm(vec2 p, float t) {
     return s;
 }
 
-// Returns clouds layer color and alpha for the given view ray.
-// Uses a flat plane at altitude H above the camera so clouds appear in a
-// natural dome regardless of world scale. Two layers — dense low cumulus
-// plus thin wispy cirrus — for a more believable sky.
+// ── Volumetric cloud slab ────────────────────────────────────────────
+// Clouds live between CLOUD_BOTTOM and CLOUD_TOP (world-space metres above
+// the camera). The renderer raymarches through this slab, accumulating
+// density and lighting via Beer–Lambert transmittance.
+const float CLOUD_BOTTOM = 350.0;
+const float CLOUD_TOP    = 850.0;
+const int   MARCH_STEPS  = 48;
+const int   SUN_STEPS    = 4;
+const float SUN_STEP_LEN = 35.0;
+
+// Cheap 3D fbm specialised for cloud density. Built from the same 3D value
+// noise as `fbm`, but uses true 3D rotation of the sample point so detail
+// varies with altitude (giving towering cumulus shape instead of an
+// extruded 2D pattern).
+float cloudFbm(vec3 p, int octaves) {
+    float s = 0.0;
+    float a = 0.5;
+    float n = 0.0;
+    mat2 R = mat2(0.80, 0.60, -0.60, 0.80);
+    for (int i = 0; i < 6; i++) {
+        if (i >= octaves) break;
+        s += a * vnoise3(p);
+        n += a;
+        // Rotate xz and scale; offset z so octaves don't stack at same plane.
+        p.xz = R * p.xz * 2.03;
+        p.y  = p.y * 2.03 + 11.0;
+        a *= 0.5;
+    }
+    return s / max(n, 1e-4);
+}
+
+// Returns cloud density at world-space point `p` for the current time.
+// `cheap=true` uses fewer octaves — used during sun-lighting sub-march
+// where the inner detail doesn't visibly affect the result.
+float cloudDensity(vec3 p, bool cheap, float lod) {
+    float h = (p.y - CLOUD_BOTTOM) / (CLOUD_TOP - CLOUD_BOTTOM);
+    if (h < 0.0 || h > 1.0) return 0.0;
+
+    // Wind drift — slowly translate the whole field horizontally. (No
+    // y-axis time offset: a monotonic y-shift in noise space reads as
+    // clouds visibly falling, which is the wrong cue.)
+    vec3 wind = vec3(0.9, 0.0, 0.3) * uTime * 0.7;
+    vec3 q = (p - wind) * 0.0018;
+
+    // ── Large-scale weather modulation ──────────────────────────────────
+    // Very-low-freq noise that varies total density across the sky. Stays
+    // present at full coverage so an overcast sky shows thicker and
+    // thinner regions instead of one uniform plane.
+    float weather   = cloudFbm(q * 0.30 + 3.1, 2);
+    float weatherMod = mix(0.35, 1.0, smoothstep(0.30, 0.85, weather));
+
+    // ── Vertical envelope with noisy bottom ────────────────────────────
+    // Modulating the bottom edge by mid-freq noise creates dangling tufts
+    // (mammatus-style) so the underside isn't a flat plane.
+    float bottomNoise = cloudFbm(q * 1.6 + 31.0, 2);
+    float bottomEdge  = smoothstep(0.0, mix(0.08, 0.32, bottomNoise), h);
+    float topEdge     = smoothstep(1.0, 0.55, h);
+    float vshape      = bottomEdge * topEdge;
+
+    // Distance LOD — drop noise octaves hard once the sample is too far
+    // away for the detail to span more than a pixel. Stops distant
+    // clouds from aliasing into per-pixel sparkle.
+    int baseOct  = cheap ? 3 : 5;
+    int detailOct = cheap ? 2 : 3;
+    baseOct   = max(1, baseOct   - int(lod * 4.0));
+    detailOct = max(1, detailOct - int(lod * 3.0));
+
+    float base = cloudFbm(q, baseOct);
+
+    // Coverage threshold — 0 pushes cutoff above the noise max (clear),
+    // 1 pushes it below the min (overcast).
+    float cov = clamp(uCoverage, 0.0, 1.0);
+    float cutoff = mix(1.05, -0.10, cov);
+    float d = max(base - cutoff, 0.0);
+
+    // ── Detail erosion ──────────────────────────────────────────────────
+    // Multiplicative high-freq carving so even fully-overcast regions
+    // show billowy texture instead of a smooth fill. Strength fades with
+    // distance so we don't carve sub-pixel features.
+    float erode = cloudFbm(q * 4.5 + 17.0, detailOct);
+    float erodeAmt = mix(0.30, 0.90, lod);
+    d *= mix(erodeAmt, 1.0, erode);
+
+    return d * vshape * weatherMod * 5.0;
+}
+
+// Raymarch the cloud slab along view ray `rd` starting at camera `ro`.
+// Returns scattered colour (rgb) and alpha (1 - transmittance).
 vec4 sampleClouds(vec3 dir, float dayFactor, vec3 baseSky) {
-    // Below horizon — no clouds.
+    // Below horizon — slab is above camera, ray never enters.
     if (dir.y < 0.02) return vec4(0.0);
 
-    vec3 wind = vec3(1.0, 0.0, 0.3);
+    // Slab entry/exit. Camera is assumed below the slab in this scene.
+    float tEnter = (CLOUD_BOTTOM - camPos.y) / dir.y;
+    float tExit  = (CLOUD_TOP    - camPos.y) / dir.y;
+    if (camPos.y > CLOUD_BOTTOM) tEnter = max(0.0, tEnter);
+    if (camPos.y > CLOUD_TOP)    return vec4(0.0);
+    if (tExit  <= 0.0) return vec4(0.0);
+    tEnter = max(tEnter, 0.0);
 
-    // Morph rates: how fast the noise pattern itself evolves (in addition
-    // to translating with the wind). Slow enough that individual clouds
-    // visibly persist for ~30s but clearly build and dissipate over time.
-    float morphLow  = uTime * 0.030;
-    float morphHigh = uTime * 0.018;
+    // Cap total march distance so grazing rays don't blow out step count.
+    float maxDist = 9000.0;
+    float marchLen = min(tExit - tEnter, maxDist);
+    float stepLen  = marchLen / float(MARCH_STEPS);
 
-    // Slowly-oscillating coverage — weather "fronts" passing through.
-    float coverageBase = 0.52;
-    float coverage = coverageBase + 0.08 * sin(uTime * 0.015);
+    // Per-pixel ray offset — dithers banding from low step count. The
+    // hash is intentionally *not* time-varying: a frame-to-frame stable
+    // dither hides ringing without flickering, while a time-varying one
+    // requires TAA to average out and looks like crawling noise here.
+    // Attenuate the jitter amplitude for grazing rays where each step
+    // covers a huge swath of cloud and the offset creates per-pixel
+    // density variance instead of just hiding banding.
+    float jitter = hash12(gl_FragCoord.xy);
+    float startLod = clamp(tEnter / 4000.0, 0.0, 1.0);
+    float jitterScale = mix(1.0, 0.15, startLod);
+    vec3 pos = camPos + dir * (tEnter + stepLen * jitter * jitterScale);
 
-    // ── Low cumulus layer ─────────────────────────────────────────────
-    float H1 = 380.0;
-    float t1 = H1 / dir.y;
-    vec3 p1 = camPos + dir * t1;
-    vec2 uv1 = p1.xz * 0.0011 + wind.xz * uTime * 0.0009;
-    float n1 = fbm(uv1, morphLow);
-    // Detail break-up — subtract a higher-frequency layer so edges aren't
-    // smooth blobs but have wispy detail.
-    float d1 = fbm(uv1 * 3.7 + 5.2, morphLow * 2.5);
-    n1 = n1 - 0.35 * d1;
-
-    float c1 = smoothstep(coverage, coverage + 0.22, n1);
-    // Distance fade — far clouds dissolve into haze near the horizon.
-    float horiz1 = smoothstep(0.02, 0.18, dir.y);
-    c1 *= horiz1;
-
-    // ── High cirrus layer ─────────────────────────────────────────────
-    float H2 = 900.0;
-    float t2 = H2 / dir.y;
-    vec3 p2 = camPos + dir * t2;
-    vec2 uv2 = p2.xz * 0.0005 + wind.xz * uTime * 0.0004;
-    // Cirrus: anisotropic stretched noise — sample with squashed Y to get
-    // streak-like patterns instead of cotton balls.
-    float n2 = fbm(vec2(uv2.x, uv2.y * 4.0) + 17.0, morphHigh);
-    float c2 = smoothstep(0.55, 0.78, n2) * 0.45;
-    c2 *= smoothstep(0.02, 0.25, dir.y);
-
-    // ── Lighting ──────────────────────────────────────────────────────
-    // Cheap self-shadow: sample density a step toward the sun and use Beer's
-    // law for transmittance. Gives clouds a sun-facing bright side and a
-    // shaded interior.
-    vec2 sunUV = uv1 + vec2(sunDirection.x, sunDirection.z) * 0.03;
-    float sn = fbm(sunUV, morphLow) - 0.35 * fbm(sunUV * 3.7 + 5.2, morphLow * 2.5);
-    float sunDensity = max(0.0, sn - coverage);
-    float transmit = exp(-3.5 * sunDensity);
-
+    // Pre-compute lighting parameters.
     vec3 sunCol = mix(vec3(1.0, 0.55, 0.30), vec3(1.0, 0.97, 0.90),
                       smoothstep(0.0, 0.25, sunDirection.y));
     vec3 ambient = mix(vec3(0.20, 0.22, 0.28), vec3(0.78, 0.82, 0.90), dayFactor);
+    sunCol  *= mix(vec3(0.08, 0.10, 0.16), vec3(1.0), dayFactor);
+    ambient *= mix(vec3(0.30, 0.35, 0.45), vec3(1.0), dayFactor);
 
-    // Forward-scatter silver lining when looking near the sun.
+    // Henyey-Greenstein-ish phase: strong forward scatter creates the
+    // "silver lining" when looking near the sun.
     float vDotL = max(dot(dir, sunDirection), 0.0);
-    float forward = pow(vDotL, 8.0) * 0.6 + pow(vDotL, 32.0) * 0.4;
+    float phase = 0.5 + 0.5 * vDotL
+                + 0.8 * pow(vDotL, 8.0)
+                + 0.4 * pow(vDotL, 32.0);
 
-    vec3 lit = ambient * (0.5 + 0.5 * transmit)
-             + sunCol * transmit * (0.6 + forward);
+    float transmittance = 1.0;
+    vec3  scatter = vec3(0.0);
 
-    // At night, clouds are dark silhouettes against the starfield.
-    lit *= mix(vec3(0.08, 0.10, 0.16), vec3(1.0), dayFactor);
+    // Reciprocal of the far distance — used to compute per-sample LOD.
+    // Smaller value pushes LOD into effect sooner, smoothing distant
+    // samples by dropping fbm octaves earlier.
+    float invFar = 1.0 / 4500.0;
 
-    // Compose: low layer over high layer.
-    float a1 = clamp(c1, 0.0, 1.0);
-    float a2 = clamp(c2 * (1.0 - a1), 0.0, 1.0);
-    float alpha = a1 + a2;
-    vec3 col = (lit * a1 + mix(baseSky, lit, 0.6) * a2);
-    if (alpha > 0.0) col /= max(alpha, 1e-4);
+    for (int i = 0; i < MARCH_STEPS; i++) {
+        float distAlong = float(i) * stepLen;
+        float lod = clamp(distAlong * invFar, 0.0, 1.0);
+        float d = cloudDensity(pos, false, lod);
+        if (d > 0.001) {
+            // Sun visibility — short march toward the sun summing density.
+            float sunOptical = 0.0;
+            vec3  lp = pos;
+            float lStep = SUN_STEP_LEN;
+            for (int j = 0; j < SUN_STEPS; j++) {
+                lp += sunDirection * lStep;
+                sunOptical += cloudDensity(lp, true, lod) * lStep;
+                lStep *= 1.6;  // exponentially-growing steps cover more sky cheaply
+            }
+            float sunT = exp(-sunOptical * 0.85);
 
-    return vec4(col, alpha);
+            // Sky occlusion — a single probe well above the sample. If the
+            // cloud is small the probe lands in clear air (no darkening);
+            // if it's a tall body the probe is still inside cloud and the
+            // underside darkens. Avoids the saturation problems of a
+            // multi-step optical-depth integral with this density scale.
+            float dAbove = cloudDensity(pos + vec3(0.0, 250.0, 0.0), true, lod);
+            float occ    = clamp(dAbove * 0.30, 0.0, 0.55);
+            vec3  ambHere = ambient * (1.0 - occ);
+
+            // Mild powder term — only attenuates the very thinnest wisps,
+            // leaving most of the cloud's sunlit response intact.
+            float powder = mix(0.65, 1.0, 1.0 - exp(-d * 4.0));
+
+            vec3 lit = sunCol * sunT * phase * powder + ambHere;
+
+            // Beer–Lambert absorption for this segment.
+            float segOptical = d * stepLen;
+            float segAlpha   = 1.0 - exp(-segOptical);
+
+            scatter      += transmittance * lit * segAlpha;
+            transmittance *= 1.0 - segAlpha;
+
+            if (transmittance < 0.01) break;
+        }
+        pos += dir * stepLen;
+    }
+
+    float alpha = 1.0 - transmittance;
+    // Horizon fade — distant grazing rays dissolve into haze. A wide
+    // fade range removes the band of per-pixel sparkle right above the
+    // horizon where cloud detail is sub-pixel.
+    alpha *= smoothstep(0.02, 0.35, dir.y);
+    return vec4(scatter, alpha);
 }
 
 void main() {
@@ -232,7 +343,11 @@ void main() {
         // be sampled consistently every frame.
         float shape = 1.0 - smoothstep(0.06, 0.16, dist);
         float horizonFade = smoothstep(0.0, 0.12, dir.y);
-        sky += vec3(1.0, 1.0, 0.95) * starMask * shape * bright * starNight * horizonFade;
+        // Attenuate by cloud opacity along this ray — opaque cloud cover
+        // hides stars behind it.
+        float cloudHide   = 1.0 - clouds.a;
+        sky += vec3(1.0, 1.0, 0.95) * starMask * shape * bright
+             * starNight * horizonFade * cloudHide;
     }
 
     FragColor = vec4(sky, 1.0);

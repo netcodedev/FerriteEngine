@@ -8,6 +8,7 @@ out vec3 Normal;
 out vec3 Color;
 out vec3 toLightVector;
 out vec4 fragPosLightSpace;
+out vec3 WorldPos;
 
 uniform vec3 lightPosition;
 uniform vec3 chunkWorldOffset;
@@ -86,4 +87,5 @@ void main()
     // matches exactly what the shadow pass wrote into the depth map.
     fragPosLightSpace = lightProjection * vec4(chunkWorldOffset + position, 1.0);
     toLightVector = lightPosition;
+    WorldPos = chunkWorldOffset + position;
 }

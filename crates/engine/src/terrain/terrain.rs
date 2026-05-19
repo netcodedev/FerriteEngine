@@ -2,11 +2,17 @@ use std::{
     cmp::max,
     sync::mpsc::{self, Sender},
     thread,
+    time::Instant,
 };
 
 use cgmath::{EuclideanSpace, Matrix4, Point3};
 use glfw::MouseButton;
+use lazy_static::lazy_static;
 use rapier3d::prelude::*;
+
+lazy_static! {
+    static ref START: Instant = Instant::now();
+}
 
 use crate::core::{
     entity::{
@@ -247,6 +253,14 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             self.shader
                 .set_uniform_mat4("lightProjection", &light_projection);
             self.shader.set_uniform_1i("shadowMap", 15);
+            self.shader
+                .set_uniform_1f("cloudCoverage", skylight.get_cloud_coverage());
+            let sun = skylight.get_sun_direction();
+            self.shader.set_uniform_3f("sunDirection", sun.x, sun.y, sun.z);
+            self.shader.set_uniform_1f(
+                "uTime",
+                START.elapsed().as_secs_f32(),
+            );
 
             let mut bound_fbo = 0;
             unsafe {

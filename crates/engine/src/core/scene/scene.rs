@@ -132,6 +132,7 @@ impl Scene {
                     tan_half_y,
                     skylight.get_sun_direction(),
                     skylight.get_time_of_day(),
+                    skylight.get_cloud_coverage(),
                 );
             }
 

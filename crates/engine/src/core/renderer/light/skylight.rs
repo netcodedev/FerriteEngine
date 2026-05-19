@@ -32,6 +32,8 @@ pub struct SkyLight {
     day_length_seconds: f32,
     /// When true the cycle is frozen — manual F5/F6 steps still apply.
     paused: bool,
+    /// Cloud coverage in [0, 1]. 0 ≈ clear sky, 1 ≈ overcast.
+    cloud_coverage: f32,
 }
 
 impl SkyLight {
@@ -63,6 +65,7 @@ impl SkyLight {
             time_of_day: initial_time,
             day_length_seconds: DEFAULT_DAY_LENGTH_SECONDS,
             paused: false,
+            cloud_coverage: 0.45,
         };
         sl.position = Point3::from_vec(sl.compute_sun_direction() * SUN_DISTANCE);
         sl
@@ -94,6 +97,18 @@ impl SkyLight {
 
     pub fn toggle_paused(&mut self) {
         self.paused = !self.paused;
+    }
+
+    pub fn get_cloud_coverage(&self) -> f32 {
+        self.cloud_coverage
+    }
+
+    pub fn set_cloud_coverage(&mut self, c: f32) {
+        self.cloud_coverage = c.clamp(0.0, 1.0);
+    }
+
+    pub fn adjust_cloud_coverage(&mut self, delta: f32) {
+        self.set_cloud_coverage(self.cloud_coverage + delta);
     }
 
     /// Advance (or rewind) the clock by `delta` of a day. `delta = 1/24`

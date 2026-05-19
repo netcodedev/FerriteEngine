@@ -50,6 +50,8 @@ pub struct DebugController {
     pending_time_delta: f32,
     /// Pending request to toggle the day/night cycle pause (F7).
     pending_toggle_cycle: bool,
+    /// Pending cloud-coverage delta accumulated from F8/F9.
+    pending_coverage_delta: f32,
 
     // Pre-built per-collider geometry: (centroid, va, vb, vc) in world space.
     // Terrain trimeshes are static so this is computed once per handle.
@@ -84,6 +86,7 @@ impl DebugController {
 
             pending_time_delta: 0.0,
             pending_toggle_cycle: false,
+            pending_coverage_delta: 0.0,
 
             trimesh_cache: HashMap::new(),
         }
@@ -200,6 +203,10 @@ impl Component for DebugController {
             if self.pending_time_delta != 0.0 {
                 skylight.advance_time(self.pending_time_delta);
                 self.pending_time_delta = 0.0;
+            }
+            if self.pending_coverage_delta != 0.0 {
+                skylight.adjust_cloud_coverage(self.pending_coverage_delta);
+                self.pending_coverage_delta = 0.0;
             }
         }
 
@@ -332,6 +339,13 @@ impl Component for DebugController {
             // F7: pause/resume the day/night cycle.
             glfw::WindowEvent::Key(Key::F7, _, Action::Press, _) => {
                 self.pending_toggle_cycle = true;
+            }
+            // Numpad -/+: decrease/increase cloud coverage in 0.02 steps.
+            glfw::WindowEvent::Key(Key::KpSubtract, _, Action::Press, _) => {
+                self.pending_coverage_delta -= 0.02;
+            }
+            glfw::WindowEvent::Key(Key::KpAdd, _, Action::Press, _) => {
+                self.pending_coverage_delta += 0.02;
             }
             _ => {}
         }

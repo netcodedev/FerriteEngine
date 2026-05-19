@@ -74,6 +74,7 @@ impl SkyRenderer {
         tan_half_fov_y: f32,
         sun_direction: Vector3<f32>,
         time_of_day: f32,
+        cloud_coverage: f32,
     ) {
         let r = RENDERER.lock().unwrap();
         unsafe {
@@ -96,6 +97,7 @@ impl SkyRenderer {
                 sun_direction.z,
             );
             r.shader.set_uniform_1f("timeOfDay", time_of_day);
+            r.shader.set_uniform_1f("uCoverage", cloud_coverage);
             r.shader.set_uniform_3f(
                 "camPos",
                 camera_pos.x,
