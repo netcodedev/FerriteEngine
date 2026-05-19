@@ -17,6 +17,9 @@ pub struct DualContouringChunk {
     /// Flat water-surface quad, present only when some terrain in this chunk
     /// falls below WATER_LEVEL.
     water_mesh: Option<ChunkMesh<Vertex>>,
+    /// Tree placements `(x, y, z, yaw)` in world coordinates, scattered using
+    /// the chunk's own noise so terrain and trees are always co-generated.
+    pub(crate) tree_placements: Vec<(f32, f32, f32, f32)>,
 }
 
 #[derive(Clone, Copy)]

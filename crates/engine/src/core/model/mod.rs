@@ -20,9 +20,38 @@ pub struct Model {
     model: Scene,
     meshes: HashMap<String, ModelMesh>,
     shader: Shader,
-    textures: HashMap<TextureType, Texture>,
+    /// Textures grouped by material index. A mesh selects its set via
+    /// `ModelMesh::material_index`. Storing them in a single flat map (as the
+    /// older code did) caused later materials to overwrite earlier ones so
+    /// every mesh ended up sampling the last-loaded texture set.
+    textures: Vec<HashMap<TextureType, Texture>>,
+    /// Directory the model was loaded from (relative to the project root).
+    /// Used as a search location when resolving external texture references
+    /// — many FBX/GLTF files ship their maps next to the model file.
+    model_dir: String,
     pub position: Point3<f32>,
     scale: f32,
+}
+
+/// Raw per-submesh geometry extracted from a `Model` for callers that need
+/// to build their own GPU buffers (e.g. a custom instanced renderer).
+/// Positions are already pre-multiplied by `Model::scale`.
+pub struct SubmeshData {
+    pub positions: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub uvs: Vec<[f32; 2]>,
+    pub indices: Vec<u32>,
+    pub material_index: usize,
+}
+
+/// One tree variant grouped with its discrete LOD tiers. Used to share a
+/// single multi-tree asset (e.g. an FBX pack) across many `TreeKind`s while
+/// preserving their per-LOD geometry split.
+pub struct TreeGroup {
+    pub name: String,
+    /// (LOD name, submeshes) in scene-graph order. Caller is responsible for
+    /// sorting by detail level.
+    pub lods: Vec<(String, Vec<SubmeshData>)>,
 }
 
 pub struct ModelBuilder {
@@ -44,6 +73,7 @@ struct ModelMesh {
     indices: Vec<u32>,
     vertices: Vec<ModelMeshVertex>,
     root_bone: Option<Bone>,
+    material_index: usize,
 }
 
 #[derive(Clone)]

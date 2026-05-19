@@ -24,6 +24,8 @@ use ferrite::{
 };
 use std::error::Error;
 
+const TERRAIN_SEED: u64 = 2;
+
 fn main() {
     let mut application = Application::new(1280, 720, "Engine");
     match WorldLayer::new(1280, 720) {
@@ -63,7 +65,7 @@ impl WorldLayer {
         let ui = UI::new();
 
         let mut terrain_entity = Entity::new("terrain");
-        terrain_entity.add_component(Terrain::<DualContouringChunk>::new(2));
+        terrain_entity.add_component(Terrain::<DualContouringChunk>::new(TERRAIN_SEED));
         terrain_entity.add_child(Player::new(
             &mut scene,
             (0.0, 52.0, 0.0),

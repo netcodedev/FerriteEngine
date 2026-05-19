@@ -30,7 +30,7 @@ use crate::core::{
     view_frustum::ViewFrustum,
 };
 
-use super::{Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
+use super::{tree_forest::TreeForest, Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
 
 impl ChunkBounds {
     pub fn parse(position: cgmath::Vector3<f32>) -> Self {
@@ -210,6 +210,17 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                     .translation(Vector::new(position.x, position.y, position.z))
                     .build();
                 scene.physics_engine.add_collider(collider, None);
+
+                // Trees scattered by the chunk's worker thread get their
+                // visual + physics representation attached here on the GL
+                // thread, where Tree.fbx and its textures live.
+                let tree_placements = chunk.get_tree_placements();
+                let tree_forest = TreeForest::from_placements(&tree_placements);
+                if !tree_forest.is_empty() {
+                    tree_forest.add_colliders(&tree_placements, scene);
+                    chunk_entity.add_component(tree_forest);
+                }
+
                 chunk_entity.add_component(chunk);
                 chunk_entity.add_component(RigidBody::new(
                     RigidBodyType::Fixed,

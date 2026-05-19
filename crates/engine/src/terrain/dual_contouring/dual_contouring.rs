@@ -11,7 +11,10 @@ use crate::{
         renderer::{light::skylight::SkyLight, line::Line, shader::{Shader, VertexAttributes}, texture::Texture},
         scene::Scene,
     },
-    terrain::{Chunk, ChunkBounds, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT, USE_LOD},
+    terrain::{
+        tree_forest::{TREE_ATTEMPTS_PER_CHUNK, TREE_MAX_Y, TREE_MIN_Y},
+        Chunk, ChunkBounds, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT, USE_LOD,
+    },
 };
 
 thread_local! {
@@ -204,6 +207,54 @@ impl DualContouringChunk {
         if wv.is_empty() { None } else { Some(ChunkMesh::new(wv, Some(wi))) }
     }
 
+    /// Scatter trees across this chunk's XZ footprint using the same noise
+    /// that drives the chunk's terrain — so the height filter sees the exact
+    /// surface a tree would land on. Returns world-space `(x, y, z, yaw)`
+    /// tuples. Only chunks at `y_chunk == 0` (where terrain actually exists)
+    /// contribute trees.
+    fn scatter_trees(&self) -> Vec<(f32, f32, f32, f32)> {
+        if self.position.1 != 0.0 {
+            return Vec::new();
+        }
+        let x0 = self.position.0 * CHUNK_SIZE_FLOAT;
+        let z0 = self.position.2 * CHUNK_SIZE_FLOAT;
+        let offset: f64 = 16777216.0;
+
+        // Deterministic chunk-local RNG so the same chunk always scatters the
+        // same trees (across runs, across chunk reloads).
+        let cx = self.position.0 as i32 as u32 as u64;
+        let cz = self.position.2 as i32 as u32 as u64;
+        let mut rng: u64 = (cx << 32 | cz).wrapping_mul(0x9E3779B97F4A7C15);
+        let mut next = || {
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (rng >> 32) as u32
+        };
+        let unit = |r: u32| (r >> 8) as f32 / ((1u32 << 24) as f32);
+
+        let mut out = Vec::new();
+        for _ in 0..TREE_ATTEMPTS_PER_CHUNK {
+            let rx = unit(next());
+            let rz = unit(next());
+            let x = x0 + rx * CHUNK_SIZE_FLOAT;
+            let z = z0 + rz * CHUNK_SIZE_FLOAT;
+
+            let n = self.noise.sample([x as f64 + offset, z as f64 + offset]);
+            let n01 = ((1.0 + n) / 2.0) as f32;
+            let y = n01 * CHUNK_SIZE_FLOAT - 1.0;
+
+            if y < TREE_MIN_Y || y > TREE_MAX_Y {
+                let _ = next(); // burn an RNG sample so accepted yaw is stable
+                continue;
+            }
+
+            let yaw = unit(next()) * std::f32::consts::TAU;
+            out.push((x, y, z, yaw));
+        }
+        out
+    }
+
     fn calculate_chunk_size(lod: usize) -> usize {
         let lod = std::cmp::max(
             8,
@@ -231,9 +282,11 @@ impl Chunk for DualContouringChunk {
             chunk_size: DualContouringChunk::calculate_chunk_size(lod),
             mesh: None,
             water_mesh: None,
+            tree_placements: Vec::new(),
         };
         chunk.mesh = Some(chunk.generate_mesh());
         chunk.water_mesh = chunk.generate_water_mesh();
+        chunk.tree_placements = chunk.scatter_trees();
         chunk
     }
 
@@ -290,6 +343,10 @@ impl Chunk for DualContouringChunk {
         } else {
             0
         }
+    }
+
+    fn get_tree_placements(&self) -> Vec<(f32, f32, f32, f32)> {
+        self.tree_placements.clone()
     }
 
     fn get_vertices(&self) -> Vec<[f32; 3]> {

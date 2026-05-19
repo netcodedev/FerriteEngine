@@ -2,7 +2,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3, Vector4, Zero};
 use russimp_ng::{
-    material::{DataContent, TextureType},
+    material::{DataContent, PropertyTypeInfo, TextureType},
     node::Node,
     scene::{PostProcess, Scene},
 };
@@ -21,8 +21,9 @@ impl Model {
         path: &str,
         position: P,
     ) -> Result<Model, Box<dyn std::error::Error>> {
+        let full_path = format!("assets/models/{path}");
         let scene = Scene::from_file(
-            format!("assets/models/{path}").as_str(),
+            full_path.as_str(),
             vec![
                 PostProcess::Triangulate,
                 // PostProcess::JoinIdenticalVertices,
@@ -32,11 +33,17 @@ impl Model {
         )?;
         let shader: Shader =
             Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
+        let model_dir = std::path::Path::new(&full_path)
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or("assets/models")
+            .to_string();
         Ok(Model {
             model: scene,
             meshes: HashMap::<String, ModelMesh>::new(),
             shader,
-            textures: HashMap::<TextureType, Texture>::new(),
+            textures: Vec::new(),
+            model_dir,
             position: position.into(),
             scale: 0.01,
         })
@@ -44,30 +51,84 @@ impl Model {
 
     pub fn init(&mut self) {
         let materials = &self.model.materials;
+        self.textures = Vec::with_capacity(materials.len());
         for material in materials {
+            let mut per_material: HashMap<TextureType, Texture> = HashMap::new();
+
+            // 1) Embedded textures — russimp populates `material.textures` only
+            //    for these. Each entry's `data` holds the encoded image bytes.
             for (tex_type, texture) in &material.textures {
                 let tex = texture.borrow();
                 if let DataContent::Bytes(texture_data) = &tex.data {
                     let data = image::load_from_memory(texture_data.as_slice()).unwrap();
                     let texture = Texture::new();
                     texture.load_from_data(data.width(), data.height(), data.to_rgba8().into_raw());
-                    self.textures.insert(tex_type.clone(), texture);
+                    per_material.insert(tex_type.clone(), texture);
                 }
             }
-        }
-        let texture_coords: Vec<f32> = self.model.meshes[0]
-            .texture_coords
-            .iter()
-            .flat_map(|tx| {
-                if let Some(tx) = tx {
-                    let coords: Vec<f32> = tx.iter().flat_map(|v| vec![v.x, v.y]).collect();
-                    coords
-                } else {
-                    Vec::<f32>::new()
+
+            // 2) External textures — FBX files commonly reference textures by
+            //    file path rather than embedding the pixels. Those references
+            //    live in the material properties under the key `$tex.file`, and
+            //    `MaterialProperty::semantic` says which TextureType slot it
+            //    belongs to. We try the assets/models and assets/textures
+            //    directories so artists can drop the maps next to the .fbx.
+            for property in &material.properties {
+                if property.key != "$tex.file" {
+                    continue;
                 }
-            })
-            .collect();
+                if per_material.contains_key(&property.semantic) {
+                    continue; // already supplied as embedded data
+                }
+                let PropertyTypeInfo::String(raw_path) = &property.data else {
+                    continue;
+                };
+                if let Some(texture) = Self::load_external_texture(raw_path, &self.model_dir) {
+                    per_material.insert(property.semantic, texture);
+                }
+            }
+
+            // 3) Heuristic fallback by material name — some FBX exports drop
+            //    the texture connections entirely (or reference filenames that
+            //    aren't in the on-disk asset). Match the material's name (e.g.
+            //    `Bark_Mat`) against files in the model's directory so we can
+            //    still recover the diffuse/normal pair.
+            let needs_diffuse = !per_material.contains_key(&TextureType::Diffuse)
+                && !per_material.contains_key(&TextureType::BaseColor);
+            let needs_normal = !per_material.contains_key(&TextureType::Normals);
+            if needs_diffuse || needs_normal {
+                if let Some(mat_name) = Self::material_name(material) {
+                    let (diffuse, normal) =
+                        Self::heuristic_textures_by_name(&mat_name, &self.model_dir);
+                    if needs_diffuse {
+                        if let Some(t) = diffuse {
+                            per_material.insert(TextureType::Diffuse, t);
+                        }
+                    }
+                    if needs_normal {
+                        if let Some(t) = normal {
+                            per_material.insert(TextureType::Normals, t);
+                        }
+                    }
+                }
+            }
+
+            self.textures.push(per_material);
+        }
         for mesh in &self.model.meshes {
+            // UVs must come from THIS mesh's first channel — using a single
+            // shared `texture_coords` derived from `meshes[0]` (as the code
+            // used to) silently fed the wrong UVs to every additional mesh in
+            // a multi-mesh model, producing visibly stretched / tiled
+            // textures. Concatenating all UV channels was wrong for the same
+            // reason: only channel 0 corresponds to `layout(location=2)` in
+            // the model shader.
+            let texture_coords: Vec<f32> = mesh
+                .texture_coords
+                .first()
+                .and_then(|c| c.as_ref())
+                .map(|c| c.iter().flat_map(|v| [v.x, v.y]).collect())
+                .unwrap_or_default();
             let mut root_bone = None;
             if let Some(root_node) = &self.model.root {
                 for node in root_node.children.borrow().iter() {
@@ -104,12 +165,220 @@ impl Model {
                     .iter()
                     .flat_map(|v| vec![v.x, v.y, v.z])
                     .collect(),
-                texture_coords.clone(),
+                texture_coords,
                 root_bone,
+                mesh.material_index as usize,
             );
             model_mesh.buffer_data();
             self.meshes.insert(mesh.name.clone(), model_mesh);
         }
+    }
+
+    /// Resolve a texture path referenced by an FBX material and upload it.
+    ///
+    /// FBX exporters sometimes write absolute paths from the artist's machine
+    /// (`C:\Users\...\bark.png`) or paths relative to the original asset
+    /// folder. We only have the filename to work with at runtime, so try a few
+    /// reasonable locations next to where models live in this project.
+    /// Read the material's display name from `?mat.name` (assimp's standard
+    /// key). Returns `None` for unnamed materials.
+    fn material_name(material: &russimp_ng::material::Material) -> Option<String> {
+        material.properties.iter().find_map(|p| {
+            if p.key != "?mat.name" {
+                return None;
+            }
+            if let PropertyTypeInfo::String(s) = &p.data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Best-effort recovery for materials whose texture connections were
+    /// lost during export. Strips a trailing `_Mat`/`_Material` suffix from
+    /// the material name to get a prefix, then looks in `model_dir` for
+    /// files starting with that prefix and a keyword in the filename:
+    /// * `color`, `albedo`, `basecolor`, `diffuse` → diffuse
+    /// * `normal` → normal map
+    /// Skips obvious non-color maps (roughness, metalness, AO).
+    fn heuristic_textures_by_name(
+        material_name: &str,
+        model_dir: &str,
+    ) -> (Option<Texture>, Option<Texture>) {
+        let lc = material_name.to_lowercase();
+        let prefix = lc
+            .trim_end_matches("_material")
+            .trim_end_matches("_mat")
+            .trim_end_matches('_')
+            .trim();
+        if prefix.is_empty() {
+            return (None, None);
+        }
+
+        let Ok(read) = std::fs::read_dir(model_dir) else {
+            return (None, None);
+        };
+        let mut entries: Vec<(String, std::path::PathBuf)> = read
+            .flatten()
+            .filter_map(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|s| (s.to_lowercase(), e.path()))
+            })
+            .collect();
+        // Sort for stable, deterministic selection — `read_dir` order is OS-
+        // dependent and HashMap-style randomness here would mean different
+        // textures on different runs.
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // If the asset ships a separate opacity texture for this prefix
+        // (e.g. `Cluster_Opacity.png` next to `Cluster_albedo.png`), we'll
+        // bake it into the diffuse texture's alpha channel so the existing
+        // alpha-cutout shader code does the right thing without needing a
+        // second sampler.
+        let opacity_path = entries
+            .iter()
+            .find(|(lc, _)| lc.starts_with(prefix) && lc.contains("opacity"))
+            .map(|(_, p)| p.clone());
+
+        let mut diffuse: Option<Texture> = None;
+        let mut normal: Option<Texture> = None;
+        for (lc_name, path) in &entries {
+            if !lc_name.starts_with(prefix) {
+                continue;
+            }
+            let is_normal = lc_name.contains("normal");
+            let is_aux = lc_name.contains("roughness")
+                || lc_name.contains("metallic")
+                || lc_name.contains("metalness")
+                || lc_name.contains("ambientocclusion")
+                || lc_name.contains("_ao")
+                || lc_name.contains("opacity");
+
+            if is_normal {
+                if normal.is_none() {
+                    normal = Self::load_texture_from_disk(path);
+                }
+            } else if !is_aux {
+                let looks_like_diffuse = lc_name.contains("color")
+                    || lc_name.contains("albedo")
+                    || lc_name.contains("basecolor")
+                    || lc_name.contains("diffuse");
+                if diffuse.is_none() && looks_like_diffuse {
+                    diffuse = Self::load_diffuse_with_opacity(path, opacity_path.as_deref());
+                }
+            }
+        }
+        (diffuse, normal)
+    }
+
+    /// Load a diffuse texture, optionally replacing its alpha channel with
+    /// the luminance of an external opacity map. Falls back to the plain
+    /// diffuse load if the opacity image can't be read or has mismatched
+    /// dimensions.
+    fn load_diffuse_with_opacity(
+        diffuse_path: &std::path::Path,
+        opacity_path: Option<&std::path::Path>,
+    ) -> Option<Texture> {
+        let bytes = std::fs::read(diffuse_path).ok()?;
+        let mut diffuse_rgba = image::load_from_memory(&bytes).ok()?.to_rgba8();
+        if let Some(op_path) = opacity_path {
+            if let Ok(op_bytes) = std::fs::read(op_path) {
+                if let Ok(op_img) = image::load_from_memory(&op_bytes) {
+                    let op_gray = op_img.to_luma8();
+                    if op_gray.dimensions() == diffuse_rgba.dimensions() {
+                        for (px_d, px_o) in
+                            diffuse_rgba.pixels_mut().zip(op_gray.pixels())
+                        {
+                            px_d.0[3] = px_o.0[0];
+                        }
+                    } else {
+                        eprintln!(
+                            "Model::init: opacity map '{}' size {:?} != diffuse '{}' size {:?} \
+                             — skipping merge",
+                            op_path.display(),
+                            op_gray.dimensions(),
+                            diffuse_path.display(),
+                            diffuse_rgba.dimensions(),
+                        );
+                    }
+                }
+            }
+        }
+        let texture = Texture::new();
+        texture.load_from_data(
+            diffuse_rgba.width(),
+            diffuse_rgba.height(),
+            diffuse_rgba.into_raw(),
+        );
+        Some(texture)
+    }
+
+    fn load_texture_from_disk(path: &std::path::Path) -> Option<Texture> {
+        let bytes = std::fs::read(path).ok()?;
+        let image = image::load_from_memory(&bytes).ok()?;
+        let texture = Texture::new();
+        texture.load_from_data(image.width(), image.height(), image.to_rgba8().into_raw());
+        Some(texture)
+    }
+
+    fn load_external_texture(raw_path: &str, model_dir: &str) -> Option<Texture> {
+        let trimmed = raw_path.trim_end_matches('\0').trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        // Extract the basename ourselves rather than via `Path::file_name`, so
+        // Windows-style references like `F:\artist\maplebranch.png` resolve
+        // correctly when running on Linux (where `\` is not a path separator).
+        let file_name = trimmed.rsplit(|c| c == '/' || c == '\\').next()?;
+        // Some FBX exporters write spaces in texture names while the on-disk
+        // file uses underscores (or vice versa), so try both spellings.
+        let space_underscore = file_name.replace(' ', "_");
+        let underscore_space = file_name.replace('_', " ");
+
+        let mut name_variants = vec![file_name.to_string()];
+        if space_underscore != file_name {
+            name_variants.push(space_underscore);
+        }
+        if underscore_space != file_name {
+            name_variants.push(underscore_space);
+        }
+
+        // Search the model's own directory first (most assets ship their
+        // textures alongside the model file), then fall back to the project's
+        // standard texture/model directories.
+        let model_dir_string = model_dir.to_string();
+        let model_dir_textures = format!("{model_dir}/textures");
+        let dirs: [&str; 5] = [
+            model_dir_string.as_str(),
+            model_dir_textures.as_str(),
+            "assets/models",
+            "assets/models/textures",
+            "assets/textures",
+        ];
+
+        let mut candidates: Vec<String> = Vec::new();
+        for dir in &dirs {
+            for name in &name_variants {
+                candidates.push(format!("{dir}/{name}"));
+            }
+        }
+        candidates.push(trimmed.to_string());
+
+        for candidate in &candidates {
+            let Ok(bytes) = std::fs::read(candidate) else {
+                continue;
+            };
+            let Ok(image) = image::load_from_memory(&bytes) else {
+                continue;
+            };
+            let texture = Texture::new();
+            texture.load_from_data(image.width(), image.height(), image.to_rgba8().into_raw());
+            return Some(texture);
+        }
+        None
     }
 
     pub fn render(
@@ -144,20 +413,37 @@ impl Model {
                 }
                 self.shader
                     .set_uniform_mat4_array("boneTransforms", &sorted);
+            } else {
+                // Unskinned mesh: vertices were authored with bone slot 0 + full
+                // weight (see ModelMesh::new), so feed the shader an identity at
+                // that slot.
+                self.shader
+                    .set_uniform_mat4_array("boneTransforms", &vec![Matrix4::identity()]);
             }
-            for (i, (texture_type, texture)) in self.textures.iter().enumerate() {
-                unsafe { gl::ActiveTexture(gl::TEXTURE0 + i as u32) };
-                texture.bind();
-                match texture_type {
-                    TextureType::Diffuse => self.shader.set_uniform_1i("texture_diffuse", i as i32),
-                    TextureType::Shininess => {
-                        self.shader.set_uniform_1i("texture_shininess", i as i32)
+            // Bind this mesh's material textures. Models that contain multiple
+            // materials (e.g. trunk + foliage on a tree) used to all sample the
+            // last-loaded texture because every material's maps got merged
+            // into a single shared HashMap; now each mesh picks the entry
+            // matching its `material_index`.
+            if let Some(material_textures) = self.textures.get(mesh.material_index) {
+                for (i, (texture_type, texture)) in material_textures.iter().enumerate() {
+                    unsafe { gl::ActiveTexture(gl::TEXTURE0 + i as u32) };
+                    texture.bind();
+                    match texture_type {
+                        TextureType::Diffuse => {
+                            self.shader.set_uniform_1i("texture_diffuse", i as i32)
+                        }
+                        TextureType::Shininess => {
+                            self.shader.set_uniform_1i("texture_shininess", i as i32)
+                        }
+                        TextureType::Normals => {
+                            self.shader.set_uniform_1i("texture_normal", i as i32)
+                        }
+                        TextureType::Specular => {
+                            self.shader.set_uniform_1i("texture_specular", i as i32)
+                        }
+                        _ => {}
                     }
-                    TextureType::Normals => self.shader.set_uniform_1i("texture_normal", i as i32),
-                    TextureType::Specular => {
-                        self.shader.set_uniform_1i("texture_specular", i as i32)
-                    }
-                    _ => {}
                 }
             }
             unsafe { gl::Disable(gl::CULL_FACE) };
@@ -224,6 +510,210 @@ impl Model {
         }
     }
 
+    /// Per-submesh geometry (positions, normals, UVs, indices) for callers
+    /// that want to build their own GPU buffers, e.g. an instanced renderer.
+    /// Positions are already pre-multiplied by `self.scale`.
+    pub fn extract_submeshes(&self) -> Vec<crate::core::model::SubmeshData> {
+        use crate::core::model::SubmeshData;
+        self.model
+            .meshes
+            .iter()
+            .map(|mesh| {
+                let positions: Vec<[f32; 3]> = mesh
+                    .vertices
+                    .iter()
+                    .map(|v| [v.x * self.scale, v.y * self.scale, v.z * self.scale])
+                    .collect();
+                let normals: Vec<[f32; 3]> = if mesh.normals.len() == mesh.vertices.len() {
+                    mesh.normals.iter().map(|v| [v.x, v.y, v.z]).collect()
+                } else {
+                    vec![[0.0, 1.0, 0.0]; positions.len()]
+                };
+                let uvs: Vec<[f32; 2]> = mesh
+                    .texture_coords
+                    .first()
+                    .and_then(|c| c.as_ref())
+                    .map(|c| c.iter().map(|v| [v.x, v.y]).collect())
+                    .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
+                let indices: Vec<u32> = mesh
+                    .faces
+                    .iter()
+                    .filter(|f| f.0.len() == 3)
+                    .flat_map(|f| [f.0[0], f.0[1], f.0[2]])
+                    .collect();
+                SubmeshData {
+                    positions,
+                    normals,
+                    uvs,
+                    indices,
+                    material_index: mesh.material_index as usize,
+                }
+            })
+            .collect()
+    }
+
+    /// Display name of the material at `idx`, if assimp reported one.
+    pub fn material_name_at(&self, idx: usize) -> Option<String> {
+        self.model
+            .materials
+            .get(idx)
+            .and_then(|m| Self::material_name(m))
+    }
+
+    /// Texture set for a given material index, as collected by `init`.
+    pub fn material_textures(
+        &self,
+        idx: usize,
+    ) -> Option<&std::collections::HashMap<russimp_ng::material::TextureType, crate::core::renderer::texture::Texture>> {
+        self.textures.get(idx)
+    }
+
+    /// Walks the scene-graph root's direct children and returns each child
+    /// node grouped with the submeshes referenced by its subtree, paired with
+    /// the node's name. Useful for LOD-by-node setups where each top-level
+    /// node represents one detail tier.
+    pub fn extract_lod_submeshes(&self) -> Vec<(String, Vec<crate::core::model::SubmeshData>)> {
+        let mut out = Vec::new();
+        if let Some(root) = &self.model.root {
+            for child in root.children.borrow().iter() {
+                let mut group = Vec::new();
+                self.collect_node_submeshes(child, &mut group);
+                if !group.is_empty() {
+                    out.push((child.name.clone(), group));
+                }
+            }
+        }
+        out
+    }
+
+    /// Walks the scene graph and returns every tree variant in the asset.
+    ///
+    /// Detects which structure the asset uses by inspecting the names of
+    /// the root's direct children:
+    /// * If those names already look like LOD markers (contain `lod`,
+    ///   `high`, `low`, `last`, or `billboard`), the asset holds a single
+    ///   tree and each child is one of its LODs.
+    /// * Otherwise the root's children are treated as separate tree
+    ///   variants, and each variant's descendants whose names contain those
+    ///   LOD markers become its LODs.
+    pub fn extract_tree_groups(&self) -> Vec<crate::core::model::TreeGroup> {
+        use crate::core::model::TreeGroup;
+        let Some(root) = &self.model.root else {
+            return Vec::new();
+        };
+        let children = root.children.borrow();
+        let lod_named = children
+            .iter()
+            .filter(|c| Self::is_lod_node_name(&c.name))
+            .count();
+        let single_tree_mode = lod_named > 0 && lod_named * 2 >= children.len();
+
+        if single_tree_mode {
+            let mut lods = Vec::new();
+            for child in children.iter() {
+                let mut subs = Vec::new();
+                self.collect_node_submeshes(child, &mut subs);
+                if !subs.is_empty() {
+                    lods.push((child.name.clone(), subs));
+                }
+            }
+            if lods.is_empty() {
+                return Vec::new();
+            }
+            vec![TreeGroup {
+                name: "tree".to_string(),
+                lods,
+            }]
+        } else {
+            let mut groups = Vec::new();
+            for tree_node in children.iter() {
+                let mut lods = Vec::new();
+                self.collect_lods_within(tree_node, &mut lods);
+                if !lods.is_empty() {
+                    groups.push(TreeGroup {
+                        name: tree_node.name.clone(),
+                        lods,
+                    });
+                }
+            }
+            groups
+        }
+    }
+
+    fn collect_lods_within(
+        &self,
+        node: &russimp_ng::node::Node,
+        out: &mut Vec<(String, Vec<crate::core::model::SubmeshData>)>,
+    ) {
+        for child in node.children.borrow().iter() {
+            if Self::is_lod_node_name(&child.name) {
+                let mut subs = Vec::new();
+                self.collect_node_submeshes(child, &mut subs);
+                if !subs.is_empty() {
+                    out.push((child.name.clone(), subs));
+                }
+            } else {
+                // Recurse — some packs wrap LOD nodes inside extra grouping
+                // nodes before reaching the meshes.
+                self.collect_lods_within(child, out);
+            }
+        }
+    }
+
+    fn is_lod_node_name(name: &str) -> bool {
+        let lc = name.to_lowercase();
+        lc.contains("lod")
+            || lc.contains("high")
+            || lc.ends_with("low")
+            || lc.contains(" low")
+            || lc.contains("_low")
+            || lc.contains("last")
+            || lc.contains("billboard")
+    }
+
+    fn collect_node_submeshes(
+        &self,
+        node: &russimp_ng::node::Node,
+        out: &mut Vec<crate::core::model::SubmeshData>,
+    ) {
+        use crate::core::model::SubmeshData;
+        for &mesh_idx in &node.meshes {
+            let mesh = &self.model.meshes[mesh_idx as usize];
+            let positions: Vec<[f32; 3]> = mesh
+                .vertices
+                .iter()
+                .map(|v| [v.x * self.scale, v.y * self.scale, v.z * self.scale])
+                .collect();
+            let normals: Vec<[f32; 3]> = if mesh.normals.len() == mesh.vertices.len() {
+                mesh.normals.iter().map(|v| [v.x, v.y, v.z]).collect()
+            } else {
+                vec![[0.0, 1.0, 0.0]; positions.len()]
+            };
+            let uvs: Vec<[f32; 2]> = mesh
+                .texture_coords
+                .first()
+                .and_then(|c| c.as_ref())
+                .map(|c| c.iter().map(|v| [v.x, v.y]).collect())
+                .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
+            let indices: Vec<u32> = mesh
+                .faces
+                .iter()
+                .filter(|f| f.0.len() == 3)
+                .flat_map(|f| [f.0[0], f.0[1], f.0[2]])
+                .collect();
+            out.push(SubmeshData {
+                positions,
+                normals,
+                uvs,
+                indices,
+                material_index: mesh.material_index as usize,
+            });
+        }
+        for child in node.children.borrow().iter() {
+            self.collect_node_submeshes(child, out);
+        }
+    }
+
     pub fn get_vertices_scaled(&self) -> Vec<[f32; 3]> {
         self.model
             .meshes
@@ -234,6 +724,28 @@ impl Model {
                     .map(|v| [v.x * self.scale, v.y * self.scale, v.z * self.scale])
             })
             .collect()
+    }
+
+    /// Triangle index list across every mesh in the model, in the same vertex
+    /// order as `get_vertices_scaled`. Indices from each successive mesh are
+    /// offset by the running vertex count so that callers (e.g. trimesh
+    /// collider builders) can use a single concatenated vertex buffer.
+    pub fn get_indices(&self) -> Vec<[u32; 3]> {
+        let mut indices = Vec::new();
+        let mut vertex_offset: u32 = 0;
+        for mesh in &self.model.meshes {
+            for face in &mesh.faces {
+                if face.0.len() == 3 {
+                    indices.push([
+                        face.0[0] + vertex_offset,
+                        face.0[1] + vertex_offset,
+                        face.0[2] + vertex_offset,
+                    ]);
+                }
+            }
+            vertex_offset += mesh.vertices.len() as u32;
+        }
+        indices
     }
 
     pub fn reset_position(&mut self) -> Vector3<f32> {
@@ -340,6 +852,11 @@ impl ModelBuilder {
 
     pub fn with_position<P: Into<Point3<f32>>>(mut self, position: P) -> ModelBuilder {
         self.model.position = position.into();
+        self
+    }
+
+    pub fn with_scale(mut self, scale: f32) -> ModelBuilder {
+        self.model.scale = scale;
         self
     }
 

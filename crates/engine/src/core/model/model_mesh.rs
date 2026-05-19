@@ -11,11 +11,34 @@ impl ModelMesh {
         normals: Vec<f32>,
         texture_coords: Vec<f32>,
         root_bone: Option<Bone>,
+        material_index: usize,
     ) -> ModelMesh {
         let mut mesh_vertices = Vec::<ModelMeshVertex>::new();
+        let vertex_count = vertices.len() / 3;
+        if root_bone.is_none() {
+            // Unskinned mesh (e.g. a static prop FBX with no skeleton). The vertex
+            // shader still multiplies by `boneTransforms[boneIDs[0]] * weights[0]`,
+            // so emit a single full-weight bind to bone slot 0 and rely on the
+            // renderer to upload an identity matrix there. Without this, `vertices`
+            // would stay empty while `indices` still references vertex IDs, and
+            // `glDrawElements` would read past the end of the VBO and crash.
+            for i in 0..vertex_count {
+                mesh_vertices.push(ModelMeshVertex {
+                    position: (vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]),
+                    normal: (normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]),
+                    texture_coords: if texture_coords.len() >= (i + 1) * 2 {
+                        (texture_coords[i * 2], texture_coords[i * 2 + 1])
+                    } else {
+                        (0.0, 0.0)
+                    },
+                    bone_ids: (0, 0, 0, 0),
+                    bone_weights: (1.0, 0.0, 0.0, 0.0),
+                });
+            }
+        }
         if let Some(root_bone) = &root_bone {
             let bone_weights = ModelMesh::get_bone_weights(root_bone.clone());
-            for i in 0..vertices.len() / 3 {
+            for i in 0..vertex_count {
                 let weights = &bone_weights[i];
                 mesh_vertices.push(ModelMeshVertex {
                     position: (vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]),
@@ -73,6 +96,7 @@ impl ModelMesh {
             indices,
             vertices: mesh_vertices,
             vertex_array: None,
+            material_index,
         }
     }
 
