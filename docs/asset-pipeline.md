@@ -4,7 +4,8 @@ Plan for importing files into the project as reusable assets, browsing and
 editing them in the editor, and using them (instead of raw file paths)
 wherever a component needs a model or a texture.
 
-Status: phases 1–5 are done on `feat/assets`; the asset editor is next. The checklist under "Phases" is kept up to date.
+Status: phases 1–6 are done on `feat/assets`. Phase 7 (more users of
+assets) and the items under "Later" are open. The checklist under "Phases" is kept up to date.
 
 ## Goals
 
@@ -170,14 +171,20 @@ Docked below the viewport, resizable, can be hidden from the Window menu.
 
 ### Asset editor (phase 6)
 
-A third workspace next to Scene and Animation, opened for one asset.
+A third workspace next to Scene and Animation, opened for one asset with
+the Edit button of the asset browser or a double click on the asset. The
+settings take the left column, the preview the place of the viewport; the
+asset browser stays, so textures can be dragged onto a material.
 
 - Model: 3D preview with orbit camera and a variant/LOD selector; name
   and scale; per material the texture slots (drop a texture asset or pick
   one) and the foliage flag.
-- Texture: preview and, later, sampling settings.
-- Save writes the sidecar and bumps the revision, so the scene updates
-  without a reload. Revert discards edits.
+- Texture: the image and its size. Sampling settings come later.
+- Edits are made on a working copy, which the preview shows right away.
+  Save (Ctrl+S) writes the sidecar and bumps the revision, so the scene
+  updates without a reload. Revert discards the edits.
+- Leaving the workspace keeps unsaved edits in memory. Opening another
+  asset is refused until they are saved or reverted.
 
 ## Phases
 
@@ -196,11 +203,14 @@ Each phase is one or a few commits and leaves the editor usable.
   for scatter layers.
 - [x] **5. Drag and drop** — from the browser onto scatter layers and
   "Add model".
-- [ ] **6. Asset editor** — workspace with preview and material editing.
+- [x] **6. Asset editor** — workspace with preview and material editing.
 - [ ] **7. More users** — `ModelComponent`, player model, animations.
 
 ## Later
 
+- Reimport: refresh a model asset's variants and materials from its
+  source file, keeping the settings of what still exists.
+- Ask before quitting with unsaved asset edits.
 - Thumbnails rendered from the preview.
 - Rename, move and delete in the browser, with a check for scenes that
   still refer to the asset.

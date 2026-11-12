@@ -20,7 +20,7 @@ use ferrite::core::{
 use ferrite_ui::ui::{element_handle::UIElementHandle, theme, UIElement};
 use glfw::{Action, Glfw, MouseButton, WindowEvent};
 
-use super::{layout::Rect, send, Command, Shared};
+use super::{asset_editor::TextureSlot, layout::Rect, send, Command, Shared};
 
 /// Cursor travel (px) after which a press on an asset becomes a drag.
 const DRAG_THRESHOLD: f32 = 5.0;
@@ -51,12 +51,15 @@ pub enum DropAction {
         entity: EntityHandle,
         layer: Option<usize>,
     },
+    /// Use a texture asset for a material of the asset being edited.
+    MaterialTexture { material: usize, slot: TextureSlot },
 }
 
 impl DropAction {
     pub fn accepts(&self, drag: &AssetDrag) -> bool {
         match self {
             DropAction::ScatterLayer { .. } => drag.is_model,
+            DropAction::MaterialTexture { .. } => !drag.is_model,
         }
     }
 
@@ -66,6 +69,11 @@ impl DropAction {
                 entity: *entity,
                 layer: *layer,
                 asset,
+            },
+            DropAction::MaterialTexture { material, slot } => Command::SetAssetTexture {
+                material: *material,
+                slot: *slot,
+                texture: Some(asset.id),
             },
         }
     }
@@ -312,6 +320,37 @@ mod tests {
     fn a_texture_cannot_be_dropped_on_a_scatter_layer() {
         let targets = vec![target(0.0, 0.0, 300.0, 400.0, None)];
         assert!(target_at(&targets, &drag(false), 50.0, 50.0).is_none());
+    }
+
+    #[test]
+    fn a_texture_slot_takes_textures_only() {
+        let slot = DropTarget {
+            rect: Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 26.0,
+            },
+            action: DropAction::MaterialTexture {
+                material: 1,
+                slot: TextureSlot::Normal,
+            },
+        };
+        let targets = vec![slot];
+        assert!(target_at(&targets, &drag(true), 10.0, 10.0).is_none());
+        let hit = target_at(&targets, &drag(false), 10.0, 10.0).unwrap();
+        match hit.action.command(AssetRef::whole(AssetId::from(4))) {
+            Command::SetAssetTexture {
+                material,
+                slot,
+                texture,
+            } => {
+                assert_eq!(material, 1);
+                assert_eq!(slot, TextureSlot::Normal);
+                assert_eq!(texture, Some(AssetId::from(4)));
+            }
+            other => panic!("unexpected command {other:?}"),
+        }
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use ferrite::core::{
-    assets::{self, AssetDatabase, AssetRef},
+    assets::{self, AssetDatabase, AssetId, AssetKind, AssetRef},
     entity::EntityHandle,
     primitives::{Offset, Size},
     scene::Scene,
@@ -10,7 +10,7 @@ use ferrite::core::{
 use ferrite_ui::ui::{element_handle::UIElementHandle, elements::popup::Popup, UIElement, UI};
 use glfw::{Glfw, WindowEvent};
 
-use super::{send, Command, Shared};
+use super::{asset_editor::TextureSlot, send, Command, Shared};
 
 pub const SCENE_DIR: &str = "scenes";
 
@@ -106,6 +106,63 @@ pub fn pick_scatter_asset(state: &Shared, entity: EntityHandle, layer: Option<us
         ]),
     ];
     show(state, "Choose a model", open_flag, children);
+}
+
+/// Ask which texture asset a material of the edited asset should use in
+/// `slot`. The first choice goes back to the automatic texture.
+pub fn pick_asset_texture(state: &Shared, material: usize, slot: TextureSlot) {
+    let mut choices: Vec<(String, Option<AssetId>)> = vec![("automatic".to_string(), None)];
+    {
+        let database = assets::database();
+        let mut textures: Vec<_> = database
+            .iter()
+            .filter(|entry| matches!(entry.meta.kind, AssetKind::Texture(_)))
+            .collect();
+        textures.sort_by_key(|entry| entry.meta.name.to_lowercase());
+        choices.extend(
+            textures
+                .into_iter()
+                .map(|entry| (entry.meta.name.clone(), Some(entry.meta.id))),
+        );
+    }
+    let open_flag = DataSource::new(true);
+    let cancel_open = open_flag.clone();
+    let selected = DataSource::new(0u32);
+    let labels: Vec<String> = choices.iter().map(|(label, _)| label.clone()).collect();
+    let height = (labels.len().min(10) as f32) * 20.0 + 4.0;
+    let use_state = state.clone();
+    let use_open = open_flag.clone();
+    let use_selected = selected.clone();
+    let mut children: Vec<Box<dyn UIElement>> = vec![
+        UI::label(&format!("Texture for {}:", slot.label()), 14.0),
+        UI::list(labels, selected, Size::new(380.0, height)),
+    ];
+    if choices.len() == 1 {
+        children.push(UI::label(
+            "No texture assets yet. Import images in the Assets panel.",
+            14.0,
+        ));
+    }
+    children.push(button_row(vec![
+        UI::button(
+            "Use",
+            Box::new(move |_| {
+                if let Some((_, texture)) = choices.get(use_selected.read() as usize) {
+                    send(
+                        &use_state,
+                        Command::SetAssetTexture {
+                            material,
+                            slot,
+                            texture: *texture,
+                        },
+                    );
+                    use_open.write(false);
+                }
+            }),
+        ),
+        UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+    ]));
+    show(state, "Choose a texture", open_flag, children);
 }
 
 /// A popup plus the flag that keeps it open (its close button and the

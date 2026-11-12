@@ -168,7 +168,7 @@ impl Splitter {
                 let max = (layout.window_w - layout.hierarchy.w - MIN_VIEWPORT).max(MIN_COLUMN);
                 let width = (layout.window_w - x).clamp(MIN_COLUMN, max).round();
                 match workspace {
-                    Workspace::Scene => sizes.stats = width,
+                    Workspace::Scene | Workspace::Asset => sizes.stats = width,
                     Workspace::Animation => sizes.preview = width,
                 }
             }
@@ -211,8 +211,13 @@ impl UIElement for Splitter {
                     self.apply_drag(edge, x, y);
                     return true;
                 }
-                let layout = self.state.borrow().layout;
-                let edge = Self::edge_at(&layout, x, y);
+                let (layout, workspace) = {
+                    let state = self.state.borrow();
+                    (state.layout, state.workspace)
+                };
+                // The asset workspace uses the left column as one panel.
+                let edge = Self::edge_at(&layout, x, y)
+                    .filter(|edge| !(workspace == Workspace::Asset && *edge == Edge::SideSplit));
                 if edge != self.hover {
                     window.set_cursor(edge.map(|e| Cursor::standard(e.cursor())));
                     self.hover = edge;

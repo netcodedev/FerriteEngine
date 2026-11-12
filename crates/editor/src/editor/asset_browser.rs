@@ -1,7 +1,7 @@
 //! Docked panel listing the project's assets by folder. A model asset with
 //! several variants (a tree pack) expands into them.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
 use ferrite::core::{
     assets::{self, AssetDatabase, AssetEntry, AssetId, AssetKind, AssetRef},
@@ -41,13 +41,19 @@ pub struct AssetBrowser {
     tree: TreeView,
     import: Button,
     refresh: Button,
+    edit: Button,
     details: Label,
     selection: DataSource<u64>,
     rows: HashMap<u64, Row>,
     /// Database change counter the tree was last built for.
     built_for: Option<u64>,
     last_selection: u64,
+    /// Row and time of the last press, to tell a double click.
+    last_press: Option<(u64, Instant)>,
 }
+
+/// Two presses on the same row within this many seconds open the asset.
+const DOUBLE_CLICK: f32 = 0.4;
 
 impl AssetBrowser {
     pub fn new(state: Shared) -> Self {
@@ -81,6 +87,31 @@ impl AssetBrowser {
         refresh.set_icon(icons::ROTATE_CW);
         refresh.set_tooltip("Scan the assets folder again");
 
+        let edit_state = state.clone();
+        let mut edit = Button::new(
+            Position::default(),
+            Size::new(10.0, 26.0),
+            Box::new(move |_| {
+                // Read first: the borrow must end before `send` borrows
+                // mutably.
+                let selected = edit_state.borrow().asset_selection.clone();
+                if let Some(asset) = selected {
+                    send(
+                        &edit_state,
+                        Command::EditAsset {
+                            id: asset.id,
+                            variant: asset.part,
+                        },
+                    );
+                }
+            }),
+        );
+        edit.set_style(ButtonStyle::Secondary);
+        edit.set_icon(icons::PENCIL);
+        edit.set_label("Edit");
+        edit.set_tooltip("Open the selected asset (double click)");
+        edit.fit(26.0);
+
         Self {
             handle: UIElementHandle::new(),
             state,
@@ -88,11 +119,13 @@ impl AssetBrowser {
             tree,
             import,
             refresh,
+            edit,
             details: Label::muted("", theme::FONT_SIZE_SMALL + 0.5),
             selection,
             rows: HashMap::new(),
             built_for: None,
             last_selection: NO_SELECTION,
+            last_press: None,
         }
     }
 
@@ -145,8 +178,13 @@ impl AssetBrowser {
         })
     }
 
-    fn widgets_mut(&mut self) -> [&mut dyn UIElement; 3] {
-        [&mut self.import, &mut self.refresh, &mut self.tree]
+    fn widgets_mut(&mut self) -> [&mut dyn UIElement; 4] {
+        [
+            &mut self.import,
+            &mut self.refresh,
+            &mut self.edit,
+            &mut self.tree,
+        ]
     }
 
     fn visible(&self) -> bool {
@@ -284,8 +322,15 @@ impl UIElement for AssetBrowser {
             x: after_import,
             y: ay,
         });
+        let after_refresh = after_import + self.refresh.get_size().width + 6.0;
+        self.edit.set_offset(Offset {
+            x: after_refresh,
+            y: ay,
+        });
+        let has_selection = self.state.borrow().asset_selection.is_some();
+        self.edit.set_enabled(has_selection);
         self.details.set_offset(Offset {
-            x: after_import + self.refresh.get_size().width + 10.0,
+            x: after_refresh + self.edit.get_size().width + 10.0,
             y: ay + 5.0,
         });
 
@@ -334,6 +379,7 @@ impl UIElement for AssetBrowser {
         self.details.render();
         self.import.render();
         self.refresh.render();
+        self.edit.render();
     }
 
     fn render_overlay(&self) {
@@ -342,6 +388,7 @@ impl UIElement for AssetBrowser {
         }
         self.import.render_overlay();
         self.refresh.render_overlay();
+        self.edit.render_overlay();
     }
 
     fn handle_events(
@@ -357,7 +404,28 @@ impl UIElement for AssetBrowser {
         if let WindowEvent::MouseButton(MouseButton::Button1, Action::Press, _) = event {
             let (x, y) = window.get_cursor_pos();
             let drag = self.drag_at(x as f32, y as f32);
-            self.state.borrow_mut().drag = drag;
+            // A second press on the same row shortly after the first opens
+            // the asset.
+            let row = self.tree.item_at(x as f32, y as f32);
+            let double = match (row, self.last_press) {
+                (Some(row), Some((last, at))) => {
+                    row == last && at.elapsed().as_secs_f32() < DOUBLE_CLICK
+                }
+                _ => false,
+            };
+            self.last_press = row.filter(|_| !double).map(|row| (row, Instant::now()));
+            match (&drag, double) {
+                (Some(drag), true) => {
+                    send(
+                        &self.state,
+                        Command::EditAsset {
+                            id: drag.asset.id,
+                            variant: drag.asset.part.clone(),
+                        },
+                    );
+                }
+                _ => self.state.borrow_mut().drag = drag,
+            }
         }
         let mut handled = false;
         for widget in self.widgets_mut() {

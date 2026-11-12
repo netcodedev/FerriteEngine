@@ -12,6 +12,7 @@ use editor::{
         preview::PreviewPanel, AnimSelection,
     },
     asset_browser::AssetBrowser,
+    asset_editor::{AssetEdit, AssetInspector, AssetPreview},
     dialogs::{self, ModalHost},
     drag::DragLayer,
     hierarchy::HierarchyPanel,
@@ -96,19 +97,38 @@ impl EditorLayer {
         // Also ahead of the panels: it has to see the release that ends a
         // drag before the panel under the cursor does.
         add(&mut ui, Box::new(DragLayer::new(state.clone())));
-        let (scene_panels, anim_panels) = {
+        let (scene_panels, anim_panels, asset_panels, browser_panel) = {
             let s = state.borrow();
-            (s.scene_panels.clone(), s.anim_panels.clone())
+            (
+                s.scene_panels.clone(),
+                s.anim_panels.clone(),
+                s.asset_panels.clone(),
+                s.browser_panel.clone(),
+            )
         };
         // Scene workspace.
         for panel in [
             Box::new(HierarchyPanel::new(state.clone())) as Box<dyn UIElement>,
             Box::new(InspectorPanel::new(state.clone())),
             Box::new(StatsPanel::new(state.clone())),
-            Box::new(AssetBrowser::new(state.clone())),
         ] {
             add(&mut ui, Box::new(ToggleWindow::new(scene_panels.clone(), panel)));
         }
+        // Asset workspace.
+        for panel in [
+            Box::new(AssetInspector::new(state.clone())) as Box<dyn UIElement>,
+            Box::new(AssetPreview::new(state.clone())),
+        ] {
+            add(&mut ui, Box::new(ToggleWindow::new(asset_panels.clone(), panel)));
+        }
+        // Shared by the scene and the asset workspace.
+        add(
+            &mut ui,
+            Box::new(ToggleWindow::new(
+                browser_panel,
+                Box::new(AssetBrowser::new(state.clone())),
+            )),
+        );
         // Animation workspace.
         for panel in [
             Box::new(NodeCanvas::new(state.clone())) as Box<dyn UIElement>,
@@ -385,7 +405,7 @@ impl EditorLayer {
                 if mode == Mode::Play {
                     return;
                 }
-                if self.state.borrow().workspace == Workspace::Animation {
+                if self.state.borrow().workspace != Workspace::Scene {
                     self.run(Command::SetWorkspace(Workspace::Scene));
                 }
                 self.play_snapshot = Some(self.scene.to_file());
@@ -527,6 +547,89 @@ impl EditorLayer {
                 state.workspace = workspace;
                 state.scene_panels.write(workspace == Workspace::Scene);
                 state.anim_panels.write(workspace == Workspace::Animation);
+                state.asset_panels.write(workspace == Workspace::Asset);
+                state.browser_panel.write(workspace != Workspace::Animation);
+            }
+            Command::EditAsset { id, variant } => {
+                let unsaved = self
+                    .state
+                    .borrow()
+                    .asset_edit
+                    .as_ref()
+                    .filter(|edit| edit.dirty && edit.meta.id != id)
+                    .map(|edit| edit.meta.name.clone());
+                if let Some(name) = unsaved {
+                    self.state
+                        .borrow_mut()
+                        .set_status(format!("Save or revert '{name}' first"));
+                    self.run(Command::SetWorkspace(Workspace::Asset));
+                    return;
+                }
+                let already_open = self
+                    .state
+                    .borrow()
+                    .asset_edit
+                    .as_ref()
+                    .is_some_and(|edit| edit.meta.id == id);
+                if already_open {
+                    // Keep its unsaved edits; just show the asked variant.
+                    let mut state = self.state.borrow_mut();
+                    if let (Some(edit), Some(variant)) = (state.asset_edit.as_mut(), variant) {
+                        let index = edit
+                            .meta
+                            .as_model()
+                            .and_then(|model| model.variants.iter().position(|v| v.name == variant));
+                        if let Some(index) = index.filter(|index| *index != edit.variant) {
+                            edit.variant = index;
+                            edit.lod = None;
+                            edit.structure += 1;
+                            edit.preview += 1;
+                        }
+                    }
+                } else {
+                    match AssetEdit::open(id, variant.as_deref()) {
+                        Ok(edit) => self.state.borrow_mut().asset_edit = Some(edit),
+                        Err(e) => {
+                            self.state.borrow_mut().set_status(e);
+                            return;
+                        }
+                    }
+                }
+                self.run(Command::SetWorkspace(Workspace::Asset));
+            }
+            Command::SaveAsset => {
+                let mut state = self.state.borrow_mut();
+                let result = state
+                    .asset_edit
+                    .as_mut()
+                    .map(|edit| edit.save().map(|()| edit.meta.name.clone()));
+                match result {
+                    Some(Ok(name)) => state.set_status(format!("Saved asset '{name}'")),
+                    Some(Err(e)) => state.set_status(format!("Could not save the asset: {e}")),
+                    None => {}
+                }
+            }
+            Command::RevertAsset => {
+                let mut state = self.state.borrow_mut();
+                let result = state.asset_edit.as_mut().map(|edit| edit.revert());
+                match result {
+                    Some(Ok(())) => state.set_status("Asset reverted"),
+                    Some(Err(e)) => state.set_status(e),
+                    None => {}
+                }
+            }
+            Command::CloseAssetEditor => self.run(Command::SetWorkspace(Workspace::Scene)),
+            Command::PickAssetTexture { material, slot } => {
+                dialogs::pick_asset_texture(&self.state, material, slot)
+            }
+            Command::SetAssetTexture {
+                material,
+                slot,
+                texture,
+            } => {
+                if let Some(edit) = self.state.borrow_mut().asset_edit.as_mut() {
+                    edit.set_texture(material, slot, texture);
+                }
             }
             Command::SaveGraph => {
                 let result = self.state.borrow_mut().anim.save();
@@ -629,6 +732,21 @@ impl EditorLayer {
         let mode = self.state.borrow().mode;
         let selected = self.state.borrow().selected();
         let workspace = self.state.borrow().workspace;
+        if workspace == Workspace::Asset {
+            // Scene shortcuts (delete, gizmos, ...) do not apply here.
+            let command = match (key, ctrl) {
+                (Key::S, true) => Some(Command::SaveAsset),
+                (Key::Escape, false) => Some(Command::CloseAssetEditor),
+                _ => None,
+            };
+            return match command {
+                Some(command) => {
+                    self.state.borrow_mut().push(command);
+                    true
+                }
+                None => false,
+            };
+        }
         if workspace == Workspace::Animation {
             let command = match (key, ctrl) {
                 (Key::S, true) => Some(Command::SaveGraph),
@@ -730,13 +848,18 @@ impl Layer for EditorLayer {
                 stats: show_stats,
                 widgets: show_widgets,
             },
+            // Settings on the left, the preview takes the rest.
+            Workspace::Asset => RightColumn::Panels {
+                stats: false,
+                widgets: false,
+            },
         };
         let sizes = self.state.borrow().panel_sizes;
         let layout = Layout::compute(
             window.width as f32,
             window.height as f32,
             right,
-            show_assets && workspace == Workspace::Scene,
+            show_assets && workspace != Workspace::Animation,
             &sizes,
         );
         self.state.borrow_mut().layout = layout;
@@ -837,7 +960,7 @@ impl Layer for EditorLayer {
             }
         }
 
-        if self.state.borrow().workspace == Workspace::Animation {
+        if self.state.borrow().workspace != Workspace::Scene {
             return;
         }
         match mode {
