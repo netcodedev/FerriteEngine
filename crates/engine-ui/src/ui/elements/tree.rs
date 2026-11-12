@@ -324,10 +324,12 @@ impl UIElement for TreeView {
             Scroll(_, dy) => {
                 let (x, y) = window.get_cursor_pos();
                 if self.region.contains(x as f32, y as f32) {
+                    let before = self.scroll_y;
                     self.scroll_y -= *dy as f32 * self.row_height * 2.0;
                     self.clamp_scroll();
                     self.dirty = true;
-                    return true;
+                    // At either end, let an enclosing area scroll instead.
+                    return (self.scroll_y - before).abs() > f32::EPSILON;
                 }
                 false
             }

@@ -144,17 +144,38 @@ impl UIElement for ScrollArea {
         glfw: &mut Glfw,
         event: &WindowEvent,
     ) -> bool {
-        if let Scroll(_, dy) = event {
-            let (cx, cy) = window.get_cursor_pos();
-            if self.region.contains(cx as f32, cy as f32) {
-                let max_scroll = (self.content_height - self.region.size.height).max(0.0);
-                self.scroll_y = (self.scroll_y - *dy as f32 * 20.0).clamp(0.0, max_scroll);
+        let (cx, cy) = window.get_cursor_pos();
+        let inside = self.region.contains(cx as f32, cy as f32);
+        let view_top = self.region.position.y + self.region.offset.y;
+        let view_bottom = view_top + self.region.size.height;
+        let is_wheel = matches!(event, Scroll(..));
+        let is_press = matches!(event, glfw::WindowEvent::MouseButton(_, glfw::Action::Press, _));
+        for child in self.children.values_mut() {
+            // Children scrolled out of view must not take clicks or the
+            // wheel. Visible ones still get clicks outside the area (an open
+            // dropdown list may hang below it).
+            if is_wheel && !inside {
+                continue;
+            }
+            if is_press {
+                let top = child.get_offset().y;
+                let visible = top < view_bottom && top + child.get_size().height > view_top;
+                if !visible {
+                    continue;
+                }
+            }
+            if child.handle_events(scene, window, glfw, event) {
                 return true;
             }
         }
-        for child in self.children.values_mut() {
-            if child.handle_events(scene, window, glfw, event) {
-                return true;
+        if let Scroll(_, dy) = event {
+            if inside {
+                // Only claim the wheel if this area actually moved, so an
+                // inner area at its end lets the outer one scroll.
+                let max_scroll = (self.content_height - self.region.size.height).max(0.0);
+                let before = self.scroll_y;
+                self.scroll_y = (self.scroll_y - *dy as f32 * 20.0).clamp(0.0, max_scroll);
+                return (self.scroll_y - before).abs() > f32::EPSILON;
             }
         }
         false
