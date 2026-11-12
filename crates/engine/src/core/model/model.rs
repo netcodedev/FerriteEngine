@@ -55,6 +55,7 @@ impl Model {
             model_dir,
             position: position.into(),
             scale: 0.01,
+            visible: None,
         })
     }
 
@@ -378,7 +379,10 @@ impl Model {
         parent_transform: &Matrix4<f32>,
         camera_projection: &Matrix4<f32>,
     ) {
-        for mesh in self.meshes.values() {
+        for (name, mesh) in self.meshes.iter() {
+            if self.visible.as_ref().is_some_and(|visible| !visible.contains(name)) {
+                continue;
+            }
             if !mesh.is_buffered() {
                 panic!("Mesh is not buffered");
             }
@@ -600,6 +604,52 @@ impl Model {
                     .collect(),
             })
             .collect()
+    }
+
+    /// Draw only one variant of the file, at its most detailed LOD: the
+    /// variant of this name, or the first one without a name. A file that
+    /// is not split into variants or LODs is drawn whole either way.
+    pub fn show_variant(&mut self, variant: Option<&str>) -> Result<(), String> {
+        let Some(root) = &self.model.root else {
+            return Ok(());
+        };
+        let groups = super::outline::group_nodes(root, &self.name);
+        let group = match variant {
+            Some(name) => groups
+                .iter()
+                .find(|group| group.name == name)
+                .ok_or_else(|| format!("the model has no variant '{name}'"))?,
+            None => match groups.first() {
+                Some(group) => group,
+                None => return Ok(()),
+            },
+        };
+        let Some((_, node)) = group
+            .lods
+            .iter()
+            .min_by_key(|(name, _)| super::outline::lod_priority(name))
+        else {
+            return Ok(());
+        };
+        let mut names = std::collections::HashSet::new();
+        self.collect_mesh_names(node, &mut names);
+        self.visible = Some(names);
+        Ok(())
+    }
+
+    fn collect_mesh_names(
+        &self,
+        node: &russimp_ng::node::Node,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        for &index in &node.meshes {
+            if let Some(mesh) = self.model.meshes.get(index as usize) {
+                out.insert(mesh.name.clone());
+            }
+        }
+        for child in node.children.borrow().iter() {
+            self.collect_mesh_names(child, out);
+        }
     }
 
     /// Replace the texture a material uses in one slot, e.g. with one the

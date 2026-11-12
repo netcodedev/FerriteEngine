@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cgmath::{Matrix4, Point3, Quaternion, Vector3};
 use russimp_ng::{material::TextureType, scene::Scene};
@@ -35,6 +35,9 @@ pub struct Model {
     model_dir: String,
     pub position: Point3<f32>,
     scale: f32,
+    /// Names of the meshes that are drawn; all of them without. Set by
+    /// `show_variant` for files that hold several variants or LODs.
+    visible: Option<HashSet<String>>,
 }
 
 /// Raw per-submesh geometry extracted from a `Model` for callers that need

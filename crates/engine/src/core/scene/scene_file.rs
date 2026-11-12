@@ -8,11 +8,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     core::{
+        assets::AssetRef,
         camera::{Camera, CameraController, Projection},
         entity::{
             component::{
                 animation_component::AnimationComponent, camera_component::CameraComponent,
-                debug_component::DebugController,
+                debug_component::DebugController, missing_component::MissingComponent,
+                model_component::ModelComponent,
             },
             Entity, EntityHandle,
         },
@@ -95,9 +97,27 @@ pub enum ComponentData {
     AnimationGraph {
         path: String,
     },
+    /// The model asset the entity shows (for a prefab: instead of the one
+    /// it comes with).
+    Model {
+        asset: AssetRef,
+    },
 }
 
 impl ComponentData {
+    /// Short name of the kind, for messages.
+    pub fn label(&self) -> &'static str {
+        match self {
+            ComponentData::Camera { .. } => "Camera",
+            ComponentData::SkyLight { .. } => "Sky light",
+            ComponentData::Terrain { .. } => "Terrain",
+            ComponentData::DebugController => "Debug controller",
+            ComponentData::Player => "Player",
+            ComponentData::AnimationGraph { .. } => "Animation",
+            ComponentData::Model { .. } => "Model",
+        }
+    }
+
     /// Kinds the editor offers in "Add component", with their default data.
     pub fn catalog() -> Vec<(&'static str, ComponentData)> {
         vec![
@@ -186,6 +206,26 @@ impl ComponentData {
                 };
                 if let Err(e) = result {
                     log::warn!("could not load animation graph {path}: {e}");
+                    // A prefab's own graph keeps playing; without one the
+                    // setting is kept for when the graph can be loaded.
+                    if entity.get_component_mut::<AnimationComponent>().is_none() {
+                        entity.add_component(MissingComponent::new(self.clone(), e.to_string()));
+                    }
+                }
+            }
+            ComponentData::Model { asset } => {
+                let result = match entity.get_component_mut::<ModelComponent>() {
+                    // A prefab was already built with this model.
+                    Some(model) if model.asset() == Some(asset) => Ok(()),
+                    Some(model) => model.set_asset(asset.clone()),
+                    None => ModelComponent::from_asset(asset)
+                        .map(|model| entity.add_component(model)),
+                };
+                if let Err(e) = result {
+                    log::warn!("could not load model asset {}: {e}", asset.id);
+                    if entity.get_component_mut::<ModelComponent>().is_none() {
+                        entity.add_component(MissingComponent::new(self.clone(), e));
+                    }
                 }
             }
         }
@@ -224,6 +264,14 @@ impl EntityData {
 
     pub fn is_player(&self) -> bool {
         self.components.contains(&ComponentData::Player)
+    }
+
+    /// The model asset the entity is given, if any.
+    fn model_asset(&self) -> Option<&AssetRef> {
+        self.components.iter().find_map(|component| match component {
+            ComponentData::Model { asset } => Some(asset),
+            _ => None,
+        })
     }
 }
 
@@ -285,6 +333,31 @@ impl Scene {
         Ok(())
     }
 
+    /// What could not be built when the scene was loaded, one line per
+    /// missing component: `entity: component: reason`.
+    pub fn problems(&self) -> Vec<String> {
+        fn visit(entity: &Entity, out: &mut Vec<String>) {
+            for component in entity.components() {
+                if let Some(missing) = component.as_any().downcast_ref::<MissingComponent>() {
+                    out.push(format!(
+                        "{}: {}: {}",
+                        entity.get_name(),
+                        missing.data().label(),
+                        missing.reason()
+                    ));
+                }
+            }
+            for child in entity.get_children() {
+                visit(child, out);
+            }
+        }
+        let mut problems = Vec::new();
+        for entity in self.get_entities() {
+            visit(entity, &mut problems);
+        }
+        problems
+    }
+
     pub fn load_from_path(path: &Path) -> Result<Scene, Box<dyn Error>> {
         let text = fs::read_to_string(path)?;
         let file = SceneFile::from_ron(&text)?;
@@ -298,12 +371,30 @@ impl Scene {
         data: &EntityData,
         fresh_ids: bool,
     ) -> Result<Entity, Box<dyn Error>> {
-        let mut entity = if data.is_player() {
-            Player::new(self, data.position(), default_animation_graph()?)?
-        } else {
+        let plain = |data: &EntityData| {
             let mut entity = Entity::new(&data.name);
             entity.set_local_position(data.position());
             entity
+        };
+        let mut entity = if data.is_player() {
+            let player = default_animation_graph()
+                .and_then(|graph| Player::with_model(self, data.position(), graph, data.model_asset()));
+            match player {
+                Ok(player) => player,
+                // Keep the entity and what it should be, so the rest of the
+                // scene loads and saving it loses nothing.
+                Err(e) => {
+                    log::warn!("could not build player '{}': {e}", data.name);
+                    let mut entity = plain(data);
+                    entity.add_component(MissingComponent::new(
+                        ComponentData::Player,
+                        e.to_string(),
+                    ));
+                    entity
+                }
+            }
+        } else {
+            plain(data)
         };
         entity.set_name(data.name.clone());
         entity.set_local_rotation(data.rotation());
@@ -369,5 +460,59 @@ pub fn default_scene_file() -> SceneFile {
             terrain,
             entity("debug", [0.0; 3], vec![ComponentData::DebugController]),
         ],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::assets::AssetId;
+
+    #[test]
+    fn a_component_that_could_not_be_built_is_saved_as_what_it_should_be() {
+        let mut entity = Entity::new("player");
+        entity.add_component(MissingComponent::new(
+            ComponentData::Player,
+            "Unable to open file",
+        ));
+        let model = ComponentData::Model {
+            asset: AssetRef::whole(AssetId::from(7)),
+        };
+        entity.add_component(MissingComponent::new(model.clone(), "asset does not exist"));
+
+        let data = entity.to_data().unwrap();
+        assert_eq!(data.components, vec![ComponentData::Player, model]);
+        // It is still a player as far as loading is concerned.
+        assert!(data.is_player());
+        assert_eq!(data.model_asset(), Some(&AssetRef::whole(AssetId::from(7))));
+    }
+
+    #[test]
+    fn scenes_from_before_assets_still_parse() {
+        let text = r#"(
+            version: 1,
+            entities: [(
+                id: 1,
+                name: "terrain",
+                position: (0.0, 0.0, 0.0),
+                rotation: (1.0, 0.0, 0.0, 0.0),
+                components: [Terrain(seed: 2), Player],
+            )],
+        )"#;
+        let file = SceneFile::from_ron(text).unwrap();
+        assert_eq!(
+            file.entities[0].components,
+            vec![ComponentData::bare_terrain(2), ComponentData::Player]
+        );
+    }
+
+    #[test]
+    fn a_model_component_round_trips() {
+        let data = ComponentData::Model {
+            asset: AssetRef::part(AssetId::from(0xbeef), "Oak"),
+        };
+        let text = ron::to_string(&data).unwrap();
+        assert_eq!(ron::from_str::<ComponentData>(&text).unwrap(), data);
+        assert_eq!(data.label(), "Model");
     }
 }

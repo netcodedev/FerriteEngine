@@ -994,7 +994,21 @@ struct ScatterLayer {
 }
 
 impl ScatterLayer {
-    fn new(data: ScatterLayerData) -> Self {
+    fn new(mut data: ScatterLayerData) -> Self {
+        // A raw file that is registered as an asset is referred to as that
+        // asset from here on; scenes from before assets existed are brought
+        // up to date this way.
+        if data.asset.is_none() && !data.model.trim().is_empty() {
+            let database = assets::database();
+            let source = database
+                .root()
+                .join("models")
+                .join(data.model.trim().replace('\\', "/"));
+            if let Some(id) = database.find_by_source(&source) {
+                data.asset = Some(AssetRef::whole(id));
+                data.model.clear();
+            }
+        }
         Self {
             asset: data.asset,
             model: data.model,
