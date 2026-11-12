@@ -12,7 +12,7 @@ use ferrite::core::{
 };
 use glfw::{Action, CursorMode, Key, MouseButton, WindowEvent};
 
-use super::{layout::Rect, outline, GizmoMode};
+use super::{layout::Rect, GizmoMode};
 
 const AXES: [Vector3<f32>; 3] = [
     Vector3::new(1.0, 0.0, 0.0),
@@ -369,8 +369,8 @@ impl Viewport {
         }
     }
 
-    /// Draw entity markers and the gizmo of the selection. Must run while the
-    /// GL viewport is still set to the editor viewport.
+    /// Draw the gizmo of the selection. Must run while the GL viewport is
+    /// still set to the editor viewport.
     pub fn render(
         &self,
         scene: &Scene,
@@ -382,28 +382,6 @@ impl Viewport {
             return;
         };
         let vp = camera.get_view_projection();
-
-        // The selected entity's marker is highlighted: entities without
-        // geometry (camera, light) have no outline to show the selection.
-        let mut markers = Vec::new();
-        let mut selected_marker = Vec::new();
-        for (id, position) in collect_world_positions(scene) {
-            let size = (position - self.position).magnitude() * 0.012;
-            let target = if Some(id) == selected {
-                &mut selected_marker
-            } else {
-                &mut markers
-            };
-            for axis in AXES {
-                target.push(Line::new(position - axis * size, axis, size * 2.0));
-            }
-        }
-        if !markers.is_empty() {
-            LineRenderer::render_lines(&vp, &markers, Vector3::new(0.75, 0.75, 0.75), true);
-        }
-        if !selected_marker.is_empty() {
-            LineRenderer::render_lines(&vp, &selected_marker, outline::OUTLINE_COLOR, true);
-        }
 
         let Some(id) = selected else {
             return;
