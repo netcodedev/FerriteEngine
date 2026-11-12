@@ -14,6 +14,7 @@ mod bone;
 mod channel;
 mod model;
 mod model_mesh;
+pub mod outline;
 mod pose;
 
 pub struct Model {
@@ -25,6 +26,9 @@ pub struct Model {
     /// older code did) caused later materials to overwrite earlier ones so
     /// every mesh ended up sampling the last-loaded texture set.
     textures: Vec<HashMap<TextureType, Texture>>,
+    /// File name without extension; names the variant of a model that holds
+    /// just one.
+    name: String,
     /// Directory the model was loaded from (relative to the project root).
     /// Used as a search location when resolving external texture references
     /// — many FBX/GLTF files ship their maps next to the model file.
@@ -44,9 +48,9 @@ pub struct SubmeshData {
     pub material_index: usize,
 }
 
-/// One tree variant grouped with its discrete LOD tiers. Used to share a
-/// single multi-tree asset (e.g. an FBX pack) across many `TreeKind`s while
-/// preserving their per-LOD geometry split.
+/// One variant of a model (e.g. one tree of a pack) with the geometry of
+/// its discrete LOD tiers. See `outline::group_nodes` for how a file is
+/// split into variants.
 pub struct TreeGroup {
     pub name: String,
     /// (LOD name, submeshes) in scene-graph order. Caller is responsible for

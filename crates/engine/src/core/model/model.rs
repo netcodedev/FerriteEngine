@@ -17,13 +17,21 @@ use super::{Bone, Model, ModelBuilder, ModelMesh, Pose};
 use crate::core::utils::ToMatrix4;
 
 impl Model {
+    /// Load a model by its path below `assets/models/`.
     pub fn new<P: Into<Point3<f32>>>(
         path: &str,
         position: P,
     ) -> Result<Model, Box<dyn std::error::Error>> {
-        let full_path = format!("assets/models/{path}");
+        Self::from_file(&format!("assets/models/{path}"), position)
+    }
+
+    /// Load a model from a path relative to the working directory.
+    pub fn from_file<P: Into<Point3<f32>>>(
+        full_path: &str,
+        position: P,
+    ) -> Result<Model, Box<dyn std::error::Error>> {
         let scene = Scene::from_file(
-            full_path.as_str(),
+            full_path,
             vec![
                 PostProcess::Triangulate,
                 // PostProcess::JoinIdenticalVertices,
@@ -33,7 +41,7 @@ impl Model {
         )?;
         let shader: Shader =
             Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
-        let model_dir = std::path::Path::new(&full_path)
+        let model_dir = std::path::Path::new(full_path)
             .parent()
             .and_then(|p| p.to_str())
             .unwrap_or("assets/models")
@@ -43,6 +51,7 @@ impl Model {
             meshes: HashMap::<String, ModelMesh>::new(),
             shader,
             textures: Vec::new(),
+            name: super::outline::default_variant_name(std::path::Path::new(full_path)),
             model_dir,
             position: position.into(),
             scale: 0.01,
@@ -174,25 +183,8 @@ impl Model {
         }
     }
 
-    /// Resolve a texture path referenced by an FBX material and upload it.
-    ///
-    /// FBX exporters sometimes write absolute paths from the artist's machine
-    /// (`C:\Users\...\bark.png`) or paths relative to the original asset
-    /// folder. We only have the filename to work with at runtime, so try a few
-    /// reasonable locations next to where models live in this project.
-    /// Read the material's display name from `?mat.name` (assimp's standard
-    /// key). Returns `None` for unnamed materials.
     fn material_name(material: &russimp_ng::material::Material) -> Option<String> {
-        material.properties.iter().find_map(|p| {
-            if p.key != "?mat.name" {
-                return None;
-            }
-            if let PropertyTypeInfo::String(s) = &p.data {
-                Some(s.clone())
-            } else {
-                None
-            }
-        })
+        super::outline::material_name(material)
     }
 
     /// Best-effort recovery for materials whose texture connections were
@@ -323,16 +315,15 @@ impl Model {
         Some(texture)
     }
 
+    /// Resolve a texture path referenced by a material and upload it.
+    ///
+    /// Exporters sometimes write absolute paths from the artist's machine
+    /// (`C:\Users\...\bark.png`) or paths relative to the original asset
+    /// folder. We only have the file name to work with at runtime, so try a
+    /// few reasonable locations next to where models live in this project.
     fn load_external_texture(raw_path: &str, model_dir: &str) -> Option<Texture> {
         let trimmed = raw_path.trim_end_matches('\0').trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        // Extract the basename ourselves rather than via `Path::file_name`, so
-        // Windows-style references like `F:\artist\maplebranch.png` resolve
-        // correctly when running on Linux (where `\` is not a path separator).
-        let file_name = trimmed.rsplit(|c| c == '/' || c == '\\').next()?;
+        let file_name = super::outline::texture_file_name(raw_path)?;
         // Some FBX exporters write spaces in texture names while the on-disk
         // file uses underscores (or vice versa), so try both spellings.
         let space_underscore = file_name.replace(' ', "_");
@@ -586,89 +577,52 @@ impl Model {
         out
     }
 
-    /// Walks the scene graph and returns every tree variant in the asset.
-    ///
-    /// Detects which structure the asset uses by inspecting the names of
-    /// the root's direct children:
-    /// * If those names already look like LOD markers (contain `lod`,
-    ///   `high`, `low`, `last`, or `billboard`), the asset holds a single
-    ///   tree and each child is one of its LODs.
-    /// * Otherwise the root's children are treated as separate tree
-    ///   variants, and each variant's descendants whose names contain those
-    ///   LOD markers become its LODs.
+    /// Every variant in the file with the geometry of its LODs. A file is
+    /// split into variants by `outline::group_nodes`, the same way the asset
+    /// importer describes it.
     pub fn extract_tree_groups(&self) -> Vec<crate::core::model::TreeGroup> {
         use crate::core::model::TreeGroup;
         let Some(root) = &self.model.root else {
             return Vec::new();
         };
-        let children = root.children.borrow();
-        let lod_named = children
-            .iter()
-            .filter(|c| Self::is_lod_node_name(&c.name))
-            .count();
-        let single_tree_mode = lod_named > 0 && lod_named * 2 >= children.len();
-
-        if single_tree_mode {
-            let mut lods = Vec::new();
-            for child in children.iter() {
-                let mut subs = Vec::new();
-                self.collect_node_submeshes(child, &mut subs);
-                if !subs.is_empty() {
-                    lods.push((child.name.clone(), subs));
-                }
-            }
-            if lods.is_empty() {
-                return Vec::new();
-            }
-            vec![TreeGroup {
-                name: "tree".to_string(),
-                lods,
-            }]
-        } else {
-            let mut groups = Vec::new();
-            for tree_node in children.iter() {
-                let mut lods = Vec::new();
-                self.collect_lods_within(tree_node, &mut lods);
-                if !lods.is_empty() {
-                    groups.push(TreeGroup {
-                        name: tree_node.name.clone(),
-                        lods,
-                    });
-                }
-            }
-            groups
-        }
+        super::outline::group_nodes(root, &self.name)
+            .into_iter()
+            .map(|group| TreeGroup {
+                name: group.name,
+                lods: group
+                    .lods
+                    .into_iter()
+                    .map(|(name, node)| {
+                        let mut submeshes = Vec::new();
+                        self.collect_node_submeshes(&node, &mut submeshes);
+                        (name, submeshes)
+                    })
+                    .collect(),
+            })
+            .collect()
     }
 
-    fn collect_lods_within(
-        &self,
-        node: &russimp_ng::node::Node,
-        out: &mut Vec<(String, Vec<crate::core::model::SubmeshData>)>,
+    /// Replace the texture a material uses in one slot, e.g. with one the
+    /// user assigned to the asset.
+    pub fn set_material_texture(
+        &mut self,
+        material_index: usize,
+        slot: TextureType,
+        texture: Texture,
     ) {
-        for child in node.children.borrow().iter() {
-            if Self::is_lod_node_name(&child.name) {
-                let mut subs = Vec::new();
-                self.collect_node_submeshes(child, &mut subs);
-                if !subs.is_empty() {
-                    out.push((child.name.clone(), subs));
-                }
-            } else {
-                // Recurse — some packs wrap LOD nodes inside extra grouping
-                // nodes before reaching the meshes.
-                self.collect_lods_within(child, out);
-            }
+        if let Some(textures) = self.textures.get_mut(material_index) {
+            textures.insert(slot, texture);
         }
     }
 
-    fn is_lod_node_name(name: &str) -> bool {
-        let lc = name.to_lowercase();
-        lc.contains("lod")
-            || lc.contains("high")
-            || lc.ends_with("low")
-            || lc.contains(" low")
-            || lc.contains("_low")
-            || lc.contains("last")
-            || lc.contains("billboard")
+    /// Upload an image file as a texture.
+    pub fn load_texture_file(path: &std::path::Path) -> Option<Texture> {
+        Self::load_texture_from_disk(path)
+    }
+
+    /// Number of materials in the file.
+    pub fn material_count(&self) -> usize {
+        self.model.materials.len()
     }
 
     fn collect_node_submeshes(

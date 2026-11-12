@@ -29,7 +29,7 @@ use crate::core::{
         component::{Component, Property, PropertyValue},
         Entity,
     },
-    model::{Model, ModelBuilder, TreeGroup},
+    model::{outline, Model, ModelBuilder},
     physics::physics_engine::PhysicsEngine,
     renderer::{light::skylight::SkyLight, shader::Shader, texture::Texture},
     scene::Scene,
@@ -212,16 +212,7 @@ fn load_variants(path: &str) -> Result<Vec<ModelVariant>, Box<dyn std::error::Er
     model.init();
     let mut groups = model.extract_tree_groups();
     if groups.is_empty() {
-        // No LOD-named nodes: a plain model. Use all of it as one variant
-        // with a single detail tier.
-        let submeshes = model.extract_submeshes();
-        if submeshes.iter().all(|sd| sd.indices.is_empty()) {
-            return Err(format!("no geometry found in '{path}'").into());
-        }
-        groups.push(TreeGroup {
-            name: path.to_string(),
-            lods: vec![("lod0".to_string(), submeshes)],
-        });
+        return Err(format!("no geometry found in '{path}'").into());
     }
 
     let shared_model = Rc::new(model);
@@ -353,16 +344,9 @@ fn build_collider(
 }
 
 fn is_foliage_material(model: &Model, material_index: usize) -> bool {
-    let Some(name) = model.material_name_at(material_index) else {
-        return false;
-    };
-    let lc = name.to_lowercase();
-    lc.contains("cluster")
-        || lc.contains("leaf")
-        || lc.contains("leaves")
-        || lc.contains("leav")    // Paine pine names its foliage material "leav"
-        || lc.contains("foliage")
-        || lc.contains("billboard")
+    model
+        .material_name_at(material_index)
+        .is_some_and(|name| outline::looks_like_foliage(&name))
 }
 
 /// Stable hash of (x, z) → variant index. Same input always picks the same variant,
