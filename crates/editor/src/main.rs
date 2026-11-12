@@ -11,6 +11,7 @@ use editor::{
         canvas::NodeCanvas, graph_inspector::GraphInspector, inputs::InputsPanel,
         preview::PreviewPanel, AnimSelection,
     },
+    asset_browser::AssetBrowser,
     dialogs::{self, ModalHost},
     hierarchy::HierarchyPanel,
     inspector::InspectorPanel,
@@ -27,6 +28,7 @@ use editor::{
 };
 use ferrite::core::{
     application::{Application, Layer},
+    assets,
     entity::{
         component::{animation_component::AnimationComponent, camera_component::CameraComponent},
         Entity, EntityHandle,
@@ -99,6 +101,7 @@ impl EditorLayer {
             Box::new(HierarchyPanel::new(state.clone())) as Box<dyn UIElement>,
             Box::new(InspectorPanel::new(state.clone())),
             Box::new(StatsPanel::new(state.clone())),
+            Box::new(AssetBrowser::new(state.clone())),
         ] {
             add(&mut ui, Box::new(ToggleWindow::new(scene_panels.clone(), panel)));
         }
@@ -237,6 +240,37 @@ impl EditorLayer {
             .get_component_mut::<Terrain<DualContouringChunk>>()
     }
 
+    /// Ask for files and import each as an asset.
+    fn import_assets(&mut self) {
+        let files = dialogs::pick_import_files();
+        if files.is_empty() {
+            return;
+        }
+        let mut imported = Vec::new();
+        let mut failed = Vec::new();
+        {
+            let mut database = assets::database();
+            for file in &files {
+                match database.import(file) {
+                    Ok(id) => {
+                        if let Some(entry) = database.get(id) {
+                            imported.push(entry.meta.name.clone());
+                        }
+                    }
+                    Err(e) => failed.push(e.to_string()),
+                }
+            }
+        }
+        let message = match (imported.as_slice(), failed.first()) {
+            (_, Some(error)) if imported.is_empty() => format!("Import failed: {error}"),
+            (names, Some(error)) => {
+                format!("Imported {}, but: {error}", names.join(", "))
+            }
+            (names, None) => format!("Imported {}", names.join(", ")),
+        };
+        self.state.borrow_mut().set_status(message);
+    }
+
     fn replace_scene(&mut self, scene: Scene) {
         self.scene = scene;
         // The viewport re-installs its camera on the next update.
@@ -275,7 +309,8 @@ impl EditorLayer {
                 | Command::AddEntity { .. }
                 | Command::AddComponent(..)
                 | Command::RemoveComponent(..)
-                | Command::PickScatterModel { .. }
+                | Command::PickScatterAsset { .. }
+                | Command::SetScatterAsset { .. }
                 | Command::RemoveScatterModel(..)
                 | Command::Delete(_)
                 | Command::Duplicate(_)
@@ -409,19 +444,35 @@ impl EditorLayer {
                     self.state.borrow_mut().dirty = true;
                 }
             }
-            Command::PickScatterModel { entity, layer } => match dialogs::pick_model() {
-                Ok(Some(model)) => {
-                    if let Some(terrain) = self.terrain_mut(&entity) {
-                        match layer {
-                            Some(layer) => terrain.scatter_mut().set_model(layer, model),
-                            None => terrain.scatter_mut().add_layer(model, DEFAULT_DENSITY),
-                        }
-                        self.state.borrow_mut().dirty = true;
-                    }
+            Command::ImportAssets => self.import_assets(),
+            Command::RefreshAssets => {
+                let (count, problems) = {
+                    let mut database = assets::database();
+                    let problems = database.scan();
+                    (database.len(), problems)
+                };
+                let mut state = self.state.borrow_mut();
+                match problems.first() {
+                    Some(problem) => state.set_status(format!("Assets: {problem}")),
+                    None => state.set_status(format!("{count} assets")),
                 }
-                Ok(None) => {}
-                Err(e) => self.state.borrow_mut().set_status(e),
-            },
+            }
+            Command::PickScatterAsset { entity, layer } => {
+                dialogs::pick_scatter_asset(&self.state, entity, layer)
+            }
+            Command::SetScatterAsset {
+                entity,
+                layer,
+                asset,
+            } => {
+                if let Some(terrain) = self.terrain_mut(&entity) {
+                    match layer {
+                        Some(layer) => terrain.scatter_mut().set_asset(layer, asset),
+                        None => terrain.scatter_mut().add_asset_layer(asset, DEFAULT_DENSITY),
+                    }
+                    self.state.borrow_mut().dirty = true;
+                }
+            }
             Command::RemoveScatterModel(entity, layer) => {
                 if let Some(terrain) = self.terrain_mut(&entity) {
                     terrain.scatter_mut().remove_layer(layer);
@@ -660,9 +711,14 @@ impl EditorLayer {
 
 impl Layer for EditorLayer {
     fn on_update(&mut self, window: &Window, delta_time: f64) {
-        let (show_stats, show_widgets, workspace) = {
+        let (show_stats, show_widgets, show_assets, workspace) = {
             let s = self.state.borrow();
-            (s.show_stats.read(), s.show_widgets.read(), s.workspace)
+            (
+                s.show_stats.read(),
+                s.show_widgets.read(),
+                s.show_assets.read(),
+                s.workspace,
+            )
         };
         let right = match workspace {
             Workspace::Animation => RightColumn::Preview,
@@ -672,7 +728,13 @@ impl Layer for EditorLayer {
             },
         };
         let sizes = self.state.borrow().panel_sizes;
-        let layout = Layout::compute(window.width as f32, window.height as f32, right, &sizes);
+        let layout = Layout::compute(
+            window.width as f32,
+            window.height as f32,
+            right,
+            show_assets && workspace == Workspace::Scene,
+            &sizes,
+        );
         self.state.borrow_mut().layout = layout;
         let mode = self.state.borrow().mode;
 

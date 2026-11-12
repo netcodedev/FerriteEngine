@@ -41,7 +41,8 @@ use super::{
 #[derive(Clone, PartialEq)]
 struct Signature {
     entity: Option<EntityHandle>,
-    components: Vec<(String, Vec<Cow<'static, str>>)>,
+    /// Per component its name and its properties (name, read-only).
+    components: Vec<(String, Vec<(Cow<'static, str>, bool)>)>,
     width: i32,
 }
 
@@ -156,7 +157,10 @@ impl InspectorPanel {
                     .map(|c| {
                         (
                             c.display_name(),
-                            c.properties().into_iter().map(|p| p.name).collect(),
+                            c.properties()
+                                .into_iter()
+                                .map(|p| (p.name, p.read_only))
+                                .collect(),
                         )
                     })
                     .collect()
@@ -253,8 +257,8 @@ impl InspectorPanel {
                 section.add_child(Box::new(Label::muted("No editable properties", theme::FONT_SIZE_SMALL)));
             }
             for property in properties {
-                // A terrain's scatter models get a file chooser and a remove
-                // button next to the path.
+                // A terrain's scatter models get an asset chooser and a
+                // remove button.
                 let layer = (display == "Terrain")
                     .then(|| Scatter::model_property_layer(&property.name))
                     .flatten();
@@ -273,7 +277,7 @@ impl InspectorPanel {
                     Box::new(move |_| {
                         send(
                             &add_state,
-                            Command::PickScatterModel {
+                            Command::PickScatterAsset {
                                 entity: id,
                                 layer: None,
                             },
@@ -323,7 +327,7 @@ impl InspectorPanel {
         self.body.add_child(Box::new(add));
     }
 
-    /// "Choose file" and "remove" buttons for one scatter layer of a terrain.
+    /// "Choose asset" and "remove" buttons for one scatter layer of a terrain.
     fn scatter_model_buttons(&self, id: EntityHandle, layer: usize) -> Vec<Box<dyn UIElement>> {
         let browse_state = self.state.clone();
         let mut browse = Button::new(
@@ -332,7 +336,7 @@ impl InspectorPanel {
             Box::new(move |_| {
                 send(
                     &browse_state,
-                    Command::PickScatterModel {
+                    Command::PickScatterAsset {
                         entity: id,
                         layer: Some(layer),
                     },
@@ -340,8 +344,8 @@ impl InspectorPanel {
             }),
         );
         browse.set_style(ButtonStyle::Secondary);
-        browse.set_icon(icons::FOLDER_OPEN);
-        browse.set_tooltip("Choose a model file");
+        browse.set_icon(icons::PACKAGE);
+        browse.set_tooltip("Choose a model asset");
 
         let remove_state = self.state.clone();
         let mut remove = Button::new(
@@ -355,7 +359,7 @@ impl InspectorPanel {
         vec![Box::new(browse), Box::new(remove)]
     }
 
-    /// `extra` widgets are placed after the value widget, which is narrowed
+    /// `extra` widgets are placed before the value widget, which is narrowed
     /// to leave room for them.
     fn add_property(
         &mut self,
@@ -425,8 +429,11 @@ impl InspectorPanel {
                 }
             }
         };
-        widgets.extend(extra);
-        let row = Box::new(FieldRow::new(&property.name, widgets));
+        // In front, so they stay put whatever the length of a read-only
+        // value.
+        let mut widgets_in_order = extra;
+        widgets_in_order.append(&mut widgets);
+        let row = Box::new(FieldRow::new(&property.name, widgets_in_order));
         self.properties.push(PropertyBinding {
             component,
             name: property.name,

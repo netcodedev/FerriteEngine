@@ -39,10 +39,11 @@ pub struct Toolbar {
 }
 
 /// Window menu entries, checked while the panel is shown.
-fn window_items(stats: bool, widgets: bool) -> Vec<MenuItem> {
+fn window_items(stats: bool, widgets: bool, assets: bool) -> Vec<MenuItem> {
     vec![
         MenuItem::new("Statistics").icon(icons::ACTIVITY).checked(stats),
         MenuItem::new("Widget showcase").icon(icons::COMPONENT).checked(widgets),
+        MenuItem::new("Assets").icon(icons::PACKAGE).checked(assets),
     ]
 }
 
@@ -82,12 +83,13 @@ impl Toolbar {
         let window_menu = MenuButton::with_items(
             "Window",
             None,
-            window_items(true, false),
+            window_items(true, false, true),
             Box::new(move |index, _scene| {
                 let state = window_state.borrow();
                 let flag = match index {
                     0 => state.show_stats.clone(),
-                    _ => state.show_widgets.clone(),
+                    1 => state.show_widgets.clone(),
+                    _ => state.show_assets.clone(),
                 };
                 flag.write(!flag.read());
             }),
@@ -177,13 +179,17 @@ impl Toolbar {
 
 impl UIElement for Toolbar {
     fn update(&mut self, scene: &mut Scene) {
-        let (stats_on, widgets_on) = {
+        let (stats_on, widgets_on, assets_on) = {
             let state = self.state.borrow();
-            (state.show_stats.read(), state.show_widgets.read())
+            (
+                state.show_stats.read(),
+                state.show_widgets.read(),
+                state.show_assets.read(),
+            )
         };
         // Rebuilds its entries only when a check mark actually changes.
         self.window_menu
-            .set_menu_items(window_items(stats_on, widgets_on));
+            .set_menu_items(window_items(stats_on, widgets_on, assets_on));
         let (rect, viewport, mode, gizmo, status, workspace) = {
             let state = self.state.borrow();
             (

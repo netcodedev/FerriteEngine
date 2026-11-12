@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use ferrite::core::{
+    assets::{self, AssetDatabase, AssetRef},
+    entity::EntityHandle,
     primitives::{Offset, Size},
     scene::Scene,
     utils::DataSource,
@@ -11,43 +13,99 @@ use glfw::{Glfw, WindowEvent};
 use super::{send, Command, Shared};
 
 pub const SCENE_DIR: &str = "scenes";
-/// Models are referenced relative to this folder.
-pub const MODEL_DIR: &str = "assets/models";
 
-/// Let the user choose a model with the system's file dialog (Windows:
-/// the native dialog; Linux: the desktop portal, or zenity without one).
-/// Blocks until the dialog is closed. Returns the path relative to
-/// `MODEL_DIR` with forward slashes, `None` if the dialog was cancelled.
-pub fn pick_model() -> Result<Option<String>, String> {
-    let model_dir = Path::new(MODEL_DIR);
-    let mut dialog = rfd::FileDialog::new()
-        .set_title("Choose a model")
-        .add_filter("Models", &["gltf", "glb", "fbx", "obj", "dae"])
-        .add_filter("All files", &["*"]);
-    // The dialog wants an absolute start folder.
-    if let Ok(start) = model_dir.canonicalize() {
-        dialog = dialog.set_directory(start);
-    }
-    let Some(picked) = dialog.pick_file() else {
-        return Ok(None);
-    };
-    model_path(&picked, model_dir)
-        .map(Some)
-        .ok_or_else(|| format!("Models have to be inside {MODEL_DIR}/"))
+/// Let the user choose files to import with the system's file dialog
+/// (Windows: the native dialog; Linux: the desktop portal, or zenity
+/// without one). Blocks until the dialog is closed; empty if cancelled.
+pub fn pick_import_files() -> Vec<PathBuf> {
+    let extensions = AssetDatabase::importable_extensions();
+    rfd::FileDialog::new()
+        .set_title("Import assets")
+        .add_filter("Models and textures", &extensions)
+        .add_filter("All files", &["*"])
+        .pick_files()
+        .unwrap_or_default()
 }
 
-/// `picked` relative to `model_dir`, with forward slashes on every platform
-/// (scene files are shared between Windows and Linux). `None` if the file
-/// is not inside `model_dir`.
-fn model_path(picked: &Path, model_dir: &Path) -> Option<String> {
-    let model_dir = model_dir.canonicalize().ok()?;
-    let picked = picked.canonicalize().ok()?;
-    let relative = picked.strip_prefix(&model_dir).ok()?;
-    let parts: Vec<String> = relative
-        .components()
-        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+/// The model assets a scatter layer can use: each asset as a whole and,
+/// for assets with several variants, each variant.
+fn model_choices() -> Vec<(String, AssetRef)> {
+    let database = assets::database();
+    let mut models: Vec<_> = database
+        .iter()
+        .filter_map(|entry| Some((entry, entry.meta.as_model()?)))
         .collect();
-    (!parts.is_empty()).then(|| parts.join("/"))
+    models.sort_by_key(|(entry, _)| entry.meta.name.to_lowercase());
+    let mut choices = Vec::new();
+    for (entry, model) in models {
+        let id = entry.meta.id;
+        if model.variants.len() > 1 {
+            choices.push((
+                format!("{} (all {} variants)", entry.meta.name, model.variants.len()),
+                AssetRef::whole(id),
+            ));
+            for variant in &model.variants {
+                choices.push((
+                    format!("{} / {}", entry.meta.name, variant.name),
+                    AssetRef::part(id, variant.name.clone()),
+                ));
+            }
+        } else {
+            choices.push((entry.meta.name.clone(), AssetRef::whole(id)));
+        }
+    }
+    choices
+}
+
+/// Ask which model asset a scatter layer of `entity`'s terrain should use.
+/// Without a layer index the choice becomes a new layer.
+pub fn pick_scatter_asset(state: &Shared, entity: EntityHandle, layer: Option<usize>) {
+    let choices = model_choices();
+    let open_flag = DataSource::new(true);
+    let cancel_open = open_flag.clone();
+    if choices.is_empty() {
+        let children: Vec<Box<dyn UIElement>> = vec![
+            UI::label("There are no model assets yet.", 14.0),
+            UI::label("Use Import in the Assets panel to add one.", 14.0),
+            button_row(vec![UI::button(
+                "Close",
+                Box::new(move |_| cancel_open.write(false)),
+            )]),
+        ];
+        show(state, "Choose a model", open_flag, children);
+        return;
+    }
+
+    let selected = DataSource::new(0u32);
+    let labels: Vec<String> = choices.iter().map(|(label, _)| label.clone()).collect();
+    let height = (labels.len().min(10) as f32) * 20.0 + 4.0;
+    let use_state = state.clone();
+    let use_open = open_flag.clone();
+    let use_selected = selected.clone();
+    let children: Vec<Box<dyn UIElement>> = vec![
+        UI::label("Model assets:", 14.0),
+        UI::list(labels, selected, Size::new(380.0, height)),
+        button_row(vec![
+            UI::button(
+                "Use",
+                Box::new(move |_| {
+                    if let Some((_, asset)) = choices.get(use_selected.read() as usize) {
+                        send(
+                            &use_state,
+                            Command::SetScatterAsset {
+                                entity,
+                                layer,
+                                asset: asset.clone(),
+                            },
+                        );
+                        use_open.write(false);
+                    }
+                }),
+            ),
+            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+        ]),
+    ];
+    show(state, "Choose a model", open_flag, children);
 }
 
 /// A popup plus the flag that keeps it open (its close button and the
@@ -323,26 +381,4 @@ impl UIElement for ModalHost {
         &self.size
     }
     fn set_z_index(&mut self, _z_index: f32) {}
-}
-
-#[cfg(test)]
-mod tests {
-    use super::model_path;
-
-    #[test]
-    fn picked_model_is_relative_with_forward_slashes() {
-        let base = std::env::temp_dir().join(format!("ferrite-model-path-{}", std::process::id()));
-        let models = base.join("models");
-        std::fs::create_dir_all(models.join("Trees")).unwrap();
-        let inside = models.join("Trees").join("Oak tree.fbx");
-        let outside = base.join("elsewhere.fbx");
-        std::fs::write(&inside, b"").unwrap();
-        std::fs::write(&outside, b"").unwrap();
-
-        assert_eq!(model_path(&inside, &models).as_deref(), Some("Trees/Oak tree.fbx"));
-        assert_eq!(model_path(&outside, &models), None);
-        assert_eq!(model_path(&models, &models), None);
-
-        std::fs::remove_dir_all(&base).unwrap();
-    }
 }

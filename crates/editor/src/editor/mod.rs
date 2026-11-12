@@ -6,10 +6,13 @@
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Instant};
 
-use ferrite::core::{entity::EntityHandle, scene::scene_file::ComponentData, utils::DataSource};
+use ferrite::core::{
+    assets::AssetRef, entity::EntityHandle, scene::scene_file::ComponentData, utils::DataSource,
+};
 use ferrite_ui::ui::elements::tree::NO_SELECTION;
 
 pub mod anim;
+pub mod asset_browser;
 pub mod dialogs;
 pub mod field_row;
 pub mod hierarchy;
@@ -80,11 +83,22 @@ pub enum Command {
     },
     AddComponent(EntityHandle, ComponentData),
     RemoveComponent(EntityHandle, usize),
-    /// Choose a model file for a scatter layer of this entity's terrain.
-    /// Without a layer index a new layer is added.
-    PickScatterModel {
+    /// Let the user import files as assets (system file dialog).
+    ImportAssets,
+    /// Scan the assets folder again.
+    RefreshAssets,
+    /// Let the user choose a model asset for a scatter layer of this
+    /// entity's terrain. Without a layer index a new layer is added.
+    PickScatterAsset {
         entity: EntityHandle,
         layer: Option<usize>,
+    },
+    /// Use a model asset for a scatter layer of this entity's terrain.
+    /// Without a layer index a new layer is added.
+    SetScatterAsset {
+        entity: EntityHandle,
+        layer: Option<usize>,
+        asset: AssetRef,
     },
     /// Remove a scatter layer from this entity's terrain.
     RemoveScatterModel(EntityHandle, usize),
@@ -129,6 +143,10 @@ pub struct EditorState {
     pub panel_sizes: layout::PanelSizes,
     pub show_widgets: DataSource<bool>,
     pub show_stats: DataSource<bool>,
+    /// Asset browser below the viewport.
+    pub show_assets: DataSource<bool>,
+    /// What is selected in the asset browser.
+    pub asset_selection: Option<AssetRef>,
     pub stats: stats::Stats,
     /// A popup the modal host should show next (save-as, open, confirm).
     pub pending_modal: Option<dialogs::Modal>,
@@ -158,11 +176,14 @@ impl EditorState {
                     stats: true,
                     widgets: false,
                 },
+                true,
                 &layout::PanelSizes::default(),
             ),
             panel_sizes: layout::PanelSizes::default(),
             show_widgets: DataSource::new(false),
             show_stats: DataSource::new(true),
+            show_assets: DataSource::new(true),
+            asset_selection: None,
             stats: stats::Stats::new(),
             pending_modal: None,
         }))

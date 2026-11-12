@@ -61,6 +61,7 @@ pub struct AssetDatabase {
     root: PathBuf,
     assets: BTreeMap<AssetId, AssetEntry>,
     next_revision: u64,
+    changes: u64,
 }
 
 impl AssetDatabase {
@@ -70,11 +71,18 @@ impl AssetDatabase {
             root: root.into(),
             assets: BTreeMap::new(),
             next_revision: 1,
+            changes: 0,
         }
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Goes up whenever the set of assets or any of their settings may
+    /// have changed. Lets views of the database know when to rebuild.
+    pub fn changes(&self) -> u64 {
+        self.changes
     }
 
     /// Re-read every sidecar below the root. Assets that are still there
@@ -132,6 +140,7 @@ impl AssetDatabase {
             }
         }
         self.assets = found;
+        self.changes += 1;
         problems
     }
 
@@ -204,6 +213,7 @@ impl AssetDatabase {
         };
         Self::write_meta(&entry)?;
         self.assets.insert(id, entry);
+        self.changes += 1;
         Ok(id)
     }
 
@@ -219,6 +229,7 @@ impl AssetDatabase {
         let previous = entry.meta_path();
         entry.meta = meta;
         entry.revision = revision;
+        self.changes += 1;
         Self::write_meta(entry)?;
         if previous != entry.meta_path() {
             let _ = fs::remove_file(previous);

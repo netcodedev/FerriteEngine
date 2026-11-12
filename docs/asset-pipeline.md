@@ -4,8 +4,8 @@ Plan for importing files into the project as reusable assets, browsing and
 editing them in the editor, and using them (instead of raw file paths)
 wherever a component needs a model or a texture.
 
-Status: planned. Work happens on `feat/assets`; the checklist under
-"Phases" is kept up to date.
+Status: phases 1–4 are done on `feat/assets`; drag and drop and the asset
+editor are next. The checklist under "Phases" is kept up to date.
 
 ## Goals
 
@@ -153,8 +153,8 @@ Docked below the viewport, resizable, can be hidden from the Window menu.
 
 - Tree of folders and assets; a model asset expands into its variants.
 - Import (file dialog) and Refresh (rescan).
-- Selecting an asset shows its settings; double click opens the asset
-  editor.
+- Selecting an asset shows a one-line summary. Opening it in the asset
+  editor comes with phase 6.
 
 ### Using assets in fields (phase 4 and 5)
 
@@ -192,7 +192,7 @@ Each phase is one or a few commits and leaves the editor usable.
 - [x] **3. Scatter uses assets** — asset references in scatter layers and
   scene files; variant filter, scale, texture overrides, foliage flag;
   reload on revision change.
-- [ ] **4. Asset browser** — panel, layout, import, refresh; asset picker
+- [x] **4. Asset browser** — panel, layout, import, refresh; asset picker
   for scatter layers.
 - [ ] **5. Drag and drop** — from the browser onto scatter layers and
   "Add model".
