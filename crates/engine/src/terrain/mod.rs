@@ -20,13 +20,17 @@ pub const USE_LOD: bool = false;
 
 pub mod dual_contouring;
 pub mod marching_cubes;
+pub mod scatter;
 mod terrain;
-pub mod tree_forest;
 pub mod voxel;
 
 pub struct Terrain<T: Chunk> {
     seed: u64,
-    /// Editor toggle: draw chunk and tree colliders as wireframes.
+    /// Countdown until the chunks are rebuilt for an edited seed.
+    reseed_in: Option<f64>,
+    /// Models scattered over the chunks. Optional; see `scatter`.
+    scatter: scatter::Scatter,
+    /// Editor toggle: draw chunk and scatter colliders as wireframes.
     show_colliders: bool,
     chunk_receiver: mpsc::Receiver<T>,
     shader: Shader,
@@ -46,11 +50,13 @@ pub trait Chunk {
     fn get_vertices(&self) -> Vec<[f32; 3]>;
     fn get_indices(&self) -> Vec<[u32; 3]>;
 
-    /// Optional per-chunk scatter of foliage props (currently just trees).
-    /// Returned as world-space `(x, y, z, yaw_radians)` so callers can apply
-    /// the model-specific orientation/lift transforms themselves. The default
-    /// is empty — only terrain backends that want trees implement this.
-    fn get_tree_placements(&self) -> Vec<(f32, f32, f32, f32)> {
+    /// Spots on this chunk where scattered models (trees, rocks, ...) may
+    /// stand, as world-space `(x, y, z, yaw_radians)`. `attempts` random
+    /// spots are tried and the unsuitable ones dropped; `salt` varies the
+    /// pattern so each model gets its own. Must be deterministic for a given
+    /// chunk, salt and attempt count. The default is empty — only terrain
+    /// backends that support scattering implement this.
+    fn scatter_points(&self, _salt: u64, _attempts: u32) -> Vec<(f32, f32, f32, f32)> {
         Vec::new()
     }
 

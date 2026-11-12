@@ -1,13 +1,18 @@
+use std::borrow::Cow;
+
 use cgmath::{Deg, Euler, Quaternion};
-use ferrite::core::{
-    entity::{
-        component::{Property, PropertyValue},
-        EntityHandle,
+use ferrite::{
+    core::{
+        entity::{
+            component::{Property, PropertyValue},
+            EntityHandle,
+        },
+        primitives::{Offset, Position, Size},
+        renderer::text::icons,
+        scene::{scene_file::ComponentData, Scene},
+        utils::DataSource,
     },
-    primitives::{Offset, Position, Size},
-    renderer::text::icons,
-    scene::{scene_file::ComponentData, Scene},
-    utils::DataSource,
+    terrain::scatter::Scatter,
 };
 use ferrite_ui::ui::{
     element_handle::UIElementHandle,
@@ -36,7 +41,7 @@ use super::{
 #[derive(Clone, PartialEq)]
 struct Signature {
     entity: Option<EntityHandle>,
-    components: Vec<(String, Vec<&'static str>)>,
+    components: Vec<(String, Vec<Cow<'static, str>>)>,
     width: i32,
 }
 
@@ -69,7 +74,7 @@ enum Field {
 
 struct PropertyBinding {
     component: usize,
-    name: &'static str,
+    name: Cow<'static, str>,
     field: Field,
 }
 
@@ -151,7 +156,7 @@ impl InspectorPanel {
                     .map(|c| {
                         (
                             c.display_name(),
-                            c.properties().iter().map(|p| p.name).collect(),
+                            c.properties().into_iter().map(|p| p.name).collect(),
                         )
                     })
                     .collect()
@@ -248,8 +253,39 @@ impl InspectorPanel {
                 section.add_child(Box::new(Label::muted("No editable properties", theme::FONT_SIZE_SMALL)));
             }
             for property in properties {
-                let row = self.add_property(index, property, width);
+                // A terrain's scatter models get a file chooser and a remove
+                // button next to the path.
+                let layer = (display == "Terrain")
+                    .then(|| Scatter::model_property_layer(&property.name))
+                    .flatten();
+                let extra = match layer {
+                    Some(layer) => self.scatter_model_buttons(id, layer),
+                    None => Vec::new(),
+                };
+                let row = self.add_property(index, property, width, extra);
                 section.add_child(row);
+            }
+            if display == "Terrain" {
+                let add_state = self.state.clone();
+                let mut add = Button::new(
+                    Position::default(),
+                    Size::new(10.0, 26.0),
+                    Box::new(move |_| {
+                        send(
+                            &add_state,
+                            Command::PickScatterModel {
+                                entity: id,
+                                layer: None,
+                            },
+                        )
+                    }),
+                );
+                add.set_style(ButtonStyle::Secondary);
+                add.set_icon(icons::PLUS);
+                add.set_label("Add model");
+                add.set_tooltip("Scatter another model over the terrain");
+                add.fit(26.0);
+                section.add_child(Box::new(FieldRow::new("", vec![Box::new(add)])));
             }
             if display == "Animation" {
                 let edit_state = self.state.clone();
@@ -287,9 +323,50 @@ impl InspectorPanel {
         self.body.add_child(Box::new(add));
     }
 
-    fn add_property(&mut self, component: usize, property: Property, width: f32) -> Box<dyn UIElement> {
-        let value_w = width - LABEL_COLUMN - 16.0;
-        let widgets: Vec<Box<dyn UIElement>>;
+    /// "Choose file" and "remove" buttons for one scatter layer of a terrain.
+    fn scatter_model_buttons(&self, id: EntityHandle, layer: usize) -> Vec<Box<dyn UIElement>> {
+        let browse_state = self.state.clone();
+        let mut browse = Button::new(
+            Position::default(),
+            Size::new(24.0, 24.0),
+            Box::new(move |_| {
+                send(
+                    &browse_state,
+                    Command::PickScatterModel {
+                        entity: id,
+                        layer: Some(layer),
+                    },
+                )
+            }),
+        );
+        browse.set_style(ButtonStyle::Secondary);
+        browse.set_icon(icons::FOLDER_OPEN);
+        browse.set_tooltip("Choose a model file");
+
+        let remove_state = self.state.clone();
+        let mut remove = Button::new(
+            Position::default(),
+            Size::new(24.0, 24.0),
+            Box::new(move |_| send(&remove_state, Command::RemoveScatterModel(id, layer))),
+        );
+        remove.set_style(ButtonStyle::Danger);
+        remove.set_icon(icons::X);
+        remove.set_tooltip("Remove this model");
+        vec![Box::new(browse), Box::new(remove)]
+    }
+
+    /// `extra` widgets are placed after the value widget, which is narrowed
+    /// to leave room for them.
+    fn add_property(
+        &mut self,
+        component: usize,
+        property: Property,
+        width: f32,
+        extra: Vec<Box<dyn UIElement>>,
+    ) -> Box<dyn UIElement> {
+        let extra_w: f32 = extra.iter().map(|w| w.get_size().width + 4.0).sum();
+        let value_w = width - LABEL_COLUMN - 16.0 - extra_w;
+        let mut widgets: Vec<Box<dyn UIElement>>;
         let field = if property.read_only {
             let source = DataSource::new(display_value(&property.value));
             let mut label = Label::bound(source.clone(), theme::FONT_SIZE_SMALL + 0.5);
@@ -348,12 +425,14 @@ impl InspectorPanel {
                 }
             }
         };
+        widgets.extend(extra);
+        let row = Box::new(FieldRow::new(&property.name, widgets));
         self.properties.push(PropertyBinding {
             component,
             name: property.name,
             field,
         });
-        Box::new(FieldRow::new(property.name, widgets))
+        row
     }
 
     /// Two-way sync: a source whose value differs from what we last wrote was
@@ -432,7 +511,7 @@ impl InspectorPanel {
                 (Field::Float { source, last }, PropertyValue::Float(actual)) => {
                     let typed = source.read();
                     if changed(typed, *last) {
-                        component.set_property(binding.name, PropertyValue::Float(typed));
+                        component.set_property(&binding.name, PropertyValue::Float(typed));
                         *last = typed;
                         edited = true;
                     } else if changed(round3(actual), *last) {
@@ -443,7 +522,7 @@ impl InspectorPanel {
                 (Field::Int { source, last }, PropertyValue::Int(actual)) => {
                     let typed = source.read();
                     if typed != *last {
-                        component.set_property(binding.name, PropertyValue::Int(typed));
+                        component.set_property(&binding.name, PropertyValue::Int(typed));
                         *last = typed;
                         edited = true;
                     } else if actual != *last {
@@ -454,7 +533,7 @@ impl InspectorPanel {
                 (Field::Bool { source, last }, PropertyValue::Bool(actual)) => {
                     let typed = source.read();
                     if typed != *last {
-                        component.set_property(binding.name, PropertyValue::Bool(typed));
+                        component.set_property(&binding.name, PropertyValue::Bool(typed));
                         *last = typed;
                         edited = true;
                     } else if actual != *last {
@@ -465,7 +544,7 @@ impl InspectorPanel {
                 (Field::Text { source, last }, PropertyValue::Text(actual)) => {
                     let typed = source.read();
                     if typed != *last {
-                        component.set_property(binding.name, PropertyValue::Text(typed.clone()));
+                        component.set_property(&binding.name, PropertyValue::Text(typed.clone()));
                         *last = typed;
                         edited = true;
                     } else if actual != *last {
@@ -478,7 +557,7 @@ impl InspectorPanel {
                     if typed != *last {
                         *last = typed;
                         if let Some(option) = options.get(typed as usize) {
-                            component.set_property(binding.name, PropertyValue::Text(option.clone()));
+                            component.set_property(&binding.name, PropertyValue::Text(option.clone()));
                             edited = true;
                         }
                     } else if let Some(index) = options.iter().position(|o| *o == actual) {

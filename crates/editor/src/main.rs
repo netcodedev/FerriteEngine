@@ -39,6 +39,9 @@ use ferrite::core::{
     window::Window,
 };
 use ferrite::player::PLAYER_GRAPH_PATH;
+use ferrite::terrain::{
+    dual_contouring::DualContouringChunk, scatter::DEFAULT_DENSITY, Terrain,
+};
 use ferrite_ui::ui::{UIElement, UI};
 use glfw::{Action, CursorMode, Glfw, Key, Modifiers, WindowEvent};
 
@@ -214,7 +217,7 @@ impl EditorLayer {
             EntityTemplate::Terrain => (
                 "terrain",
                 Point3::origin(),
-                vec![ComponentData::Terrain { seed: 2 }],
+                vec![ComponentData::bare_terrain(2)],
             ),
             EntityTemplate::Player => ("player", spawn, vec![ComponentData::Player]),
         };
@@ -226,6 +229,12 @@ impl EditorLayer {
             components,
             children: Vec::new(),
         }
+    }
+
+    fn terrain_mut(&mut self, id: &EntityHandle) -> Option<&mut Terrain<DualContouringChunk>> {
+        self.scene
+            .get_entity_mut(id)?
+            .get_component_mut::<Terrain<DualContouringChunk>>()
     }
 
     fn replace_scene(&mut self, scene: Scene) {
@@ -266,6 +275,8 @@ impl EditorLayer {
                 | Command::AddEntity { .. }
                 | Command::AddComponent(..)
                 | Command::RemoveComponent(..)
+                | Command::PickScatterModel { .. }
+                | Command::RemoveScatterModel(..)
                 | Command::Delete(_)
                 | Command::Duplicate(_)
                 | Command::ConfirmDiscard(_)
@@ -395,6 +406,25 @@ impl EditorLayer {
                     .and_then(|entity| entity.remove_component_at(index));
                 if let Some(mut component) = removed {
                     component.on_remove(&mut self.scene.physics_engine);
+                    self.state.borrow_mut().dirty = true;
+                }
+            }
+            Command::PickScatterModel { entity, layer } => match dialogs::pick_model() {
+                Ok(Some(model)) => {
+                    if let Some(terrain) = self.terrain_mut(&entity) {
+                        match layer {
+                            Some(layer) => terrain.scatter_mut().set_model(layer, model),
+                            None => terrain.scatter_mut().add_layer(model, DEFAULT_DENSITY),
+                        }
+                        self.state.borrow_mut().dirty = true;
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => self.state.borrow_mut().set_status(e),
+            },
+            Command::RemoveScatterModel(entity, layer) => {
+                if let Some(terrain) = self.terrain_mut(&entity) {
+                    terrain.scatter_mut().remove_layer(layer);
                     self.state.borrow_mut().dirty = true;
                 }
             }

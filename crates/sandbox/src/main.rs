@@ -16,7 +16,7 @@ use ferrite::{
         window::Window,
     },
     player::Player,
-    terrain::{dual_contouring::DualContouringChunk, Terrain},
+    terrain::{dual_contouring::DualContouringChunk, scatter::Scatter, Terrain},
 };
 use std::error::Error;
 
@@ -61,7 +61,10 @@ impl WorldLayer {
         let ui = UI::new();
 
         let mut terrain_entity = Entity::new("terrain");
-        terrain_entity.add_component(Terrain::<DualContouringChunk>::new(TERRAIN_SEED));
+        terrain_entity.add_component(
+            Terrain::<DualContouringChunk>::new(TERRAIN_SEED)
+                .with_scatter(Scatter::default_layers()),
+        );
         terrain_entity.add_child(Player::new(
             &mut scene,
             (0.0, 52.0, 0.0),

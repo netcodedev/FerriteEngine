@@ -138,6 +138,18 @@ impl PhysicsEngine {
         );
     }
 
+    /// Remove a single collider, leaving its body in place. Does nothing if
+    /// the collider no longer exists.
+    pub fn remove_collider(&mut self, handle: ColliderHandle) {
+        self.colliders.remove(
+            handle,
+            &mut self.island_manager,
+            &mut self.rigid_bodies,
+            &mut self.soft_bodies,
+            true,
+        );
+    }
+
     pub fn add_collider(
         &mut self,
         collider: Collider,

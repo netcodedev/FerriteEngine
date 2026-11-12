@@ -1,6 +1,6 @@
 use std::{
     cmp::max,
-    sync::mpsc::{self, Sender},
+    sync::mpsc::{self, Receiver, Sender},
     thread,
     time::Instant,
 };
@@ -30,7 +30,19 @@ use crate::core::{
     view_frustum::ViewFrustum,
 };
 
-use super::{tree_forest::TreeForest, Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT};
+use super::{
+    scatter::{Scatter, ScatterInstances, ScatterLayerData},
+    Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
+};
+
+/// How many layer-on-chunk plantings happen per frame. Spreads the collider
+/// work out when a scatter layer is added to (or changed on) an already
+/// loaded terrain, instead of stalling one frame on every chunk at once.
+const SCATTER_PLANTINGS_PER_FRAME: usize = 4;
+
+/// Seconds the seed has to stay untouched before the terrain is rebuilt, so
+/// typing a number does not regenerate on every digit.
+const RESEED_DELAY: f64 = 0.6;
 
 impl ChunkBounds {
     pub fn parse(position: cgmath::Vector3<f32>) -> Self {
@@ -92,11 +104,44 @@ impl ChunkBounds {
 
 impl<T: Chunk + Component + Send + 'static> Terrain<T> {
     pub fn new(seed: u64) -> Self {
+        let shader_source = T::get_shader_source();
+        let shader = Shader::new(&shader_source.0, &shader_source.1);
+
+        Self {
+            seed,
+            reseed_in: None,
+            scatter: Scatter::new(Vec::new()),
+            show_colliders: false,
+            chunk_receiver: Self::start_chunkloaders(seed),
+            shader,
+            textures: T::get_textures(),
+            mouse_picker: MousePicker::new(),
+        }
+    }
+
+    /// Models to scatter over the terrain. Purely optional: the terrain
+    /// works without any, and a model that cannot be loaded is skipped.
+    pub fn with_scatter(mut self, layers: Vec<ScatterLayerData>) -> Self {
+        self.scatter = Scatter::new(layers);
+        self
+    }
+
+    pub fn scatter(&self) -> &Scatter {
+        &self.scatter
+    }
+
+    /// For adding, removing and repointing scatter layers at runtime; the
+    /// chunks follow on the next update.
+    pub fn scatter_mut(&mut self) -> &mut Scatter {
+        &mut self.scatter
+    }
+
+    /// Generate the origin chunk and start the worker threads for the rest.
+    /// They stop on their own once the returned receiver is dropped.
+    fn start_chunkloaders(seed: u64) -> Receiver<T> {
         let (tx, rx) = mpsc::channel();
         let origin = T::new(seed, (0.0, 0.0, 0.0), 0);
         tx.send(origin).unwrap();
-        let shader_source = T::get_shader_source();
-        let shader = Shader::new(&shader_source.0, &shader_source.1);
 
         let tx1 = tx.clone();
         let tx2 = tx.clone();
@@ -106,15 +151,23 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, -1, 1, tx2));
         let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, 1, -1, tx3));
         let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, -1, -1, tx4));
+        rx
+    }
 
-        Self {
-            seed,
-            show_colliders: false,
-            chunk_receiver: rx,
-            shader,
-            textures: T::get_textures(),
-            mouse_picker: MousePicker::new(),
+    /// Throw away every chunk (with its colliders and scattered models) and
+    /// generate the terrain again from the current seed.
+    fn regenerate(&mut self, scene: &mut Scene, entity: &mut Entity) {
+        let children = entity.get_children_mut();
+        let mut index = 0;
+        while index < children.len() {
+            if children[index].get_own_component::<T>().is_some() {
+                let mut chunk_entity = children.remove(index);
+                chunk_entity.release_resources(&mut scene.physics_engine);
+            } else {
+                index += 1;
+            }
         }
+        self.chunk_receiver = Self::start_chunkloaders(self.seed);
     }
 
     pub fn process_line(&mut self, line: Option<(Line, MouseButton)>) {
@@ -159,6 +212,58 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         }
     }
 
+    /// Bring every loaded chunk in line with the scatter layers: plant what
+    /// is missing and clear what no layer asks for any more (layer removed,
+    /// model or density changed).
+    fn sync_scatter(&self, scene: &mut Scene, entity: &mut Entity) {
+        let specs = self.scatter.specs();
+        let mut planted = 0;
+        for chunk_entity in entity.get_children_mut() {
+            if chunk_entity.get_own_component::<T>().is_none() {
+                continue;
+            }
+            let mut present = vec![false; specs.len()];
+            let mut index = 0;
+            while index < chunk_entity.components().len() {
+                let layer = chunk_entity.components()[index]
+                    .as_any()
+                    .downcast_ref::<ScatterInstances>()
+                    .map(|instances| specs.iter().position(|spec| instances.matches(spec)));
+                match layer {
+                    // Not scatter at all.
+                    None => {}
+                    Some(Some(layer)) if !present[layer] => present[layer] = true,
+                    // Stale: no layer wants these instances (any more).
+                    Some(_) => {
+                        if let Some(mut stale) = chunk_entity.remove_component_at(index) {
+                            stale.on_remove(&mut scene.physics_engine);
+                        }
+                        continue;
+                    }
+                }
+                index += 1;
+            }
+            for (spec, present) in specs.iter().zip(present) {
+                if present || planted >= SCATTER_PLANTINGS_PER_FRAME {
+                    continue;
+                }
+                let Some(chunk) = chunk_entity.get_own_component::<T>() else {
+                    break;
+                };
+                let points = chunk.scatter_points(spec.salt, spec.attempts);
+                let chunk_body = chunk_entity
+                    .get_own_component::<RigidBody>()
+                    .map(|body| body.rigid_body_handle);
+                // Added even when no spot was suitable, so the chunk counts
+                // as done for this layer.
+                let mut instances = ScatterInstances::new(spec, &points);
+                instances.add_colliders(&points, scene, chunk_body);
+                chunk_entity.add_component(instances);
+                planted += 1;
+            }
+        }
+    }
+
     pub fn get_triangle_count(&self, entity: &Entity) -> usize {
         let mut count = 0;
         for chunk in entity.get_with_own_component::<T>() {
@@ -178,7 +283,17 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
 }
 
 impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
-    fn update(&mut self, scene: &mut Scene, entity: &mut Entity, _: f64) {
+    fn update(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {
+        if let Some(remaining) = self.reseed_in {
+            let remaining = remaining - delta_time;
+            if remaining > 0.0 {
+                self.reseed_in = Some(remaining);
+            } else {
+                self.reseed_in = None;
+                self.regenerate(scene, entity);
+            }
+        }
+        self.scatter.tick(delta_time);
         if let Ok(mut chunk) = self.chunk_receiver.try_recv() {
             chunk.buffer_data();
             let mut chunk_exists = false;
@@ -220,26 +335,15 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                     .physics_engine
                     .add_collider(collider, Some(chunk_body.rigid_body_handle));
 
-                // Trees scattered by the chunk's worker thread get their
-                // visual + physics representation attached here on the GL
-                // thread, where Tree.fbx and its textures live.
-                let tree_placements = chunk.get_tree_placements();
-                let tree_forest = TreeForest::from_placements(&tree_placements);
-                if !tree_forest.is_empty() {
-                    tree_forest.add_colliders(
-                        &tree_placements,
-                        scene,
-                        Some(chunk_body.rigid_body_handle),
-                    );
-                    chunk_entity.add_component(tree_forest);
-                }
-
+                // Scattered models are not part of the chunk itself:
+                // `sync_scatter` plants them afterwards.
                 chunk_entity.add_component(chunk);
                 chunk_entity.add_component(chunk_body);
                 chunk_entity.set_transient(true);
                 entity.add_child(chunk_entity);
             }
         }
+        self.sync_scatter(scene, entity);
         if let Some(camera_component) = scene.get_active_camera() {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();
@@ -254,21 +358,37 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
     }
 
     fn to_data(&self) -> Option<ComponentData> {
-        Some(ComponentData::Terrain { seed: self.seed })
+        Some(ComponentData::Terrain {
+            seed: self.seed,
+            scatter: self.scatter.to_data(),
+        })
     }
 
     fn properties(&self) -> Vec<Property> {
-        // The seed only takes effect when the terrain is rebuilt (load or
-        // play/stop), so it is shown but not editable in place.
-        vec![
-            Property::int("seed", self.seed as i64).read_only(),
+        let mut properties = vec![
+            Property::int("seed", self.seed as i64),
             Property::bool("show colliders", self.show_colliders),
-        ]
+        ];
+        properties.extend(self.scatter.properties());
+        properties
     }
 
     fn set_property(&mut self, name: &str, value: PropertyValue) {
-        if let ("show colliders", Some(v)) = (name, value.as_bool()) {
-            self.show_colliders = v;
+        if self.scatter.set_property(name, &value) {
+            return;
+        }
+        match (name, value) {
+            ("seed", PropertyValue::Int(v)) => {
+                // Rebuilding the terrain is deferred to `update`, which has
+                // the scene at hand.
+                let seed = v.max(0) as u64;
+                if seed != self.seed {
+                    self.seed = seed;
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("show colliders", PropertyValue::Bool(v)) => self.show_colliders = v,
+            _ => {}
         }
     }
 
@@ -276,7 +396,7 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         if !self.show_colliders {
             return Vec::new();
         }
-        // Each chunk child owns a fixed body carrying its mesh and tree
+        // Each chunk child owns a fixed body carrying its mesh and scatter
         // colliders.
         entity
             .get_children()

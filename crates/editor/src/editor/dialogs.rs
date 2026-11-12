@@ -11,6 +11,44 @@ use glfw::{Glfw, WindowEvent};
 use super::{send, Command, Shared};
 
 pub const SCENE_DIR: &str = "scenes";
+/// Models are referenced relative to this folder.
+pub const MODEL_DIR: &str = "assets/models";
+
+/// Let the user choose a model with the system's file dialog (Windows:
+/// the native dialog; Linux: the desktop portal, or zenity without one).
+/// Blocks until the dialog is closed. Returns the path relative to
+/// `MODEL_DIR` with forward slashes, `None` if the dialog was cancelled.
+pub fn pick_model() -> Result<Option<String>, String> {
+    let model_dir = Path::new(MODEL_DIR);
+    let mut dialog = rfd::FileDialog::new()
+        .set_title("Choose a model")
+        .add_filter("Models", &["gltf", "glb", "fbx", "obj", "dae"])
+        .add_filter("All files", &["*"]);
+    // The dialog wants an absolute start folder.
+    if let Ok(start) = model_dir.canonicalize() {
+        dialog = dialog.set_directory(start);
+    }
+    let Some(picked) = dialog.pick_file() else {
+        return Ok(None);
+    };
+    model_path(&picked, model_dir)
+        .map(Some)
+        .ok_or_else(|| format!("Models have to be inside {MODEL_DIR}/"))
+}
+
+/// `picked` relative to `model_dir`, with forward slashes on every platform
+/// (scene files are shared between Windows and Linux). `None` if the file
+/// is not inside `model_dir`.
+fn model_path(picked: &Path, model_dir: &Path) -> Option<String> {
+    let model_dir = model_dir.canonicalize().ok()?;
+    let picked = picked.canonicalize().ok()?;
+    let relative = picked.strip_prefix(&model_dir).ok()?;
+    let parts: Vec<String> = relative
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
 
 /// A popup plus the flag that keeps it open (its close button and the
 /// dialog's own buttons write `false`).
@@ -285,4 +323,26 @@ impl UIElement for ModalHost {
         &self.size
     }
     fn set_z_index(&mut self, _z_index: f32) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::model_path;
+
+    #[test]
+    fn picked_model_is_relative_with_forward_slashes() {
+        let base = std::env::temp_dir().join(format!("ferrite-model-path-{}", std::process::id()));
+        let models = base.join("models");
+        std::fs::create_dir_all(models.join("Trees")).unwrap();
+        let inside = models.join("Trees").join("Oak tree.fbx");
+        let outside = base.join("elsewhere.fbx");
+        std::fs::write(&inside, b"").unwrap();
+        std::fs::write(&outside, b"").unwrap();
+
+        assert_eq!(model_path(&inside, &models).as_deref(), Some("Trees/Oak tree.fbx"));
+        assert_eq!(model_path(&outside, &models), None);
+        assert_eq!(model_path(&models, &models), None);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 }
