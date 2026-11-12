@@ -6,7 +6,10 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 
 mod database;
 mod id;
+mod import;
 mod meta;
+#[cfg(test)]
+pub(crate) mod test_models;
 
 pub use database::{AssetDatabase, AssetEntry, AssetError};
 pub use id::{AssetId, AssetRef};
