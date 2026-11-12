@@ -16,6 +16,7 @@ pub mod inspector;
 pub mod layout;
 pub mod outline;
 pub mod showcase;
+pub mod titlebar;
 pub mod toolbar;
 pub mod toggle_window;
 pub mod viewport;
@@ -73,6 +74,8 @@ pub enum Command {
     Delete(EntityHandle),
     Duplicate(EntityHandle),
     Focus(EntityHandle),
+    /// Close the editor window.
+    Quit,
 }
 
 pub struct EditorState {

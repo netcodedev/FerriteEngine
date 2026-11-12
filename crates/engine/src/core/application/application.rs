@@ -7,8 +7,14 @@ use super::{Application, Layer};
 
 impl Application {
     pub fn new(width: u32, height: u32, title: &str) -> Self {
+        Self::with_decorations(width, height, title, true)
+    }
+
+    /// Like `new`, but without the system title bar when `decorated` is
+    /// false.
+    pub fn with_decorations(width: u32, height: u32, title: &str, decorated: bool) -> Self {
         env_logger::init();
-        let mut window = Window::new(width, height, title);
+        let mut window = Window::with_decorations(width, height, title, decorated);
 
         TextRenderer::resize(width, height);
         PlaneRenderer::resize(width, height);

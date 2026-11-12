@@ -10,6 +10,7 @@ use editor::{
     layout::Layout,
     outline::Outline,
     showcase,
+    titlebar::TitleBar,
     toggle_window::ToggleWindow,
     toolbar::Toolbar,
     viewport::{Viewport, ViewportAction},
@@ -33,7 +34,8 @@ const STARTUP_SCENE: &str = "scenes/default.ron";
 const COLLIDER_MESH_DISTANCE: f32 = 96.0;
 
 fn main() {
-    let mut application = Application::new(1280, 720, "Ferrite Editor");
+    // The editor draws its own title bar.
+    let mut application = Application::with_decorations(1280, 720, "Ferrite Editor", false);
     application.add_layer(Box::new(EditorLayer::new()));
     application.start();
 }
@@ -49,6 +51,8 @@ struct EditorLayer {
     /// Cursor mode to apply on the next event (commands run in `on_update`
     /// have no access to the GLFW window).
     pending_cursor: Option<CursorMode>,
+    /// Set by `Command::Quit`; the window is closed on the next event.
+    pending_quit: bool,
     cursor_initialised: bool,
 }
 
@@ -63,6 +67,7 @@ impl EditorLayer {
             element.set_z_index(0.0);
             ui.add(element);
         };
+        add(&mut ui, Box::new(TitleBar::new(state.clone())));
         add(&mut ui, Box::new(Toolbar::new(state.clone())));
         add(&mut ui, Box::new(HierarchyPanel::new(state.clone())));
         add(&mut ui, Box::new(InspectorPanel::new(state.clone())));
@@ -82,6 +87,7 @@ impl EditorLayer {
             outline: Outline::new(),
             play_snapshot: None,
             pending_cursor: None,
+            pending_quit: false,
             cursor_initialised: false,
         }
     }
@@ -201,6 +207,17 @@ impl EditorLayer {
 
     fn run(&mut self, command: Command) {
         let mode = self.state.borrow().mode;
+        // Closing during play: leave play mode first, then ask about unsaved
+        // edits as usual.
+        if mode == Mode::Play {
+            if let Command::ConfirmDiscard(then) = &command {
+                if matches!(**then, Command::Quit) {
+                    self.run(Command::Stop);
+                    self.run(command);
+                    return;
+                }
+            }
+        }
         let edits_scene = matches!(
             command,
             Command::NewScene
@@ -365,6 +382,7 @@ impl EditorLayer {
                 }
             }
             Command::Focus(id) => self.viewport.focus(&self.scene, id),
+            Command::Quit => self.pending_quit = true,
         }
     }
 
@@ -507,10 +525,7 @@ impl Layer for EditorLayer {
             window.set_cursor_mode(CursorMode::Normal);
             self.cursor_initialised = true;
         }
-        if let Some(mode) = self.pending_cursor.take() {
-            self.viewport.reset_interaction(window);
-            window.set_cursor_mode(mode);
-        }
+        self.apply_pending_cursor(window);
 
         let mode = self.state.borrow().mode;
         let layout = self.state.borrow().layout;
@@ -569,6 +584,9 @@ impl EditorLayer {
         if let Some(mode) = self.pending_cursor.take() {
             self.viewport.reset_interaction(window);
             window.set_cursor_mode(mode);
+        }
+        if self.pending_quit {
+            window.set_should_close(true);
         }
     }
 }

@@ -17,13 +17,16 @@ impl Rect {
 pub struct Layout {
     pub window_w: f32,
     pub window_h: f32,
+    pub titlebar: Rect,
     pub toolbar: Rect,
     pub hierarchy: Rect,
     pub inspector: Rect,
     pub viewport: Rect,
 }
 
+pub const TITLEBAR_HEIGHT: f32 = 28.0;
 pub const TOOLBAR_HEIGHT: f32 = 32.0;
+const TOP: f32 = TITLEBAR_HEIGHT + TOOLBAR_HEIGHT;
 /// Left column holding the hierarchy (top) and inspector (bottom). Wide
 /// enough for the inspector's label column plus three number fields.
 const SIDE_WIDTH: f32 = 330.0;
@@ -34,7 +37,7 @@ const MIN_VIEWPORT: f32 = 64.0;
 
 impl Layout {
     pub fn compute(window_w: f32, window_h: f32) -> Self {
-        let body_h = (window_h - TOOLBAR_HEIGHT).max(MIN_VIEWPORT);
+        let body_h = (window_h - TOP).max(MIN_VIEWPORT);
         // The column shrinks before the viewport disappears on tiny windows.
         let side_w = SIDE_WIDTH.min((window_w - MIN_VIEWPORT).max(0.0)).floor();
         let hierarchy_h = (body_h * HIERARCHY_SHARE)
@@ -44,27 +47,33 @@ impl Layout {
         Self {
             window_w,
             window_h,
-            toolbar: Rect {
+            titlebar: Rect {
                 x: 0.0,
                 y: 0.0,
+                w: window_w,
+                h: TITLEBAR_HEIGHT,
+            },
+            toolbar: Rect {
+                x: 0.0,
+                y: TITLEBAR_HEIGHT,
                 w: window_w,
                 h: TOOLBAR_HEIGHT,
             },
             hierarchy: Rect {
                 x: 0.0,
-                y: TOOLBAR_HEIGHT,
+                y: TOP,
                 w: side_w,
                 h: hierarchy_h,
             },
             inspector: Rect {
                 x: 0.0,
-                y: TOOLBAR_HEIGHT + hierarchy_h,
+                y: TOP + hierarchy_h,
                 w: side_w,
                 h: body_h - hierarchy_h,
             },
             viewport: Rect {
                 x: side_w,
-                y: TOOLBAR_HEIGHT,
+                y: TOP,
                 w: (window_w - side_w).max(1.0),
                 h: body_h,
             },

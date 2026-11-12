@@ -28,7 +28,6 @@ pub struct Toolbar {
     move_button: Button,
     rotate_button: Button,
     play_button: Button,
-    title: Text,
     status: Text,
 }
 
@@ -111,7 +110,6 @@ impl Toolbar {
             move_button,
             rotate_button,
             play_button,
-            title: Text::new(Fonts::RobotoMono, 0, 0, 0, 15.0, String::new()),
             status: Text::new(Fonts::RobotoMono, 0, 0, 0, 14.0, String::new()),
         }
     }
@@ -139,13 +137,12 @@ impl Toolbar {
 
 impl UIElement for Toolbar {
     fn update(&mut self, scene: &mut Scene) {
-        let (rect, mode, gizmo, title, status) = {
+        let (rect, mode, gizmo, status) = {
             let state = self.state.borrow();
             (
                 state.layout.toolbar,
                 state.mode,
                 state.gizmo,
-                state.scene_title(),
                 state.status().map(str::to_owned),
             )
         };
@@ -187,16 +184,13 @@ impl UIElement for Toolbar {
         self.play_button.set_active(mode == Mode::Play);
 
         let after_play = play_x + 92.0;
-        self.title.set_content(&title);
-        self.title
-            .prepare_render_at(Position::new(after_play, y + 2.0, 2.0));
         let status = status.unwrap_or_else(|| match mode {
             Mode::Play => "Playing - Esc frees the mouse, Ctrl+P stops".into(),
             Mode::Edit => String::new(),
         });
         self.status.set_content(&status);
         let status_x = (rect.x + rect.w - self.status.measure_width() - 10.0)
-            .max(after_play + self.title.measure_width() + 20.0);
+            .max(after_play);
         self.status
             .prepare_render_at(Position::new(status_x, y + 3.0, 2.0));
 
@@ -210,7 +204,6 @@ impl UIElement for Toolbar {
         for widget in self.widgets() {
             widget.render();
         }
-        self.title.render();
         self.status.render();
     }
 

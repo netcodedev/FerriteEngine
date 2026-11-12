@@ -11,12 +11,19 @@ pub struct Window {
 
 impl Window {
     pub fn new(width: u32, height: u32, title: &str) -> Self {
+        Self::with_decorations(width, height, title, true)
+    }
+
+    /// `decorated = false` removes the system title bar and borders, for
+    /// applications that draw their own (like the editor).
+    pub fn with_decorations(width: u32, height: u32, title: &str, decorated: bool) -> Self {
         let mut glfw = glfw::init(glfw::log_errors).unwrap_or_else(|err| {
             eprintln!("Fehler bei der GLFW-Initialisierung: {}", err);
             std::process::exit(1);
         });
 
         glfw.window_hint(glfw::WindowHint::Samples(Some(8)));
+        glfw.window_hint(glfw::WindowHint::Decorated(decorated));
 
         let (mut window, events) = glfw
             .create_window(width, height, title, glfw::WindowMode::Windowed)
