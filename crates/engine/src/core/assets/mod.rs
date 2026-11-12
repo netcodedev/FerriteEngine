@@ -14,8 +14,8 @@ pub(crate) mod test_models;
 pub use database::{AssetDatabase, AssetEntry, AssetError};
 pub use id::{AssetId, AssetRef};
 pub use meta::{
-    AssetKind, AssetMeta, MaterialSettings, ModelSettings, TextureSettings, VariantInfo,
-    ASSET_META_VERSION, META_SUFFIX,
+    AnimationSettings, AssetKind, AssetMeta, ClipInfo, MaterialSettings, ModelSettings,
+    TextureSettings, VariantInfo, ASSET_META_VERSION, META_SUFFIX,
 };
 
 /// Folder (relative to the working directory) that holds the project's

@@ -326,6 +326,7 @@ pub(crate) mod tests {
                     normal: None,
                     foliage: false,
                 }],
+                clips: Vec::new(),
             }),
         };
         let mut database = AssetDatabase::new(&temp.0);

@@ -90,3 +90,37 @@ pub(crate) fn write_png(path: &Path) {
         .save(path)
         .unwrap();
 }
+
+/// Two keyframe times (0 s, 1 s) followed by two translations.
+const ANIMATION: &str = "AAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAAAA=";
+
+/// Write a glTF file without meshes that animates one node ("hips") with a
+/// one-second clip of the given name.
+pub(crate) fn write_animation_gltf(path: &Path, clip: &str) {
+    let text = format!(
+        r#"{{
+  "asset": {{"version": "2.0"}},
+  "scene": 0,
+  "scenes": [{{"nodes": [0]}}],
+  "nodes": [{{"name": "hips"}}],
+  "animations": [{{
+    "name": "{clip}",
+    "samplers": [{{"input": 0, "output": 1, "interpolation": "LINEAR"}}],
+    "channels": [{{"sampler": 0, "target": {{"node": 0, "path": "translation"}}}}]
+  }}],
+  "buffers": [{{"byteLength": 32, "uri": "data:application/octet-stream;base64,{ANIMATION}"}}],
+  "bufferViews": [
+    {{"buffer": 0, "byteOffset": 0, "byteLength": 8}},
+    {{"buffer": 0, "byteOffset": 8, "byteLength": 24}}
+  ],
+  "accessors": [
+    {{"bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0.0], "max": [1.0]}},
+    {{"bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC3"}}
+  ]
+}}"#
+    );
+    if let Some(folder) = path.parent() {
+        fs::create_dir_all(folder).unwrap();
+    }
+    fs::write(path, text).unwrap();
+}

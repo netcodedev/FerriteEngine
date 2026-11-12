@@ -418,6 +418,18 @@ impl AssetInspector {
                 self.body.add_child(Box::new(section));
             }
         }
+        // The clips of an animation file, or those a model brings along.
+        let clips = edit.meta.clips();
+        if !clips.is_empty() {
+            let mut section = Section::new("Clips", Some(icons::ACTIVITY), width);
+            for clip in clips {
+                section.add_child(Box::new(FieldRow::new(
+                    &clip.name,
+                    vec![muted(format!("{:.2} s", clip.duration))],
+                )));
+            }
+            self.body.add_child(Box::new(section));
+        }
         self.bindings = Some(bindings);
     }
 
@@ -653,6 +665,8 @@ enum Shown {
         floor: f32,
     },
     Texture(Image),
+    /// Nothing to draw for this kind of asset; says so.
+    Note(String),
     Failed(String),
 }
 
@@ -737,6 +751,11 @@ impl AssetPreview {
                     None => Shown::Texture(image),
                 }
             }
+            AssetKind::Animation(animation) => Shown::Note(format!(
+                "{} animation clip{}. Use them in an animation graph to see them play.",
+                animation.clips.len(),
+                if animation.clips.len() == 1 { "" } else { "s" }
+            )),
             AssetKind::Model(model) => {
                 let variant = model.variants.get(edit.variant).map(|v| v.name.as_str());
                 match ScatterModel::load_preview(&edit.source_path(), model, variant) {
@@ -830,6 +849,7 @@ impl UIElement for AssetPreview {
         let message = match &self.shown {
             Shown::Nothing => "No asset is open.".to_string(),
             Shown::Failed(error) => format!("The asset could not be loaded: {error}"),
+            Shown::Note(note) => note.clone(),
             Shown::Texture(image) => image
                 .natural_size()
                 .map(|(w, h)| format!("{w} x {h} px"))
@@ -936,7 +956,7 @@ impl UIElement for AssetPreview {
                 image.render();
                 self.message.render();
             }
-            Shown::Nothing | Shown::Failed(_) => {
+            Shown::Nothing | Shown::Note(_) | Shown::Failed(_) => {
                 self.message.render();
             }
         }
@@ -1035,6 +1055,7 @@ mod tests {
                         name: "bark".into(),
                         ..MaterialSettings::default()
                     }],
+                    clips: Vec::new(),
                 }),
             },
             dir: PathBuf::from("assets/models/test"),

@@ -24,6 +24,8 @@ pub struct AssetMeta {
 pub enum AssetKind {
     Model(ModelSettings),
     Texture(TextureSettings),
+    /// A file that holds animation clips but no meshes.
+    Animation(AnimationSettings),
 }
 
 impl AssetKind {
@@ -32,6 +34,7 @@ impl AssetKind {
         match self {
             AssetKind::Model(_) => "Model",
             AssetKind::Texture(_) => "Texture",
+            AssetKind::Animation(_) => "Animation",
         }
     }
 }
@@ -49,6 +52,9 @@ pub struct ModelSettings {
     /// In the file's material order.
     #[serde(default)]
     pub materials: Vec<MaterialSettings>,
+    /// Animation clips the file brings along with its meshes.
+    #[serde(default)]
+    pub clips: Vec<ClipInfo>,
 }
 
 fn one() -> f32 {
@@ -61,6 +67,7 @@ impl Default for ModelSettings {
             scale: 1.0,
             variants: Vec::new(),
             materials: Vec::new(),
+            clips: Vec::new(),
         }
     }
 }
@@ -99,6 +106,22 @@ pub struct MaterialSettings {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct TextureSettings {}
 
+/// The clips found in an animation file at import.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct AnimationSettings {
+    #[serde(default)]
+    pub clips: Vec<ClipInfo>,
+}
+
+/// One animation clip of a file. A reference names it as its part.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ClipInfo {
+    pub name: String,
+    /// Length in seconds.
+    #[serde(default)]
+    pub duration: f32,
+}
+
 impl AssetMeta {
     pub fn to_ron(&self) -> Result<String, ron::Error> {
         ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
@@ -119,6 +142,16 @@ impl AssetMeta {
         match &mut self.kind {
             AssetKind::Model(settings) => Some(settings),
             _ => None,
+        }
+    }
+
+    /// The animation clips of the asset: those of an animation file, or
+    /// the ones a model file brings along.
+    pub fn clips(&self) -> &[ClipInfo] {
+        match &self.kind {
+            AssetKind::Animation(settings) => &settings.clips,
+            AssetKind::Model(settings) => &settings.clips,
+            AssetKind::Texture(_) => &[],
         }
     }
 }

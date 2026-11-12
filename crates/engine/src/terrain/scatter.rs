@@ -337,28 +337,6 @@ pub fn release_gl_resources() {
     });
 }
 
-/// Sort key for an LOD's name. Lower numbers are higher detail.
-fn lod_priority(name: &str) -> u32 {
-    let lc = name.to_lowercase();
-    if lc.contains("lod0") {
-        0
-    } else if lc.contains("lod1") {
-        1
-    } else if lc.contains("lod2") {
-        2
-    } else if lc.contains("lod3") || lc.contains("billboard") {
-        3
-    } else if lc.contains("high") {
-        0
-    } else if lc.contains("last") {
-        2
-    } else if lc.contains("low") {
-        1
-    } else {
-        99
-    }
-}
-
 fn load_variants(
     path: &str,
     options: &LoadOptions,
@@ -399,7 +377,7 @@ fn load_variants(
 
     let mut out = Vec::with_capacity(groups.len());
     for group in groups.iter_mut() {
-        group.lods.sort_by_key(|(name, _)| lod_priority(name));
+        group.lods.sort_by_key(|(name, _)| outline::lod_priority(name));
 
         // Build GPU LODs.
         let mut gpu_lods: Vec<VariantLod> = Vec::with_capacity(group.lods.len());

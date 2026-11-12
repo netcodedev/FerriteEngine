@@ -164,10 +164,62 @@ pub struct MaterialOutline {
     pub texture_files: Vec<String>,
 }
 
+pub struct ClipOutline {
+    pub name: String,
+    /// Length in seconds.
+    pub duration: f32,
+}
+
 pub struct ModelOutline {
+    /// Empty for a file that only holds animations.
     pub variants: Vec<VariantOutline>,
     /// In the file's material order.
     pub materials: Vec<MaterialOutline>,
+    /// The animation clips in the file.
+    pub clips: Vec<ClipOutline>,
+}
+
+/// Names of a file's animation clips, in file order and made unique:
+/// exporters often leave them empty or give every clip the same name.
+pub fn clip_names(scene: &Scene) -> Vec<String> {
+    let mut names: Vec<String> = Vec::with_capacity(scene.animations.len());
+    for (index, animation) in scene.animations.iter().enumerate() {
+        let base = if animation.name.trim().is_empty() {
+            format!("clip {}", index + 1)
+        } else {
+            animation.name.trim().to_string()
+        };
+        let mut name = base.clone();
+        let mut copy = 2;
+        while names.contains(&name) {
+            name = format!("{base} {copy}");
+            copy += 1;
+        }
+        names.push(name);
+    }
+    names
+}
+
+/// Sort key for an LOD's name. Lower numbers are higher detail.
+pub fn lod_priority(name: &str) -> u32 {
+    let lc = name.to_lowercase();
+    if lc.contains("lod0") {
+        0
+    } else if lc.contains("lod1") {
+        1
+    } else if lc.contains("lod2") {
+        2
+    } else if lc.contains("lod3") || lc.contains("billboard") {
+        3
+    } else if lc.contains("high") {
+        0
+    } else if lc.contains("last") {
+        2
+    } else if lc.contains("low") {
+        1
+    } else {
+        99
+    }
 }
 
 /// File stem used as the name of a model's only variant.
@@ -191,8 +243,24 @@ pub fn inspect(path: &Path) -> Result<ModelOutline, String> {
             .collect(),
         None => Vec::new(),
     };
-    if variants.is_empty() {
-        return Err("the file contains no meshes".to_string());
+    let clips: Vec<ClipOutline> = clip_names(&scene)
+        .into_iter()
+        .zip(&scene.animations)
+        .map(|(name, animation)| {
+            // Assimp reports 0 ticks per second when the file does not say.
+            let ticks = if animation.ticks_per_second > 0.0 {
+                animation.ticks_per_second
+            } else {
+                25.0
+            };
+            ClipOutline {
+                name,
+                duration: (animation.duration / ticks) as f32,
+            }
+        })
+        .collect();
+    if variants.is_empty() && clips.is_empty() {
+        return Err("the file contains neither meshes nor animations".to_string());
     }
     let materials = scene
         .materials
@@ -225,5 +293,6 @@ pub fn inspect(path: &Path) -> Result<ModelOutline, String> {
     Ok(ModelOutline {
         variants,
         materials,
+        clips,
     })
 }

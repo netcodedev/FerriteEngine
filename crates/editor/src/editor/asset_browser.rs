@@ -145,6 +145,12 @@ impl AssetBrowser {
                 .get(asset.id)
                 .and_then(|entry| {
                     let part = asset.part.as_deref()?;
+                    if let Some(clip) = entry.meta.clips().iter().find(|c| c.name == part) {
+                        return Some(format!(
+                            "{part}  ·  clip of {}  ·  {:.2} s",
+                            entry.meta.name, clip.duration
+                        ));
+                    }
                     let variant = entry.meta.as_model()?.variant(part)?;
                     Some(format!(
                         "{part}  ·  variant of {}  ·  {}",
@@ -211,6 +217,11 @@ fn describe(entry: &AssetEntry) -> String {
             count(model.materials.len(), "material"),
         ),
         AssetKind::Texture(_) => format!("{}  ·  Texture  ·  {source}", entry.meta.name),
+        AssetKind::Animation(animation) => format!(
+            "{}  ·  Animation  ·  {}  ·  {source}",
+            entry.meta.name,
+            count(animation.clips.len(), "clip"),
+        ),
     }
 }
 
@@ -236,7 +247,8 @@ fn folder_of(entry: &AssetEntry, database: &AssetDatabase) -> Vec<String> {
 }
 
 /// The tree rows in depth-first order: folders, the assets in them, and
-/// below a model asset with more than one variant its variants.
+/// below an asset with several parts (the variants of a model, the clips of
+/// an animation file) those parts.
 fn build_items(database: &AssetDatabase) -> (Vec<TreeItem>, HashMap<u64, Row>) {
     let mut entries: Vec<(Vec<String>, &AssetEntry)> = database
         .iter()
@@ -272,33 +284,43 @@ fn build_items(database: &AssetDatabase) -> (Vec<TreeItem>, HashMap<u64, Row>) {
         }
 
         let depth = open.len();
-        let variants: &[_] = match &entry.meta.kind {
-            AssetKind::Model(model) if model.variants.len() > 1 => &model.variants,
-            _ => &[],
+        let parts: Vec<&str> = match &entry.meta.kind {
+            AssetKind::Model(model) if model.variants.len() > 1 => {
+                model.variants.iter().map(|v| v.name.as_str()).collect()
+            }
+            AssetKind::Animation(animation) if animation.clips.len() > 1 => {
+                animation.clips.iter().map(|c| c.name.as_str()).collect()
+            }
+            _ => Vec::new(),
         };
         let id = entry.meta.id.as_u64().max(1);
         items.push(TreeItem {
             id,
             label: entry.meta.name.clone(),
             depth,
-            has_children: !variants.is_empty(),
+            has_children: !parts.is_empty(),
             icon: Some(match &entry.meta.kind {
-                AssetKind::Model(_) if !variants.is_empty() => icons::BOXES,
+                AssetKind::Model(_) if !parts.is_empty() => icons::BOXES,
                 AssetKind::Model(_) => icons::PACKAGE,
                 AssetKind::Texture(_) => icons::LAYOUT_GRID,
+                AssetKind::Animation(_) => icons::ACTIVITY,
             }),
         });
         rows.insert(id, Row::Asset(entry.meta.id));
-        for variant in variants {
-            let id = row_id(&format!("variant:{}:{}", entry.meta.id, variant.name));
+        let part_icon = match &entry.meta.kind {
+            AssetKind::Animation(_) => icons::ACTIVITY,
+            _ => icons::BOX,
+        };
+        for part in parts {
+            let id = row_id(&format!("variant:{}:{part}", entry.meta.id));
             items.push(TreeItem {
                 id,
-                label: variant.name.clone(),
+                label: part.to_string(),
                 depth: depth + 1,
                 has_children: false,
-                icon: Some(icons::BOX),
+                icon: Some(part_icon),
             });
-            rows.insert(id, Row::Variant(AssetRef::part(entry.meta.id, variant.name.clone())));
+            rows.insert(id, Row::Variant(AssetRef::part(entry.meta.id, part)));
         }
     }
     (items, rows)
@@ -509,6 +531,7 @@ mod tests {
                 })
                 .collect(),
             materials: Vec::new(),
+            clips: Vec::new(),
         })
     }
 

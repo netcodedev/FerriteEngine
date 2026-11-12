@@ -9,8 +9,9 @@ use std::{
 use crate::core::model::outline;
 
 use super::{
-    AssetDatabase, AssetError, AssetId, AssetKind, AssetMeta, MaterialSettings, ModelSettings,
-    TextureSettings, VariantInfo, ASSET_META_VERSION,
+    AnimationSettings, AssetDatabase, AssetError, AssetId, AssetKind, AssetMeta, ClipInfo,
+    MaterialSettings, ModelSettings, TextureSettings, VariantInfo, ASSET_META_VERSION,
+    META_SUFFIX,
 };
 
 const MODEL_EXTENSIONS: [&str; 5] = ["gltf", "glb", "fbx", "obj", "dae"];
@@ -19,6 +20,7 @@ const TEXTURE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "tga", "bmp", "tif"
 /// Folders below the asset root that imported files are copied into.
 const MODEL_FOLDER: &str = "models";
 const TEXTURE_FOLDER: &str = "textures";
+const ANIMATION_FOLDER: &str = "animations";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FileKind {
@@ -53,8 +55,9 @@ impl AssetDatabase {
     /// a folder of its own, together with the files it refers to (texture
     /// images, glTF buffers, OBJ material libraries). A file inside the
     /// root is registered where it is. Texture files a model refers to
-    /// become texture assets too. Importing a file that already is an asset
-    /// returns that asset.
+    /// become texture assets too. A model file without meshes becomes an
+    /// animation asset. Importing a file that already is an asset returns
+    /// that asset.
     pub fn import(&mut self, file: &Path) -> Result<AssetId, AssetError> {
         let kind = file_kind(file).ok_or_else(|| AssetError::Unsupported(file.to_path_buf()))?;
         if !file.is_file() {
@@ -89,14 +92,40 @@ impl AssetDatabase {
         // cannot be read leaves nothing behind.
         let found = outline::inspect(file).map_err(|e| AssetError::Import(file.to_path_buf(), e))?;
 
+        let clips: Vec<ClipInfo> = found
+            .clips
+            .iter()
+            .map(|clip| ClipInfo {
+                name: clip.name.clone(),
+                duration: clip.duration,
+            })
+            .collect();
+        // No meshes: the file is there for its animations.
+        let animation_only = found.variants.is_empty();
+
         let (source, copied) = match self.path_in_root(file) {
             Some(inside) => (inside, false),
+            None if animation_only => {
+                let folder = self.root().join(ANIMATION_FOLDER);
+                (copy_into(file, &folder, true)?, true)
+            }
             None => {
                 let folder = unused_folder(&self.root().join(MODEL_FOLDER), &name);
                 (copy_into(file, &folder, false)?, true)
             }
         };
         let target_dir = source.parent().unwrap_or(Path::new(".")).to_path_buf();
+
+        if animation_only {
+            let meta = AssetMeta {
+                version: ASSET_META_VERSION,
+                id: AssetId::new(),
+                name: outline::default_variant_name(&source),
+                source: file_name_of(&source),
+                kind: AssetKind::Animation(AnimationSettings { clips }),
+            };
+            return self.register(meta, &target_dir);
+        }
 
         if copied {
             // Files the model cannot be loaded without.
@@ -163,9 +192,45 @@ impl AssetDatabase {
                         normal: None,
                     })
                     .collect(),
+                clips,
             }),
         };
         self.register(meta, &target_dir)
+    }
+
+    /// Register every importable file below the root that is not an asset
+    /// yet, where it is. Returns how many assets were added and one message
+    /// per file that could not be registered.
+    pub fn register_new_files(&mut self) -> (usize, Vec<String>) {
+        let mut files: Vec<PathBuf> = Vec::new();
+        let mut pending = vec![self.root().to_path_buf()];
+        while let Some(dir) = pending.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for path in entries.flatten().map(|e| e.path()) {
+                if path.is_dir() {
+                    pending.push(path);
+                } else if file_kind(&path).is_some() && !sidecar_of(&path).exists() {
+                    files.push(path);
+                }
+            }
+        }
+        // Models first: they register the textures next to them themselves.
+        files.sort_by_key(|path| (file_kind(path) != Some(FileKind::Model), path.clone()));
+
+        let before = self.len();
+        let mut problems = Vec::new();
+        for file in files {
+            // A model imported a moment ago may have registered this file.
+            if sidecar_of(&file).exists() {
+                continue;
+            }
+            if let Err(e) = self.import(&file) {
+                problems.push(e.to_string());
+            }
+        }
+        (self.len() - before, problems)
     }
 
     fn register_texture(&mut self, source: &Path) -> Result<AssetId, AssetError> {
@@ -187,6 +252,13 @@ impl AssetDatabase {
             .ok()
             .map(|relative| self.root().join(relative))
     }
+}
+
+/// Where the sidecar of a source file is (or would be).
+fn sidecar_of(source: &Path) -> PathBuf {
+    let mut name = source.file_name().unwrap_or_default().to_os_string();
+    name.push(META_SUFFIX);
+    source.with_file_name(name)
 }
 
 fn file_name_of(path: &Path) -> String {
@@ -361,7 +433,7 @@ fn obj_material_libraries(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::assets::{database::tests::TempDir, test_models, META_SUFFIX};
+    use crate::core::assets::{database::tests::TempDir, test_models};
 
     #[test]
     fn finds_file_references_in_gltf_text() {
@@ -515,6 +587,58 @@ mod tests {
             b"someone else's"
         );
         assert!(matches!(entry.meta.kind, AssetKind::Texture(_)));
+    }
+
+    #[test]
+    fn a_file_without_meshes_becomes_an_animation_asset() {
+        let outside = TempDir::new("import-animation");
+        let project = TempDir::new("import-animation-project");
+        let file = outside.0.join("Walk.gltf");
+        test_models::write_animation_gltf(&file, "walk cycle");
+
+        let found = outline::inspect(&file).unwrap();
+        assert!(found.variants.is_empty());
+        assert_eq!(found.clips.len(), 1);
+        assert_eq!(found.clips[0].name, "walk cycle");
+        assert!((found.clips[0].duration - 1.0).abs() < 0.2, "{}", found.clips[0].duration);
+
+        let mut database = AssetDatabase::new(&project.0);
+        let id = database.import(&file).unwrap();
+        let entry = database.get(id).unwrap();
+        assert_eq!(entry.source_path(), project.0.join("animations").join("Walk.gltf"));
+        assert!(matches!(entry.meta.kind, AssetKind::Animation(_)));
+        assert_eq!(entry.meta.clips().len(), 1);
+        assert_eq!(entry.meta.clips()[0].name, "walk cycle");
+    }
+
+    #[test]
+    fn files_dropped_into_the_project_are_registered_once() {
+        let project = TempDir::new("register-new");
+        let models = project.0.join("models").join("oak");
+        test_models::write_gltf(
+            &models.join("oak.gltf"),
+            &[("oak_LOD0", &[]), ("oak_LOD1", &[])],
+            Some("bark.png"),
+        );
+        test_models::write_png(&models.join("bark.png"));
+        test_models::write_animation_gltf(&project.0.join("animations").join("Idle.gltf"), "idle");
+        test_models::write_png(&project.0.join("textures").join("moss.png"));
+        fs::write(project.0.join("notes.txt"), "not an asset").unwrap();
+
+        let mut database = AssetDatabase::new(&project.0);
+        let (added, problems) = database.register_new_files();
+        assert!(problems.is_empty(), "{problems:?}");
+        // oak, its bark texture, the idle animation and the moss texture.
+        assert_eq!(added, 4);
+        assert!(database
+            .find_by_source(&project.0.join("animations").join("Idle.gltf"))
+            .is_some());
+
+        // Nothing is left to register, and nothing is registered twice.
+        assert_eq!(database.register_new_files(), (0, Vec::new()));
+        let mut fresh = AssetDatabase::new(&project.0);
+        assert!(fresh.scan().is_empty());
+        assert_eq!(fresh.len(), 4);
     }
 
     #[test]
