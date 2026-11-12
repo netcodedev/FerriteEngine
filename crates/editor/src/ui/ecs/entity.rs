@@ -92,6 +92,10 @@ impl UIElement for EntityUI {
         self.panel.render();
     }
 
+    fn render_overlay(&self) {
+        self.panel.render_overlay();
+    }
+
     fn handle_events(
         &mut self,
         scene: &mut Scene,
@@ -289,6 +293,12 @@ impl UIElement for EditEntityButton {
         self.button.render();
         if self.show_popup.read() {
             self.popup.render();
+        }
+    }
+
+    fn render_overlay(&self) {
+        if self.show_popup.read() {
+            self.popup.render_overlay();
         }
     }
 

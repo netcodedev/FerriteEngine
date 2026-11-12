@@ -54,30 +54,36 @@ impl UIElement for Container {
         match self.direction {
             Direction::Horizontal => {
                 let mut x_offset = self.gap;
+                let mut max_h: f32 = 0.0;
                 for child in self.children.values_mut() {
                     let offset = &self.region.offset + &self.region.position + (x_offset, self.gap);
                     if offset != *child.get_offset() {
                         child.set_offset(offset);
                     }
                     x_offset += child.get_size().width + self.gap;
+                    max_h = max_h.max(child.get_size().height);
                     child.update(scene);
                 }
                 self.region.size.width = x_offset;
+                self.region.size.height = max_h + self.gap * 2.0;
                 if !self.with_end_gap {
                     self.region.size.width -= self.gap;
                 }
             }
             Direction::Vertical => {
                 let mut y_offset = self.gap;
+                let mut max_w: f32 = 0.0;
                 for child in self.children.values_mut() {
                     let offset = &self.region.offset + &self.region.position + (self.gap, y_offset);
                     if offset != *child.get_offset() {
                         child.set_offset(offset);
                     }
                     y_offset += child.get_size().height + self.gap;
+                    max_w = max_w.max(child.get_size().width);
                     child.update(scene);
                 }
                 self.region.size.height = y_offset;
+                self.region.size.width = self.region.size.width.max(max_w + self.gap * 2.0);
                 if !self.with_end_gap {
                     self.region.size.height -= self.gap;
                 }
@@ -92,6 +98,12 @@ impl UIElement for Container {
         self.plane.render();
         for child in self.children.values() {
             child.render();
+        }
+    }
+
+    fn render_overlay(&self) {
+        for child in self.children.values() {
+            child.render_overlay();
         }
     }
 
@@ -120,6 +132,10 @@ impl UIElement for Container {
                         + (self.region.size.width, 0.0),
                 );
                 self.region.size.width += child.get_size().width + self.gap;
+                let needed = child.get_size().height + self.gap * 2.0;
+                if needed > self.region.size.height {
+                    self.region.size.height = needed;
+                }
             }
             Direction::Vertical => {
                 child.set_offset(
@@ -128,6 +144,10 @@ impl UIElement for Container {
                         + (0.0, self.gap),
                 );
                 self.region.size.height += child.get_size().height + self.gap;
+                let needed = child.get_size().width + self.gap * 2.0;
+                if needed > self.region.size.width {
+                    self.region.size.width = needed;
+                }
             }
         }
         self.plane.set_size(self.region.size);

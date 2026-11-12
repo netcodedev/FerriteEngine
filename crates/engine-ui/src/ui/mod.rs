@@ -14,6 +14,12 @@ mod ui;
 pub trait UIElement {
     fn update(&mut self, scene: &mut Scene);
     fn render(&self);
+    /// Second render pass for top-level overlays (modal dim layers, menus).
+    /// Runs after every element's regular `render` so overlays sit above all
+    /// sibling panels regardless of render order. Container-like elements
+    /// should forward this call to their children; leaf elements default to
+    /// a no-op.
+    fn render_overlay(&self) {}
     fn handle_events(
         &mut self,
         scene: &mut Scene,

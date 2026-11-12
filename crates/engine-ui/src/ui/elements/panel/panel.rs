@@ -140,6 +140,13 @@ impl UIElement for Panel {
         }
     }
 
+    fn render_overlay(&self) {
+        self.controls.render_overlay();
+        if !self.is_collapsible || self.is_open {
+            self.content.render_overlay();
+        }
+    }
+
     fn handle_events(
         &mut self,
         scene: &mut Scene,

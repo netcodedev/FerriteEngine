@@ -1,5 +1,5 @@
 use core::panic;
-use std::str::FromStr;
+use std::{str::FromStr, time::Instant};
 
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
@@ -25,22 +25,39 @@ impl<T: Clone + ToString> Input<T> {
         content: T,
         data_source: Option<DataSource<T>>,
     ) -> Self {
+        // Derive the font size from the input's height so taller inputs get
+        // bigger text automatically. Clamped so very small inputs still get a
+        // legible font.
+        let font_size = ((size.height - 6.0).max(10.0)).min(size.height.max(10.0));
+        let cursor_h = (font_size - 2.0).max(6.0);
         let plane = PlaneBuilder::new()
             .position(position)
             .size(size)
             .border_radius_uniform(5.0)
             .border_thickness(1.0);
+        let cursor_plane = PlaneBuilder::new()
+            .position(position)
+            .size(Size::new((font_size * 0.08).max(1.0), cursor_h))
+            .color((0.9, 0.9, 0.9, 1.0))
+            .build();
         Self {
             handle: UIElementHandle::new(),
             region: Region::new(position, size),
             is_hovering: false,
             is_focused: false,
+            scroll_offset: 0.0,
+            blink_start: Instant::now(),
             content: content.to_string(),
-            text: Text::new(Fonts::RobotoMono, 0, 0, 0, 16.0, content.to_string()),
+            text: Text::new(Fonts::RobotoMono, 0, 0, 0, font_size, content.to_string()),
             plane: plane.build(),
             stencil_plane: plane.size(&size - (2.0, 0.0)).build(),
+            cursor_plane,
             data_source,
         }
+    }
+
+    fn reset_blink(&mut self) {
+        self.blink_start = Instant::now();
     }
 
     pub fn set_handle(&mut self, handle: UIElementHandle) {
@@ -66,8 +83,29 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
             self.content = data_source.to_string();
         }
         self.text.set_content(&self.content);
-        self.text
-            .prepare_render_at(&(&self.region.position + &self.region.offset) + (5.0, 2.0, 1.0));
+
+        // Lay the text out once at the origin so we can measure it, then
+        // horizontally scroll so the end of the text stays inside the
+        // visible (stencil-clipped) area. We measure via the font's own
+        // advance widths (`measure_width`) so trailing whitespace counts and
+        // proportional fonts give accurate results.
+        let base = &self.region.position + &self.region.offset;
+        self.text.prepare_render_at(&base + (5.0, 2.0, 1.0));
+        let text_width = self.text.measure_width();
+        let visible_width = (self.region.size.width - 10.0).max(0.0);
+        self.scroll_offset = (text_width - visible_width).max(0.0);
+        if self.scroll_offset > 0.0 {
+            self.text
+                .prepare_render_at(&base + (5.0 - self.scroll_offset, 2.0, 1.0));
+        }
+
+        // Cursor sits at the caret (end of text in visible coords) and
+        // follows the stencil so it also gets clipped at the edges.
+        let caret_x = base.x + 5.0 + text_width - self.scroll_offset;
+        let caret_h = self.cursor_plane.get_region().size.height;
+        let caret_y = base.y + (self.region.size.height - caret_h) * 0.5;
+        self.cursor_plane
+            .set_position(Position::new(caret_x, caret_y, base.z + 2.0));
     }
 
     fn render(&self) {
@@ -94,6 +132,14 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
             gl::DepthFunc(gl::LEQUAL);
 
             self.text.render();
+            // Blinking caret: 500 ms on, 500 ms off, drawn inside the same
+            // stencil window so it clips at the edges just like the text.
+            if self.is_focused {
+                let elapsed_ms = self.blink_start.elapsed().as_millis();
+                if (elapsed_ms / 500) % 2 == 0 {
+                    PlaneRenderer::render(&self.cursor_plane);
+                }
+            }
             gl::Disable(gl::STENCIL_TEST);
             gl::StencilMask(0xFF);
             gl::StencilFunc(gl::ALWAYS, 0, 0xFF);
@@ -117,6 +163,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                         self.plane.set_color((0.3, 0.3, 0.3, 1.0));
                         self.stencil_plane.set_color((0.3, 0.3, 0.3, 1.0));
                     }
+                    self.reset_blink();
                     return true;
                 } else if self.is_focused {
                     self.is_focused = false;
@@ -150,6 +197,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                     if let Some(data_source) = &self.data_source {
                         data_source.write_from_string(self.content.clone());
                     }
+                    self.reset_blink();
                     return true;
                 }
                 false
@@ -160,6 +208,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                     if let Some(data_source) = &mut self.data_source {
                         data_source.write_from_string(self.content.clone());
                     }
+                    self.reset_blink();
                     return true;
                 }
                 false
@@ -219,5 +268,6 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
         self.plane.set_z_index(z_index);
         self.stencil_plane.set_z_index(z_index + 1.0);
         self.text.set_z_index(z_index + 1.0);
+        self.cursor_plane.set_z_index(z_index + 2.0);
     }
 }

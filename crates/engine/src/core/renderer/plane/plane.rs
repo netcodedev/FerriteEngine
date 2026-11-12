@@ -63,6 +63,11 @@ impl PlaneRenderer {
         renderer.height = height as f32;
     }
 
+    pub fn get_size() -> (f32, f32) {
+        let renderer = RENDERER.lock().unwrap();
+        (renderer.width, renderer.height)
+    }
+
     pub fn resize_from_event(event: &glfw::WindowEvent) {
         match event {
             glfw::WindowEvent::FramebufferSize(width, height) => {

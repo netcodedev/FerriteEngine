@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/engine",
+    "crates/engine-ui",
     "crates/editor",
     "crates/sandbox"
 ]

@@ -93,6 +93,29 @@ impl Text {
         }
     }
 
+    /// Width of the current content measured from actual font metrics. Unlike
+    /// [`Self::get_size`], this includes trailing whitespace and works with
+    /// proportional fonts, since it sums each glyph's `advance_width` and the
+    /// pair kerning between adjacent glyphs.
+    pub fn measure_width(&self) -> f32 {
+        let font = &self.font.get().font;
+        let scale = Scale::uniform(self.size);
+        let mut width = 0.0f32;
+        let mut last_id = None;
+        for c in self.content.chars() {
+            if c.is_control() {
+                continue;
+            }
+            let glyph = font.glyph(c);
+            if let Some(prev) = last_id.take() {
+                width += font.pair_kerning(scale, prev, glyph.id());
+            }
+            last_id = Some(glyph.id());
+            width += glyph.scaled(scale).h_metrics().advance_width;
+        }
+        width
+    }
+
     fn layout(&mut self, width: u32) {
         if self.dirty {
             self.glyphs = self.layout_text(Scale::uniform(self.size), width, &self.content);

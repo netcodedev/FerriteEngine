@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use ferrite::core::{
     primitives::Region,
     renderer::{plane::Plane, text::Text},
@@ -19,6 +21,10 @@ pub struct Input<T: Clone + ToString> {
     is_hovering: bool,
     is_focused: bool,
 
+    scroll_offset: f32,
+    blink_start: Instant,
+
     plane: Plane,
     stencil_plane: Plane,
+    cursor_plane: Plane,
 }

@@ -53,6 +53,10 @@ impl UIElement for EntityComponentsPanel {
         self.panel.render();
     }
 
+    fn render_overlay(&self) {
+        self.panel.render_overlay();
+    }
+
     fn handle_events(
         &mut self,
         scene: &mut Scene,
