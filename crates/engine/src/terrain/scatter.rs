@@ -13,7 +13,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, Vector3, Zero};
@@ -26,7 +26,7 @@ use russimp_ng::material::TextureType;
 use serde::{Deserialize, Serialize};
 
 use crate::core::{
-    assets::{self, AssetKind, AssetRef},
+    assets::{self, AssetDatabase, AssetKind, AssetRef, ModelSettings},
     entity::{
         component::{Component, Property, PropertyValue},
         Entity,
@@ -84,6 +84,7 @@ thread_local! {
 #[derive(Default)]
 struct ModelCache {
     shader: Option<Rc<Shader>>,
+    white: Option<Rc<Texture>>,
     models: HashMap<String, Rc<ScatterModel>>,
 }
 
@@ -91,7 +92,19 @@ struct ModelCache {
 /// layer that asked for it and every chunk's instances of it.
 pub struct ScatterModel {
     shader: Rc<Shader>,
+    /// Stands in for a colour or normal map a material does not have, so it
+    /// is drawn plain and lit instead of with whatever was bound last.
+    white: Rc<Texture>,
     variants: Vec<ModelVariant>,
+}
+
+/// Which detail tier to draw.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LodChoice {
+    /// The tier for this distance from the camera.
+    Distance(f32),
+    /// This tier (clamped to what the variant has), whatever the distance.
+    Fixed(usize),
 }
 
 /// How a model file is turned into scatter variants.
@@ -116,6 +129,32 @@ impl Default for LoadOptions {
             base_color: Vec::new(),
             normal: Vec::new(),
             foliage: Vec::new(),
+        }
+    }
+}
+
+impl LoadOptions {
+    /// The options a model asset's settings ask for. Texture assets that do
+    /// not exist are skipped with a warning.
+    fn for_settings(
+        settings: &ModelSettings,
+        variant: Option<String>,
+        database: &AssetDatabase,
+    ) -> Self {
+        let texture = |id: &Option<assets::AssetId>| {
+            let id = (*id)?;
+            let found = database.get(id).map(|texture| texture.source_path());
+            if found.is_none() {
+                log::warn!("terrain scatter: texture asset {id} does not exist");
+            }
+            found
+        };
+        LoadOptions {
+            scale: settings.scale,
+            variant,
+            base_color: settings.materials.iter().map(|m| texture(&m.base_color)).collect(),
+            normal: settings.materials.iter().map(|m| texture(&m.normal)).collect(),
+            foliage: settings.materials.iter().map(|m| m.foliage).collect(),
         }
     }
 }
@@ -145,24 +184,7 @@ impl ScatterModel {
             let AssetKind::Model(settings) = &entry.meta.kind else {
                 return Err(format!("'{}' is not a model", entry.meta.name));
             };
-            let texture = |id: &Option<assets::AssetId>| {
-                let id = (*id)?;
-                let found = database.get(id).map(|texture| texture.source_path());
-                if found.is_none() {
-                    log::warn!(
-                        "terrain scatter: texture {id} of '{}' does not exist",
-                        entry.meta.name
-                    );
-                }
-                found
-            };
-            let options = LoadOptions {
-                scale: settings.scale,
-                variant: asset.part.clone(),
-                base_color: settings.materials.iter().map(|m| texture(&m.base_color)).collect(),
-                normal: settings.materials.iter().map(|m| texture(&m.normal)).collect(),
-                foliage: settings.materials.iter().map(|m| m.foliage).collect(),
-            };
+            let options = LoadOptions::for_settings(settings, asset.part.clone(), &database);
             (entry.source_path(), options, entry.revision)
         };
         let part = asset.part.as_deref().unwrap_or("");
@@ -179,6 +201,21 @@ impl ScatterModel {
         Ok((model, revision))
     }
 
+    /// Load a model file with the given settings, which need not be saved
+    /// (or belong to a registered asset) yet — for previewing edits. Not
+    /// cached. Must run on the GL thread.
+    pub fn load_preview(
+        source: &Path,
+        settings: &ModelSettings,
+        variant: Option<&str>,
+    ) -> Result<Rc<ScatterModel>, String> {
+        let options = {
+            let database = assets::database();
+            LoadOptions::for_settings(settings, variant.map(str::to_string), &database)
+        };
+        Self::build(&source.to_string_lossy().replace('\\', "/"), &options)
+    }
+
     fn load_cached(
         key: String,
         full_path: &str,
@@ -187,10 +224,16 @@ impl ScatterModel {
         if let Some(cached) = MODEL_CACHE.with(|cache| cache.borrow().models.get(&key).cloned()) {
             return Ok(cached);
         }
+        let model = Self::build(full_path, options)?;
+        MODEL_CACHE.with(|cache| cache.borrow_mut().models.insert(key, model.clone()));
+        Ok(model)
+    }
+
+    fn build(full_path: &str, options: &LoadOptions) -> Result<Rc<ScatterModel>, String> {
         let variants = load_variants(full_path, options).map_err(|e| e.to_string())?;
-        let shader = MODEL_CACHE.with(|cache| {
-            cache
-                .borrow_mut()
+        let (shader, white) = MODEL_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let shader = cache
                 .shader
                 .get_or_insert_with(|| {
                     Rc::new(Shader::new(
@@ -198,16 +241,38 @@ impl ScatterModel {
                         include_str!("scatter_instanced_fragment.glsl"),
                     ))
                 })
-                .clone()
+                .clone();
+            let white = cache
+                .white
+                .get_or_insert_with(|| {
+                    let texture = Texture::new();
+                    texture.load_from_data(1, 1, vec![255; 4]);
+                    Rc::new(texture)
+                })
+                .clone();
+            (shader, white)
         });
-        let model = Rc::new(ScatterModel { shader, variants });
-        MODEL_CACHE.with(|cache| cache.borrow_mut().models.insert(key, model.clone()));
-        Ok(model)
+        Ok(Rc::new(ScatterModel {
+            shader,
+            white,
+            variants,
+        }))
     }
 
     /// Number of variants loaded (always at least one).
     pub fn variant_count(&self) -> usize {
         self.variants.len()
+    }
+
+    /// Number of detail tiers of a variant.
+    pub fn lod_count(&self, variant: usize) -> usize {
+        self.variants.get(variant).map_or(0, |v| v.lods.len())
+    }
+
+    /// Corners of the box around a variant's most detailed tier, in model
+    /// space with the asset's scale applied.
+    pub fn bounds(&self, variant: usize) -> Option<([f32; 3], [f32; 3])> {
+        self.variants.get(variant).map(|v| v.bounds)
     }
 }
 
@@ -236,6 +301,8 @@ struct ModelVariant {
     /// Detail tiers sorted from highest quality (index 0) to lowest.
     lods: Vec<VariantLod>,
     collider_shape: SharedShape,
+    /// Box around the most detailed tier: `(min, max)`.
+    bounds: ([f32; 3], [f32; 3]),
 }
 
 struct VariantLod {
@@ -266,6 +333,7 @@ pub fn release_gl_resources() {
         let mut cache = cache.borrow_mut();
         cache.models.clear();
         cache.shader = None;
+        cache.white = None;
     });
 }
 
@@ -401,10 +469,22 @@ fn load_variants(
             build_collider(&shared_model, &group.lods[collider_idx].1, &options.foliage)
             .ok_or_else(|| format!("'{}' failed to build collider trimesh", group.name))?;
 
+        let mut bounds = ([f32::MAX; 3], [f32::MIN; 3]);
+        for position in group.lods[0].1.iter().flat_map(|sd| sd.positions.iter()) {
+            for axis in 0..3 {
+                bounds.0[axis] = bounds.0[axis].min(position[axis]);
+                bounds.1[axis] = bounds.1[axis].max(position[axis]);
+            }
+        }
+        if bounds.0[0] > bounds.1[0] {
+            bounds = ([0.0; 3], [0.0; 3]);
+        }
+
         out.push(ModelVariant {
             model: shared_model.clone(),
             lods: gpu_lods,
             collider_shape,
+            bounds,
         });
     }
     Ok(out)
@@ -745,14 +825,9 @@ impl Component for ScatterInstances {
         view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
     ) {
-        if self.is_empty() {
-            return;
-        }
         let Some(skylight) = scene.get_component::<SkyLight>() else {
             return;
         };
-        let light_pos = skylight.get_position();
-
         let camera_pos = scene
             .get_active_camera()
             .map(|c| c.get_camera().get_eye_position());
@@ -762,7 +837,33 @@ impl Component for ScatterInstances {
                 (d.x * d.x + d.y * d.y + d.z * d.z).sqrt()
             })
             .unwrap_or(0.0);
+        self.draw(
+            view_projection,
+            parent_transform,
+            skylight.get_position(),
+            LodChoice::Distance(distance),
+        );
+    }
 
+    fn handle_event(&mut self, _: &mut glfw::Glfw, _: &mut glfw::Window, _: &WindowEvent) {}
+
+    fn on_remove(&mut self, physics: &mut PhysicsEngine) {
+        self.remove_colliders(physics);
+    }
+}
+
+impl ScatterInstances {
+    /// Draw the instances. Needs no scene, so previews can use it too.
+    pub fn draw(
+        &self,
+        view_projection: &Matrix4<f32>,
+        parent_transform: &Matrix4<f32>,
+        light_pos: Point3<f32>,
+        lod: LodChoice,
+    ) {
+        if self.is_empty() {
+            return;
+        }
         self.ensure_gpu();
         let gpu_borrow = self.gpu.borrow();
         let gpu = gpu_borrow.as_ref().expect("gpu just initialized");
@@ -783,12 +884,16 @@ impl Component for ScatterInstances {
                 for (variant_idx, variant_gpu_opt) in gpu.variants.iter().enumerate() {
                     let Some(variant_gpu) = variant_gpu_opt else { continue };
                     let kind = &r.variants[variant_idx];
-                    let lod_idx = pick_lod_index(distance, kind.lods.len());
+                    let lod_idx = match lod {
+                        LodChoice::Distance(distance) => pick_lod_index(distance, kind.lods.len()),
+                        LodChoice::Fixed(tier) => tier.min(kind.lods.len().saturating_sub(1)),
+                    };
                     let lod = &kind.lods[lod_idx];
                     let vaos = &variant_gpu.vaos[lod_idx];
                     for (sub_idx, sub) in lod.submeshes.iter().enumerate() {
                         bind_material_textures(
                             &r.shader,
+                            &r.white,
                             kind.model.material_textures(sub.material_index),
                         );
                         gl::BindVertexArray(vaos[sub_idx]);
@@ -807,59 +912,55 @@ impl Component for ScatterInstances {
             }
         }
     }
-
-    fn handle_event(&mut self, _: &mut glfw::Glfw, _: &mut glfw::Window, _: &WindowEvent) {}
-
-    fn on_remove(&mut self, physics: &mut PhysicsEngine) {
-        self.remove_colliders(physics);
-    }
 }
 
+/// Bind a material's colour and normal map. A map the material does not
+/// have is replaced by plain white (colour: unshaded white; normal: the
+/// surface normal as it is).
 fn bind_material_textures(
     shader: &Shader,
+    white: &Texture,
     textures: Option<&HashMap<TextureType, Texture>>,
 ) {
-    let Some(textures) = textures else {
-        return;
-    };
     // PBR-authored materials (Acer pack) expose albedo as `BaseColor`; legacy
     // ones (Paine pine, the older Tree.fbx) use `Diffuse`. Pick whichever the
     // material actually carries — and if neither is tagged, fall back to any
-    // non-normal texture so we don't inherit the previous draw's binding.
-    let diffuse = textures
-        .get(&TextureType::Diffuse)
-        .or_else(|| textures.get(&TextureType::BaseColor))
-        .or_else(|| {
-            textures.iter().find_map(|(t, tex)| {
-                if matches!(
-                    t,
-                    TextureType::Normals
-                        | TextureType::NormalCamera
-                        | TextureType::Height
-                        | TextureType::Roughness
-                        | TextureType::Metalness
-                        | TextureType::AmbientOcclusion
-                ) {
-                    None
-                } else {
-                    Some(tex)
-                }
+    // non-normal texture.
+    let diffuse = textures.and_then(|textures| {
+        textures
+            .get(&TextureType::Diffuse)
+            .or_else(|| textures.get(&TextureType::BaseColor))
+            .or_else(|| {
+                textures.iter().find_map(|(t, tex)| {
+                    if matches!(
+                        t,
+                        TextureType::Normals
+                            | TextureType::NormalCamera
+                            | TextureType::Height
+                            | TextureType::Roughness
+                            | TextureType::Metalness
+                            | TextureType::AmbientOcclusion
+                    ) {
+                        None
+                    } else {
+                        Some(tex)
+                    }
+                })
             })
-        });
-    if let Some(diffuse) = diffuse {
-        unsafe { gl::ActiveTexture(gl::TEXTURE0) };
-        diffuse.bind();
-        shader.set_uniform_1i("texture_diffuse", 0);
-    }
-    let normal = textures
-        .get(&TextureType::Normals)
-        .or_else(|| textures.get(&TextureType::NormalCamera))
-        .or_else(|| textures.get(&TextureType::Height));
-    if let Some(normal) = normal {
-        unsafe { gl::ActiveTexture(gl::TEXTURE1) };
-        normal.bind();
-        shader.set_uniform_1i("texture_normals", 1);
-    }
+    });
+    unsafe { gl::ActiveTexture(gl::TEXTURE0) };
+    diffuse.unwrap_or(white).bind();
+    shader.set_uniform_1i("texture_diffuse", 0);
+
+    let normal = textures.and_then(|textures| {
+        textures
+            .get(&TextureType::Normals)
+            .or_else(|| textures.get(&TextureType::NormalCamera))
+            .or_else(|| textures.get(&TextureType::Height))
+    });
+    unsafe { gl::ActiveTexture(gl::TEXTURE1) };
+    normal.unwrap_or(white).bind();
+    shader.set_uniform_1i("texture_normals", 1);
 }
 
 /// One scatter layer as stored in a scene file.
