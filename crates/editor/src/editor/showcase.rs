@@ -3,7 +3,13 @@ use ferrite::core::{
     scene::Scene,
     utils::DataSource,
 };
-use ferrite_ui::ui::{element_handle::UIElementHandle, elements::popup::Popup, UIElement, UI};
+use ferrite_ui::ui::{
+    element_handle::UIElementHandle,
+    elements::{panel::Panel, popup::Popup, scroll::ScrollArea},
+    UIElement, UI,
+};
+
+use super::{layout::Rect, Shared};
 use glfw::{Glfw, WindowEvent};
 
 /// Wrapper around a `Popup` that only renders/forwards events while
@@ -83,14 +89,9 @@ impl UIElement for PopupGate {
 
 /// Floating panel that exercises every widget in `ferrite_ui`; opened from
 /// the editor's Window menu.
-fn build_widget_showcase(show_popup: DataSource<bool>) -> Box<dyn UIElement> {
-    let mut panel = UI::panel(
-        "Widgets",
-        Position::new(960.0, 10.0, 0.0),
-        Size::new(310.0, 700.0),
-    );
-    panel.set_collapsible(true);
-    panel.set_with_end_gap(true);
+fn build_widget_showcase(show_popup: DataSource<bool>, state: Shared) -> Box<dyn UIElement> {
+    let mut panel = ScrollArea::new(Position::default(), Size::new(290.0, 400.0));
+    panel.set_gap(6.0);
 
     // Text (static).
     panel.add_child(UI::label("Text (static)", 14.0));
@@ -199,15 +200,129 @@ fn build_widget_showcase(show_popup: DataSource<bool>) -> Box<dyn UIElement> {
         DataSource::new(1.0),
     ));
 
-    panel
+    Box::new(DockedShowcase::new(state, panel))
+}
+
+/// The showcase docked in the right column (below the statistics when both
+/// are shown).
+struct DockedShowcase {
+    handle: UIElementHandle,
+    state: Shared,
+    panel: Panel,
+    body: ScrollArea,
+}
+
+impl DockedShowcase {
+    fn new(state: Shared, mut body: ScrollArea) -> Self {
+        let mut panel = Panel::new("Widget showcase".into(), Position::default(), Size::new(300.0, 400.0));
+        panel.set_movable(false);
+        panel.set_fixed_size(true);
+        panel.set_flat(true);
+        body.set_z_index(2.0);
+        Self {
+            handle: UIElementHandle::new(),
+            state,
+            panel,
+            body,
+        }
+    }
+
+    fn rect(&self) -> Rect {
+        self.state.borrow().layout.widgets
+    }
+}
+
+impl UIElement for DockedShowcase {
+    fn update(&mut self, scene: &mut Scene) {
+        let rect = self.rect();
+        if rect.w <= 0.0 {
+            return;
+        }
+        self.panel.set_size(Size::new(rect.w, rect.h));
+        self.panel.set_position(Position::new(rect.x, rect.y, 0.0));
+        let header = self.panel.header_height();
+        self.body
+            .set_position(Position::new(rect.x + 4.0, rect.y + header + 4.0, 0.0));
+        self.body.set_size(Size::new(
+            (rect.w - 8.0).max(10.0),
+            (rect.h - header - 8.0).max(10.0),
+        ));
+        self.panel.update(scene);
+        self.body.update(scene);
+    }
+
+    fn render(&self) {
+        if self.rect().w <= 0.0 {
+            return;
+        }
+        self.panel.render();
+        self.body.render();
+    }
+
+    fn render_overlay(&self) {
+        if self.rect().w > 0.0 {
+            self.body.render_overlay();
+        }
+    }
+
+    fn handle_events(
+        &mut self,
+        scene: &mut Scene,
+        window: &mut glfw::Window,
+        glfw: &mut Glfw,
+        event: &WindowEvent,
+    ) -> bool {
+        let rect = self.rect();
+        if rect.w <= 0.0 {
+            return false;
+        }
+        if self.body.handle_events(scene, window, glfw, event) {
+            return true;
+        }
+        if let WindowEvent::MouseButton(..) | WindowEvent::Scroll(..) = event {
+            let (x, y) = window.get_cursor_pos();
+            return rect.contains(x as f32, y as f32);
+        }
+        false
+    }
+
+    fn add_child(&mut self, child: Box<dyn UIElement>) {
+        self.body.add_child(child);
+    }
+    fn add_child_to(&mut self, parent: UIElementHandle, child: Box<dyn UIElement>) {
+        self.body.add_child_to(parent, child);
+    }
+    fn contains_child(&self, handle: &UIElementHandle) -> bool {
+        self.body.contains_child(handle)
+    }
+    fn get_child(&self, handle: &UIElementHandle) -> Option<&Box<dyn UIElement>> {
+        self.body.get_child(handle)
+    }
+    fn get_child_mut(&mut self, handle: &UIElementHandle) -> Option<&mut Box<dyn UIElement>> {
+        self.body.get_child_mut(handle)
+    }
+    fn get_handle(&self) -> &UIElementHandle {
+        &self.handle
+    }
+    fn get_offset(&self) -> &Offset {
+        self.panel.get_offset()
+    }
+    fn set_offset(&mut self, _offset: Offset) {}
+    fn get_size(&self) -> &Size {
+        self.panel.get_size()
+    }
+    fn set_z_index(&mut self, z: f32) {
+        self.panel.set_z_index(z);
+        self.body.set_z_index(z + 2.0);
+    }
 }
 
 /// The widget showcase panel plus the modal popup its "Open popup" button
 /// shows. Both are added to the UI separately so the popup can sit above
 /// every other element.
-pub fn widget_showcase() -> (Box<dyn UIElement>, Box<dyn UIElement>) {
+pub fn widget_showcase(state: Shared) -> (Box<dyn UIElement>, Box<dyn UIElement>) {
     let show_popup = DataSource::new(false);
-    let panel = build_widget_showcase(show_popup.clone());
+    let panel = build_widget_showcase(show_popup.clone(), state);
     let popup = Popup::new(
         String::from("Popup demo"),
         show_popup.clone(),

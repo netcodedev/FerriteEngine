@@ -109,10 +109,11 @@ impl EditorLayer {
             add(&mut ui, Box::new(ToggleWindow::new(anim_panels.clone(), panel)));
         }
 
-        // Floating windows from the Window menu (hidden by default).
-        let (widgets, widgets_popup) = showcase::widget_showcase();
+        // Widget showcase, docked in the right column while enabled in the
+        // Window menu (it hides itself when the layout gives it no room).
+        let (widgets, widgets_popup) = showcase::widget_showcase(state.clone());
         let show_widgets = state.borrow().show_widgets.clone();
-        add(&mut ui, Box::new(ToggleWindow::new(show_widgets.clone(), widgets)));
+        add(&mut ui, widgets);
         add(&mut ui, Box::new(ToggleWindow::new(show_widgets, widgets_popup)));
         add(&mut ui, Box::new(ModalHost::new(state.clone())));
 
@@ -629,14 +630,16 @@ impl EditorLayer {
 
 impl Layer for EditorLayer {
     fn on_update(&mut self, window: &Window, delta_time: f64) {
-        let (show_stats, workspace) = {
+        let (show_stats, show_widgets, workspace) = {
             let s = self.state.borrow();
-            (s.show_stats.read(), s.workspace)
+            (s.show_stats.read(), s.show_widgets.read(), s.workspace)
         };
-        let right = match (workspace, show_stats) {
-            (Workspace::Animation, _) => RightColumn::Preview,
-            (Workspace::Scene, true) => RightColumn::Stats,
-            (Workspace::Scene, false) => RightColumn::None,
+        let right = match workspace {
+            Workspace::Animation => RightColumn::Preview,
+            Workspace::Scene => RightColumn::Panels {
+                stats: show_stats,
+                widgets: show_widgets,
+            },
         };
         let sizes = self.state.borrow().panel_sizes;
         let layout = Layout::compute(window.width as f32, window.height as f32, right, &sizes);

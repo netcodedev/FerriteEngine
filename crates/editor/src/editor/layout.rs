@@ -22,9 +22,13 @@ pub struct Layout {
     pub hierarchy: Rect,
     pub inspector: Rect,
     pub viewport: Rect,
-    /// Right column (statistics or animation preview); zero width when
-    /// hidden.
+    /// The whole right column; zero width when nothing is docked there.
+    pub right: Rect,
+    /// Statistics (scene) or preview (animation) in the right column; zero
+    /// size when hidden.
     pub stats: Rect,
+    /// Widget showcase in the right column; zero size when hidden.
+    pub widgets: Rect,
 }
 
 pub const TITLEBAR_HEIGHT: f32 = 28.0;
@@ -46,6 +50,9 @@ pub struct PanelSizes {
     pub top_share: f32,
     pub stats: f32,
     pub preview: f32,
+    /// Share of the right column's height for statistics when the widget
+    /// showcase is docked below it.
+    pub right_share: f32,
 }
 
 impl Default for PanelSizes {
@@ -55,6 +62,7 @@ impl Default for PanelSizes {
             top_share: 0.4,
             stats: 300.0,
             preview: 360.0,
+            right_share: 0.55,
         }
     }
 }
@@ -62,8 +70,8 @@ impl Default for PanelSizes {
 /// What occupies the right-hand column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RightColumn {
-    None,
-    Stats,
+    /// Scene workspace: statistics and/or the widget showcase.
+    Panels { stats: bool, widgets: bool },
     Preview,
 }
 
@@ -73,11 +81,23 @@ impl Layout {
         // Columns shrink before the viewport disappears on small windows.
         let side_w = sizes.side.min((window_w - MIN_VIEWPORT).max(0.0)).floor();
         let wanted = match right {
-            RightColumn::None => 0.0,
-            RightColumn::Stats => sizes.stats,
+            RightColumn::Panels { stats: false, widgets: false } => 0.0,
+            RightColumn::Panels { .. } => sizes.stats,
             RightColumn::Preview => sizes.preview,
         };
         let stats_w = wanted.min((window_w - side_w - MIN_VIEWPORT).max(0.0)).floor();
+        // Right column: top panel (stats or preview) and/or widgets below.
+        let (show_top, show_widgets) = match right {
+            RightColumn::Preview => (true, false),
+            RightColumn::Panels { stats, widgets } => (stats, widgets),
+        };
+        let top_h = match (show_top, show_widgets) {
+            (true, true) => (body_h * sizes.right_share)
+                .clamp(MIN_PANEL_HEIGHT.min(body_h * 0.5), (body_h - MIN_PANEL_HEIGHT).max(body_h * 0.5))
+                .floor(),
+            (true, false) => body_h,
+            _ => 0.0,
+        };
         let hierarchy_h = (body_h * sizes.top_share)
             .clamp(MIN_PANEL_HEIGHT.min(body_h * 0.5), (body_h - MIN_PANEL_HEIGHT).max(body_h * 0.5))
             .floor();
@@ -114,11 +134,23 @@ impl Layout {
                 w: (window_w - side_w - stats_w).max(1.0),
                 h: body_h,
             },
-            stats: Rect {
+            right: Rect {
                 x: window_w - stats_w,
                 y: TOP,
                 w: stats_w,
                 h: body_h,
+            },
+            stats: Rect {
+                x: window_w - stats_w,
+                y: TOP,
+                w: if show_top { stats_w } else { 0.0 },
+                h: top_h,
+            },
+            widgets: Rect {
+                x: window_w - stats_w,
+                y: TOP + top_h,
+                w: if show_widgets { stats_w } else { 0.0 },
+                h: body_h - top_h,
             },
         }
     }

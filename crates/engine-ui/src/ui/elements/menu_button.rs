@@ -2,7 +2,7 @@ use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::{
         plane::{Plane, PlaneBuilder},
-        text::Text,
+        text::{icons, Text},
     },
     scene::Scene,
 };
@@ -23,6 +23,8 @@ pub struct MenuItem {
     pub label: String,
     /// Shown right-aligned and dimmed, e.g. "Ctrl+S".
     pub shortcut: Option<String>,
+    /// For toggles: a check mark is shown at the right end when true.
+    pub checked: Option<bool>,
 }
 
 impl MenuItem {
@@ -31,7 +33,14 @@ impl MenuItem {
             icon: None,
             label: label.into(),
             shortcut: None,
+            checked: None,
         }
+    }
+
+    /// Make this a toggle entry showing a check mark while `checked`.
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = Some(checked);
+        self
     }
 
     pub fn icon(mut self, icon: &'static str) -> Self {
@@ -50,6 +59,7 @@ struct Entry {
     icon: Option<Text>,
     label: Text,
     shortcut: Option<Text>,
+    check: Option<Text>,
     bg: Plane,
     region: Region,
 }
@@ -141,6 +151,8 @@ impl MenuButton {
                     .shortcut
                     .as_deref()
                     .map(|s| theme::text(s, theme::FONT_SIZE_SMALL, theme::TEXT_DIM)),
+                check: (item.checked == Some(true))
+                    .then(|| theme::icon(icons::CHECK_MARK, 15.0, theme::ACCENT_TEXT)),
                 item,
                 bg: PlaneBuilder::new()
                     .color(theme::TRANSPARENT)
@@ -156,6 +168,7 @@ impl MenuButton {
             .map(|e| {
                 e.label.measure_width()
                     + e.shortcut.as_ref().map_or(0.0, |s| s.measure_width() + 32.0)
+                    + if e.item.checked.is_some() { 32.0 } else { 0.0 }
             })
             .fold(0.0f32, f32::max);
         let icon_column = if has_icons { 26.0 } else { 0.0 };
@@ -205,8 +218,16 @@ impl MenuButton {
                 .label
                 .prepare_render_at(Position::new(x, p.y + y, OVERLAY_Z + 2.0));
             entry.label.set_z_index(OVERLAY_Z + 2.0);
+            let mut right = p.x + width - 10.0;
+            if let Some(check) = &mut entry.check {
+                right -= check.measure_width();
+                let y = theme::center_y(check, self.row_height);
+                check.prepare_render_at(Position::new(right, p.y + y, OVERLAY_Z + 2.0));
+                check.set_z_index(OVERLAY_Z + 2.0);
+                right -= 10.0;
+            }
             if let Some(shortcut) = &mut entry.shortcut {
-                let sx = p.x + width - 10.0 - shortcut.measure_width();
+                let sx = right - shortcut.measure_width();
                 let y = theme::center_y(shortcut, self.row_height);
                 shortcut.prepare_render_at(Position::new(sx, p.y + y, OVERLAY_Z + 2.0));
                 shortcut.set_z_index(OVERLAY_Z + 2.0);
@@ -241,6 +262,9 @@ impl UIElement for MenuButton {
                 entry.label.render();
                 if let Some(shortcut) = &entry.shortcut {
                     shortcut.render();
+                }
+                if let Some(check) = &entry.check {
+                    check.render();
                 }
             }
         }

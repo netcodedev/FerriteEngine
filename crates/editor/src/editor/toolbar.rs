@@ -38,6 +38,14 @@ pub struct Toolbar {
     status: Text,
 }
 
+/// Window menu entries, checked while the panel is shown.
+fn window_items(stats: bool, widgets: bool) -> Vec<MenuItem> {
+    vec![
+        MenuItem::new("Statistics").icon(icons::ACTIVITY).checked(stats),
+        MenuItem::new("Widget showcase").icon(icons::COMPONENT).checked(widgets),
+    ]
+}
+
 fn tool_button(label: &str, icon: &str, on_click: Box<dyn Fn(&mut Scene)>) -> Button {
     let mut button = Button::new(Position::default(), Size::new(10.0, BUTTON_HEIGHT), on_click);
     button.set_style(ButtonStyle::Ghost);
@@ -74,10 +82,7 @@ impl Toolbar {
         let window_menu = MenuButton::with_items(
             "Window",
             None,
-            vec![
-                MenuItem::new("Statistics").icon(icons::ACTIVITY),
-                MenuItem::new("Widget showcase").icon(icons::COMPONENT),
-            ],
+            window_items(true, false),
             Box::new(move |index, _scene| {
                 let state = window_state.borrow();
                 let flag = match index {
@@ -172,6 +177,13 @@ impl Toolbar {
 
 impl UIElement for Toolbar {
     fn update(&mut self, scene: &mut Scene) {
+        let (stats_on, widgets_on) = {
+            let state = self.state.borrow();
+            (state.show_stats.read(), state.show_widgets.read())
+        };
+        // Rebuilds its entries only when a check mark actually changes.
+        self.window_menu
+            .set_menu_items(window_items(stats_on, widgets_on));
         let (rect, viewport, mode, gizmo, status, workspace) = {
             let state = self.state.borrow();
             (

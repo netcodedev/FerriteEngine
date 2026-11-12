@@ -26,13 +26,15 @@ enum Edge {
     SideSplit,
     /// Left edge of the right column.
     Right,
+    /// Between statistics and the widget showcase in the right column.
+    RightSplit,
 }
 
 impl Edge {
     fn cursor(self) -> StandardCursor {
         match self {
             Edge::Side | Edge::Right => StandardCursor::HResize,
-            Edge::SideSplit => StandardCursor::VResize,
+            Edge::SideSplit | Edge::RightSplit => StandardCursor::VResize,
         }
     }
 }
@@ -73,7 +75,16 @@ impl Splitter {
         if (x - (side.x + side.w)).abs() <= GRAB {
             return Some(Edge::Side);
         }
-        if layout.stats.w > 0.0 && (x - layout.stats.x).abs() <= GRAB {
+        let right = layout.right;
+        if right.w > 0.0
+            && layout.stats.w > 0.0
+            && layout.widgets.w > 0.0
+            && x > right.x + GRAB
+            && (y - layout.widgets.y).abs() <= GRAB
+        {
+            return Some(Edge::RightSplit);
+        }
+        if right.w > 0.0 && (x - right.x).abs() <= GRAB {
             return Some(Edge::Right);
         }
         None
@@ -95,10 +106,16 @@ impl Splitter {
                 h: 2.0,
             },
             Edge::Right => Rect {
-                x: layout.stats.x - 1.0,
-                y: layout.stats.y,
+                x: layout.right.x - 1.0,
+                y: layout.right.y,
                 w: 2.0,
-                h: layout.stats.h,
+                h: layout.right.h,
+            },
+            Edge::RightSplit => Rect {
+                x: layout.right.x,
+                y: layout.widgets.y - 1.0,
+                w: layout.right.w,
+                h: 2.0,
             },
         }
     }
@@ -106,7 +123,7 @@ impl Splitter {
     fn apply_drag(&self, edge: Edge, x: f32, y: f32) {
         let mut state = self.state.borrow_mut();
         let layout = state.layout;
-        let right_w = layout.stats.w;
+        let right_w = layout.right.w;
         let workspace = state.workspace;
         let sizes = &mut state.panel_sizes;
         match edge {
@@ -118,6 +135,11 @@ impl Splitter {
                 let body = layout.hierarchy.h + layout.inspector.h;
                 let top = (y - layout.hierarchy.y).clamp(MIN_PANEL_HEIGHT, (body - MIN_PANEL_HEIGHT).max(MIN_PANEL_HEIGHT));
                 sizes.top_share = top / body.max(1.0);
+            }
+            Edge::RightSplit => {
+                let body = layout.right.h;
+                let top = (y - layout.right.y).clamp(MIN_PANEL_HEIGHT, (body - MIN_PANEL_HEIGHT).max(MIN_PANEL_HEIGHT));
+                sizes.right_share = top / body.max(1.0);
             }
             Edge::Right => {
                 let max = (layout.window_w - layout.hierarchy.w - MIN_VIEWPORT).max(MIN_COLUMN);

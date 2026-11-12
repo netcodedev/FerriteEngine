@@ -146,7 +146,10 @@ impl EditorState {
             layout: layout::Layout::compute(
                 1280.0,
                 720.0,
-                layout::RightColumn::Stats,
+                layout::RightColumn::Panels {
+                    stats: true,
+                    widgets: false,
+                },
                 &layout::PanelSizes::default(),
             ),
             panel_sizes: layout::PanelSizes::default(),
