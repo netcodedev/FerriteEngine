@@ -1,4 +1,5 @@
 pub mod application;
+pub mod assets;
 pub mod camera;
 pub mod entity;
 pub mod model;

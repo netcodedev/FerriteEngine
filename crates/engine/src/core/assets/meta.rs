@@ -1,0 +1,124 @@
+//! Contents of an asset's sidecar file (`<source file>.asset.ron`).
+
+use serde::{Deserialize, Serialize};
+
+use super::AssetId;
+
+pub const ASSET_META_VERSION: u32 = 1;
+
+/// Appended to the source file's name to get the sidecar's name.
+pub const META_SUFFIX: &str = ".asset.ron";
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AssetMeta {
+    pub version: u32,
+    pub id: AssetId,
+    /// Display name; free to change.
+    pub name: String,
+    /// File name of the source file, which sits next to the sidecar.
+    pub source: String,
+    pub kind: AssetKind,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum AssetKind {
+    Model(ModelSettings),
+    Texture(TextureSettings),
+}
+
+impl AssetKind {
+    /// Short name for lists and messages.
+    pub fn label(&self) -> &'static str {
+        match self {
+            AssetKind::Model(_) => "Model",
+            AssetKind::Texture(_) => "Texture",
+        }
+    }
+}
+
+/// Settings of a model asset, plus the structure found in the file at
+/// import (cached here so tools can show it without loading the model).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ModelSettings {
+    /// Applied on top of the units of the file.
+    #[serde(default = "one")]
+    pub scale: f32,
+    /// The separately usable objects in the file, e.g. the trees of a pack.
+    #[serde(default)]
+    pub variants: Vec<VariantInfo>,
+    /// In the file's material order.
+    #[serde(default)]
+    pub materials: Vec<MaterialSettings>,
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+impl Default for ModelSettings {
+    fn default() -> Self {
+        Self {
+            scale: 1.0,
+            variants: Vec::new(),
+            materials: Vec::new(),
+        }
+    }
+}
+
+impl ModelSettings {
+    pub fn variant(&self, name: &str) -> Option<&VariantInfo> {
+        self.variants.iter().find(|v| v.name == name)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct VariantInfo {
+    pub name: String,
+    /// Names of the detail tiers, as found in the file.
+    #[serde(default)]
+    pub lods: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct MaterialSettings {
+    /// Name in the file; settings are matched to materials by it on
+    /// reimport.
+    pub name: String,
+    /// Texture asset used as colour map. `None`: whatever the model loader
+    /// finds for this material on its own.
+    #[serde(default)]
+    pub base_color: Option<AssetId>,
+    /// Texture asset used as normal map. `None`: as for `base_color`.
+    #[serde(default)]
+    pub normal: Option<AssetId>,
+    /// Leaves and the like: drawn, but left out of collision shapes.
+    #[serde(default)]
+    pub foliage: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct TextureSettings {}
+
+impl AssetMeta {
+    pub fn to_ron(&self) -> Result<String, ron::Error> {
+        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
+    }
+
+    pub fn from_ron(text: &str) -> Result<Self, ron::error::SpannedError> {
+        ron::from_str(text)
+    }
+
+    pub fn as_model(&self) -> Option<&ModelSettings> {
+        match &self.kind {
+            AssetKind::Model(settings) => Some(settings),
+            _ => None,
+        }
+    }
+
+    pub fn as_model_mut(&mut self) -> Option<&mut ModelSettings> {
+        match &mut self.kind {
+            AssetKind::Model(settings) => Some(settings),
+            _ => None,
+        }
+    }
+}
