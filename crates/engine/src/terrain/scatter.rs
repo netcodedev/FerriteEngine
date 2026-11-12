@@ -13,6 +13,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, Vector3, Zero};
@@ -25,6 +26,7 @@ use russimp_ng::material::TextureType;
 use serde::{Deserialize, Serialize};
 
 use crate::core::{
+    assets::{self, AssetKind, AssetRef},
     entity::{
         component::{Component, Property, PropertyValue},
         Entity,
@@ -76,8 +78,9 @@ thread_local! {
     static MODEL_CACHE: RefCell<ModelCache> = RefCell::new(ModelCache::default());
 }
 
-/// Everything loaded so far, by model path. Failed loads are not cached, so
-/// a model that was missing is tried again the next time it is asked for.
+/// Everything loaded so far, by model path or asset (with its revision).
+/// Failed loads are not cached, so a model that was missing is tried again
+/// the next time it is asked for.
 #[derive(Default)]
 struct ModelCache {
     shader: Option<Rc<Shader>>,
@@ -91,14 +94,100 @@ pub struct ScatterModel {
     variants: Vec<ModelVariant>,
 }
 
+/// How a model file is turned into scatter variants.
+struct LoadOptions {
+    scale: f32,
+    /// Only the variant of this name; all of them without.
+    variant: Option<String>,
+    /// Per material: replace the colour map with this image file.
+    base_color: Vec<Option<PathBuf>>,
+    /// Per material: replace the normal map with this image file.
+    normal: Vec<Option<PathBuf>>,
+    /// Per material: leave it out of the collision shape. Materials beyond
+    /// the end are judged by their name.
+    foliage: Vec<bool>,
+}
+
+impl Default for LoadOptions {
+    fn default() -> Self {
+        Self {
+            scale: 1.0,
+            variant: None,
+            base_color: Vec::new(),
+            normal: Vec::new(),
+            foliage: Vec::new(),
+        }
+    }
+}
+
 impl ScatterModel {
-    /// Load a model (path relative to `assets/models/`), or hand out the
-    /// cached one. Must run on the GL thread.
+    /// Load a model file (path relative to `assets/models/`), or hand out
+    /// the cached one. Must run on the GL thread.
     pub fn load(path: &str) -> Result<Rc<ScatterModel>, String> {
-        if let Some(cached) = MODEL_CACHE.with(|cache| cache.borrow().models.get(path).cloned()) {
+        Self::load_cached(
+            path.to_string(),
+            &format!("assets/models/{path}"),
+            &LoadOptions::default(),
+        )
+    }
+
+    /// Load a model asset — all of it, or the variant the reference names —
+    /// with the asset's settings applied. Returns the model and the asset
+    /// revision it was loaded at. Must run on the GL thread.
+    pub fn load_asset(asset: &AssetRef) -> Result<(Rc<ScatterModel>, u64), String> {
+        // Take what is needed out of the database and let go of it before
+        // the (slow) load.
+        let (source, options, revision) = {
+            let database = assets::database();
+            let entry = database
+                .get(asset.id)
+                .ok_or_else(|| format!("asset {} does not exist", asset.id))?;
+            let AssetKind::Model(settings) = &entry.meta.kind else {
+                return Err(format!("'{}' is not a model", entry.meta.name));
+            };
+            let texture = |id: &Option<assets::AssetId>| {
+                let id = (*id)?;
+                let found = database.get(id).map(|texture| texture.source_path());
+                if found.is_none() {
+                    log::warn!(
+                        "terrain scatter: texture {id} of '{}' does not exist",
+                        entry.meta.name
+                    );
+                }
+                found
+            };
+            let options = LoadOptions {
+                scale: settings.scale,
+                variant: asset.part.clone(),
+                base_color: settings.materials.iter().map(|m| texture(&m.base_color)).collect(),
+                normal: settings.materials.iter().map(|m| texture(&m.normal)).collect(),
+                foliage: settings.materials.iter().map(|m| m.foliage).collect(),
+            };
+            (entry.source_path(), options, entry.revision)
+        };
+        let part = asset.part.as_deref().unwrap_or("");
+        let prefix = format!("asset:{}:{part}:", asset.id);
+        let key = format!("{prefix}{revision}");
+        // Older revisions of the same asset are of no use any more.
+        MODEL_CACHE.with(|cache| {
+            cache
+                .borrow_mut()
+                .models
+                .retain(|k, _| !k.starts_with(&prefix) || *k == key)
+        });
+        let model = Self::load_cached(key, &source.to_string_lossy().replace('\\', "/"), &options)?;
+        Ok((model, revision))
+    }
+
+    fn load_cached(
+        key: String,
+        full_path: &str,
+        options: &LoadOptions,
+    ) -> Result<Rc<ScatterModel>, String> {
+        if let Some(cached) = MODEL_CACHE.with(|cache| cache.borrow().models.get(&key).cloned()) {
             return Ok(cached);
         }
-        let variants = load_variants(path).map_err(|e| e.to_string())?;
+        let variants = load_variants(full_path, options).map_err(|e| e.to_string())?;
         let shader = MODEL_CACHE.with(|cache| {
             cache
                 .borrow_mut()
@@ -112,16 +201,11 @@ impl ScatterModel {
                 .clone()
         });
         let model = Rc::new(ScatterModel { shader, variants });
-        MODEL_CACHE.with(|cache| {
-            cache
-                .borrow_mut()
-                .models
-                .insert(path.to_string(), model.clone())
-        });
+        MODEL_CACHE.with(|cache| cache.borrow_mut().models.insert(key, model.clone()));
         Ok(model)
     }
 
-    /// Number of variants in the file (always at least one).
+    /// Number of variants loaded (always at least one).
     pub fn variant_count(&self) -> usize {
         self.variants.len()
     }
@@ -207,10 +291,38 @@ fn lod_priority(name: &str) -> u32 {
     }
 }
 
-fn load_variants(path: &str) -> Result<Vec<ModelVariant>, Box<dyn std::error::Error>> {
-    let mut model = ModelBuilder::new(path)?.with_scale(MODEL_SCALE).build();
+fn load_variants(
+    path: &str,
+    options: &LoadOptions,
+) -> Result<Vec<ModelVariant>, Box<dyn std::error::Error>> {
+    let mut model = ModelBuilder::from_file(path)?
+        .with_scale(MODEL_SCALE * options.scale)
+        .build();
     model.init();
+    // Textures assigned to the asset replace what the file brought along.
+    // The colour map goes into the slot the renderer looks at first.
+    let overrides = [
+        (&options.base_color, TextureType::Diffuse),
+        (&options.normal, TextureType::Normals),
+    ];
+    for (files, slot) in overrides {
+        for (material, file) in files.iter().enumerate() {
+            let Some(file) = file else {
+                continue;
+            };
+            match Model::load_texture_file(file) {
+                Some(texture) => model.set_material_texture(material, slot.clone(), texture),
+                None => log::warn!("terrain scatter: could not load texture {}", file.display()),
+            }
+        }
+    }
     let mut groups = model.extract_tree_groups();
+    if let Some(wanted) = &options.variant {
+        groups.retain(|group| group.name == *wanted);
+        if groups.is_empty() {
+            return Err(format!("the model has no variant '{wanted}'").into());
+        }
+    }
     if groups.is_empty() {
         return Err(format!("no geometry found in '{path}'").into());
     }
@@ -285,7 +397,8 @@ fn load_variants(path: &str) -> Result<Vec<ModelVariant>, Box<dyn std::error::Er
                 })
             })
             .unwrap_or(0);
-        let collider_shape = build_collider(&shared_model, &group.lods[collider_idx].1)
+        let collider_shape =
+            build_collider(&shared_model, &group.lods[collider_idx].1, &options.foliage)
             .ok_or_else(|| format!("'{}' failed to build collider trimesh", group.name))?;
 
         out.push(ModelVariant {
@@ -298,11 +411,12 @@ fn load_variants(path: &str) -> Result<Vec<ModelVariant>, Box<dyn std::error::Er
 }
 
 /// Build a shared trimesh collider from a single LOD's submeshes, skipping
-/// any submesh whose material name reads as foliage. The player should bump
-/// into the trunk/branches but walk through the canopy.
+/// any submesh whose material is foliage. The player should bump into the
+/// trunk/branches but walk through the canopy.
 fn build_collider(
     model: &Model,
     submeshes: &[crate::core::model::SubmeshData],
+    foliage: &[bool],
 ) -> Option<SharedShape> {
     if submeshes.is_empty() {
         return None;
@@ -311,7 +425,7 @@ fn build_collider(
     let mut indices: Vec<[u32; 3]> = Vec::new();
     let mut offset: u32 = 0;
     for sd in submeshes {
-        if is_foliage_material(model, sd.material_index) {
+        if is_foliage_material(model, sd.material_index, foliage) {
             continue;
         }
         for p in &sd.positions {
@@ -343,10 +457,15 @@ fn build_collider(
     SharedShape::trimesh_with_flags(verts, indices, TriMeshFlags::FIX_INTERNAL_EDGES).ok()
 }
 
-fn is_foliage_material(model: &Model, material_index: usize) -> bool {
-    model
-        .material_name_at(material_index)
-        .is_some_and(|name| outline::looks_like_foliage(&name))
+/// `foliage` holds the asset's per-material flags; a material it does not
+/// cover (a raw model file has no flags at all) is judged by its name.
+fn is_foliage_material(model: &Model, material_index: usize, foliage: &[bool]) -> bool {
+    match foliage.get(material_index) {
+        Some(flag) => *flag,
+        None => model
+            .material_name_at(material_index)
+            .is_some_and(|name| outline::looks_like_foliage(&name)),
+    }
 }
 
 /// Stable hash of (x, z) → variant index. Same input always picks the same variant,
@@ -746,10 +865,33 @@ fn bind_material_textures(
 /// One scatter layer as stored in a scene file.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ScatterLayerData {
-    /// Model path relative to `assets/models/`.
+    /// The model asset to scatter: all its variants, or the one named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset: Option<AssetRef>,
+    /// A raw model file, as a path relative to `assets/models/`. Used by
+    /// scenes from before assets existed and when `asset` is not set.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub model: String,
     /// Placements tried per 100 m x 100 m of terrain.
     pub density: f32,
+}
+
+impl ScatterLayerData {
+    pub fn asset(asset: AssetRef, density: f32) -> Self {
+        Self {
+            asset: Some(asset),
+            model: String::new(),
+            density,
+        }
+    }
+
+    pub fn file(model: impl Into<String>, density: f32) -> Self {
+        Self {
+            asset: None,
+            model: model.into(),
+            density,
+        }
+    }
 }
 
 /// Seconds an edited layer has to stay untouched before it is applied, so
@@ -757,11 +899,15 @@ pub struct ScatterLayerData {
 const APPLY_DELAY: f64 = 0.6;
 
 struct ScatterLayer {
-    /// As typed; empty for an unused slot.
+    /// The asset to scatter. Takes precedence over `model`.
+    asset: Option<AssetRef>,
+    /// Raw model file as typed; empty when unused.
     model: String,
     density: f32,
     /// What is planted right now.
     loaded: Option<Rc<ScatterModel>>,
+    /// Revision of the asset `loaded` was built from.
+    loaded_revision: u64,
     applied_density: f32,
     error: Option<String>,
     /// Countdown until the edited values are applied; `None` when they are.
@@ -769,14 +915,29 @@ struct ScatterLayer {
 }
 
 impl ScatterLayer {
-    fn new(model: String, density: f32) -> Self {
+    fn new(data: ScatterLayerData) -> Self {
         Self {
-            model,
-            density,
+            asset: data.asset,
+            model: data.model,
+            density: data.density,
             loaded: None,
-            applied_density: density,
+            loaded_revision: 0,
+            applied_density: data.density,
             error: None,
             apply_in: Some(0.0),
+        }
+    }
+
+    /// Stable per-model salt, so a model keeps its spots when layers are
+    /// reordered.
+    fn salt(&self) -> u64 {
+        match &self.asset {
+            Some(asset) => fnv1a(&format!(
+                "{}/{}",
+                asset.id,
+                asset.part.as_deref().unwrap_or("")
+            )),
+            None => fnv1a(&self.path()),
         }
     }
 
@@ -786,20 +947,52 @@ impl ScatterLayer {
         self.model.trim().replace('\\', "/")
     }
 
+    /// Neither an asset nor a file: the layer scatters nothing.
+    fn is_unused(&self) -> bool {
+        self.asset.is_none() && self.path().is_empty()
+    }
+
+    /// What the layer scatters, for messages.
+    fn label(&self) -> String {
+        match &self.asset {
+            Some(asset) => assets::database()
+                .display_name(asset)
+                .unwrap_or_else(|| format!("missing asset {}", asset.id)),
+            None => self.path(),
+        }
+    }
+
+    /// Whether the asset was saved again since it was loaded.
+    fn is_outdated(&self) -> bool {
+        let (Some(asset), Some(_)) = (&self.asset, &self.loaded) else {
+            return false;
+        };
+        assets::database()
+            .get(asset.id)
+            .is_some_and(|entry| entry.revision != self.loaded_revision)
+    }
+
     fn apply(&mut self) {
         self.applied_density = self.density;
         self.error = None;
-        let path = self.path();
-        if path.is_empty() {
-            self.loaded = None;
-            return;
-        }
-        let path = path.as_str();
-        match ScatterModel::load(path) {
+        self.loaded = None;
+        let result = match &self.asset {
+            Some(asset) => ScatterModel::load_asset(asset).map(|(model, revision)| {
+                self.loaded_revision = revision;
+                model
+            }),
+            None => {
+                let path = self.path();
+                if path.is_empty() {
+                    return;
+                }
+                ScatterModel::load(&path)
+            }
+        };
+        match result {
             Ok(model) => self.loaded = Some(model),
             Err(e) => {
-                log::warn!("terrain scatter: could not load {path}: {e}");
-                self.loaded = None;
+                log::warn!("terrain scatter: could not load {}: {e}", self.label());
                 self.error = Some(e);
             }
         }
@@ -816,10 +1009,7 @@ impl Scatter {
     /// model is reported in the status property and the log, never fatal.
     pub fn new(layers: Vec<ScatterLayerData>) -> Self {
         Self {
-            layers: layers
-                .into_iter()
-                .map(|l| ScatterLayer::new(l.model, l.density))
-                .collect(),
+            layers: layers.into_iter().map(ScatterLayer::new).collect(),
         }
     }
 
@@ -831,9 +1021,32 @@ impl Scatter {
         self.layers.is_empty()
     }
 
-    /// Append a layer; its model is loaded on the next `tick`.
+    /// Append a layer scattering a raw model file; it is loaded on the next
+    /// `tick`.
     pub fn add_layer(&mut self, model: String, density: f32) {
-        self.layers.push(ScatterLayer::new(model, density.max(0.0)));
+        self.layers
+            .push(ScatterLayer::new(ScatterLayerData::file(model, density.max(0.0))));
+    }
+
+    /// Append a layer scattering a model asset; it is loaded on the next
+    /// `tick`.
+    pub fn add_asset_layer(&mut self, asset: AssetRef, density: f32) {
+        self.layers
+            .push(ScatterLayer::new(ScatterLayerData::asset(asset, density.max(0.0))));
+    }
+
+    /// Point a layer at a model asset (loaded on the next `tick`).
+    pub fn set_asset(&mut self, index: usize, asset: AssetRef) {
+        if let Some(layer) = self.layers.get_mut(index) {
+            layer.asset = Some(asset);
+            layer.model.clear();
+            layer.apply_in = Some(0.0);
+        }
+    }
+
+    /// The asset a layer scatters, if it uses one.
+    pub fn asset(&self, index: usize) -> Option<&AssetRef> {
+        self.layers.get(index)?.asset.as_ref()
     }
 
     /// Remove a layer. The terrain clears its instances on the next update.
@@ -843,9 +1056,10 @@ impl Scatter {
         }
     }
 
-    /// Point a layer at another model file (loaded on the next `tick`).
+    /// Point a layer at a raw model file (loaded on the next `tick`).
     pub fn set_model(&mut self, index: usize, model: String) {
         if let Some(layer) = self.layers.get_mut(index) {
+            layer.asset = None;
             layer.model = model;
             layer.apply_in = Some(0.0);
         }
@@ -854,28 +1068,29 @@ impl Scatter {
     pub fn default_layers() -> Vec<ScatterLayerData> {
         DEFAULT_SCATTER
             .iter()
-            .map(|&(model, density)| ScatterLayerData {
-                model: model.to_string(),
-                density,
-            })
+            .map(|&(model, density)| ScatterLayerData::file(model, density))
             .collect()
     }
 
-    /// The layers that name a model, for saving.
+    /// The layers that scatter something, for saving.
     pub fn to_data(&self) -> Vec<ScatterLayerData> {
         self.layers
             .iter()
-            .filter(|l| !l.path().is_empty())
-            .map(|l| ScatterLayerData {
-                model: l.path(),
-                density: l.density,
+            .filter(|l| !l.is_unused())
+            .map(|l| match &l.asset {
+                Some(asset) => ScatterLayerData::asset(asset.clone(), l.density),
+                None => ScatterLayerData::file(l.path(), l.density),
             })
             .collect()
     }
 
-    /// Apply edits whose delay has run out (loading models as needed).
+    /// Apply edits whose delay has run out (loading models as needed) and
+    /// reload layers whose asset was saved again.
     pub fn tick(&mut self, delta_time: f64) {
         for layer in &mut self.layers {
+            if layer.apply_in.is_none() && layer.is_outdated() {
+                layer.apply_in = Some(0.0);
+            }
             let Some(remaining) = layer.apply_in else {
                 continue;
             };
@@ -904,7 +1119,7 @@ impl Scatter {
             let spec = ScatterSpec {
                 model: model.clone(),
                 attempts,
-                salt: path_salt(&layer.path()),
+                salt: layer.salt(),
             };
             // The same model at the same density twice would land on the
             // very same spots; plant it once.
@@ -919,10 +1134,12 @@ impl Scatter {
         let mut properties = Vec::new();
         for (index, layer) in self.layers.iter().enumerate() {
             let number = index + 1;
-            properties.push(Property::text(
-                format!("{MODEL_PROPERTY}{number}"),
-                layer.model.clone(),
-            ));
+            let name = format!("{MODEL_PROPERTY}{number}");
+            properties.push(match &layer.asset {
+                // An asset is chosen, not typed.
+                Some(_) => Property::text(name, layer.label()).read_only(),
+                None => Property::text(name, layer.model.clone()),
+            });
             properties.push(Property::ranged(
                 format!("{DENSITY_PROPERTY}{number}"),
                 layer.density,
@@ -943,7 +1160,7 @@ impl Scatter {
     pub fn set_property(&mut self, name: &str, value: &PropertyValue) -> bool {
         if let Some(index) = property_layer(name, MODEL_PROPERTY) {
             if let (Some(layer), Some(text)) = (self.layers.get_mut(index), value.as_text()) {
-                if text != layer.model {
+                if layer.asset.is_none() && text != layer.model {
                     layer.model = text.to_string();
                     layer.apply_in = Some(APPLY_DELAY);
                 }
@@ -967,7 +1184,7 @@ impl Scatter {
         let mut loaded = 0;
         let mut problems = Vec::new();
         for (index, layer) in self.layers.iter().enumerate() {
-            if layer.path().is_empty() {
+            if layer.is_unused() {
                 continue;
             }
             if layer.apply_in.is_some() {
@@ -1001,13 +1218,49 @@ fn property_layer(name: &str, prefix: &str) -> Option<usize> {
         .checked_sub(1)
 }
 
-/// Stable per-model salt (FNV-1a of the path), so a model keeps its spots
-/// when layers are reordered.
-fn path_salt(path: &str) -> u64 {
+/// FNV-1a.
+fn fnv1a(text: &str) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in path.bytes() {
+    for byte in text.bytes() {
         hash ^= byte as u64;
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::assets::AssetId;
+
+    #[test]
+    fn layers_from_before_assets_still_load() {
+        let layer: ScatterLayerData =
+            ron::from_str("(model: \"Trees/Trees.gltf\", density: 21.0)").unwrap();
+        assert_eq!(layer, ScatterLayerData::file("Trees/Trees.gltf", 21.0));
+    }
+
+    #[test]
+    fn asset_layers_round_trip_without_an_empty_path() {
+        let layer = ScatterLayerData::asset(AssetRef::part(AssetId::from(0xabc), "Oak"), 12.5);
+        let text = ron::to_string(&layer).unwrap();
+        assert!(!text.contains("model"), "{text}");
+        assert_eq!(ron::from_str::<ScatterLayerData>(&text).unwrap(), layer);
+
+        let file = ron::to_string(&ScatterLayerData::file("rock.gltf", 3.0)).unwrap();
+        assert!(!file.contains("asset"), "{file}");
+    }
+
+    #[test]
+    fn an_asset_and_a_file_scatter_to_different_spots() {
+        let id = AssetId::from(7);
+        let whole = ScatterLayer::new(ScatterLayerData::asset(AssetRef::whole(id), 1.0));
+        let part = ScatterLayer::new(ScatterLayerData::asset(AssetRef::part(id, "Oak"), 1.0));
+        let file = ScatterLayer::new(ScatterLayerData::file("rock.gltf", 1.0));
+        assert_ne!(whole.salt(), part.salt());
+        assert_ne!(whole.salt(), file.salt());
+        // Unused: neither an asset nor a path.
+        assert!(ScatterLayer::new(ScatterLayerData::file("  ", 1.0)).is_unused());
+        assert!(!whole.is_unused());
+    }
 }

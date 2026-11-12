@@ -189,7 +189,7 @@ Each phase is one or a few commits and leaves the editor usable.
 - [x] **2. Model inspection and import** — GPU-free detection of
   variants, LODs and materials; import with copying and texture
   registration. Unit tests with a generated glTF.
-- [ ] **3. Scatter uses assets** — asset references in scatter layers and
+- [x] **3. Scatter uses assets** — asset references in scatter layers and
   scene files; variant filter, scale, texture overrides, foliage flag;
   reload on revision change.
 - [ ] **4. Asset browser** — panel, layout, import, refresh; asset picker

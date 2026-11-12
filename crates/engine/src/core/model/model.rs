@@ -804,6 +804,13 @@ impl ModelBuilder {
         })
     }
 
+    /// Like `new`, for a path relative to the working directory.
+    pub fn from_file(full_path: &str) -> Result<ModelBuilder, Box<dyn std::error::Error>> {
+        Ok(ModelBuilder {
+            model: Model::from_file(full_path, (0.0, 0.0, 0.0))?,
+        })
+    }
+
     pub fn with_position<P: Into<Point3<f32>>>(mut self, position: P) -> ModelBuilder {
         self.model.position = position.into();
         self

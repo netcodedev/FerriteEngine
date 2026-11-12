@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{AssetId, AssetMeta, ASSET_META_VERSION, META_SUFFIX};
+use super::{AssetId, AssetMeta, AssetRef, ASSET_META_VERSION, META_SUFFIX};
 
 #[derive(Debug)]
 pub enum AssetError {
@@ -172,6 +172,16 @@ impl AssetDatabase {
     /// Every asset, ordered by id.
     pub fn iter(&self) -> impl Iterator<Item = &AssetEntry> {
         self.assets.values()
+    }
+
+    /// Name to show for a reference: the asset's name, followed by the part
+    /// if the reference names one. `None` if the asset does not exist.
+    pub fn display_name(&self, asset: &AssetRef) -> Option<String> {
+        let entry = self.get(asset.id)?;
+        Some(match &asset.part {
+            Some(part) => format!("{} / {part}", entry.meta.name),
+            None => entry.meta.name.clone(),
+        })
     }
 
     /// The asset registered for this source file, if any.
