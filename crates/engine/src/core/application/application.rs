@@ -54,3 +54,18 @@ impl Application {
         self.layers.push(layer);
     }
 }
+
+impl Drop for Application {
+    /// Layers own GL objects (textures, buffers, framebuffers) whose `Drop`
+    /// calls into OpenGL. Fields drop in declaration order, which would
+    /// destroy the window — and its GL context — first, so tear the layers
+    /// down explicitly while the context is still current.
+    fn drop(&mut self) {
+        for mut layer in self.layers.drain(..) {
+            layer.on_detach();
+            drop(layer);
+        }
+        // Thread-local GL caches would otherwise outlive the context too.
+        crate::terrain::tree_forest::release_gl_resources();
+    }
+}

@@ -91,6 +91,13 @@ impl Drop for TreeSubmeshGpu {
     }
 }
 
+/// Free the shared tree models and textures. Must run on the GL thread while
+/// the context is still alive; otherwise they would be dropped with the
+/// thread-local at process exit, after the context is gone.
+pub fn release_gl_resources() {
+    let _ = TREE_RESOURCES.try_with(|cell| cell.borrow_mut().take());
+}
+
 fn with_tree_resources<R>(f: impl FnOnce(&TreeResources) -> R) -> R {
     TREE_RESOURCES.with(|cell| {
         {
