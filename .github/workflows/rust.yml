@@ -17,19 +17,23 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Install dependencies (Linux)
-      run: sudo apt-get install -y libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libassimp5
-      if: matrix.platform == 'ubuntu-latest'
-    - name: Download font file
+      # libassimp-dev pulls in whichever libassimp runtime the image ships
+      # (the versioned libassimp5 package no longer exists on ubuntu-latest)
+      # and provides the libassimp.so link that russimp-sys-ng needs.
+      # libclang-dev is required by bindgen and libssl-dev by reqwest in the
+      # russimp-sys-ng build script; zlib1g-dev is linked alongside assimp.
+      # glfw-sys has no prebuilt Linux libraries and builds GLFW from source,
+      # which needs the X11 and Wayland headers.
       run: |
-        sudo mkdir -p assets/font
-        cd assets/font
-        sudo wget https://font.download/dl/font/roboto-mono.zip
-        sudo unzip roboto-mono.zip
-        sudo mv RobotoMono-Medium.ttf RobotoMono.ttf
+        sudo apt-get update
+        sudo apt-get install -y cmake pkg-config libassimp-dev libclang-dev libssl-dev zlib1g-dev \
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+          libwayland-dev libxkbcommon-dev
       if: matrix.platform == 'ubuntu-latest'
+    - uses: Swatinem/rust-cache@v2
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --workspace --verbose
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --workspace --verbose
