@@ -131,6 +131,14 @@ pub enum Command {
         slot: asset_editor::TextureSlot,
         texture: Option<AssetId>,
     },
+    /// Let the user choose the model asset an entity shows; an entity
+    /// without a model component gets one.
+    PickModelAsset(EntityHandle),
+    /// Make an entity show a model asset; an entity without a model
+    /// component gets one.
+    SetEntityModel { entity: EntityHandle, asset: AssetRef },
+    /// Add an entity showing a model asset in front of the camera.
+    SpawnModel(AssetRef),
     /// Remove a scatter layer from this entity's terrain.
     RemoveScatterModel(EntityHandle, usize),
     Delete(EntityHandle),

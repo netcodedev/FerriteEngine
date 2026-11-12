@@ -22,7 +22,10 @@ use ferrite_ui::ui::{
 };
 use glfw::{Action, Glfw, MouseButton, WindowEvent};
 
-use super::{drag::AssetDrag, send, Command, Shared};
+use super::{
+    drag::{AssetDrag, DragKind},
+    send, Command, Shared,
+};
 
 const ACTIONS_HEIGHT: f32 = 30.0;
 
@@ -176,7 +179,11 @@ impl AssetBrowser {
         let entry = database.get(asset.id)?;
         Some(AssetDrag {
             label: database.display_name(&asset)?,
-            is_model: matches!(entry.meta.kind, AssetKind::Model(_)),
+            kind: match entry.meta.kind {
+                AssetKind::Model(_) => DragKind::Model,
+                AssetKind::Texture(_) => DragKind::Texture,
+                AssetKind::Animation(_) => DragKind::Animation,
+            },
             asset,
             origin: (x, y),
             position: (x, y),

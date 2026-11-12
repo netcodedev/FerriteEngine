@@ -32,14 +32,21 @@ pub struct AssetDrag {
     pub asset: AssetRef,
     /// Shown next to the cursor.
     pub label: String,
-    /// Whether the asset is a model (targets only take what fits them).
-    pub is_model: bool,
+    /// What kind of asset it is; targets only take what fits them.
+    pub kind: DragKind,
     /// Where the mouse button went down.
     pub origin: (f32, f32),
     /// Where the cursor is now.
     pub position: (f32, f32),
     /// False until the cursor has moved far enough from `origin`.
     pub active: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DragKind {
+    Model,
+    Texture,
+    Animation,
 }
 
 /// What dropping an asset on a target does.
@@ -53,13 +60,19 @@ pub enum DropAction {
     },
     /// Use a texture asset for a material of the asset being edited.
     MaterialTexture { material: usize, slot: TextureSlot },
+    /// Make this entity show a model asset.
+    EntityModel(EntityHandle),
+    /// Add an entity showing a model asset to the scene.
+    SpawnModel,
 }
 
 impl DropAction {
     pub fn accepts(&self, drag: &AssetDrag) -> bool {
         match self {
-            DropAction::ScatterLayer { .. } => drag.is_model,
-            DropAction::MaterialTexture { .. } => !drag.is_model,
+            DropAction::ScatterLayer { .. }
+            | DropAction::EntityModel(_)
+            | DropAction::SpawnModel => drag.kind == DragKind::Model,
+            DropAction::MaterialTexture { .. } => drag.kind == DragKind::Texture,
         }
     }
 
@@ -75,6 +88,11 @@ impl DropAction {
                 slot: *slot,
                 texture: Some(asset.id),
             },
+            DropAction::EntityModel(entity) => Command::SetEntityModel {
+                entity: *entity,
+                asset,
+            },
+            DropAction::SpawnModel => Command::SpawnModel(asset),
         }
     }
 }
@@ -285,7 +303,11 @@ mod tests {
         AssetDrag {
             asset: AssetRef::whole(AssetId::from(1)),
             label: "pack".into(),
-            is_model,
+            kind: if is_model {
+                DragKind::Model
+            } else {
+                DragKind::Texture
+            },
             origin: (0.0, 0.0),
             position: (0.0, 0.0),
             active: true,
@@ -351,6 +373,46 @@ mod tests {
             }
             other => panic!("unexpected command {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_model_dropped_on_the_viewport_becomes_an_entity_a_row_wins_over_it() {
+        let viewport = DropTarget {
+            rect: Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 800.0,
+                h: 600.0,
+            },
+            action: DropAction::SpawnModel,
+        };
+        let row = DropTarget {
+            rect: Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 200.0,
+                h: 26.0,
+            },
+            action: DropAction::EntityModel(EntityHandle::from(3)),
+        };
+        let targets = vec![viewport, row];
+        let asset = AssetRef::whole(AssetId::from(1));
+        let on_row = target_at(&targets, &drag(true), 20.0, 20.0).unwrap();
+        assert!(matches!(
+            on_row.action.command(asset.clone()),
+            Command::SetEntityModel { .. }
+        ));
+        let elsewhere = target_at(&targets, &drag(true), 400.0, 300.0).unwrap();
+        assert!(matches!(
+            elsewhere.action.command(asset),
+            Command::SpawnModel(_)
+        ));
+        // An animation is not a model.
+        let animation = AssetDrag {
+            kind: DragKind::Animation,
+            ..drag(true)
+        };
+        assert!(target_at(&targets, &animation, 400.0, 300.0).is_none());
     }
 
     #[test]

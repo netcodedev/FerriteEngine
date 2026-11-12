@@ -8,7 +8,7 @@ use ferrite::{
     core::{
         model::{
             animation_graph::{graph_file::AnimGraphFile, AnimationGraph},
-            Model, ModelBuilder,
+            Model,
         },
         primitives::{Offset, Position, Size},
         renderer::{
@@ -18,7 +18,7 @@ use ferrite::{
         scene::Scene,
         utils::DataSource,
     },
-    player::build_animation_graph,
+    player::{build_animation_graph, load_player_model, PLAYER_MODEL_FILE},
 };
 use ferrite_ui::ui::{
     element_handle::UIElementHandle,
@@ -34,7 +34,6 @@ use glfw::{Action, Glfw, MouseButton, WindowEvent};
 
 use super::super::{field_row::FieldRow, layout::Rect, Shared};
 
-const MODEL_FILE: &str = "Mannequin.fbx";
 /// The player's feet sit this far below the entity origin (capsule half
 /// height + radius), so the floor is drawn there.
 const FLOOR_Y: f32 = -1.0;
@@ -147,13 +146,12 @@ impl PreviewPanel {
         if self.model.is_some() || self.model_error.is_some() {
             return;
         }
-        match ModelBuilder::new(MODEL_FILE) {
-            Ok(builder) => {
-                let mut model = builder.build();
-                model.init();
-                self.model = Some(model);
+        // The model the player has: its asset if it is registered.
+        match load_player_model(None) {
+            Ok(model) => self.model = Some(model.into_model()),
+            Err(e) => {
+                self.model_error = Some(format!("Could not load {PLAYER_MODEL_FILE}: {e}"))
             }
-            Err(e) => self.model_error = Some(format!("Could not load {MODEL_FILE}: {e}")),
         }
     }
 

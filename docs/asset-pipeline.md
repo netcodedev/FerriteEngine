@@ -4,8 +4,8 @@ Plan for importing files into the project as reusable assets, browsing and
 editing them in the editor, and using them (instead of raw file paths)
 wherever a component needs a model or a texture.
 
-Status: phases 1–6 are done on `feat/assets`. Phase 7 (more users of
-assets) and the items under "Later" are open. The checklist under "Phases" is kept up to date.
+Status: phases 1–7 are done on `feat/assets`. The items under "Later" are
+open. The checklist under "Phases" is kept up to date.
 
 ## Goals
 
@@ -142,8 +142,40 @@ Users of assets:
   mixed. Scale, texture overrides and foliage flags come from the asset.
   A layer reloads when its asset's revision changes. Layers with a raw
   path (old scenes) still load.
-- Later: `ModelComponent`, the player model, animation clips, animation
-  graphs, scenes.
+- **Model component** (phase 7): shows a model asset — the variant the
+  reference names, or the first one, at its most detailed LOD — with the
+  asset's scale and texture overrides. Reloads when the asset is saved.
+- **Player** (phase 7): its model is a model asset. Without one given it
+  uses `Mannequin.fbx`, as an asset once that file is registered.
+- **Animation graphs** (phase 7): a clip of a state refers to an
+  animation asset; for a file with several clips the reference names the
+  clip.
+
+### Animation assets
+
+A model file without meshes is an animation asset; its clips are listed
+in the sidecar with their length. A model file that brings clips along
+lists them too, and they can be used the same way.
+
+### Old references
+
+Scenes and graphs written before assets existed name raw files. When
+they are loaded, such a name becomes an asset reference wherever the
+file is registered, and is saved as one from then on. Where the file is
+not registered, the name keeps working as a path.
+
+The editor registers every importable file in `assets/` that has no
+sidecar yet when it starts and on Refresh. Together with the above this
+means: put files into `assets/`, start the editor, and everything refers
+to assets. The game itself never writes sidecars.
+
+### Missing assets
+
+A component that cannot be built when a scene is loaded (its asset is
+gone, the player's animations are not there) no longer fails the whole
+scene. The entity gets a placeholder component that says what is wrong
+and keeps the component's data, so saving the scene loses nothing and
+the component comes back once the cause is fixed.
 
 ## Editor
 
@@ -161,6 +193,9 @@ Docked below the viewport, resizable, can be hidden from the Window menu.
 - A scatter layer shows the asset's name instead of a path.
 - "Add model" and the button on a layer open an asset picker (model
   assets and their variants) instead of a file dialog.
+- A model asset dropped on the viewport becomes an entity showing it;
+  dropped on the model row of an entity's model component it replaces the
+  model. "Add component → Model" asks for the asset.
 - Drag and drop (phase 5): dragging a row out of the browser starts a
   drag with an asset reference as payload. Fields that accept it
   highlight while the drag is over them; dropping assigns it. Dropping on
@@ -204,7 +239,9 @@ Each phase is one or a few commits and leaves the editor usable.
 - [x] **5. Drag and drop** — from the browser onto scatter layers and
   "Add model".
 - [x] **6. Asset editor** — workspace with preview and material editing.
-- [ ] **7. More users** — `ModelComponent`, player model, animations.
+- [x] **7. More users** — model component, player model, animation clips
+  in graphs; automatic registration and upgrade of old references;
+  placeholders for components that cannot be built.
 
 ## Later
 
@@ -223,5 +260,9 @@ Each phase is one or a few commits and leaves the editor usable.
 - Should `assets/` (or at least the sidecars) go under version control,
   e.g. with Git LFS? Scenes refer to asset ids, and those only exist in
   the sidecars.
-- Dropping a model asset into the viewport: create an entity with a
-  `ModelComponent`? Needs phase 7.
+- Animation graphs and scenes are still project files referred to by
+  path (`animations/`, `scenes/`), not assets. They are documents the
+  editor writes rather than imported files; should they show up in the
+  asset browser anyway?
+- The voxel terrain backend loads `assets/grass.png` and
+  `assets/stone.png` directly. It is not used by any scene at the moment.

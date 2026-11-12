@@ -104,6 +104,9 @@ pub struct InspectorPanel {
     /// The selected entity, if it has a terrain: an asset dropped anywhere
     /// on the inspector becomes a new scatter layer of it.
     terrain_entity: Option<EntityHandle>,
+    /// The "model" row of the selected entity's model component: a model
+    /// asset dropped on it replaces the model.
+    model_row: Option<(UIElementHandle, EntityHandle)>,
     /// Open/closed state per section title, kept across rebuilds.
     section_open: std::collections::HashMap<String, DataSource<bool>>,
 }
@@ -130,7 +133,7 @@ fn component_icon(name: &str) -> &'static str {
         "Player controller" => icons::USER,
         "Collider" | "Bone colliders" => icons::SCAN,
         "Animation" | "AnimationComponent" => icons::ACTIVITY,
-        "ModelComponent" => icons::PACKAGE,
+        "Model" | "ModelComponent" => icons::PACKAGE,
         _ => icons::COMPONENT,
     }
 }
@@ -153,6 +156,7 @@ impl InspectorPanel {
             properties: Vec::new(),
             scatter_rows: Vec::new(),
             terrain_entity: None,
+            model_row: None,
             section_open: std::collections::HashMap::new(),
         }
     }
@@ -200,6 +204,7 @@ impl InspectorPanel {
         self.properties.clear();
         self.scatter_rows.clear();
         self.terrain_entity = None;
+        self.model_row = None;
         let width = (self.state.borrow().layout.inspector.w - 24.0).max(200.0);
 
         let Some(id) = signature.entity else {
@@ -274,13 +279,19 @@ impl InspectorPanel {
                 let layer = (display == "Terrain")
                     .then(|| Scatter::model_property_layer(&property.name))
                     .flatten();
+                // So does the model of a model component.
+                let entity_model = display == "Model" && property.name == "model";
                 let extra = match layer {
                     Some(layer) => self.scatter_model_buttons(id, layer),
+                    None if entity_model => vec![self.entity_model_button(id)],
                     None => Vec::new(),
                 };
                 let row = self.add_property(index, property, width, extra);
                 if let Some(layer) = layer {
                     self.scatter_rows.push((*row.get_handle(), id, Some(layer)));
+                }
+                if entity_model {
+                    self.model_row = Some((*row.get_handle(), id));
                 }
                 section.add_child(row);
             }
@@ -327,17 +338,20 @@ impl InspectorPanel {
 
         // Add component.
         let add_state = self.state.clone();
-        let items = ComponentData::catalog()
+        let mut items: Vec<MenuItem> = ComponentData::catalog()
             .iter()
             .map(|(name, _)| MenuItem::new(*name).icon(component_icon(name)))
             .collect();
+        // Not in the catalog: a model component needs an asset to exist.
+        items.push(MenuItem::new("Model").icon(component_icon("Model")));
         let mut add = MenuButton::with_items(
             "Add component",
             Some(icons::PLUS),
             items,
             Box::new(move |index, _scene| {
-                if let Some((_, data)) = ComponentData::catalog().into_iter().nth(index) {
-                    send(&add_state, Command::AddComponent(id, data));
+                match ComponentData::catalog().into_iter().nth(index) {
+                    Some((_, data)) => send(&add_state, Command::AddComponent(id, data)),
+                    None => send(&add_state, Command::PickModelAsset(id)),
                 }
             }),
         );
@@ -349,10 +363,26 @@ impl InspectorPanel {
     /// layer's row (replaces its model), on the "Add model" row or anywhere
     /// else on the inspector of a terrain (adds a layer).
     fn register_drop_targets(&self) {
+        let panel = self.state.borrow().layout.inspector;
+        if let Some((handle, entity)) = &self.model_row {
+            if let Some(row) = self.body.get_child(handle) {
+                let rect = Rect {
+                    x: panel.x + 4.0,
+                    y: row.get_offset().y - 1.0,
+                    w: (panel.w - 8.0).max(1.0),
+                    h: row.get_size().height + 2.0,
+                };
+                if rect.y >= panel.y && rect.y + rect.h <= panel.y + panel.h {
+                    self.state.borrow_mut().drop_targets.push(DropTarget {
+                        rect,
+                        action: DropAction::EntityModel(*entity),
+                    });
+                }
+            }
+        }
         let Some(entity) = self.terrain_entity else {
             return;
         };
-        let panel = self.state.borrow().layout.inspector;
         let mut targets = vec![DropTarget {
             rect: panel,
             action: DropAction::ScatterLayer {
@@ -385,6 +415,20 @@ impl InspectorPanel {
             });
         }
         self.state.borrow_mut().drop_targets.extend(targets);
+    }
+
+    /// "Choose asset" button for the model of a model component.
+    fn entity_model_button(&self, id: EntityHandle) -> Box<dyn UIElement> {
+        let pick_state = self.state.clone();
+        let mut pick = Button::new(
+            Position::default(),
+            Size::new(24.0, 24.0),
+            Box::new(move |_| send(&pick_state, Command::PickModelAsset(id))),
+        );
+        pick.set_style(ButtonStyle::Secondary);
+        pick.set_icon(icons::PACKAGE);
+        pick.set_tooltip("Choose a model asset");
+        Box::new(pick)
     }
 
     /// "Choose asset" and "remove" buttons for one scatter layer of a terrain.

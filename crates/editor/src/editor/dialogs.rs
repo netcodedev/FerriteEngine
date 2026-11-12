@@ -60,6 +60,21 @@ fn model_choices() -> Vec<(String, AssetRef)> {
 /// Ask which model asset a scatter layer of `entity`'s terrain should use.
 /// Without a layer index the choice becomes a new layer.
 pub fn pick_scatter_asset(state: &Shared, entity: EntityHandle, layer: Option<usize>) {
+    pick_model_asset(state, move |asset| Command::SetScatterAsset {
+        entity,
+        layer,
+        asset,
+    });
+}
+
+/// Ask which model asset `entity` should show.
+pub fn pick_entity_model(state: &Shared, entity: EntityHandle) {
+    pick_model_asset(state, move |asset| Command::SetEntityModel { entity, asset });
+}
+
+/// Let the user choose a model asset (or one of its variants) and queue
+/// the command `then` makes of the choice.
+fn pick_model_asset(state: &Shared, then: impl Fn(AssetRef) -> Command + 'static) {
     let choices = model_choices();
     let open_flag = DataSource::new(true);
     let cancel_open = open_flag.clone();
@@ -90,14 +105,7 @@ pub fn pick_scatter_asset(state: &Shared, entity: EntityHandle, layer: Option<us
                 "Use",
                 Box::new(move |_| {
                     if let Some((_, asset)) = choices.get(use_selected.read() as usize) {
-                        send(
-                            &use_state,
-                            Command::SetScatterAsset {
-                                entity,
-                                layer,
-                                asset: asset.clone(),
-                            },
-                        );
+                        send(&use_state, then(asset.clone()));
                         use_open.write(false);
                     }
                 }),

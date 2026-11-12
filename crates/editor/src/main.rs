@@ -14,7 +14,7 @@ use editor::{
     asset_browser::AssetBrowser,
     asset_editor::{AssetEdit, AssetInspector, AssetPreview},
     dialogs::{self, ModalHost},
-    drag::DragLayer,
+    drag::{DragLayer, DropAction, DropTarget},
     hierarchy::HierarchyPanel,
     inspector::InspectorPanel,
     layout::{Layout, RightColumn},
@@ -32,7 +32,10 @@ use ferrite::core::{
     application::{Application, Layer},
     assets,
     entity::{
-        component::{animation_component::AnimationComponent, camera_component::CameraComponent},
+        component::{
+            animation_component::AnimationComponent, camera_component::CameraComponent,
+            model_component::ModelComponent,
+        },
         Entity, EntityHandle,
     },
     renderer::line::LineRenderer,
@@ -82,7 +85,19 @@ struct EditorLayer {
 impl EditorLayer {
     fn new() -> Self {
         let state = EditorState::new();
+        // Files that were put into the asset folder by hand become assets,
+        // so everything in there can be referred to the same way.
+        let (registered, problems) = assets::database().register_new_files();
+        for problem in &problems {
+            log::warn!("assets: {problem}");
+        }
         let (scene, path) = Self::startup_scene(&state);
+        Self::report_scene_problems(&state, &scene);
+        if registered > 0 && state.borrow().status().is_none() {
+            state
+                .borrow_mut()
+                .set_status(format!("Registered {registered} new assets"));
+        }
         state.borrow_mut().scene_path = path;
 
         let mut ui = UI::new();
@@ -181,6 +196,20 @@ impl EditorLayer {
             Scene::new()
         });
         (scene, None)
+    }
+
+    /// Tell the user about components that could not be built on load.
+    fn report_scene_problems(state: &Shared, scene: &Scene) {
+        let problems = scene.problems();
+        if let Some(first) = problems.first() {
+            let more = match problems.len() - 1 {
+                0 => String::new(),
+                n => format!(" (and {n} more)"),
+            };
+            state
+                .borrow_mut()
+                .set_status(format!("Not loaded: {first}{more}"));
+        }
     }
 
     /// Camera + sky light, like a fresh scene in most editors.
@@ -335,6 +364,9 @@ impl EditorLayer {
                 | Command::RemoveComponent(..)
                 | Command::PickScatterAsset { .. }
                 | Command::SetScatterAsset { .. }
+                | Command::PickModelAsset(_)
+                | Command::SetEntityModel { .. }
+                | Command::SpawnModel(_)
                 | Command::RemoveScatterModel(..)
                 | Command::Delete(_)
                 | Command::Duplicate(_)
@@ -364,11 +396,14 @@ impl EditorLayer {
             Command::Open(path) => match Scene::load_from_path(&path) {
                 Ok(scene) => {
                     self.replace_scene(scene);
-                    let mut state = self.state.borrow_mut();
-                    state.set_status(format!("Opened {}", path.display()));
-                    state.scene_path = Some(path);
-                    state.dirty = false;
-                    state.select(None);
+                    {
+                        let mut state = self.state.borrow_mut();
+                        state.set_status(format!("Opened {}", path.display()));
+                        state.scene_path = Some(path);
+                        state.dirty = false;
+                        state.select(None);
+                    }
+                    Self::report_scene_problems(&self.state, &self.scene);
                 }
                 Err(e) => self
                     .state
@@ -472,7 +507,9 @@ impl EditorLayer {
             Command::RefreshAssets => {
                 let (count, problems) = {
                     let mut database = assets::database();
-                    let problems = database.scan();
+                    let mut problems = database.scan();
+                    // Files added by hand since the last look become assets.
+                    problems.extend(database.register_new_files().1);
                     (database.len(), problems)
                 };
                 let mut state = self.state.borrow_mut();
@@ -495,6 +532,52 @@ impl EditorLayer {
                         None => terrain.scatter_mut().add_asset_layer(asset, DEFAULT_DENSITY),
                     }
                     self.state.borrow_mut().dirty = true;
+                }
+            }
+            Command::PickModelAsset(entity) => dialogs::pick_entity_model(&self.state, entity),
+            Command::SetEntityModel { entity, asset } => {
+                let Some(target) = self.scene.get_entity_mut(&entity) else {
+                    return;
+                };
+                let result = match target.get_component_mut::<ModelComponent>() {
+                    Some(model) => model.set_asset(asset),
+                    None => {
+                        // Reports a failure through a placeholder component.
+                        ComponentData::Model { asset }.attach(target);
+                        Ok(())
+                    }
+                };
+                let mut state = self.state.borrow_mut();
+                match result {
+                    Ok(()) => state.dirty = true,
+                    Err(e) => state.set_status(format!("Could not load the model: {e}")),
+                }
+            }
+            Command::SpawnModel(asset) => {
+                let name = assets::database()
+                    .display_name(&asset)
+                    .unwrap_or_else(|| "model".into());
+                let spawn = self.viewport.spawn_point();
+                let data = EntityData {
+                    id: u64::from(EntityHandle::new()),
+                    name,
+                    position: [spawn.x, spawn.y, spawn.z],
+                    rotation: [1.0, 0.0, 0.0, 0.0],
+                    components: vec![ComponentData::Model { asset }],
+                    children: Vec::new(),
+                };
+                match self.scene.instantiate(&data, true) {
+                    Ok(entity) => {
+                        let id = entity.id;
+                        self.scene.add_entity(entity);
+                        let mut state = self.state.borrow_mut();
+                        state.select(Some(id));
+                        state.dirty = true;
+                    }
+                    Err(e) => self
+                        .state
+                        .borrow_mut()
+                        .set_status(format!("Could not create entity: {e}")),
                 }
             }
             Command::RemoveScatterModel(entity, layer) => {
@@ -919,6 +1002,14 @@ impl Layer for EditorLayer {
 
         let ui_start = Instant::now();
         self.ui.update(&mut self.scene);
+        // A model asset dropped on the viewport becomes an entity. Panels
+        // registered their (smaller) targets during the update.
+        if workspace == Workspace::Scene && mode == Mode::Edit {
+            self.state.borrow_mut().drop_targets.push(DropTarget {
+                rect: layout.viewport,
+                action: DropAction::SpawnModel,
+            });
+        }
         self.run_commands();
         self.ui.render();
         let ui_ms = ui_start.elapsed().as_secs_f32() * 1000.0;
