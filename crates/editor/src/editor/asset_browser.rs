@@ -20,9 +20,9 @@ use ferrite_ui::ui::{
     },
     theme, UIElement,
 };
-use glfw::{Glfw, WindowEvent};
+use glfw::{Action, Glfw, MouseButton, WindowEvent};
 
-use super::{send, Command, Shared};
+use super::{drag::AssetDrag, send, Command, Shared};
 
 const ACTIONS_HEIGHT: f32 = 30.0;
 
@@ -122,6 +122,27 @@ impl AssetBrowser {
                 .unwrap_or_default(),
             _ => format!("{}", count(database.len(), "asset")),
         }
+    }
+
+    /// The asset (or variant) whose row is at this point, ready to be
+    /// dragged: not yet active, the drag layer starts it once the cursor
+    /// moves.
+    fn drag_at(&self, x: f32, y: f32) -> Option<AssetDrag> {
+        let asset = match self.rows.get(&self.tree.item_at(x, y)?)? {
+            Row::Asset(id) => AssetRef::whole(*id),
+            Row::Variant(asset) => asset.clone(),
+            Row::Folder => return None,
+        };
+        let database = assets::database();
+        let entry = database.get(asset.id)?;
+        Some(AssetDrag {
+            label: database.display_name(&asset)?,
+            is_model: matches!(entry.meta.kind, AssetKind::Model(_)),
+            asset,
+            origin: (x, y),
+            position: (x, y),
+            active: false,
+        })
     }
 
     fn widgets_mut(&mut self) -> [&mut dyn UIElement; 3] {
@@ -332,6 +353,11 @@ impl UIElement for AssetBrowser {
     ) -> bool {
         if !self.visible() {
             return false;
+        }
+        if let WindowEvent::MouseButton(MouseButton::Button1, Action::Press, _) = event {
+            let (x, y) = window.get_cursor_pos();
+            let drag = self.drag_at(x as f32, y as f32);
+            self.state.borrow_mut().drag = drag;
         }
         let mut handled = false;
         for widget in self.widgets_mut() {

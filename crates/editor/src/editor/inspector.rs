@@ -30,8 +30,10 @@ use ferrite_ui::ui::{
 use glfw::{Glfw, WindowEvent};
 
 use super::{
+    drag::{DropAction, DropTarget},
     field_row::{FieldRow, LABEL_COLUMN},
     hierarchy::entity_icon,
+    layout::Rect,
     send, Command, Shared,
 };
 
@@ -96,6 +98,12 @@ pub struct InspectorPanel {
     signature: Option<Signature>,
     transform: Option<TransformBinding>,
     properties: Vec<PropertyBinding>,
+    /// Rows a model asset can be dropped on, with the scatter layer they
+    /// stand for (`None`: the "Add model" row).
+    scatter_rows: Vec<(UIElementHandle, EntityHandle, Option<usize>)>,
+    /// The selected entity, if it has a terrain: an asset dropped anywhere
+    /// on the inspector becomes a new scatter layer of it.
+    terrain_entity: Option<EntityHandle>,
     /// Open/closed state per section title, kept across rebuilds.
     section_open: std::collections::HashMap<String, DataSource<bool>>,
 }
@@ -143,6 +151,8 @@ impl InspectorPanel {
             signature: None,
             transform: None,
             properties: Vec::new(),
+            scatter_rows: Vec::new(),
+            terrain_entity: None,
             section_open: std::collections::HashMap::new(),
         }
     }
@@ -188,6 +198,8 @@ impl InspectorPanel {
         self.body.clear();
         self.transform = None;
         self.properties.clear();
+        self.scatter_rows.clear();
+        self.terrain_entity = None;
         let width = (self.state.borrow().layout.inspector.w - 24.0).max(200.0);
 
         let Some(id) = signature.entity else {
@@ -267,9 +279,13 @@ impl InspectorPanel {
                     None => Vec::new(),
                 };
                 let row = self.add_property(index, property, width, extra);
+                if let Some(layer) = layer {
+                    self.scatter_rows.push((*row.get_handle(), id, Some(layer)));
+                }
                 section.add_child(row);
             }
             if display == "Terrain" {
+                self.terrain_entity = Some(id);
                 let add_state = self.state.clone();
                 let mut add = Button::new(
                     Position::default(),
@@ -289,7 +305,9 @@ impl InspectorPanel {
                 add.set_label("Add model");
                 add.set_tooltip("Scatter another model over the terrain");
                 add.fit(26.0);
-                section.add_child(Box::new(FieldRow::new("", vec![Box::new(add)])));
+                let row = Box::new(FieldRow::new("", vec![Box::new(add)]));
+                self.scatter_rows.push((*row.get_handle(), id, None));
+                section.add_child(row);
             }
             if display == "Animation" {
                 let edit_state = self.state.clone();
@@ -325,6 +343,48 @@ impl InspectorPanel {
         );
         add.set_button_style(ButtonStyle::Secondary);
         self.body.add_child(Box::new(add));
+    }
+
+    /// Tell the drag layer where a model asset can be dropped: on a scatter
+    /// layer's row (replaces its model), on the "Add model" row or anywhere
+    /// else on the inspector of a terrain (adds a layer).
+    fn register_drop_targets(&self) {
+        let Some(entity) = self.terrain_entity else {
+            return;
+        };
+        let panel = self.state.borrow().layout.inspector;
+        let mut targets = vec![DropTarget {
+            rect: panel,
+            action: DropAction::ScatterLayer {
+                entity,
+                layer: None,
+            },
+        }];
+        for (handle, entity, layer) in &self.scatter_rows {
+            let Some(row) = self.body.get_child(handle) else {
+                continue;
+            };
+            // The full width of the panel, not just as far as the row's
+            // widgets reach.
+            let rect = Rect {
+                x: panel.x + 4.0,
+                y: row.get_offset().y - 1.0,
+                w: (panel.w - 8.0).max(1.0),
+                h: row.get_size().height + 2.0,
+            };
+            // Rows scrolled out of the panel cannot be hit.
+            if rect.y < panel.y || rect.y + rect.h > panel.y + panel.h {
+                continue;
+            }
+            targets.push(DropTarget {
+                rect,
+                action: DropAction::ScatterLayer {
+                    entity: *entity,
+                    layer: *layer,
+                },
+            });
+        }
+        self.state.borrow_mut().drop_targets.extend(targets);
     }
 
     /// "Choose asset" and "remove" buttons for one scatter layer of a terrain.
@@ -627,6 +687,7 @@ impl UIElement for InspectorPanel {
 
         self.panel.update(scene);
         self.body.update(scene);
+        self.register_drop_targets();
     }
 
     fn render(&self) {

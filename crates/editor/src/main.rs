@@ -13,6 +13,7 @@ use editor::{
     },
     asset_browser::AssetBrowser,
     dialogs::{self, ModalHost},
+    drag::DragLayer,
     hierarchy::HierarchyPanel,
     inspector::InspectorPanel,
     layout::{Layout, RightColumn},
@@ -92,6 +93,9 @@ impl EditorLayer {
         add(&mut ui, Box::new(Toolbar::new(state.clone())));
         // Before the panels, so it gets first claim on clicks at the edges.
         add(&mut ui, Box::new(Splitter::new(state.clone())));
+        // Also ahead of the panels: it has to see the release that ends a
+        // drag before the panel under the cursor does.
+        add(&mut ui, Box::new(DragLayer::new(state.clone())));
         let (scene_panels, anim_panels) = {
             let s = state.borrow();
             (s.scene_panels.clone(), s.anim_panels.clone())

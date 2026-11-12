@@ -14,6 +14,7 @@ use ferrite_ui::ui::elements::tree::NO_SELECTION;
 pub mod anim;
 pub mod asset_browser;
 pub mod dialogs;
+pub mod drag;
 pub mod field_row;
 pub mod hierarchy;
 pub mod inspector;
@@ -147,6 +148,11 @@ pub struct EditorState {
     pub show_assets: DataSource<bool>,
     /// What is selected in the asset browser.
     pub asset_selection: Option<AssetRef>,
+    /// The asset pressed or being dragged in the asset browser.
+    pub drag: Option<drag::AssetDrag>,
+    /// Where an asset can be dropped this frame; panels register their
+    /// targets on every update.
+    pub drop_targets: Vec<drag::DropTarget>,
     pub stats: stats::Stats,
     /// A popup the modal host should show next (save-as, open, confirm).
     pub pending_modal: Option<dialogs::Modal>,
@@ -184,6 +190,8 @@ impl EditorState {
             show_stats: DataSource::new(true),
             show_assets: DataSource::new(true),
             asset_selection: None,
+            drag: None,
+            drop_targets: Vec::new(),
             stats: stats::Stats::new(),
             pending_modal: None,
         }))

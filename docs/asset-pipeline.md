@@ -4,8 +4,7 @@ Plan for importing files into the project as reusable assets, browsing and
 editing them in the editor, and using them (instead of raw file paths)
 wherever a component needs a model or a texture.
 
-Status: phases 1–4 are done on `feat/assets`; drag and drop and the asset
-editor are next. The checklist under "Phases" is kept up to date.
+Status: phases 1–5 are done on `feat/assets`; the asset editor is next. The checklist under "Phases" is kept up to date.
 
 ## Goals
 
@@ -164,7 +163,8 @@ Docked below the viewport, resizable, can be hidden from the Window menu.
 - Drag and drop (phase 5): dragging a row out of the browser starts a
   drag with an asset reference as payload. Fields that accept it
   highlight while the drag is over them; dropping assigns it. Dropping on
-  a terrain's "Add model" row adds a layer. Implemented in the editor:
+  a terrain's "Add model" row, or anywhere else on its inspector, adds a
+  layer. Implemented in the editor:
   the drag payload lives in the editor state, fields register their drop
   rectangles every frame, and the editor layer resolves the drop.
 
@@ -194,7 +194,7 @@ Each phase is one or a few commits and leaves the editor usable.
   reload on revision change.
 - [x] **4. Asset browser** — panel, layout, import, refresh; asset picker
   for scatter layers.
-- [ ] **5. Drag and drop** — from the browser onto scatter layers and
+- [x] **5. Drag and drop** — from the browser onto scatter layers and
   "Add model".
 - [ ] **6. Asset editor** — workspace with preview and material editing.
 - [ ] **7. More users** — `ModelComponent`, player model, animations.
