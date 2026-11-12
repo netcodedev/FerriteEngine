@@ -19,7 +19,11 @@ use crate::{
         renderer::light::skylight::SkyLight,
     },
     player::{build_animation_graph, default_animation_graph, load_graph_file, Player},
-    terrain::{dual_contouring::DualContouringChunk, Terrain},
+    terrain::{
+        dual_contouring::DualContouringChunk,
+        scatter::{Scatter, ScatterLayerData},
+        Terrain,
+    },
 };
 
 use super::Scene;
@@ -78,6 +82,9 @@ pub enum ComponentData {
     },
     Terrain {
         seed: u64,
+        /// Models scattered over the terrain, each with its own density.
+        #[serde(default)]
+        scatter: Vec<ScatterLayerData>,
     },
     DebugController,
     /// Prefab marker: the entity is rebuilt with `Player::new`, which brings
@@ -96,7 +103,7 @@ impl ComponentData {
         vec![
             ("Camera", ComponentData::default_camera()),
             ("Sky light", ComponentData::default_sky_light()),
-            ("Terrain", ComponentData::Terrain { seed: 2 }),
+            ("Terrain", ComponentData::bare_terrain(2)),
             ("Debug controller", ComponentData::DebugController),
         ]
     }
@@ -110,6 +117,14 @@ impl ComponentData {
             near: 0.1,
             far: 1000.0,
             speed: 10.0,
+        }
+    }
+
+    /// Terrain without any scattered models; they can be set later.
+    pub fn bare_terrain(seed: u64) -> Self {
+        ComponentData::Terrain {
+            seed,
+            scatter: Vec::new(),
         }
     }
 
@@ -155,8 +170,10 @@ impl ComponentData {
                 sky.set_cloud_coverage(*cloud_coverage);
                 entity.add_component(sky);
             }
-            ComponentData::Terrain { seed } => {
-                entity.add_component(Terrain::<DualContouringChunk>::new(*seed));
+            ComponentData::Terrain { seed, scatter } => {
+                entity.add_component(
+                    Terrain::<DualContouringChunk>::new(*seed).with_scatter(scatter.clone()),
+                );
             }
             ComponentData::DebugController => entity.add_component(DebugController::new()),
             ComponentData::Player => {}
@@ -317,7 +334,14 @@ pub fn default_scene_file() -> SceneFile {
             children: Vec::new(),
         }
     }
-    let mut terrain = entity("terrain", [0.0; 3], vec![ComponentData::Terrain { seed: 2 }]);
+    let mut terrain = entity(
+        "terrain",
+        [0.0; 3],
+        vec![ComponentData::Terrain {
+            seed: 2,
+            scatter: Scatter::default_layers(),
+        }],
+    );
     terrain
         .children
         .push(entity("player", [0.0, 52.0, 0.0], vec![ComponentData::Player]));

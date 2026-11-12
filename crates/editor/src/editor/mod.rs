@@ -80,6 +80,14 @@ pub enum Command {
     },
     AddComponent(EntityHandle, ComponentData),
     RemoveComponent(EntityHandle, usize),
+    /// Choose a model file for a scatter layer of this entity's terrain.
+    /// Without a layer index a new layer is added.
+    PickScatterModel {
+        entity: EntityHandle,
+        layer: Option<usize>,
+    },
+    /// Remove a scatter layer from this entity's terrain.
+    RemoveScatterModel(EntityHandle, usize),
     Delete(EntityHandle),
     Duplicate(EntityHandle),
     Focus(EntityHandle),
