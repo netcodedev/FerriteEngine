@@ -4,10 +4,10 @@ use glfw::{Glfw, WindowEvent};
 use crate::core::{
     camera::{Camera, Projection},
     entity::{
-        component::{camera_component::CameraComponent, Component},
+        component::{Component, Property, PropertyValue},
         Entity,
     },
-    scene::Scene,
+    scene::{scene_file::ComponentData, Scene},
 };
 
 const OFFSET: f32 = 150.0;
@@ -212,21 +212,73 @@ impl SkyLight {
     }
 }
 
+impl SkyLight {
+    pub fn set_time_of_day(&mut self, time_of_day: f32) {
+        self.time_of_day = time_of_day.rem_euclid(1.0);
+        self.position = Point3::from_vec(self.compute_sun_direction() * SUN_DISTANCE);
+    }
+
+    pub fn get_day_length_seconds(&self) -> f32 {
+        self.day_length_seconds
+    }
+
+    pub fn set_day_length_seconds(&mut self, seconds: f32) {
+        self.day_length_seconds = seconds.max(0.0);
+    }
+
+    fn refit_to_active_camera(&mut self, scene: &Scene) {
+        if let Some(camera_component) = scene.get_active_camera() {
+            let camera = camera_component.get_camera();
+            let projection = camera_component.get_projection();
+            self.update_light_view(camera, projection);
+        }
+    }
+}
+
 impl Component for SkyLight {
     fn update(&mut self, scene: &mut Scene, _: &mut Entity, delta_time: f64) {
         if !self.paused && self.day_length_seconds > 0.0 {
             let dt_day = (delta_time as f32) / self.day_length_seconds;
             self.advance_time(dt_day);
         }
+        self.refit_to_active_camera(scene);
+    }
 
-        if let Some(camera_component) = scene.get_component::<CameraComponent>() {
-            let camera = camera_component.get_camera();
-            let projection = camera_component.get_projection();
-            self.update_light_view(&camera, &projection);
-        }
+    fn update_in_editor(&mut self, scene: &mut Scene, _: &mut Entity, _: f64) {
+        // Time stays frozen while editing; only the shadow box follows the
+        // editor camera so shadows stay visible where you are looking.
+        self.refit_to_active_camera(scene);
     }
 
     fn handle_event(&mut self, _: &mut Glfw, _: &mut glfw::Window, _: &WindowEvent) {}
+
+    fn to_data(&self) -> Option<ComponentData> {
+        Some(ComponentData::SkyLight {
+            time_of_day: self.time_of_day,
+            day_length_seconds: self.day_length_seconds,
+            paused: self.paused,
+            cloud_coverage: self.cloud_coverage,
+        })
+    }
+
+    fn properties(&self) -> Vec<Property> {
+        vec![
+            Property::ranged("time of day", self.time_of_day, 0.0, 1.0),
+            Property::float("day length (s)", self.day_length_seconds),
+            Property::bool("paused", self.paused),
+            Property::ranged("cloud coverage", self.cloud_coverage, 0.0, 1.0),
+        ]
+    }
+
+    fn set_property(&mut self, name: &str, value: PropertyValue) {
+        match (name, value) {
+            ("time of day", PropertyValue::Float(v)) => self.set_time_of_day(v),
+            ("day length (s)", PropertyValue::Float(v)) => self.set_day_length_seconds(v),
+            ("paused", PropertyValue::Bool(v)) => self.paused = v,
+            ("cloud coverage", PropertyValue::Float(v)) => self.set_cloud_coverage(v),
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug)]

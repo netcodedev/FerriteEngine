@@ -1,7 +1,6 @@
 use glfw::{Action, Glfw, Key};
 use rapier3d::prelude::{ColliderHandle, TypedShape};
 use std::collections::HashMap;
-use std::f32::consts::PI;
 
 use crate::{
     core::{
@@ -22,7 +21,6 @@ use cgmath::{Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, Vector3};
 
 use super::model_component::ModelComponent;
 
-const CIRCLE_SEGMENTS: usize = 16;
 const TRIMESH_DRAW_DISTANCE: f32 = 96.0;
 
 pub struct DebugController {
@@ -93,100 +91,9 @@ impl DebugController {
     }
 }
 
-// --- wireframe helpers ---
-
-fn seg(a: Point3<f32>, b: Point3<f32>) -> Line {
-    let dir = b - a;
-    let len = dir.magnitude();
-    Line {
-        position: a,
-        direction: if len > 0.001 {
-            dir / len
-        } else {
-            Vector3::new(0.0, 1.0, 0.0)
-        },
-        length: len,
-    }
-}
-
-fn apply_pose(
-    pos: &rapier3d::math::Vector,
-    rot: &rapier3d::math::Rotation,
-    local: Vector3<f32>,
-) -> Point3<f32> {
-    use cgmath::Rotation as _;
-    let q = cgmath::Quaternion::new(rot.w, rot.x, rot.y, rot.z);
-    let r = q.rotate_vector(local);
-    Point3::new(pos.x + r.x, pos.y + r.y, pos.z + r.z)
-}
-
-fn perp_basis(axis: Vector3<f32>) -> (Vector3<f32>, Vector3<f32>) {
-    let n = axis.normalize();
-    let right = if n.x.abs() < 0.9 {
-        n.cross(Vector3::new(1.0, 0.0, 0.0)).normalize()
-    } else {
-        n.cross(Vector3::new(0.0, 1.0, 0.0)).normalize()
-    };
-    (right, n.cross(right).normalize())
-}
-
-fn circle_lines(
-    center: Point3<f32>,
-    right: Vector3<f32>,
-    up: Vector3<f32>,
-    radius: f32,
-) -> Vec<Line> {
-    (0..CIRCLE_SEGMENTS)
-        .map(|i| {
-            let a = 2.0 * PI * i as f32 / CIRCLE_SEGMENTS as f32;
-            let b = 2.0 * PI * (i + 1) as f32 / CIRCLE_SEGMENTS as f32;
-            let pa = center + right * (radius * a.cos()) + up * (radius * a.sin());
-            let pb = center + right * (radius * b.cos()) + up * (radius * b.sin());
-            seg(pa, pb)
-        })
-        .collect()
-}
-
-fn ball_wires(pos: &rapier3d::math::Vector, radius: f32) -> Vec<Line> {
-    let c = Point3::new(pos.x, pos.y, pos.z);
-    let mut lines = Vec::new();
-    lines.extend(circle_lines(
-        c,
-        Vector3::new(1.0, 0.0, 0.0),
-        Vector3::new(0.0, 0.0, 1.0),
-        radius,
-    ));
-    lines.extend(circle_lines(
-        c,
-        Vector3::new(1.0, 0.0, 0.0),
-        Vector3::new(0.0, 1.0, 0.0),
-        radius,
-    ));
-    lines.extend(circle_lines(
-        c,
-        Vector3::new(0.0, 0.0, 1.0),
-        Vector3::new(0.0, 1.0, 0.0),
-        radius,
-    ));
-    lines
-}
-
-fn capsule_wires(a: Point3<f32>, b: Point3<f32>, r: f32) -> Vec<Line> {
-    let axis = (b - a).normalize();
-    let (right, up) = perp_basis(axis);
-    let mid = a + (b - a) * 0.5;
-
-    let mut lines = Vec::new();
-    lines.extend(circle_lines(a, right, up, r));
-    lines.extend(circle_lines(b, right, up, r));
-    lines.extend(circle_lines(mid, right, up, r));
-    for i in 0..4 {
-        let angle = PI * 0.5 * i as f32;
-        let offset = right * (r * angle.cos()) + up * (r * angle.sin());
-        lines.push(seg(a + offset, b + offset));
-    }
-    lines
-}
+// Wireframe helpers live in `physics::collider_debug` (shared with the
+// editor's per-component collider display).
+use crate::core::physics::collider_debug::{apply_pose, ball_wires, capsule_wires, seg};
 
 // --- component impl ---
 
@@ -347,6 +254,34 @@ impl Component for DebugController {
             glfw::WindowEvent::Key(Key::KpAdd, _, Action::Press, _) => {
                 self.pending_coverage_delta += 0.02;
             }
+            _ => {}
+        }
+    }
+
+    fn display_name(&self) -> String {
+        "Debug controller".into()
+    }
+
+    fn to_data(&self) -> Option<crate::core::scene::scene_file::ComponentData> {
+        Some(crate::core::scene::scene_file::ComponentData::DebugController)
+    }
+
+    fn properties(&self) -> Vec<super::Property> {
+        vec![
+            super::Property::bool("overlay (F3)", self.debug_ui),
+            super::Property::bool("show colliders", self.show_colliders),
+            super::Property::bool("show rays", self.show_rays),
+        ]
+    }
+
+    fn set_property(&mut self, name: &str, value: super::PropertyValue) {
+        let Some(v) = value.as_bool() else {
+            return;
+        };
+        match name {
+            "overlay (F3)" => self.debug_ui = v,
+            "show colliders" => self.show_colliders = v,
+            "show rays" => self.show_rays = v,
             _ => {}
         }
     }

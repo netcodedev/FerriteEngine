@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
-    renderer::plane::{Plane, PlaneBuilder, PlaneRenderer},
+    renderer::plane::{Plane, PlaneBuilder},
     scene::Scene,
 };
 use glfw::{
@@ -67,6 +67,30 @@ impl ScrollArea {
     }
 }
 
+impl ScrollArea {
+    pub fn set_size(&mut self, size: Size) {
+        self.region.size = size;
+        self.frame.set_size(size);
+        self.stencil.set_size(&size - (2.0, 2.0));
+        let max_scroll = (self.content_height - size.height).max(0.0);
+        self.scroll_y = self.scroll_y.min(max_scroll);
+    }
+
+    pub fn set_position(&mut self, position: Position) {
+        let z = self.region.position.z;
+        self.region.position = Position::new(position.x, position.y, z);
+    }
+
+    pub fn clear(&mut self) {
+        self.children.clear();
+        self.scroll_y = 0.0;
+    }
+
+    pub fn set_gap(&mut self, gap: f32) {
+        self.gap = gap;
+    }
+}
+
 impl UIElement for ScrollArea {
     fn update(&mut self, scene: &mut Scene) {
         self.layout();
@@ -77,26 +101,11 @@ impl UIElement for ScrollArea {
 
     fn render(&self) {
         self.frame.render();
-        unsafe {
-            gl::Enable(gl::STENCIL_TEST);
-            gl::Clear(gl::STENCIL_BUFFER_BIT);
-            gl::StencilFunc(gl::ALWAYS, 1, 0xFF);
-            gl::StencilOp(gl::KEEP, gl::KEEP, gl::REPLACE);
-            gl::ColorMask(gl::FALSE, gl::FALSE, gl::FALSE, gl::FALSE);
-            gl::DepthMask(gl::FALSE);
-            PlaneRenderer::render(&self.stencil);
-            gl::StencilFunc(gl::EQUAL, 1, 0xFF);
-            gl::StencilMask(0x00);
-            gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
-            gl::DepthMask(gl::TRUE);
-            gl::DepthFunc(gl::LEQUAL);
-            for child in self.children.values() {
-                child.render();
-            }
-            gl::Disable(gl::STENCIL_TEST);
-            gl::StencilMask(0xFF);
-            gl::StencilFunc(gl::ALWAYS, 0, 0xFF);
+        crate::ui::clip::push(&self.stencil);
+        for child in self.children.values() {
+            child.render();
         }
+        crate::ui::clip::pop(&self.stencil);
     }
 
     fn render_overlay(&self) {

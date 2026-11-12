@@ -16,7 +16,7 @@ use russimp_ng::material::TextureType;
 
 use crate::core::{
     entity::{
-        component::{camera_component::CameraComponent, Component},
+        component::Component,
         Entity,
     },
     model::{Model, ModelBuilder},
@@ -380,7 +380,14 @@ impl TreeForest {
         self.instances_by_kind.iter().all(|v| v.is_empty())
     }
 
-    pub fn add_colliders(&self, placements: &[(f32, f32, f32, f32)], scene: &mut Scene) {
+    /// `parent` is the chunk's fixed body; parenting the colliders to it lets
+    /// them be removed together with the chunk.
+    pub fn add_colliders(
+        &self,
+        placements: &[(f32, f32, f32, f32)],
+        scene: &mut Scene,
+        parent: Option<rapier3d::prelude::RigidBodyHandle>,
+    ) {
         if placements.is_empty() {
             return;
         }
@@ -394,7 +401,7 @@ impl TreeForest {
                 let collider = ColliderBuilder::new(r.kinds[kind_idx].collider_shape.clone())
                     .position(pose)
                     .build();
-                scene.physics_engine.add_collider(collider, None);
+                scene.physics_engine.add_collider(collider, parent);
             }
         });
     }
@@ -555,7 +562,7 @@ impl Component for TreeForest {
         let light_pos = skylight.get_position();
 
         let camera_pos = scene
-            .get_component::<CameraComponent>()
+            .get_active_camera()
             .map(|c| c.get_camera().get_eye_position());
         let distance = camera_pos
             .map(|p| {

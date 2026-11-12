@@ -18,6 +18,9 @@ pub struct Panel {
     is_collapsible: bool,
     is_movable: bool,
     has_controls: bool,
+    /// Docked panels keep the size they are given instead of growing with
+    /// their content.
+    fixed_size: bool,
 
     is_hovering: bool,
     is_open: bool,

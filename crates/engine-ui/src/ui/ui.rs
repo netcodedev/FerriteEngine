@@ -22,6 +22,7 @@ use super::{
         input::Input,
         label::Label,
         list::List,
+        menu_button::MenuButton,
         panel::Panel,
         popup::Popup,
         progress::ProgressBar,
@@ -32,6 +33,7 @@ use super::{
         text::Text,
         toggle::Toggle,
         tooltip::Tooltip,
+        tree::TreeView,
     },
     UIElement, UI,
 };
@@ -73,6 +75,7 @@ impl UI {
     }
 
     pub fn render(&mut self) {
+        super::clip::reset();
         for (_, child) in &mut self.children {
             child.render();
         }
@@ -111,15 +114,18 @@ impl UI {
     }
 
     pub fn button(text: &str, on_click: Box<dyn Fn(&mut Scene)>) -> Box<Button> {
+        // Width follows the label (≈ 9 px per glyph at 15 pt + padding) so
+        // short labels like "x" or "+" stay compact.
+        let width = (text.chars().count() as f32 * 9.0 + 16.0).max(24.0);
         let mut button = Button::new(
             Position::default(),
             Size {
-                width: 100.0,
+                width,
                 height: 20.0,
             },
             on_click,
         );
-        button.add_child(Box::new(Text::new(text.to_owned(), 16.0)));
+        button.set_label(text);
         Box::new(button)
     }
 
@@ -196,6 +202,10 @@ impl UI {
         ))
     }
 
+    pub fn slider_sized(value: DataSource<f32>, min: f32, max: f32, size: Size) -> Box<Slider> {
+        Box::new(Slider::new(Position::default(), size, value, min, max))
+    }
+
     pub fn progress(value: DataSource<f32>) -> Box<ProgressBar> {
         Box::new(ProgressBar::new(
             Position::default(),
@@ -254,5 +264,17 @@ impl UI {
         a: DataSource<f32>,
     ) -> Box<ColorPicker> {
         Box::new(ColorPicker::new(Position::default(), width, r, g, b, a))
+    }
+
+    pub fn tree(selected: DataSource<u64>, size: Size) -> Box<TreeView> {
+        Box::new(TreeView::new(Position::default(), size, selected))
+    }
+
+    pub fn menu_button(
+        label: &str,
+        items: Vec<String>,
+        on_select: Box<dyn Fn(usize, &mut Scene)>,
+    ) -> Box<MenuButton> {
+        Box::new(MenuButton::new(label, items, on_select))
     }
 }

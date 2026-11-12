@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
-    renderer::plane::PlaneBuilder,
+    renderer::{plane::PlaneBuilder, text::{Fonts, Text}},
     scene::Scene,
 };
 
@@ -28,7 +28,9 @@ impl Button {
             children: BTreeMap::new(),
 
             is_hovering: false,
+            is_active: false,
 
+            label: None,
             plane: PlaneBuilder::new()
                 .position(position)
                 .size(size)
@@ -43,10 +45,51 @@ impl Button {
         self.region.size = size;
         self.plane.set_size(size);
     }
+
+    /// Text drawn inside the button. Unlike a `Text` child, it can be
+    /// changed later with `set_label` (e.g. "Play" ↔ "Stop").
+    pub fn set_label(&mut self, label: &str) {
+        match &mut self.label {
+            Some((current, _)) if current == label => {}
+            Some((current, text)) => {
+                *current = label.to_owned();
+                text.set_content(label);
+            }
+            None => {
+                let mut text = Text::new(Fonts::RobotoMono, 0, 0, 0, 15.0, label.to_owned());
+                text.set_z_index(self.region.position.z + 1.0);
+                self.label = Some((label.to_owned(), text));
+            }
+        }
+    }
+
+    /// Highlighted look for toggle-style buttons (selected tool, play mode).
+    pub fn set_active(&mut self, active: bool) {
+        if self.is_active != active {
+            self.is_active = active;
+            self.plane.set_color(self.base_color());
+        }
+    }
+
+    fn base_color(&self) -> (f32, f32, f32, f32) {
+        match (self.is_active, self.is_hovering) {
+            (true, _) => (0.35, 0.5, 0.25, 1.0),
+            (false, true) => (0.3, 0.4, 0.6, 1.0),
+            (false, false) => (0.2, 0.3, 0.5, 1.0),
+        }
+    }
 }
 
 impl UIElement for Button {
     fn update(&mut self, scene: &mut Scene) {
+        let origin = self.region.get_absolute_position();
+        let size = self.region.size;
+        if let Some((_, text)) = &mut self.label {
+            let text_size = text.get_size();
+            let x = (size.width - text.measure_width()).max(0.0) * 0.5;
+            let y = (size.height - text_size.height).max(0.0) * 0.5;
+            text.prepare_render_at(&origin + (x, y, 1.0));
+        }
         for child in self.children.values_mut() {
             child.update(scene);
         }
@@ -54,6 +97,9 @@ impl UIElement for Button {
 
     fn render(&self) {
         self.plane.render();
+        if let Some((_, text)) = &self.label {
+            text.render();
+        }
         for child in self.children.values() {
             child.render();
         }
@@ -81,12 +127,12 @@ impl UIElement for Button {
                     if !self.is_hovering {
                         window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
                         self.is_hovering = true;
-                        self.plane.set_color((0.3, 0.4, 0.6, 1.0));
+                        self.plane.set_color(self.base_color());
                     }
                 } else if self.is_hovering {
                     window.set_cursor(None);
                     self.is_hovering = false;
-                    self.plane.set_color((0.2, 0.3, 0.5, 1.0));
+                    self.plane.set_color(self.base_color());
                 }
                 false
             }
@@ -170,6 +216,9 @@ impl UIElement for Button {
     fn set_z_index(&mut self, z_index: f32) {
         self.region.position.z = z_index;
         self.plane.set_z_index(z_index);
+        if let Some((_, text)) = &mut self.label {
+            text.set_z_index(z_index + 1.0);
+        }
         for child in self.children.values_mut() {
             child.set_z_index(z_index + 1.0);
         }

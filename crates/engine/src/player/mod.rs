@@ -1,5 +1,8 @@
+mod animation;
 mod bone_colliders;
 mod player;
+
+pub use animation::default_animation_graph;
 
 pub use bone_colliders::BoneColliders;
 use cgmath::{Rad, Vector3};

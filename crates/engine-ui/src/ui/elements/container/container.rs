@@ -39,6 +39,18 @@ impl Container {
         self.direction = direction;
     }
 
+    pub fn set_gap(&mut self, gap: f32) {
+        self.gap = gap;
+    }
+
+    pub fn clear(&mut self) {
+        self.children.clear();
+        match self.direction {
+            Direction::Horizontal => self.region.size.width = 0.0,
+            Direction::Vertical => self.region.size.height = 0.0,
+        }
+    }
+
     pub fn set_position(&mut self, position: Position) {
         self.region.position = position;
         self.plane

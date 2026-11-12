@@ -8,13 +8,13 @@ use crate::core::{
     entity::{
         component::{
             animation_component::AnimationComponent, camera_component::CameraComponent,
-            model_component::ModelComponent, Component,
+            model_component::ModelComponent, Component, Property, PropertyValue,
         },
         Entity,
     },
     model::{animation_graph::AnimationGraph, ModelBuilder},
     physics::rigidbody::RigidBody,
-    scene::Scene,
+    scene::{scene_file::ComponentData, Scene},
 };
 
 use super::{BoneColliders, Player, PlayerController};
@@ -57,7 +57,10 @@ impl Player {
             .physics_engine
             .add_collider(collider, Some(rigid_body_handle));
 
-        let rigidbody_component = RigidBody { rigid_body_handle };
+        let rigidbody_component = RigidBody {
+            rigid_body_handle,
+            show_collider: false,
+        };
         let controller = PlayerController::new(rigid_body_handle);
 
         entity.add_component(animation_component);
@@ -172,7 +175,12 @@ impl Component for PlayerController {
         }
 
         // --- Camera sync ---
-        let camera_component = scene.get_component_mut::<CameraComponent>().unwrap();
+        // A scene edited in the editor may have no camera; the player still
+        // simulates, there is just nothing to follow it.
+        let Some(camera_component) = scene.get_component_mut::<CameraComponent>() else {
+            self.dirty = false;
+            return;
+        };
         camera_component.get_camera_controller_mut().is_free = self.is_free_camera;
 
         if !self.is_free_camera {
@@ -292,6 +300,39 @@ impl Component for PlayerController {
                 _ => {}
             },
             _ => {}
+        }
+    }
+
+    fn update_in_editor(&mut self, _scene: &mut Scene, entity: &mut Entity, _dt: f64) {
+        // The animation writes root motion (including the hip height on the
+        // first pose) into the model's offset; in play mode `update` consumes
+        // it as velocity every frame. Discard it here as well so the model is
+        // drawn exactly where it stands in play mode instead of drifting.
+        if let Some(mc) = entity.get_component_mut::<ModelComponent>() {
+            mc.get_model_mut().reset_position();
+        }
+    }
+
+    fn display_name(&self) -> String {
+        "Player controller".into()
+    }
+
+    /// The whole player (model, animation, physics capsule, bone colliders)
+    /// is rebuilt from this marker by `Scene::instantiate`.
+    fn to_data(&self) -> Option<ComponentData> {
+        Some(ComponentData::Player)
+    }
+
+    fn properties(&self) -> Vec<Property> {
+        vec![
+            Property::float("sensitivity", self.sensitivity),
+            Property::bool("free camera", self.is_free_camera).read_only(),
+        ]
+    }
+
+    fn set_property(&mut self, name: &str, value: PropertyValue) {
+        if let ("sensitivity", Some(v)) = (name, value.as_f32()) {
+            self.sensitivity = v.max(0.0);
         }
     }
 }

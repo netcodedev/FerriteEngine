@@ -68,6 +68,14 @@ impl Shader {
         }
     }
 
+    pub fn set_uniform_2f(&self, name: &str, float1: f32, float2: f32) {
+        unsafe {
+            let name = CString::new(name).unwrap();
+            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            gl::Uniform2f(location, float1, float2);
+        }
+    }
+
     pub fn set_uniform_3f(&self, name: &str, float1: f32, float2: f32, float3: f32) {
         unsafe {
             let name = CString::new(name).unwrap();

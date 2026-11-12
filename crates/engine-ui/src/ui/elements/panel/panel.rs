@@ -62,6 +62,7 @@ impl Panel {
             is_collapsible: false,
             is_movable: true,
             has_controls: false,
+            fixed_size: false,
 
             is_hovering: false,
             is_open: true,
@@ -90,6 +91,39 @@ impl Panel {
 
     pub fn set_handle(&mut self, handle: UIElementHandle) {
         self.handle = handle;
+    }
+
+    pub fn set_fixed_size(&mut self, fixed: bool) {
+        self.fixed_size = fixed;
+    }
+
+    /// Move the panel; children and controls follow.
+    pub fn set_position(&mut self, position: Position) {
+        let z = self.region.position.z;
+        self.region.position = Position::new(position.x, position.y, z);
+        self.set_offset(self.region.offset);
+        // Controls are anchored to the right edge of the header.
+        let controls_width = self.controls.get_size().width;
+        self.controls.set_position(Position {
+            x: self.region.size.width - controls_width - 2.5,
+            y: -2.0,
+            z: z + 2.0,
+        });
+        self.controls
+            .set_offset(&self.region.offset + &self.region.position);
+    }
+
+    /// Height of the title bar; content starts below it.
+    pub fn header_height(&self) -> f32 {
+        if self.has_controls {
+            24.0
+        } else {
+            20.0
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.content.clear();
     }
 
     pub fn set_collapsible(&mut self, collapsible: bool) {
@@ -222,7 +256,7 @@ impl UIElement for Panel {
 
     fn add_child(&mut self, child: Box<dyn UIElement>) {
         self.content.add_child(child);
-        if self.is_open {
+        if self.is_open && !self.fixed_size {
             self.set_size(self.content.get_size() + (0.0, 20.0));
         }
     }
@@ -231,7 +265,7 @@ impl UIElement for Panel {
         if self.content.contains_child(&parent) {
             self.content.add_child_to(parent, child);
         }
-        if self.is_open {
+        if self.is_open && !self.fixed_size {
             self.set_size(self.content.get_size() + (0.0, 20.0));
         }
     }

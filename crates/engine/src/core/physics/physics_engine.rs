@@ -76,6 +76,63 @@ impl PhysicsEngine {
         self.rigid_bodies.insert(rigid_body)
     }
 
+    /// Ray cast against every non-sensor collider attached to a body,
+    /// returning the closest body and hit distance. Unlike rapier's query
+    /// pipeline this does not rely on the broad phase, which is only
+    /// refreshed by `update` — so it also works while the simulation is
+    /// paused (e.g. picking in the editor).
+    pub fn cast_ray_bodies(
+        &mut self,
+        origin: [f32; 3],
+        dir: [f32; 3],
+        max_distance: f32,
+    ) -> Option<(RigidBodyHandle, f32)> {
+        use rapier3d::parry::query::RayCast;
+
+        self.rigid_bodies
+            .propagate_modified_body_positions_to_colliders(&mut self.colliders);
+        let ray = Ray::new(
+            Vector::new(origin[0], origin[1], origin[2]),
+            Vector::new(dir[0], dir[1], dir[2]),
+        );
+        let mut best: Option<(RigidBodyHandle, f32)> = None;
+        for (_, collider) in self.colliders.iter() {
+            if collider.is_sensor() {
+                continue;
+            }
+            let Some(parent) = collider.parent() else {
+                continue;
+            };
+            let limit = best.map_or(max_distance, |(_, t)| t);
+            if collider
+                .compute_aabb()
+                .cast_local_ray(&ray, limit, true)
+                .is_none()
+            {
+                continue;
+            }
+            if let Some(t) = collider
+                .shape()
+                .cast_ray(collider.position(), &ray, limit, true)
+            {
+                best = Some((parent, t));
+            }
+        }
+        best
+    }
+
+    /// Remove a body together with every collider attached to it.
+    pub fn remove_rigid_body(&mut self, handle: RigidBodyHandle) {
+        self.rigid_bodies.remove(
+            handle,
+            &mut self.island_manager,
+            &mut self.colliders,
+            &mut self.impulse_joints,
+            &mut self.multibody_joints,
+            true,
+        );
+    }
+
     pub fn add_collider(
         &mut self,
         collider: Collider,

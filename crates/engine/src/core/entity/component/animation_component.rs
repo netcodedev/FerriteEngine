@@ -30,4 +30,9 @@ impl Component for AnimationComponent {
     }
 
     fn handle_event(&mut self, _: &mut Glfw, _: &mut glfw::Window, _: &WindowEvent) {}
+
+    fn update_in_editor(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {
+        // Keep the idle loop playing so posed models look alive in the editor.
+        Component::update(self, scene, entity, delta_time);
+    }
 }

@@ -17,4 +17,7 @@ pub struct Entity {
     components: Vec<Box<dyn Component>>,
     position: Point3<f32>,
     rotation: Quaternion<f32>,
+    /// Runtime-generated entities (terrain chunks, …) that are rebuilt by
+    /// their owner. They are neither saved nor listed in the editor.
+    transient: bool,
 }

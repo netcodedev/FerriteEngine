@@ -3,12 +3,18 @@ use glfw::{Glfw, WindowEvent};
 use rapier3d::prelude::*;
 
 use crate::core::{
-    entity::{component::Component, Entity},
+    entity::{
+        component::{Component, Property, PropertyValue},
+        Entity,
+    },
+    physics::physics_engine::PhysicsEngine,
     scene::Scene,
 };
 
 pub struct RigidBody {
     pub rigid_body_handle: RigidBodyHandle,
+    /// Editor toggle: draw this body's colliders as wireframes.
+    pub show_collider: bool,
 }
 
 impl RigidBody {
@@ -34,7 +40,10 @@ impl RigidBody {
                 .physics_engine
                 .add_collider(collider, Some(rigid_body_handle));
         }
-        RigidBody { rigid_body_handle }
+        RigidBody {
+            rigid_body_handle,
+            show_collider: false,
+        }
     }
 
     pub fn set_position<P: Into<Point3<f32>>>(&mut self, scene: &mut Scene, position: P) {
@@ -66,4 +75,30 @@ impl Component for RigidBody {
     }
 
     fn handle_event(&mut self, _: &mut Glfw, _: &mut glfw::Window, _: &WindowEvent) {}
+
+    fn on_remove(&mut self, physics: &mut PhysicsEngine) {
+        physics.remove_rigid_body(self.rigid_body_handle);
+    }
+
+    fn display_name(&self) -> String {
+        "Collider".into()
+    }
+
+    fn properties(&self) -> Vec<Property> {
+        vec![Property::bool("show collider", self.show_collider)]
+    }
+
+    fn set_property(&mut self, name: &str, value: PropertyValue) {
+        if let ("show collider", Some(v)) = (name, value.as_bool()) {
+            self.show_collider = v;
+        }
+    }
+
+    fn visible_collider_bodies(&self, _entity: &Entity) -> Vec<RigidBodyHandle> {
+        if self.show_collider {
+            vec![self.rigid_body_handle]
+        } else {
+            Vec::new()
+        }
+    }
 }

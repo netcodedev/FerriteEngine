@@ -138,6 +138,12 @@ impl UIElement for Dropdown {
     fn render(&self) {
         self.button.render();
         self.button_text.render();
+    }
+
+    /// The open menu belongs to the overlay pass: it is drawn after every
+    /// panel (so later siblings cannot cover it) and outside any clip region
+    /// (so it can extend past a scroll area or panel edge).
+    fn render_overlay(&self) {
         if self.is_open {
             self.menu.render();
             for opt in &self.options {

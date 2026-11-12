@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
 
-use ferrite::core::{primitives::{Offset, Region}, renderer::plane::Plane, scene::Scene};
+use ferrite::core::{
+    primitives::{Offset, Region},
+    renderer::{plane::Plane, text::Text},
+    scene::Scene,
+};
 
 use crate::ui::{element_handle::UIElementHandle, UIElement};
 
@@ -16,6 +20,8 @@ pub struct Button {
     children: BTreeMap<UIElementHandle, Box<dyn UIElement>>,
 
     is_hovering: bool,
+    is_active: bool,
 
+    label: Option<(String, Text)>,
     plane: Plane,
 }

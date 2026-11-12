@@ -1,0 +1,84 @@
+/// Docked editor layout in window pixels (top-left origin).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl Rect {
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Layout {
+    pub window_w: f32,
+    pub window_h: f32,
+    pub toolbar: Rect,
+    pub hierarchy: Rect,
+    pub inspector: Rect,
+    pub viewport: Rect,
+}
+
+pub const TOOLBAR_HEIGHT: f32 = 32.0;
+/// Left column holding the hierarchy (top) and inspector (bottom). Wide
+/// enough for the inspector's label column plus three number fields.
+const SIDE_WIDTH: f32 = 330.0;
+/// Share of the column height given to the hierarchy.
+const HIERARCHY_SHARE: f32 = 0.4;
+const MIN_HIERARCHY: f32 = 140.0;
+const MIN_VIEWPORT: f32 = 64.0;
+
+impl Layout {
+    pub fn compute(window_w: f32, window_h: f32) -> Self {
+        let body_h = (window_h - TOOLBAR_HEIGHT).max(MIN_VIEWPORT);
+        // The column shrinks before the viewport disappears on tiny windows.
+        let side_w = SIDE_WIDTH.min((window_w - MIN_VIEWPORT).max(0.0)).floor();
+        let hierarchy_h = (body_h * HIERARCHY_SHARE)
+            .max(MIN_HIERARCHY)
+            .min(body_h * 0.8)
+            .floor();
+        Self {
+            window_w,
+            window_h,
+            toolbar: Rect {
+                x: 0.0,
+                y: 0.0,
+                w: window_w,
+                h: TOOLBAR_HEIGHT,
+            },
+            hierarchy: Rect {
+                x: 0.0,
+                y: TOOLBAR_HEIGHT,
+                w: side_w,
+                h: hierarchy_h,
+            },
+            inspector: Rect {
+                x: 0.0,
+                y: TOOLBAR_HEIGHT + hierarchy_h,
+                w: side_w,
+                h: body_h - hierarchy_h,
+            },
+            viewport: Rect {
+                x: side_w,
+                y: TOOLBAR_HEIGHT,
+                w: (window_w - side_w).max(1.0),
+                h: body_h,
+            },
+        }
+    }
+
+    /// The viewport as a GL viewport (bottom-left origin).
+    pub fn viewport_gl(&self) -> [i32; 4] {
+        let v = self.viewport;
+        [
+            v.x as i32,
+            (self.window_h - (v.y + v.h)).max(0.0) as i32,
+            v.w as i32,
+            v.h as i32,
+        ]
+    }
+}

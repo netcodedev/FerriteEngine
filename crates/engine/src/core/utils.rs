@@ -43,6 +43,18 @@ impl<T: Clone + ToString + FromStr> DataSource<T> {
         *self.data.write().unwrap() = data;
     }
 
+    /// Parse and store `data`; returns `false` (leaving the value untouched)
+    /// when it does not parse, e.g. a half-typed number like `-` or `1e`.
+    pub fn try_write_from_string(&self, data: &str) -> bool {
+        match data.parse() {
+            Ok(data) => {
+                self.write(data);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     pub fn write_from_string(&self, data: String) {
         match data.parse() {
             Ok(data) => self.write(data),

@@ -3,9 +3,10 @@ use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder, RigidBodyHandle};
 
 use crate::core::{
     entity::{
-        component::{model_component::ModelComponent, Component},
+        component::{model_component::ModelComponent, Component, Property, PropertyValue},
         Entity,
     },
+    physics::physics_engine::PhysicsEngine,
     scene::Scene,
 };
 
@@ -15,6 +16,8 @@ const MAX_BONE_RADIUS: f32 = 0.08;
 
 pub struct BoneColliders {
     handles: Vec<(RigidBodyHandle, String)>,
+    /// Editor toggle: draw the bone capsules as wireframes.
+    show: bool,
 }
 
 impl BoneColliders {
@@ -48,7 +51,10 @@ impl BoneColliders {
             handles.push((rb_handle, name.clone()));
         }
 
-        Self { handles }
+        Self {
+            handles,
+            show: false,
+        }
     }
 }
 
@@ -90,6 +96,34 @@ impl Component for BoneColliders {
         _: &mut glfw::Window,
         _: &glfw::WindowEvent,
     ) {
+    }
+
+    fn display_name(&self) -> String {
+        "Bone colliders".into()
+    }
+
+    fn properties(&self) -> Vec<Property> {
+        vec![Property::bool("show colliders", self.show)]
+    }
+
+    fn set_property(&mut self, name: &str, value: PropertyValue) {
+        if let ("show colliders", Some(v)) = (name, value.as_bool()) {
+            self.show = v;
+        }
+    }
+
+    fn visible_collider_bodies(&self, _entity: &Entity) -> Vec<RigidBodyHandle> {
+        if self.show {
+            self.handles.iter().map(|(h, _)| *h).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn on_remove(&mut self, physics: &mut PhysicsEngine) {
+        for (handle, _) in self.handles.drain(..) {
+            physics.remove_rigid_body(handle);
+        }
     }
 }
 

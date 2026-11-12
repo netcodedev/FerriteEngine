@@ -141,6 +141,30 @@ impl Projection {
     pub fn get_matrix(&self) -> Matrix4<f32> {
         self.matrix
     }
+
+    /// Use when rendering into a sub-rectangle of the window (e.g. the
+    /// editor viewport), whose aspect differs from the framebuffer's.
+    pub fn set_aspect(&mut self, aspect: f32) {
+        if aspect.is_finite() && aspect > 0.0 && (aspect - self.aspect).abs() > f32::EPSILON {
+            self.aspect = aspect;
+            self.calc_matrix();
+        }
+    }
+
+    pub fn set_fovy<F: Into<Rad<f32>>>(&mut self, fovy: F) {
+        self.fovy = fovy.into();
+        self.calc_matrix();
+    }
+
+    pub fn get_zfar(&self) -> f32 {
+        self.zfar
+    }
+
+    pub fn set_clip(&mut self, znear: f32, zfar: f32) {
+        self.znear = znear.max(0.001);
+        self.zfar = zfar.max(self.znear + 0.001);
+        self.calc_matrix();
+    }
 }
 
 #[derive(Debug)]

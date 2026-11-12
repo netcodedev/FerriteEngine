@@ -1,0 +1,158 @@
+//! Editor state shared between the layer and its panels.
+//!
+//! Panels never replace the scene themselves; they queue `Command`s that the
+//! `EditorLayer` executes after the UI pass, because some commands (open,
+//! play/stop) swap the whole `Scene` out from under them.
+
+use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Instant};
+
+use ferrite::core::{entity::EntityHandle, scene::scene_file::ComponentData, utils::DataSource};
+use ferrite_ui::ui::elements::tree::NO_SELECTION;
+
+pub mod dialogs;
+pub mod field_row;
+pub mod hierarchy;
+pub mod inspector;
+pub mod layout;
+pub mod outline;
+pub mod showcase;
+pub mod toolbar;
+pub mod toggle_window;
+pub mod viewport;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Edit,
+    Play,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GizmoMode {
+    Translate,
+    Rotate,
+}
+
+/// What "Add entity" creates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntityTemplate {
+    Empty,
+    Camera,
+    SkyLight,
+    Terrain,
+    Player,
+}
+
+impl EntityTemplate {
+    pub const ALL: [(&'static str, EntityTemplate); 5] = [
+        ("Empty", EntityTemplate::Empty),
+        ("Camera", EntityTemplate::Camera),
+        ("Sky light", EntityTemplate::SkyLight),
+        ("Terrain", EntityTemplate::Terrain),
+        ("Player", EntityTemplate::Player),
+    ];
+}
+
+#[derive(Clone, Debug)]
+pub enum Command {
+    NewScene,
+    OpenDialog,
+    Open(PathBuf),
+    Save,
+    SaveAsDialog,
+    SaveAs(PathBuf),
+    /// Run `then` once unsaved changes are saved or discarded.
+    ConfirmDiscard(Box<Command>),
+    Play,
+    Stop,
+    AddEntity {
+        parent: Option<EntityHandle>,
+        template: EntityTemplate,
+    },
+    AddComponent(EntityHandle, ComponentData),
+    RemoveComponent(EntityHandle, usize),
+    Delete(EntityHandle),
+    Duplicate(EntityHandle),
+    Focus(EntityHandle),
+}
+
+pub struct EditorState {
+    /// Selected entity id, shared with the hierarchy tree (`NO_SELECTION`
+    /// when empty).
+    pub selection: DataSource<u64>,
+    pub mode: Mode,
+    pub gizmo: GizmoMode,
+    pub scene_path: Option<PathBuf>,
+    pub dirty: bool,
+    status: Option<(String, Instant)>,
+    pub commands: Vec<Command>,
+    pub layout: layout::Layout,
+    pub show_widgets: DataSource<bool>,
+    /// A popup the modal host should show next (save-as, open, confirm).
+    pub pending_modal: Option<dialogs::Modal>,
+}
+
+pub type Shared = Rc<RefCell<EditorState>>;
+
+impl EditorState {
+    pub fn new() -> Shared {
+        Rc::new(RefCell::new(Self {
+            selection: DataSource::new(NO_SELECTION),
+            mode: Mode::Edit,
+            gizmo: GizmoMode::Translate,
+            scene_path: None,
+            dirty: false,
+            status: None,
+            commands: Vec::new(),
+            layout: layout::Layout::compute(1280.0, 720.0),
+            show_widgets: DataSource::new(false),
+            pending_modal: None,
+        }))
+    }
+
+    pub fn selected(&self) -> Option<EntityHandle> {
+        match self.selection.read() {
+            NO_SELECTION => None,
+            id => Some(EntityHandle::from(id)),
+        }
+    }
+
+    pub fn select(&self, id: Option<EntityHandle>) {
+        self.selection
+            .write(id.map(u64::from).unwrap_or(NO_SELECTION));
+    }
+
+    pub fn push(&mut self, command: Command) {
+        self.commands.push(command);
+    }
+
+    pub fn set_status(&mut self, message: impl Into<String>) {
+        self.status = Some((message.into(), Instant::now()));
+    }
+
+    /// The latest status message, hidden after a few seconds.
+    pub fn status(&self) -> Option<&str> {
+        match &self.status {
+            Some((text, at)) if at.elapsed().as_secs_f32() < 6.0 => Some(text),
+            _ => None,
+        }
+    }
+
+    pub fn scene_title(&self) -> String {
+        let name = self
+            .scene_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "untitled".into());
+        if self.dirty {
+            format!("{name} *")
+        } else {
+            name
+        }
+    }
+}
+
+/// Queue a command from a UI callback.
+pub fn send(state: &Shared, command: Command) {
+    state.borrow_mut().push(command);
+}

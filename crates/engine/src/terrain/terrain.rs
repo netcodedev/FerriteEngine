@@ -16,7 +16,7 @@ lazy_static! {
 
 use crate::core::{
     entity::{
-        component::{camera_component::CameraComponent, Component},
+        component::{Component, Property, PropertyValue},
         Entity,
     },
     mouse_picker::MousePicker,
@@ -26,7 +26,7 @@ use crate::core::{
         line::Line,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
     },
-    scene::Scene,
+    scene::{scene_file::ComponentData, Scene},
     view_frustum::ViewFrustum,
 };
 
@@ -108,6 +108,8 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, -1, -1, tx4));
 
         Self {
+            seed,
+            show_colliders: false,
             chunk_receiver: rx,
             shader,
             textures: T::get_textures(),
@@ -209,7 +211,14 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 .expect("Failed to create collider")
                     .translation(Vector::new(position.x, position.y, position.z))
                     .build();
-                scene.physics_engine.add_collider(collider, None);
+                // The chunk entity sits at the origin, so its fixed body does
+                // too; colliders keep their world placement while becoming
+                // removable together with the chunk.
+                let chunk_body =
+                    RigidBody::new(RigidBodyType::Fixed, scene, &chunk_entity, None);
+                scene
+                    .physics_engine
+                    .add_collider(collider, Some(chunk_body.rigid_body_handle));
 
                 // Trees scattered by the chunk's worker thread get their
                 // visual + physics representation attached here on the GL
@@ -217,25 +226,64 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 let tree_placements = chunk.get_tree_placements();
                 let tree_forest = TreeForest::from_placements(&tree_placements);
                 if !tree_forest.is_empty() {
-                    tree_forest.add_colliders(&tree_placements, scene);
+                    tree_forest.add_colliders(
+                        &tree_placements,
+                        scene,
+                        Some(chunk_body.rigid_body_handle),
+                    );
                     chunk_entity.add_component(tree_forest);
                 }
 
                 chunk_entity.add_component(chunk);
-                chunk_entity.add_component(RigidBody::new(
-                    RigidBodyType::Fixed,
-                    scene,
-                    &chunk_entity,
-                    None,
-                ));
+                chunk_entity.add_component(chunk_body);
+                chunk_entity.set_transient(true);
                 entity.add_child(chunk_entity);
             }
         }
-        if let Some(camera_component) = scene.get_component::<CameraComponent>() {
+        if let Some(camera_component) = scene.get_active_camera() {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();
             self.mouse_picker.update(camera, projection);
         }
+    }
+
+    fn update_in_editor(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {
+        // Chunk streaming has no gameplay side effects, so the editor keeps
+        // it running to show the terrain while the simulation is stopped.
+        Component::update(self, scene, entity, delta_time);
+    }
+
+    fn to_data(&self) -> Option<ComponentData> {
+        Some(ComponentData::Terrain { seed: self.seed })
+    }
+
+    fn properties(&self) -> Vec<Property> {
+        // The seed only takes effect when the terrain is rebuilt (load or
+        // play/stop), so it is shown but not editable in place.
+        vec![
+            Property::int("seed", self.seed as i64).read_only(),
+            Property::bool("show colliders", self.show_colliders),
+        ]
+    }
+
+    fn set_property(&mut self, name: &str, value: PropertyValue) {
+        if let ("show colliders", Some(v)) = (name, value.as_bool()) {
+            self.show_colliders = v;
+        }
+    }
+
+    fn visible_collider_bodies(&self, entity: &Entity) -> Vec<RigidBodyHandle> {
+        if !self.show_colliders {
+            return Vec::new();
+        }
+        // Each chunk child owns a fixed body carrying its mesh and tree
+        // colliders.
+        entity
+            .get_children()
+            .iter()
+            .filter_map(|chunk| chunk.get_own_component::<RigidBody>())
+            .map(|rb| rb.rigid_body_handle)
+            .collect()
     }
 
     fn render(

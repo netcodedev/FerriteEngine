@@ -1,6 +1,10 @@
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion};
 
-use crate::core::{physics::rigidbody::RigidBody, scene::Scene, utils::DataSource};
+use crate::core::{
+    physics::{physics_engine::PhysicsEngine, rigidbody::RigidBody},
+    scene::Scene,
+    utils::DataSource,
+};
 
 use super::{component::Component, Entity, EntityHandle};
 
@@ -13,7 +17,85 @@ impl Entity {
             components: Vec::new(),
             position: Point3::new(0.0, 0.0, 0.0),
             rotation: Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            transient: false,
         }
+    }
+
+    pub fn set_transient(&mut self, transient: bool) {
+        self.transient = transient;
+    }
+
+    pub fn is_transient(&self) -> bool {
+        self.transient
+    }
+
+    pub fn update_in_editor(&mut self, scene: &mut Scene, delta_time: f64) {
+        for i in 0..self.components.len() {
+            let mut component = self.components.remove(i);
+            component.update_in_editor(scene, self, delta_time);
+            self.components.insert(i, component);
+        }
+        for child in self.children.iter_mut() {
+            child.update_in_editor(scene, delta_time);
+        }
+    }
+
+    pub fn components(&self) -> &[Box<dyn Component>] {
+        &self.components
+    }
+
+    pub fn components_mut(&mut self) -> &mut [Box<dyn Component>] {
+        &mut self.components
+    }
+
+    pub fn remove_component_at(&mut self, index: usize) -> Option<Box<dyn Component>> {
+        (index < self.components.len()).then(|| self.components.remove(index))
+    }
+
+    /// Like `get_component`, but never looks into children.
+    pub fn get_own_component<T: Component>(&self) -> Option<&T> {
+        self.components
+            .iter()
+            .find_map(|c| c.as_any().downcast_ref::<T>())
+    }
+
+    pub fn get_children_mut(&mut self) -> &mut Vec<Entity> {
+        &mut self.children
+    }
+
+    /// Detach a descendant (at any depth) and return it.
+    pub fn remove_descendant(&mut self, id: &EntityHandle) -> Option<Entity> {
+        if let Some(index) = self.children.iter().position(|c| c.id == *id) {
+            return Some(self.children.remove(index));
+        }
+        self.children
+            .iter_mut()
+            .find_map(|child| child.remove_descendant(id))
+    }
+
+    /// Call `on_remove` on every component in this subtree.
+    pub fn release_resources(&mut self, physics: &mut PhysicsEngine) {
+        for component in self.components.iter_mut() {
+            component.on_remove(physics);
+        }
+        for child in self.children.iter_mut() {
+            child.release_resources(physics);
+        }
+    }
+
+    /// Set the local position without touching physics. Prefer
+    /// `Scene::set_entity_position`, which also moves an attached body.
+    pub fn set_local_position(&mut self, position: Point3<f32>) {
+        self.position = position;
+    }
+
+    pub fn set_local_rotation(&mut self, rotation: Quaternion<f32>) {
+        self.rotation = rotation;
+    }
+
+    /// Local transform (translation then rotation), as used when rendering.
+    pub fn local_transform(&self) -> Matrix4<f32> {
+        Matrix4::from_translation(self.position.to_vec()) * Matrix4::from(self.rotation)
     }
 
     pub fn update(&mut self, scene: &mut Scene, delta_time: f64) {

@@ -18,7 +18,7 @@ use crate::ui::{element_handle::UIElementHandle, UIElement};
 
 use super::Input;
 
-impl<T: Clone + ToString> Input<T> {
+impl<T: Clone + ToString + FromStr> Input<T> {
     pub fn new(
         position: Position,
         size: Size,
@@ -60,6 +60,19 @@ impl<T: Clone + ToString> Input<T> {
         self.blink_start = Instant::now();
     }
 
+    pub fn is_focused(&self) -> bool {
+        self.is_focused
+    }
+
+    fn blur(&mut self) {
+        self.is_focused = false;
+        self.plane.set_color((0.2, 0.2, 0.2, 1.0));
+        self.stencil_plane.set_color((0.2, 0.2, 0.2, 1.0));
+        if let Some(data_source) = &self.data_source {
+            self.content = data_source.to_string();
+        }
+    }
+
     pub fn set_handle(&mut self, handle: UIElementHandle) {
         self.handle = handle;
     }
@@ -79,8 +92,13 @@ impl<T: Clone + ToString> Input<T> {
 
 impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
     fn update(&mut self, _scene: &mut Scene) {
-        if let Some(data_source) = &self.data_source {
-            self.content = data_source.to_string();
+        // While focused the typed text is authoritative: it may be a value
+        // that does not parse yet ("-", "1."), so it must not be replaced by
+        // the bound source until editing ends.
+        if !self.is_focused {
+            if let Some(data_source) = &self.data_source {
+                self.content = data_source.to_string();
+            }
         }
         self.text.set_content(&self.content);
 
@@ -110,40 +128,20 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
 
     fn render(&self) {
         PlaneRenderer::render(&self.plane);
+        crate::ui::clip::push(&self.stencil_plane);
         unsafe {
-            gl::Enable(gl::DEPTH_TEST);
-            gl::Enable(gl::STENCIL_TEST);
-            gl::Clear(gl::STENCIL_BUFFER_BIT);
-            gl::StencilFunc(gl::ALWAYS, 1, 0xFF);
-            gl::StencilOp(gl::KEEP, gl::KEEP, gl::REPLACE);
-
-            // Disable writing to the color and depth buffer
-            gl::ColorMask(gl::FALSE, gl::FALSE, gl::FALSE, gl::FALSE);
-            gl::DepthMask(gl::FALSE);
-
-            // Render the plane to the stencil buffer
-            PlaneRenderer::render(&self.stencil_plane);
-            gl::StencilFunc(gl::EQUAL, 1, 0xFF);
-            gl::StencilMask(0x00);
-
-            // Enable writing to the color and depth buffer
-            gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
-            gl::DepthMask(gl::TRUE);
             gl::DepthFunc(gl::LEQUAL);
-
-            self.text.render();
-            // Blinking caret: 500 ms on, 500 ms off, drawn inside the same
-            // stencil window so it clips at the edges just like the text.
-            if self.is_focused {
-                let elapsed_ms = self.blink_start.elapsed().as_millis();
-                if (elapsed_ms / 500) % 2 == 0 {
-                    PlaneRenderer::render(&self.cursor_plane);
-                }
+        }
+        self.text.render();
+        // Blinking caret: 500 ms on, 500 ms off, drawn inside the same clip
+        // window so it is cut at the edges just like the text.
+        if self.is_focused {
+            let elapsed_ms = self.blink_start.elapsed().as_millis();
+            if (elapsed_ms / 500) % 2 == 0 {
+                PlaneRenderer::render(&self.cursor_plane);
             }
-            gl::Disable(gl::STENCIL_TEST);
-            gl::StencilMask(0xFF);
-            gl::StencilFunc(gl::ALWAYS, 0, 0xFF);
-        };
+        }
+        crate::ui::clip::pop(&self.stencil_plane);
     }
 
     fn handle_events(
@@ -166,9 +164,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                     self.reset_blink();
                     return true;
                 } else if self.is_focused {
-                    self.is_focused = false;
-                    self.plane.set_color((0.2, 0.2, 0.2, 1.0));
-                    self.stencil_plane.set_color((0.2, 0.2, 0.2, 1.0));
+                    self.blur();
                 }
                 false
             }
@@ -195,7 +191,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 if self.is_focused {
                     self.content.push(*character);
                     if let Some(data_source) = &self.data_source {
-                        data_source.write_from_string(self.content.clone());
+                        data_source.try_write_from_string(&self.content);
                     }
                     self.reset_blink();
                     return true;
@@ -206,12 +202,23 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 if self.is_focused {
                     self.content.pop();
                     if let Some(data_source) = &mut self.data_source {
-                        data_source.write_from_string(self.content.clone());
+                        data_source.try_write_from_string(&self.content);
                     }
                     self.reset_blink();
                     return true;
                 }
                 false
+            }
+            Key(glfw::Key::Enter | glfw::Key::KpEnter | glfw::Key::Tab, _, Press, _)
+                if self.is_focused =>
+            {
+                self.blur();
+                true
+            }
+            Key(glfw::Key::Escape, _, Press, _) if self.is_focused => {
+                // Discard the unparsed remainder and show the bound value.
+                self.blur();
+                true
             }
             Key(_, _, Press | Repeat, _) => {
                 if self.is_focused {

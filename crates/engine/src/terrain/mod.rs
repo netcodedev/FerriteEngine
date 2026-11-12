@@ -25,6 +25,9 @@ pub mod tree_forest;
 pub mod voxel;
 
 pub struct Terrain<T: Chunk> {
+    seed: u64,
+    /// Editor toggle: draw chunk and tree colliders as wireframes.
+    show_colliders: bool,
     chunk_receiver: mpsc::Receiver<T>,
     shader: Shader,
     textures: Vec<Texture>,
