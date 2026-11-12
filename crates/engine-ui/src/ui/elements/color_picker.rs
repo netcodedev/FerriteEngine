@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::plane::{Plane, PlaneBuilder},
@@ -51,8 +52,8 @@ impl ColorPicker {
         let frame = PlaneBuilder::new()
             .position(position)
             .size(size)
-            .color((0.15, 0.15, 0.15, 1.0))
-            .border_color((0.5, 0.5, 0.5, 1.0))
+            .color(theme::BG_PANEL)
+            .border_color(theme::BORDER)
             .border_thickness(1.0)
             .border_radius_uniform(4.0)
             .build();
@@ -60,16 +61,16 @@ impl ColorPicker {
             .position(&position + (padding, padding, 1.0))
             .size(Size::new(width - padding * 2.0, swatch_h))
             .color((r.read(), g.read(), b.read(), a.read()))
-            .border_color((0.4, 0.4, 0.4, 1.0))
+            .border_color(theme::BORDER)
             .border_thickness(1.0)
-            .border_radius_uniform(3.0)
+            .border_radius_uniform(theme::RADIUS)
             .build();
 
         let colors = [
             (0.9, 0.2, 0.2, 1.0),
             (0.2, 0.8, 0.3, 1.0),
             (0.2, 0.4, 0.9, 1.0),
-            (0.7, 0.7, 0.7, 1.0),
+            theme::TEXT_MUTED,
         ];
         let sources = [r, g, b, a];
         let channels = sources
@@ -82,21 +83,21 @@ impl ColorPicker {
                 let track = PlaneBuilder::new()
                     .position(row_pos)
                     .size(row_size)
-                    .color((0.1, 0.1, 0.1, 1.0))
-                    .border_color((0.4, 0.4, 0.4, 1.0))
+                    .color(theme::BG_FIELD)
+                    .border_color(theme::BORDER)
                     .border_thickness(1.0)
-                    .border_radius_uniform(3.0)
+                    .border_radius_uniform(theme::RADIUS)
                     .build();
                 let fill = PlaneBuilder::new()
                     .position(&row_pos + (0.0, 0.0, 1.0))
                     .size(Size::new(0.0, row_h))
                     .color(colors[i])
-                    .border_radius_uniform(3.0)
+                    .border_radius_uniform(theme::RADIUS)
                     .build();
                 let knob = PlaneBuilder::new()
                     .position(&row_pos + (0.0, -1.0, 2.0))
                     .size(Size::new(4.0, row_h + 2.0))
-                    .color((0.95, 0.95, 0.95, 1.0))
+                    .color(theme::TEXT)
                     .build();
                 Channel {
                     value: src,

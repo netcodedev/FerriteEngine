@@ -106,6 +106,29 @@ impl Window {
         delta_time
     }
 
+    /// Save the current back buffer (what is about to be presented) as a
+    /// PNG. Reads only this window's own framebuffer.
+    pub fn save_screenshot(&self, path: &std::path::Path) -> Result<(), image::ImageError> {
+        let (w, h) = (self.width.max(1), self.height.max(1));
+        let mut pixels = vec![0u8; (w * h * 4) as usize];
+        unsafe {
+            gl::PixelStorei(gl::PACK_ALIGNMENT, 1);
+            gl::ReadBuffer(gl::BACK);
+            gl::ReadPixels(
+                0,
+                0,
+                w as i32,
+                h as i32,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                pixels.as_mut_ptr() as *mut _,
+            );
+        }
+        let image = image::RgbaImage::from_raw(w, h, pixels).expect("buffer sized for image");
+        // GL rows start at the bottom.
+        image::imageops::flip_vertical(&image).save(path)
+    }
+
     pub fn reset_viewport(&self) {
         unsafe {
             gl::Viewport(0, 0, self.width as i32, self.height as i32);

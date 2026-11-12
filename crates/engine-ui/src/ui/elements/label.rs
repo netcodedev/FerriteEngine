@@ -26,7 +26,11 @@ impl Label {
                 size: Size::new(size * content.len() as f32, size),
                 ..Default::default()
             },
-            text: FerriteText::new(Fonts::RobotoMono, 0, 0, 0, size, content.clone()),
+            text: {
+                let mut t = FerriteText::new(Fonts::Inter, 0, 0, 0, size, content.clone());
+                t.set_color(crate::ui::theme::TEXT);
+                t
+            },
             content,
             source: None,
         }
@@ -36,6 +40,21 @@ impl Label {
         let mut l = Self::new(source.read(), size);
         l.source = Some(source);
         l
+    }
+
+    pub fn set_color(&mut self, color: (f32, f32, f32, f32)) {
+        self.text.set_color(color);
+    }
+
+    pub fn set_font(&mut self, font: Fonts, size: f32) {
+        self.text.set_font(font, size);
+    }
+
+    /// Dimmed secondary text.
+    pub fn muted(text: impl Into<String>, size: f32) -> Self {
+        let mut label = Self::new(text, size);
+        label.set_color(crate::ui::theme::TEXT_MUTED);
+        label
     }
 
     pub fn set_text(&mut self, text: impl Into<String>) {

@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::plane::PlaneBuilder,
@@ -19,34 +20,46 @@ use glfw::{
 };
 
 use super::Panel;
+use ferrite::core::renderer::text::Fonts;
+
+/// Height of the title bar of every panel.
+pub const HEADER_HEIGHT: f32 = 30.0;
+/// Title baseline offset that centres semibold small text in the header.
+const TITLE_Y: f32 = 8.0;
+/// Container y that centres 22 px controls (the container adds its gap).
+const CONTROLS_Y: f32 = (HEADER_HEIGHT - 22.0) * 0.5 - 5.0;
 
 impl Panel {
     pub fn new(title: String, position: Position, size: Size) -> Self {
-        let mut title = Text::new(title, 16.0);
+        let mut title = Text::new(title, theme::FONT_SIZE_SMALL);
+        title.set_font(Fonts::InterSemiBold, theme::FONT_SIZE_SMALL);
+        title.set_color(theme::TEXT_MUTED);
         title.set_z_index(position.z + 2.0);
         let mut content = Container::new((0.0, 0.0, position.z + 1.0).into(), &size - (0.0, 40.0));
-        content.set_offset((&position + (0.0, 20.0)).into());
+        content.set_offset((&position + (0.0, HEADER_HEIGHT)).into());
         let mut controls = Container::new(Position::new(size.width - 2.0, -2.0, position.z + 2.0), Size::new(0.0, 20.0));
         controls.set_direction(Direction::Horizontal);
         controls.set_offset(position.into());
 
-        title.set_position(&position + (8.0, 2.0, 3.0));
+        title.set_position(&position + (12.0, TITLE_Y, 3.0));
 
         let plane = PlaneBuilder::new()
             .position(position)
             .size(size)
-            .color((0.2, 0.2, 0.2, 1.0))
-            .border_radius_uniform(5.0)
+            .color(theme::BG_PANEL)
+            .border_color(theme::BORDER)
+            .border_radius_uniform(theme::RADIUS)
             .border_thickness(1.0)
             .build();
         let header_plane = PlaneBuilder::new()
             .position(&position + (0.0, 0.0, 1.0))
             .size(Size {
                 width: size.width,
-                height: 20.0,
+                height: HEADER_HEIGHT,
             })
-            .color((0.2, 0.3, 0.5, 1.0))
-            .border_radius((5.0, 5.0, 0.0, 0.0))
+            .color(theme::BG_HEADER)
+            .border_color(theme::BORDER)
+            .border_radius((theme::RADIUS, theme::RADIUS, 0.0, 0.0))
             .border_thickness(1.0)
             .build();
 
@@ -85,7 +98,7 @@ impl Panel {
         self.plane.set_size(size);
         self.header_plane.set_size(Size {
             width: size.width,
-            height: if self.has_controls { 24.0 } else { 20.0 },
+            height: HEADER_HEIGHT,
         });
     }
 
@@ -97,6 +110,13 @@ impl Panel {
         self.fixed_size = fixed;
     }
 
+    /// Square corners, for panels docked edge to edge.
+    pub fn set_flat(&mut self, flat: bool) {
+        let r = if flat { 0.0 } else { theme::RADIUS };
+        self.plane.border_radius = (r, r, r, r);
+        self.header_plane.border_radius = (0.0, r, 0.0, r);
+    }
+
     /// Move the panel; children and controls follow.
     pub fn set_position(&mut self, position: Position) {
         let z = self.region.position.z;
@@ -106,7 +126,7 @@ impl Panel {
         let controls_width = self.controls.get_size().width;
         self.controls.set_position(Position {
             x: self.region.size.width - controls_width - 2.5,
-            y: -2.0,
+            y: CONTROLS_Y,
             z: z + 2.0,
         });
         self.controls
@@ -116,9 +136,9 @@ impl Panel {
     /// Height of the title bar; content starts below it.
     pub fn header_height(&self) -> f32 {
         if self.has_controls {
-            24.0
+            HEADER_HEIGHT
         } else {
-            20.0
+            HEADER_HEIGHT
         }
     }
 
@@ -142,15 +162,15 @@ impl Panel {
         self.controls.add_child(control);
         self.controls.set_position(Position {
             x: self.region.size.width - self.controls.get_size().width - 2.5,
-            y: -2.0,
+            y: CONTROLS_Y,
             z: self.region.position.z + 2.0,
         });
         self.has_controls = true;
         self.header_plane.set_size(Size {
             width: self.region.size.width,
-            height: 24.0,
+            height: HEADER_HEIGHT,
         });
-        self.title.set_position(&self.region.position + (8.0, 4.0, 3.0));
+        self.title.set_position(&self.region.position + (12.0, TITLE_Y, 3.0));
     }
 }
 
@@ -208,14 +228,14 @@ impl UIElement for Panel {
                 if self.is_collapsible && !self.is_moved && self.is_dragging {
                     self.is_open = !self.is_open;
                     if self.is_open {
-                        self.header_plane.border_radius = (0.0, 5.0, 0.0, 5.0);
-                        self.set_size(self.content.get_size() + (0.0, 20.0));
+                        self.header_plane.border_radius = (0.0, theme::RADIUS, 0.0, theme::RADIUS);
+                        self.set_size(self.content.get_size() + (0.0, HEADER_HEIGHT));
                     } else {
                         self.set_size(Size {
                             width: self.region.size.width,
-                            height: if self.has_controls { 24.0 } else { 20.0 },
+                            height: HEADER_HEIGHT,
                         });
-                        self.header_plane.border_radius = (5.0, 5.0, 5.0, 5.0);
+                        self.header_plane.border_radius = (theme::RADIUS, theme::RADIUS, theme::RADIUS, theme::RADIUS);
                     }
                 }
                 self.is_dragging = false;
@@ -228,12 +248,12 @@ impl UIElement for Panel {
                     if !self.is_hovering {
                         window.set_cursor(Some(Cursor::standard(Hand)));
                         self.is_hovering = true;
-                        self.header_plane.set_color((0.3, 0.4, 0.6, 1.0));
+                        self.header_plane.set_color(theme::BG_HEADER);
                     }
                 } else if self.is_hovering {
                     window.set_cursor(None);
                     self.is_hovering = false;
-                    self.header_plane.set_color((0.2, 0.3, 0.5, 1.0));
+                    self.header_plane.set_color(theme::BG_HEADER);
                 }
                 if self.is_dragging {
                     if let Some((start_x, start_y)) = self.drag_position {
@@ -257,7 +277,7 @@ impl UIElement for Panel {
     fn add_child(&mut self, child: Box<dyn UIElement>) {
         self.content.add_child(child);
         if self.is_open && !self.fixed_size {
-            self.set_size(self.content.get_size() + (0.0, 20.0));
+            self.set_size(self.content.get_size() + (0.0, HEADER_HEIGHT));
         }
     }
 
@@ -266,7 +286,7 @@ impl UIElement for Panel {
             self.content.add_child_to(parent, child);
         }
         if self.is_open && !self.fixed_size {
-            self.set_size(self.content.get_size() + (0.0, 20.0));
+            self.set_size(self.content.get_size() + (0.0, HEADER_HEIGHT));
         }
     }
 
@@ -294,8 +314,8 @@ impl UIElement for Panel {
         self.region.offset = offset;
         self.plane.set_position(&self.region.position + &self.region.offset);
         self.header_plane.set_position(&(&self.region.position + &self.region.offset) + (0.0, 0.0, 1.0));
-        self.title.set_position(&(&self.region.position + &self.region.offset) + (8.0, if self.has_controls { 4.0 } else { 2.0 }, 3.0));
-        self.content.set_offset(&self.region.offset + &self.region.position + (0.0, 20.0));
+        self.title.set_position(&(&self.region.position + &self.region.offset) + (12.0, TITLE_Y, 3.0));
+        self.content.set_offset(&self.region.offset + &self.region.position + (0.0, HEADER_HEIGHT));
         self.controls.set_offset(&self.region.offset + &self.region.position);
     }
 

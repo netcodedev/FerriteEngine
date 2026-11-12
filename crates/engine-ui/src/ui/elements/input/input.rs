@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use core::panic;
 use std::{str::FromStr, time::Instant};
 
@@ -18,6 +19,9 @@ use crate::ui::{element_handle::UIElementHandle, UIElement};
 
 use super::Input;
 
+/// Horizontal text padding inside the field.
+const PAD_X: f32 = 8.0;
+
 impl<T: Clone + ToString + FromStr> Input<T> {
     pub fn new(
         position: Position,
@@ -33,12 +37,12 @@ impl<T: Clone + ToString + FromStr> Input<T> {
         let plane = PlaneBuilder::new()
             .position(position)
             .size(size)
-            .border_radius_uniform(5.0)
+            .border_radius_uniform(theme::RADIUS)
             .border_thickness(1.0);
         let cursor_plane = PlaneBuilder::new()
             .position(position)
             .size(Size::new((font_size * 0.08).max(1.0), cursor_h))
-            .color((0.9, 0.9, 0.9, 1.0))
+            .color(theme::ACCENT)
             .build();
         Self {
             handle: UIElementHandle::new(),
@@ -48,7 +52,11 @@ impl<T: Clone + ToString + FromStr> Input<T> {
             scroll_offset: 0.0,
             blink_start: Instant::now(),
             content: content.to_string(),
-            text: Text::new(Fonts::RobotoMono, 0, 0, 0, font_size, content.to_string()),
+            text: {
+                let mut t = Text::new(Fonts::Inter, 0, 0, 0, font_size.min(theme::FONT_SIZE), content.to_string());
+                t.set_color(theme::TEXT);
+                t
+            },
             plane: plane.build(),
             stencil_plane: plane.size(&size - (2.0, 0.0)).build(),
             cursor_plane,
@@ -66,8 +74,8 @@ impl<T: Clone + ToString + FromStr> Input<T> {
 
     fn blur(&mut self) {
         self.is_focused = false;
-        self.plane.set_color((0.2, 0.2, 0.2, 1.0));
-        self.stencil_plane.set_color((0.2, 0.2, 0.2, 1.0));
+        self.plane.set_color(theme::BG_FIELD);
+        self.stencil_plane.set_color(theme::BG_FIELD);
         if let Some(data_source) = &self.data_source {
             self.content = data_source.to_string();
         }
@@ -108,18 +116,26 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
         // advance widths (`measure_width`) so trailing whitespace counts and
         // proportional fonts give accurate results.
         let base = &self.region.position + &self.region.offset;
-        self.text.prepare_render_at(&base + (5.0, 2.0, 1.0));
+        let text_y = theme::center_y(&self.text, self.region.size.height);
+        self.text.prepare_render_at(&base + (PAD_X, text_y, 1.0));
         let text_width = self.text.measure_width();
-        let visible_width = (self.region.size.width - 10.0).max(0.0);
+        let visible_width = (self.region.size.width - PAD_X * 2.0).max(0.0);
         self.scroll_offset = (text_width - visible_width).max(0.0);
         if self.scroll_offset > 0.0 {
             self.text
-                .prepare_render_at(&base + (5.0 - self.scroll_offset, 2.0, 1.0));
+                .prepare_render_at(&base + (PAD_X - self.scroll_offset, text_y, 1.0));
         }
 
         // Cursor sits at the caret (end of text in visible coords) and
         // follows the stencil so it also gets clipped at the edges.
-        let caret_x = base.x + 5.0 + text_width - self.scroll_offset;
+        let caret_x = base.x + PAD_X + text_width - self.scroll_offset;
+        self.plane.border_color = if self.is_focused {
+            theme::ACCENT
+        } else if self.is_hovering {
+            theme::BORDER_STRONG
+        } else {
+            theme::BORDER
+        };
         let caret_h = self.cursor_plane.get_region().size.height;
         let caret_y = base.y + (self.region.size.height - caret_h) * 0.5;
         self.cursor_plane
@@ -158,8 +174,8 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 if self.region.contains(x, y) {
                     if !self.is_focused {
                         self.is_focused = true;
-                        self.plane.set_color((0.3, 0.3, 0.3, 1.0));
-                        self.stencil_plane.set_color((0.3, 0.3, 0.3, 1.0));
+                        self.plane.set_color(theme::BG_FIELD);
+                        self.stencil_plane.set_color(theme::BG_FIELD);
                     }
                     self.reset_blink();
                     return true;
@@ -172,8 +188,8 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 if self.region.contains(*x as f32, *y as f32) {
                     if !self.is_hovering {
                         self.is_hovering = true;
-                        self.plane.set_color((0.3, 0.3, 0.3, 1.0));
-                        self.stencil_plane.set_color((0.3, 0.3, 0.3, 1.0));
+                        self.plane.set_color(theme::BG_FIELD);
+                        self.stencil_plane.set_color(theme::BG_FIELD);
                         window
                             .set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::IBeam)));
                     }
@@ -181,8 +197,8 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                     window.set_cursor(None);
                     self.is_hovering = false;
                     if !self.is_focused {
-                        self.plane.set_color((0.2, 0.2, 0.2, 1.0));
-                        self.stencil_plane.set_color((0.2, 0.2, 0.2, 1.0));
+                        self.plane.set_color(theme::BG_FIELD);
+                        self.stencil_plane.set_color(theme::BG_FIELD);
                     }
                 }
                 false

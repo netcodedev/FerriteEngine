@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::{
@@ -33,16 +34,16 @@ impl Tooltip {
         let background = PlaneBuilder::new()
             .position(Position::default())
             .size(Size::default())
-            .color((0.1, 0.1, 0.1, 0.9))
-            .border_color((0.5, 0.5, 0.5, 1.0))
+            .color(theme::BG_MENU)
+            .border_color(theme::BORDER_STRONG)
             .border_thickness(1.0)
-            .border_radius_uniform(3.0)
+            .border_radius_uniform(theme::RADIUS)
             .build();
         Self {
             handle: UIElementHandle::new(),
             region: Region::default(),
             trigger,
-            text: FerriteText::new(Fonts::RobotoMono, 0, 0, 0, size, content.clone()),
+            text: FerriteText::new(Fonts::Inter, 0, 0, 0, size, content.clone()),
             content,
             visible: false,
             background,

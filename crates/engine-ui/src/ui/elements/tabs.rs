@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::{
@@ -51,8 +52,8 @@ impl Tabs {
         let frame = PlaneBuilder::new()
             .position(&position + (0.0, bar_height))
             .size(Size::new(size.width, size.height - bar_height))
-            .color((0.15, 0.15, 0.15, 1.0))
-            .border_color((0.5, 0.5, 0.5, 1.0))
+            .color(theme::BG_FIELD)
+            .border_color(theme::BORDER)
             .border_thickness(1.0)
             .border_radius((0.0, 3.0, 3.0, 3.0))
             .build();
@@ -64,12 +65,12 @@ impl Tabs {
                 let bg = PlaneBuilder::new()
                     .position(p)
                     .size(Size::new(tab_w, bar_height))
-                    .color((0.18, 0.18, 0.18, 1.0))
-                    .border_color((0.4, 0.4, 0.4, 1.0))
+                    .color(theme::BG_CONTROL)
+                    .border_color(theme::BORDER)
                     .border_thickness(1.0)
                     .border_radius((3.0, 3.0, 0.0, 0.0))
                     .build();
-                let text = FerriteText::new(Fonts::RobotoMono, 0, 0, 0, 14.0, label.clone());
+                let text = FerriteText::new(Fonts::Inter, 0, 0, 0, 14.0, label.clone());
                 TabBtn {
                     label,
                     text,
@@ -105,9 +106,9 @@ impl UIElement for Tabs {
             t.region.position = p;
             t.bg.set_position(p);
             t.bg.set_color(if i == sel {
-                (0.25, 0.4, 0.6, 1.0)
+                theme::ACCENT_SOFT
             } else {
-                (0.18, 0.18, 0.18, 1.0)
+                theme::BG_CONTROL
             });
             t.text.set_content(&t.label);
             t.text.prepare_render_at(&p + (6.0, 4.0, 1.0));

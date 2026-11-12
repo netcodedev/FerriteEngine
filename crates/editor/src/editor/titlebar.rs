@@ -4,11 +4,11 @@ use ferrite::core::{
     primitives::{Offset, Position, Size},
     renderer::{
         plane::{Plane, PlaneBuilder},
-        text::{Fonts, Text},
+        text::{icons, Text},
     },
     scene::Scene,
 };
-use ferrite_ui::ui::{element_handle::UIElementHandle, UIElement};
+use ferrite_ui::ui::{element_handle::UIElementHandle, theme, UIElement};
 use glfw::{Action, Glfw, MouseButton, Platform, WindowEvent};
 
 use super::{send, Command, Shared};
@@ -36,9 +36,8 @@ pub struct TitleBar {
     size: Size,
     background: Plane,
     hover_planes: [Plane; 3],
-    minimize_icon: Plane,
-    maximize_icon: Plane,
-    close_icon: Text,
+    control_icons: [Text; 3],
+    app_icon: Text,
     name: Text,
     title: Text,
     hovered: Option<Control>,
@@ -48,35 +47,26 @@ pub struct TitleBar {
 
 impl TitleBar {
     pub fn new(state: Shared) -> Self {
-        let hover = || {
-            PlaneBuilder::new()
-                .color((0.0, 0.0, 0.0, 0.0))
-                .build()
-        };
-        let mut name = Text::new(Fonts::RobotoMono, 0, 0, 0, 15.0, "Ferrite Engine".into());
-        name.set_z_index(3.0);
+        let hover = || PlaneBuilder::new().color(theme::TRANSPARENT).build();
+        let control_icon = |glyph| theme::icon(glyph, 15.0, theme::TEXT_MUTED);
         Self {
             handle: UIElementHandle::new(),
             state,
             offset: Offset::default(),
             size: Size::new(1280.0, super::layout::TITLEBAR_HEIGHT),
             background: PlaneBuilder::new()
-                .color((0.09, 0.09, 0.11, 1.0))
+                .color(theme::BG_APP)
+                .border_color(theme::BORDER)
                 .build(),
             hover_planes: [hover(), hover(), hover()],
-            minimize_icon: PlaneBuilder::new()
-                .size(Size::new(10.0, 1.5))
-                .color((0.85, 0.85, 0.85, 1.0))
-                .build(),
-            maximize_icon: PlaneBuilder::new()
-                .size(Size::new(10.0, 10.0))
-                .color((0.0, 0.0, 0.0, 0.0))
-                .border_color((0.85, 0.85, 0.85, 1.0))
-                .border_thickness(1.2)
-                .build(),
-            close_icon: Text::new(Fonts::RobotoMono, 0, 0, 0, 17.0, "\u{00d7}".into()),
-            name,
-            title: Text::new(Fonts::RobotoMono, 0, 0, 0, 14.0, String::new()),
+            control_icons: [
+                control_icon(icons::MINUS),
+                control_icon(icons::SQUARE),
+                control_icon(icons::X),
+            ],
+            app_icon: theme::icon(icons::BOXES, 16.0, theme::ACCENT),
+            name: theme::heading("Ferrite Engine", theme::FONT_SIZE, theme::TEXT),
+            title: theme::text("", theme::FONT_SIZE_SMALL + 0.5, theme::TEXT_DIM),
             hovered: None,
             drag_from: None,
             last_click: None,
@@ -127,12 +117,18 @@ impl UIElement for TitleBar {
             .set_position(Position::new(rect.x, rect.y, 0.0));
         self.background.set_size(self.size);
 
+        let icon_y = theme::center_y(&self.app_icon, rect.h);
+        self.app_icon
+            .prepare_render_at(Position::new(rect.x + 12.0, rect.y + icon_y, 3.0));
+        let name_x = rect.x + 36.0;
+        let name_y = theme::center_y(&self.name, rect.h);
         self.name
-            .prepare_render_at(Position::new(rect.x + 10.0, rect.y + 6.0, 3.0));
-        self.title.set_content(&format!("-  {title}"));
+            .prepare_render_at(Position::new(name_x, rect.y + name_y, 3.0));
+        self.title.set_content(&title);
+        let title_y = theme::center_y(&self.title, rect.h);
         self.title.prepare_render_at(Position::new(
-            rect.x + 20.0 + self.name.measure_width(),
-            rect.y + 7.0,
+            name_x + self.name.measure_width() + 12.0,
+            rect.y + title_y,
             3.0,
         ));
 
@@ -143,25 +139,15 @@ impl UIElement for TitleBar {
             plane.set_position(Position::new(x, rect.y, 1.0));
             plane.set_size(Size::new(BUTTON_WIDTH, rect.h));
             plane.set_color(match (hovered, control) {
-                (true, Control::Close) => (0.78, 0.17, 0.17, 1.0),
-                (true, _) => (0.25, 0.25, 0.3, 1.0),
-                (false, _) => (0.0, 0.0, 0.0, 0.0),
+                (true, Control::Close) => theme::DANGER,
+                (true, _) => theme::BG_CONTROL,
+                (false, _) => theme::TRANSPARENT,
             });
-            let cx = x + BUTTON_WIDTH * 0.5;
-            let cy = rect.y + rect.h * 0.5;
-            match control {
-                Control::Minimize => self
-                    .minimize_icon
-                    .set_position(Position::new(cx - 5.0, cy, 2.0)),
-                Control::Maximize => self
-                    .maximize_icon
-                    .set_position(Position::new(cx - 5.0, cy - 5.0, 2.0)),
-                Control::Close => {
-                    let w = self.close_icon.measure_width();
-                    self.close_icon
-                        .prepare_render_at(Position::new(cx - w * 0.5, cy - 11.0, 3.0));
-                }
-            }
+            let icon = &mut self.control_icons[i];
+            icon.set_color(if hovered { theme::TEXT } else { theme::TEXT_MUTED });
+            let ix = x + ((BUTTON_WIDTH - icon.measure_width()) * 0.5).round();
+            let iy = theme::center_y(icon, rect.h);
+            icon.prepare_render_at(Position::new(ix, rect.y + iy, 3.0));
         }
     }
 
@@ -170,9 +156,10 @@ impl UIElement for TitleBar {
         for plane in &self.hover_planes {
             plane.render();
         }
-        self.minimize_icon.render();
-        self.maximize_icon.render();
-        self.close_icon.render();
+        for icon in &self.control_icons {
+            icon.render();
+        }
+        self.app_icon.render();
         self.name.render();
         self.title.render();
     }

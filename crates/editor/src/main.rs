@@ -1,6 +1,9 @@
 mod editor;
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use cgmath::{EuclideanSpace, Point3, Vector3};
 use editor::{
@@ -10,6 +13,7 @@ use editor::{
     layout::Layout,
     outline::Outline,
     showcase,
+    stats::{GpuTimer, StatsPanel},
     titlebar::TitleBar,
     toggle_window::ToggleWindow,
     toolbar::Toolbar,
@@ -36,6 +40,7 @@ const COLLIDER_MESH_DISTANCE: f32 = 96.0;
 fn main() {
     // The editor draws its own title bar.
     let mut application = Application::with_decorations(1280, 720, "Ferrite Editor", false);
+    application.set_clear_color(ferrite_ui::ui::theme::BG_APP);
     application.add_layer(Box::new(EditorLayer::new()));
     application.start();
 }
@@ -46,6 +51,8 @@ struct EditorLayer {
     state: Shared,
     viewport: Viewport,
     outline: Outline,
+    gpu_timer: Option<GpuTimer>,
+    frame_count: u64,
     /// Scene as it was when play mode started; restored on stop.
     play_snapshot: Option<SceneFile>,
     /// Cursor mode to apply on the next event (commands run in `on_update`
@@ -71,6 +78,7 @@ impl EditorLayer {
         add(&mut ui, Box::new(Toolbar::new(state.clone())));
         add(&mut ui, Box::new(HierarchyPanel::new(state.clone())));
         add(&mut ui, Box::new(InspectorPanel::new(state.clone())));
+        add(&mut ui, Box::new(StatsPanel::new(state.clone())));
 
         // Floating windows from the Window menu (hidden by default).
         let (widgets, widgets_popup) = showcase::widget_showcase();
@@ -85,6 +93,8 @@ impl EditorLayer {
             state,
             viewport: Viewport::new(),
             outline: Outline::new(),
+            gpu_timer: None,
+            frame_count: 0,
             play_snapshot: None,
             pending_cursor: None,
             pending_quit: false,
@@ -471,7 +481,8 @@ impl EditorLayer {
 
 impl Layer for EditorLayer {
     fn on_update(&mut self, window: &Window, delta_time: f64) {
-        let layout = Layout::compute(window.width as f32, window.height as f32);
+        let show_stats = self.state.borrow().show_stats.read();
+        let layout = Layout::compute(window.width as f32, window.height as f32, show_stats);
         self.state.borrow_mut().layout = layout;
         let mode = self.state.borrow().mode;
 
@@ -483,6 +494,7 @@ impl Layer for EditorLayer {
             }
         }
 
+        let update_start = Instant::now();
         match mode {
             Mode::Edit => {
                 self.scene.set_physics_enabled(false);
@@ -494,8 +506,12 @@ impl Layer for EditorLayer {
             }
         }
         self.apply_viewport_aspect(&layout);
+        let update_ms = update_start.elapsed().as_secs_f32() * 1000.0;
 
         // Scene into the docked viewport, then gizmos on top of it.
+        let render_start = Instant::now();
+        let gpu_timer = self.gpu_timer.get_or_insert_with(GpuTimer::new);
+        gpu_timer.begin();
         self.scene.set_viewport(Some(layout.viewport_gl()));
         self.scene.render(window);
         self.render_colliders();
@@ -511,13 +527,28 @@ impl Layer for EditorLayer {
             self.viewport
                 .render(&self.scene, layout.viewport, selected, gizmo);
         }
+        let gpu_timer = self.gpu_timer.as_mut().expect("created above");
+        gpu_timer.end();
+        let gpu_ms = gpu_timer.last_ms();
+        let render_ms = render_start.elapsed().as_secs_f32() * 1000.0;
         window.reset_viewport();
         // UI depth must not be tested against the 3D scene.
         window.clear_mask(gl::DEPTH_BUFFER_BIT);
 
+        let ui_start = Instant::now();
         self.ui.update(&mut self.scene);
         self.run_commands();
         self.ui.render();
+        let ui_ms = ui_start.elapsed().as_secs_f32() * 1000.0;
+
+        self.capture_if_requested(window);
+
+        let mut state = self.state.borrow_mut();
+        state.stats.record_frame(delta_time);
+        state
+            .stats
+            .record_phases(update_ms, render_ms, ui_ms, gpu_ms);
+        state.stats.refresh_slow(&self.scene);
     }
 
     fn on_event(&mut self, glfw: &mut Glfw, window: &mut glfw::Window, event: &WindowEvent) {
@@ -580,6 +611,26 @@ impl Layer for EditorLayer {
 }
 
 impl EditorLayer {
+    /// Development aid: with `FERRITE_CAPTURE=<file.png>` (and optionally
+    /// `FERRITE_CAPTURE_FRAME=<n>`, default 300) the editor saves its own
+    /// framebuffer once after that many frames.
+    fn capture_if_requested(&mut self, window: &Window) {
+        self.frame_count += 1;
+        let Ok(path) = std::env::var("FERRITE_CAPTURE") else {
+            return;
+        };
+        let frame = std::env::var("FERRITE_CAPTURE_FRAME")
+            .ok()
+            .and_then(|f| f.parse().ok())
+            .unwrap_or(300u64);
+        if self.frame_count == frame {
+            match window.save_screenshot(Path::new(&path)) {
+                Ok(()) => eprintln!("captured {path}"),
+                Err(e) => eprintln!("capture failed: {e}"),
+            }
+        }
+    }
+
     fn apply_pending_cursor(&mut self, window: &mut glfw::Window) {
         if let Some(mode) = self.pending_cursor.take() {
             self.viewport.reset_interaction(window);

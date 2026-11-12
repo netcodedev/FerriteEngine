@@ -85,7 +85,10 @@ impl PlaneBuilder {
             size: Size::default(),
             color: (0.0, 0.0, 0.0, 0.0),
             border_thickness: 0.0,
-            border_color: (0.0, 0.0, 0.0, 1.0),
+            // Transparent by default: even with zero thickness the shader
+            // blends the anti-aliased edge towards the border colour, which
+            // left a dark outline around borderless planes.
+            border_color: (0.0, 0.0, 0.0, 0.0),
             border_radius: (0.0, 0.0, 0.0, 0.0),
         }
     }

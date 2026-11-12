@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::plane::{Plane, PlaneBuilder},
@@ -11,6 +12,9 @@ use glfw::{
 };
 
 use crate::ui::{element_handle::UIElementHandle, UIElement};
+
+/// Diameter of the round handle.
+const KNOB: f32 = 14.0;
 
 /// Horizontal slider bound to a `DataSource<f32>` in `[min, max]`.
 pub struct Slider {
@@ -33,22 +37,22 @@ impl Slider {
         let track = PlaneBuilder::new()
             .position(&position + (0.0, track_y_off))
             .size(Size::new(size.width, track_h))
-            .color((0.2, 0.2, 0.2, 1.0))
-            .border_color((0.5, 0.5, 0.5, 1.0))
+            .color(theme::BG_CONTROL)
+            .border_color(theme::BG_CONTROL)
             .border_thickness(1.0)
-            .border_radius_uniform(2.0)
+            .border_radius_uniform(theme::RADIUS_SMALL)
             .build();
         let fill = PlaneBuilder::new()
             .position(&position + (0.0, track_y_off, 1.0))
             .size(Size::new(0.0, track_h))
-            .color((0.3, 0.55, 0.8, 1.0))
-            .border_radius_uniform(2.0)
+            .color(theme::ACCENT)
+            .border_radius_uniform(theme::RADIUS_SMALL)
             .build();
         let knob = PlaneBuilder::new()
             .position(&position + (0.0, 0.0, 2.0))
-            .size(Size::new(10.0, size.height))
-            .color((0.85, 0.85, 0.85, 1.0))
-            .border_radius_uniform(3.0)
+            .size(Size::new(KNOB, KNOB))
+            .color(theme::TEXT)
+            .border_radius_uniform(KNOB * 0.5)
             .build();
         Self {
             handle: UIElementHandle::new(),
@@ -84,7 +88,9 @@ impl Slider {
         self.track.set_position(&base + (0.0, track_y_off));
         self.fill.set_position(&base + (0.0, track_y_off, 1.0));
         self.fill.set_size(Size::new(fill_w, track_h));
-        self.knob.set_position(&base + (fill_w - 5.0, 0.0, 2.0));
+        let knob_y = (self.region.size.height - KNOB) * 0.5;
+        self.knob
+            .set_position(&base + (fill_w - KNOB * 0.5, knob_y, 2.0));
     }
 }
 

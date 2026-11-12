@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use std::collections::BTreeMap;
 
 use ferrite::core::{
@@ -23,6 +24,7 @@ pub struct ScrollArea {
     gap: f32,
     frame: Plane,
     stencil: Plane,
+    thumb: Plane,
 }
 
 impl ScrollArea {
@@ -30,10 +32,10 @@ impl ScrollArea {
         let frame = PlaneBuilder::new()
             .position(position)
             .size(size)
-            .color((0.12, 0.12, 0.12, 1.0))
-            .border_color((0.5, 0.5, 0.5, 1.0))
+            .color(theme::TRANSPARENT)
+            .border_color(theme::TRANSPARENT)
             .border_thickness(1.0)
-            .border_radius_uniform(3.0)
+            .border_radius_uniform(theme::RADIUS)
             .build();
         let stencil = PlaneBuilder::new()
             .position(&position + (1.0, 1.0))
@@ -48,6 +50,10 @@ impl ScrollArea {
             gap: 4.0,
             frame,
             stencil,
+            thumb: PlaneBuilder::new()
+                .color(theme::BORDER_STRONG)
+                .border_radius_uniform(2.0)
+                .build(),
         }
     }
 
@@ -64,6 +70,22 @@ impl ScrollArea {
             y += child.get_size().height + self.gap;
         }
         self.content_height = y + self.scroll_y;
+
+        let view = self.region.size.height;
+        if self.content_height > view + 1.0 {
+            let ratio = view / self.content_height;
+            let thumb_h = (view * ratio).max(24.0);
+            let max_scroll = self.content_height - view;
+            let t = (self.scroll_y / max_scroll).clamp(0.0, 1.0);
+            self.thumb.set_size(Size::new(4.0, thumb_h));
+            self.thumb.set_position(Position::new(
+                base.x + self.region.size.width - 6.0,
+                base.y + t * (view - thumb_h),
+                base.z + 5.0,
+            ));
+        } else {
+            self.thumb.set_size(Size::new(0.0, 0.0));
+        }
     }
 }
 
@@ -106,6 +128,7 @@ impl UIElement for ScrollArea {
             child.render();
         }
         crate::ui::clip::pop(&self.stencil);
+        self.thumb.render();
     }
 
     fn render_overlay(&self) {

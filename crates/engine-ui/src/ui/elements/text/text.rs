@@ -22,7 +22,7 @@ impl Text {
             },
             content: text.clone(),
             text: ferrite::core::renderer::text::Text::new(
-                Fonts::RobotoMono,
+                Fonts::Inter,
                 0,
                 0,
                 0,
@@ -48,6 +48,14 @@ impl Text {
 
     pub fn get_text(&self) -> String {
         self.content.clone()
+    }
+
+    pub fn set_color(&mut self, color: (f32, f32, f32, f32)) {
+        self.text.set_color(color);
+    }
+
+    pub fn set_font(&mut self, font: Fonts, size: f32) {
+        self.text.set_font(font, size);
     }
 }
 

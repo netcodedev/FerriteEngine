@@ -1,9 +1,9 @@
 use ferrite::core::{
     primitives::{Offset, Position, Size},
-    renderer::text::{Fonts, Text},
+    renderer::text::Text,
     scene::Scene,
 };
-use ferrite_ui::ui::{element_handle::UIElementHandle, UIElement};
+use ferrite_ui::ui::{element_handle::UIElementHandle, theme, UIElement};
 use glfw::{Glfw, WindowEvent};
 
 /// Inspector row: a label in a fixed-width column, then widgets laid out
@@ -19,7 +19,7 @@ pub struct FieldRow {
     widgets: Vec<Box<dyn UIElement>>,
 }
 
-pub const LABEL_COLUMN: f32 = 110.0;
+pub const LABEL_COLUMN: f32 = 96.0;
 
 impl FieldRow {
     pub fn new(label: &str, widgets: Vec<Box<dyn UIElement>>) -> Self {
@@ -35,8 +35,8 @@ impl FieldRow {
             handle: UIElementHandle::new(),
             offset: Offset::default(),
             z: 0.0,
-            size: Size::new(label_width, 22.0),
-            label: Text::new(Fonts::RobotoMono, 0, 0, 0, 14.0, label.to_owned()),
+            size: Size::new(label_width, 26.0),
+            label: theme::text(label, theme::FONT_SIZE_SMALL + 0.5, theme::TEXT_MUTED),
             label_width,
             gap: 4.0,
             widgets,
@@ -50,7 +50,7 @@ impl FieldRow {
             .widgets
             .iter()
             .map(|w| w.get_size().height)
-            .fold(20.0f32, f32::max);
+            .fold(24.0f32, f32::max);
         let mut x = self.offset.x + self.label_width;
         for widget in self.widgets.iter_mut() {
             let h = widget.get_size().height;
@@ -65,8 +65,8 @@ impl FieldRow {
         }
         self.size = Size::new(x - self.offset.x, height);
         self.label.prepare_render_at(Position::new(
-            self.offset.x,
-            self.offset.y + (height - 16.0).max(0.0) * 0.5,
+            self.offset.x + 4.0,
+            self.offset.y + theme::center_y(&self.label, height),
             self.z + 1.0,
         ));
     }

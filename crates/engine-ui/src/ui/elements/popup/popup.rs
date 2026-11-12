@@ -1,6 +1,10 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Size},
-    renderer::plane::{PlaneBuilder, PlaneRenderer},
+    renderer::{
+        plane::{PlaneBuilder, PlaneRenderer},
+        text::icons,
+    },
     scene::Scene,
     utils::DataSource,
 };
@@ -27,19 +31,19 @@ impl Popup {
             panel.add_child(child);
         }
         // Add the close control last so it anchors against the final width.
-        let mut button = UI::button(
-            "x",
+        let mut button = UI::icon_button(
+            icons::X,
             Box::new(move |_| {
                 close_ref.write(false);
             }),
         );
-        button.set_size(Size { width: 18.0, height: 18.0 });
+        button.set_size(Size { width: 22.0, height: 22.0 });
         panel.add_control(button);
 
         let background = PlaneBuilder::new()
             .position((0.0, 0.0, 51.0).into())
             .size((5000.0, 5000.0).into())
-            .color((0.0, 0.0, 0.0, 0.6))
+            .color(theme::OVERLAY_DIM)
             .build();
 
         Self {

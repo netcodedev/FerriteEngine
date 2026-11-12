@@ -1,6 +1,10 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
-    renderer::plane::{Plane, PlaneBuilder},
+    renderer::{
+        plane::{Plane, PlaneBuilder},
+        text::{icons, Text},
+    },
     scene::Scene,
     utils::DataSource,
 };
@@ -18,6 +22,7 @@ pub struct Checkbox {
     is_hovering: bool,
     box_plane: Plane,
     check_plane: Plane,
+    check_icon: Text,
 }
 
 impl Checkbox {
@@ -26,16 +31,16 @@ impl Checkbox {
         let box_plane = PlaneBuilder::new()
             .position(position)
             .size(size)
-            .color((0.15, 0.15, 0.15, 1.0))
-            .border_color((0.6, 0.6, 0.6, 1.0))
+            .color(theme::BG_FIELD)
+            .border_color(theme::BORDER_STRONG)
             .border_thickness(1.0)
-            .border_radius_uniform(3.0)
+            .border_radius_uniform(theme::RADIUS)
             .build();
         let check_plane = PlaneBuilder::new()
-            .position(&position + (3.0, 3.0, 1.0))
-            .size(Size::new(12.0, 12.0))
-            .color((0.3, 0.7, 0.4, 1.0))
-            .border_radius_uniform(2.0)
+            .position(&position + (0.0, 0.0, 1.0))
+            .size(size)
+            .color(theme::ACCENT)
+            .border_radius_uniform(theme::RADIUS)
             .build();
         Self {
             handle: UIElementHandle::new(),
@@ -44,17 +49,25 @@ impl Checkbox {
             is_hovering: false,
             box_plane,
             check_plane,
+            check_icon: theme::icon(icons::CHECK_MARK, 14.0, (1.0, 1.0, 1.0, 1.0)),
         }
     }
 }
 
 impl UIElement for Checkbox {
-    fn update(&mut self, _scene: &mut Scene) {}
+    fn update(&mut self, _scene: &mut Scene) {
+        let pos = &self.region.position + &self.region.offset;
+        let x = ((self.region.size.width - self.check_icon.measure_width()) * 0.5).round();
+        let y = theme::center_y(&self.check_icon, self.region.size.height);
+        self.check_icon
+            .prepare_render_at(&pos + (x, y, 2.0));
+    }
 
     fn render(&self) {
         self.box_plane.render();
         if self.value.read() {
             self.check_plane.render();
+            self.check_icon.render();
         }
     }
 
@@ -80,11 +93,11 @@ impl UIElement for Checkbox {
                 if inside && !self.is_hovering {
                     window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
                     self.is_hovering = true;
-                    self.box_plane.set_color((0.22, 0.22, 0.22, 1.0));
+                    self.box_plane.set_color(theme::BG_CONTROL);
                 } else if !inside && self.is_hovering {
                     window.set_cursor(None);
                     self.is_hovering = false;
-                    self.box_plane.set_color((0.15, 0.15, 0.15, 1.0));
+                    self.box_plane.set_color(theme::BG_FIELD);
                 }
                 false
             }
@@ -104,7 +117,7 @@ impl UIElement for Checkbox {
         self.region.offset = offset;
         let pos = &self.region.position + &self.region.offset;
         self.box_plane.set_position(pos);
-        self.check_plane.set_position(&pos + (3.0, 3.0, 1.0));
+        self.check_plane.set_position(&pos + (0.0, 0.0, 1.0));
     }
     fn get_size(&self) -> &Size {
         &self.region.size
@@ -113,5 +126,6 @@ impl UIElement for Checkbox {
         self.region.position.z = z_index;
         self.box_plane.set_z_index(z_index);
         self.check_plane.set_z_index(z_index + 1.0);
+        self.check_icon.set_z_index(z_index + 2.0);
     }
 }

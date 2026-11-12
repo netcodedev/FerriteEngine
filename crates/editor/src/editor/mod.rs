@@ -16,6 +16,7 @@ pub mod inspector;
 pub mod layout;
 pub mod outline;
 pub mod showcase;
+pub mod stats;
 pub mod titlebar;
 pub mod toolbar;
 pub mod toggle_window;
@@ -90,6 +91,8 @@ pub struct EditorState {
     pub commands: Vec<Command>,
     pub layout: layout::Layout,
     pub show_widgets: DataSource<bool>,
+    pub show_stats: DataSource<bool>,
+    pub stats: stats::Stats,
     /// A popup the modal host should show next (save-as, open, confirm).
     pub pending_modal: Option<dialogs::Modal>,
 }
@@ -106,8 +109,10 @@ impl EditorState {
             dirty: false,
             status: None,
             commands: Vec::new(),
-            layout: layout::Layout::compute(1280.0, 720.0),
+            layout: layout::Layout::compute(1280.0, 720.0, true),
             show_widgets: DataSource::new(false),
+            show_stats: DataSource::new(true),
+            stats: stats::Stats::new(),
             pending_modal: None,
         }))
     }

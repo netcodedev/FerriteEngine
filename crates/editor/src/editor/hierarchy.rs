@@ -1,13 +1,14 @@
 use ferrite::core::{
     entity::Entity,
+    renderer::text::icons,
     primitives::{Offset, Position, Size},
     scene::Scene,
 };
 use ferrite_ui::ui::{
     element_handle::UIElementHandle,
     elements::{
-        button::Button,
-        menu_button::MenuButton,
+        button::{Button, ButtonStyle},
+        menu_button::{MenuButton, MenuItem},
         panel::Panel,
         tree::{TreeItem, TreeView},
     },
@@ -29,25 +30,56 @@ pub struct HierarchyPanel {
     last_selection: u64,
 }
 
-const ACTIONS_HEIGHT: f32 = 26.0;
+const ACTIONS_HEIGHT: f32 = 30.0;
+
+/// Icon for an entity, chosen from its most telling component.
+pub fn entity_icon(entity: &Entity) -> &'static str {
+    let names: Vec<String> = entity.components().iter().map(|c| c.display_name()).collect();
+    let has = |name: &str| names.iter().any(|n| n == name);
+    if has("Player controller") {
+        icons::USER
+    } else if has("Camera") {
+        icons::CAMERA
+    } else if has("Sky light") {
+        icons::SUN
+    } else if has("Terrain") {
+        icons::MOUNTAIN
+    } else if has("Debug controller") {
+        icons::BUG
+    } else {
+        icons::BOX
+    }
+}
+
+pub fn template_icon(template: EntityTemplate) -> &'static str {
+    match template {
+        EntityTemplate::Empty => icons::BOX,
+        EntityTemplate::Camera => icons::CAMERA,
+        EntityTemplate::SkyLight => icons::SUN,
+        EntityTemplate::Terrain => icons::MOUNTAIN,
+        EntityTemplate::Player => icons::USER,
+    }
+}
 
 impl HierarchyPanel {
     pub fn new(state: Shared) -> Self {
         let mut panel = Panel::new("Hierarchy".into(), Position::default(), Size::new(260.0, 400.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
+        panel.set_flat(true);
 
         let selection = state.borrow().selection.clone();
         let tree = TreeView::new(Position::default(), Size::new(250.0, 300.0), selection);
 
         let add_state = state.clone();
-        let mut items: Vec<String> = EntityTemplate::ALL
+        let mut items: Vec<MenuItem> = EntityTemplate::ALL
             .iter()
-            .map(|(name, _)| format!("{name}"))
+            .map(|(name, template)| MenuItem::new(*name).icon(template_icon(*template)))
             .collect();
-        items.push("Empty child of selected".into());
-        let add_menu = MenuButton::new(
-            "+ Add",
+        items.push(MenuItem::new("Empty child of selected").icon(icons::LIST_TREE));
+        let add_menu = MenuButton::with_items(
+            "Add",
+            Some(icons::PLUS),
             items,
             Box::new(move |index, _scene| {
                 let selected = add_state.borrow().selected();
@@ -55,7 +87,7 @@ impl HierarchyPanel {
                     Some((_, template)) => (None, *template),
                     None => (selected, EntityTemplate::Empty),
                 };
-                if template == EntityTemplate::Empty && index > 0 && parent.is_none() {
+                if index >= EntityTemplate::ALL.len() && parent.is_none() {
                     add_state
                         .borrow_mut()
                         .set_status("Select an entity to add a child to it");
@@ -68,7 +100,7 @@ impl HierarchyPanel {
         let dup_state = state.clone();
         let mut duplicate = Button::new(
             Position::default(),
-            Size::new(78.0, 20.0),
+            Size::new(26.0, 26.0),
             Box::new(move |_| {
                 // Read first: the borrow must end before `send` borrows mutably.
                 let selected = dup_state.borrow().selected();
@@ -77,11 +109,12 @@ impl HierarchyPanel {
                 }
             }),
         );
-        duplicate.set_label("Duplicate");
+        duplicate.set_style(ButtonStyle::Ghost);
+        duplicate.set_icon(icons::COPY_PLUS);
         let del_state = state.clone();
         let mut delete = Button::new(
             Position::default(),
-            Size::new(60.0, 20.0),
+            Size::new(26.0, 26.0),
             Box::new(move |_| {
                 // Read first: the borrow must end before `send` borrows mutably.
                 let selected = del_state.borrow().selected();
@@ -90,7 +123,8 @@ impl HierarchyPanel {
                 }
             }),
         );
-        delete.set_label("Delete");
+        delete.set_style(ButtonStyle::Danger);
+        delete.set_icon(icons::TRASH);
 
         Self {
             handle: UIElementHandle::new(),
@@ -115,6 +149,7 @@ impl HierarchyPanel {
                 label: entity.get_name(),
                 depth,
                 has_children,
+                icon: Some(entity_icon(entity)),
             });
             for child in entity.get_children() {
                 visit(child, depth + 1, out);
@@ -148,15 +183,13 @@ impl UIElement for HierarchyPanel {
 
         let header = self.panel.header_height();
         let x = rect.x + 6.0;
-        let mut ax = x;
         let ay = rect.y + header + 4.0;
-        for widget in [
-            &mut self.add_menu as &mut dyn UIElement,
-            &mut self.duplicate,
-            &mut self.delete,
-        ] {
-            widget.set_offset(Offset { x: ax, y: ay });
-            ax += widget.get_size().width + 5.0;
+        self.add_menu.set_offset(Offset { x, y: ay });
+        let mut right = rect.x + rect.w - 6.0;
+        for widget in [&mut self.delete as &mut dyn UIElement, &mut self.duplicate] {
+            right -= widget.get_size().width;
+            widget.set_offset(Offset { x: right, y: ay });
+            right -= 2.0;
         }
 
         let tree_top = rect.y + header + ACTIONS_HEIGHT + 6.0;

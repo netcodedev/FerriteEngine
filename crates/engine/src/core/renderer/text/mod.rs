@@ -5,14 +5,24 @@ use crate::core::renderer::shader::Shader;
 
 use super::shader::DynamicVertexArray;
 
+pub mod icons;
 pub mod text;
 
 pub struct Font {
     font: rusttype::Font<'static>,
 }
 
+/// Fonts bundled with the engine. Each has its own id in the shared glyph
+/// cache, so glyphs of different fonts never collide.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fonts {
     RobotoMono,
+    /// Inter Regular — default UI text.
+    Inter,
+    /// Inter SemiBold — headings and emphasis.
+    InterSemiBold,
+    /// Lucide icon font; use the constants in `icons`.
+    Lucide,
 }
 
 pub struct TextRenderer {
@@ -26,6 +36,7 @@ pub struct TextRenderer {
 pub struct Text {
     pub content: String,
     font: Fonts,
+    color: (f32, f32, f32, f32),
     size: f32,
     pub glyphs: Vec<PositionedGlyph<'static>>,
     dirty: bool,

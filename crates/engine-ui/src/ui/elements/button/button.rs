@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use std::collections::BTreeMap;
 
 use ferrite::core::{
@@ -14,7 +15,10 @@ use glfw::{
     WindowEvent::{self, CursorPos, MouseButton},
 };
 
-use super::Button;
+use super::{Button, ButtonStyle};
+
+const ICON_LABEL_GAP: f32 = 6.0;
+const PADDING_X: f32 = 10.0;
 
 impl Button {
     pub fn new(position: Position, size: Size, on_click: Box<dyn Fn(&mut Scene)>) -> Self {
@@ -29,15 +33,91 @@ impl Button {
 
             is_hovering: false,
             is_active: false,
+            style: ButtonStyle::Secondary,
 
             label: None,
+            icon: None,
             plane: PlaneBuilder::new()
                 .position(position)
                 .size(size)
-                .border_radius_uniform(5.0)
+                .border_radius_uniform(theme::RADIUS)
                 .border_thickness(1.0)
-                .color((0.2, 0.3, 0.5, 1.0))
+                .border_color(theme::BORDER)
+                .color(theme::BG_CONTROL)
                 .build(),
+        }
+    }
+
+    pub fn set_style(&mut self, style: ButtonStyle) {
+        if self.style == style && self.plane.border_thickness == self.border_for(style) {
+            return;
+        }
+        self.style = style;
+        self.plane.border_thickness = self.border_for(style);
+        self.refresh_colors();
+    }
+
+    fn border_for(&self, style: ButtonStyle) -> f32 {
+        match style {
+            ButtonStyle::Secondary => 1.0,
+            _ => 0.0,
+        }
+    }
+
+    /// Lucide icon drawn before the label (or alone, centred).
+    pub fn set_icon(&mut self, glyph: &str) {
+        match &mut self.icon {
+            Some((current, _)) if current == glyph => {}
+            Some((current, text)) => {
+                *current = glyph.to_owned();
+                text.set_content(glyph);
+            }
+            None => {
+                let mut text = theme::icon(glyph, theme::ICON_SIZE, theme::TEXT);
+                text.set_z_index(self.region.position.z + 1.0);
+                self.icon = Some((glyph.to_owned(), text));
+            }
+        }
+    }
+
+    /// Width that fits icon and label with padding.
+    pub fn content_width(&self) -> f32 {
+        let icon = self.icon.as_ref().map_or(0.0, |(_, t)| t.measure_width());
+        let label = self.label.as_ref().map_or(0.0, |(_, t)| t.measure_width());
+        let gap = if icon > 0.0 && label > 0.0 { ICON_LABEL_GAP } else { 0.0 };
+        let padding = if label > 0.0 { PADDING_X * 2.0 } else { 16.0 };
+        (icon + gap + label + padding).ceil()
+    }
+
+    /// Resize to `content_width` at the given height.
+    pub fn fit(&mut self, height: f32) {
+        self.set_size(Size::new(self.content_width(), height));
+    }
+
+    fn refresh_colors(&mut self) {
+        let fill = self.base_color();
+        self.plane.set_color(fill);
+        self.plane.border_color = if self.is_active && self.style == ButtonStyle::Secondary {
+            theme::ACCENT
+        } else {
+            theme::BORDER
+        };
+        let text = self.text_color();
+        if let Some((_, t)) = &mut self.label {
+            t.set_color(text);
+        }
+        if let Some((_, t)) = &mut self.icon {
+            t.set_color(text);
+        }
+    }
+
+    fn text_color(&self) -> (f32, f32, f32, f32) {
+        match (self.style, self.is_active, self.is_hovering) {
+            (ButtonStyle::Primary, _, _) => (1.0, 1.0, 1.0, 1.0),
+            (ButtonStyle::Danger, _, true) => (1.0, 1.0, 1.0, 1.0),
+            (_, true, _) => theme::ACCENT_TEXT,
+            (ButtonStyle::Ghost | ButtonStyle::Danger, false, false) => theme::TEXT_MUTED,
+            _ => theme::TEXT,
         }
     }
 
@@ -56,9 +136,10 @@ impl Button {
                 text.set_content(label);
             }
             None => {
-                let mut text = Text::new(Fonts::RobotoMono, 0, 0, 0, 15.0, label.to_owned());
+                let mut text = Text::new(Fonts::Inter, 0, 0, 0, theme::FONT_SIZE, label.to_owned());
                 text.set_z_index(self.region.position.z + 1.0);
                 self.label = Some((label.to_owned(), text));
+                self.refresh_colors();
             }
         }
     }
@@ -67,15 +148,20 @@ impl Button {
     pub fn set_active(&mut self, active: bool) {
         if self.is_active != active {
             self.is_active = active;
-            self.plane.set_color(self.base_color());
+            self.refresh_colors();
         }
     }
 
     fn base_color(&self) -> (f32, f32, f32, f32) {
-        match (self.is_active, self.is_hovering) {
-            (true, _) => (0.35, 0.5, 0.25, 1.0),
-            (false, true) => (0.3, 0.4, 0.6, 1.0),
-            (false, false) => (0.2, 0.3, 0.5, 1.0),
+        match (self.style, self.is_active, self.is_hovering) {
+            (ButtonStyle::Primary, _, false) => theme::ACCENT,
+            (ButtonStyle::Primary, _, true) => theme::ACCENT_HOVER,
+            (ButtonStyle::Danger, _, true) => theme::DANGER,
+            (_, true, _) => theme::ACCENT_SOFT,
+            (ButtonStyle::Secondary, false, true) => theme::BG_CONTROL_HOVER,
+            (ButtonStyle::Secondary, false, false) => theme::BG_CONTROL,
+            (_, false, true) => theme::BG_ROW_HOVER,
+            (_, false, false) => theme::TRANSPARENT,
         }
     }
 }
@@ -84,10 +170,18 @@ impl UIElement for Button {
     fn update(&mut self, scene: &mut Scene) {
         let origin = self.region.get_absolute_position();
         let size = self.region.size;
+        // Icon and label are laid out as one centred group.
+        let icon_w = self.icon.as_ref().map_or(0.0, |(_, t)| t.measure_width());
+        let label_w = self.label.as_ref().map_or(0.0, |(_, t)| t.measure_width());
+        let gap = if icon_w > 0.0 && label_w > 0.0 { ICON_LABEL_GAP } else { 0.0 };
+        let mut x = ((size.width - (icon_w + gap + label_w)) * 0.5).max(0.0).round();
+        if let Some((_, icon)) = &mut self.icon {
+            let y = theme::center_y(icon, size.height);
+            icon.prepare_render_at(&origin + (x, y, 1.0));
+            x += icon_w + gap;
+        }
         if let Some((_, text)) = &mut self.label {
-            let text_size = text.get_size();
-            let x = (size.width - text.measure_width()).max(0.0) * 0.5;
-            let y = (size.height - text_size.height).max(0.0) * 0.5;
+            let y = theme::center_y(text, size.height);
             text.prepare_render_at(&origin + (x, y, 1.0));
         }
         for child in self.children.values_mut() {
@@ -97,6 +191,9 @@ impl UIElement for Button {
 
     fn render(&self) {
         self.plane.render();
+        if let Some((_, icon)) = &self.icon {
+            icon.render();
+        }
         if let Some((_, text)) = &self.label {
             text.render();
         }
@@ -127,12 +224,12 @@ impl UIElement for Button {
                     if !self.is_hovering {
                         window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
                         self.is_hovering = true;
-                        self.plane.set_color(self.base_color());
+                        self.refresh_colors();
                     }
                 } else if self.is_hovering {
                     window.set_cursor(None);
                     self.is_hovering = false;
-                    self.plane.set_color(self.base_color());
+                    self.refresh_colors();
                 }
                 false
             }
@@ -218,6 +315,9 @@ impl UIElement for Button {
         self.plane.set_z_index(z_index);
         if let Some((_, text)) = &mut self.label {
             text.set_z_index(z_index + 1.0);
+        }
+        if let Some((_, icon)) = &mut self.icon {
+            icon.set_z_index(z_index + 1.0);
         }
         for child in self.children.values_mut() {
             child.set_z_index(z_index + 1.0);

@@ -5,19 +5,29 @@ use ferrite::core::{
         EntityHandle,
     },
     primitives::{Offset, Position, Size},
+    renderer::text::icons,
     scene::{scene_file::ComponentData, Scene},
     utils::DataSource,
 };
 use ferrite_ui::ui::{
     element_handle::UIElementHandle,
     elements::{
-        button::Button, label::Label, menu_button::MenuButton, panel::Panel, scroll::ScrollArea,
+        button::{Button, ButtonStyle},
+        label::Label,
+        menu_button::{MenuButton, MenuItem},
+        panel::Panel,
+        scroll::ScrollArea,
+        section::Section,
     },
-    UIElement, UI,
+    theme, UIElement, UI,
 };
 use glfw::{Glfw, WindowEvent};
 
-use super::{field_row::FieldRow, send, Command, Shared};
+use super::{
+    field_row::{FieldRow, LABEL_COLUMN},
+    hierarchy::entity_icon,
+    send, Command, Shared,
+};
 
 /// Shape of what the inspector currently shows. When the selected entity's
 /// shape changes (another entity, component added/removed) the widgets are
@@ -84,11 +94,22 @@ fn changed(a: f32, b: f32) -> bool {
 }
 
 fn number_input(source: &DataSource<f32>, width: f32) -> Box<dyn UIElement> {
-    UI::input_sized(source.clone(), Size::new(width, 20.0))
+    UI::input_sized(source.clone(), Size::new(width, 24.0))
 }
 
-fn section_title(text: &str) -> Box<dyn UIElement> {
-    UI::label(text, 15.0)
+/// Icon for a component section, by display name.
+fn component_icon(name: &str) -> &'static str {
+    match name {
+        "Camera" => icons::CAMERA,
+        "SkyLight" | "Sky light" => icons::SUN,
+        "Terrain" => icons::MOUNTAIN,
+        "Debug controller" => icons::BUG,
+        "Player controller" => icons::USER,
+        "Collider" | "Bone colliders" => icons::SCAN,
+        "AnimationComponent" => icons::ACTIVITY,
+        "ModelComponent" => icons::PACKAGE,
+        _ => icons::COMPONENT,
+    }
 }
 
 impl InspectorPanel {
@@ -96,8 +117,9 @@ impl InspectorPanel {
         let mut panel = Panel::new("Inspector".into(), Position::default(), Size::new(330.0, 400.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
+        panel.set_flat(true);
         let mut body = ScrollArea::new(Position::default(), Size::new(320.0, 300.0));
-        body.set_gap(6.0);
+        body.set_gap(4.0);
         Self {
             handle: UIElementHandle::new(),
             state,
@@ -135,35 +157,47 @@ impl InspectorPanel {
         self.body.clear();
         self.transform = None;
         self.properties.clear();
+        let width = (self.state.borrow().layout.inspector.w - 24.0).max(200.0);
 
         let Some(id) = signature.entity else {
-            self.body
-                .add_child(UI::label("Select an entity in the hierarchy", 14.0));
-            self.body
-                .add_child(UI::label("or click one in the viewport.", 14.0));
+            let _ = width;
+            self.body.add_child(Box::new(Label::muted(
+                "Select an entity in the hierarchy",
+                theme::FONT_SIZE,
+            )));
+            self.body.add_child(Box::new(Label::muted(
+                "or click one in the viewport.",
+                theme::FONT_SIZE,
+            )));
             return;
         };
         let Some(entity) = scene.get_entity(&id) else {
             return;
         };
 
-        // Name and transform.
+        // Entity name.
         let name = entity.get_name_ref();
-        self.body.add_child(Box::new(FieldRow::new(
+        let mut header = Section::new("Entity", Some(entity_icon(entity)), width);
+        header.add_child(Box::new(FieldRow::new(
             "Name",
-            vec![UI::input_sized(name.clone(), Size::new(190.0, 20.0))],
+            vec![UI::input_sized(name.clone(), Size::new(width - LABEL_COLUMN - 16.0, 24.0))],
         )));
-        self.body.add_child(section_title("Transform"));
+        self.body.add_child(Box::new(header));
+
+        // Transform.
         let position: [DataSource<f32>; 3] = std::array::from_fn(|_| DataSource::new(0.0));
         let rotation: [DataSource<f32>; 3] = std::array::from_fn(|_| DataSource::new(0.0));
-        self.body.add_child(Box::new(FieldRow::new(
+        let field_w = ((width - LABEL_COLUMN - 16.0 - 8.0) / 3.0).floor();
+        let mut transform = Section::new("Transform", Some(icons::AXIS_3D), width);
+        transform.add_child(Box::new(FieldRow::new(
             "Position",
-            position.iter().map(|s| number_input(s, 60.0)).collect(),
+            position.iter().map(|s| number_input(s, field_w)).collect(),
         )));
-        self.body.add_child(Box::new(FieldRow::new(
+        transform.add_child(Box::new(FieldRow::new(
             "Rotation",
-            rotation.iter().map(|s| number_input(s, 60.0)).collect(),
+            rotation.iter().map(|s| number_input(s, field_w)).collect(),
         )));
+        self.body.add_child(Box::new(transform));
         self.transform = Some(TransformBinding {
             position,
             position_last: [f32::NAN; 3],
@@ -173,48 +207,58 @@ impl InspectorPanel {
             name,
         });
 
-        // Components.
+        // One section per component, with a remove action in its header.
         for (index, component) in entity.components().iter().enumerate() {
-            self.body.add_child(UI::divider_h(300.0));
+            let display = component.display_name();
+            let mut section = Section::new(&display, Some(component_icon(&display)), width);
             let remove_state = self.state.clone();
             let mut remove = Button::new(
                 Position::default(),
-                Size::new(70.0, 20.0),
+                Size::new(24.0, 24.0),
                 Box::new(move |_| send(&remove_state, Command::RemoveComponent(id, index))),
             );
-            remove.set_label("Remove");
-            self.body.add_child(Box::new(FieldRow::with_label_width(
-                &component.display_name(),
-                220.0,
-                vec![Box::new(remove)],
-            )));
-            for property in component.properties() {
-                self.add_property(index, property);
+            remove.set_style(ButtonStyle::Danger);
+            remove.set_icon(icons::TRASH);
+            section.set_accessory(Box::new(remove));
+            let properties = component.properties();
+            if properties.is_empty() {
+                section.add_child(Box::new(Label::muted("No editable properties", theme::FONT_SIZE_SMALL)));
             }
+            for property in properties {
+                let row = self.add_property(index, property, width);
+                section.add_child(row);
+            }
+            self.body.add_child(Box::new(section));
         }
 
         // Add component.
-        self.body.add_child(UI::divider_h(300.0));
-        let catalog = ComponentData::catalog();
-        let names = catalog.iter().map(|(name, _)| name.to_string()).collect();
         let add_state = self.state.clone();
-        let add = MenuButton::new(
-            "+ Add component",
-            names,
+        let items = ComponentData::catalog()
+            .iter()
+            .map(|(name, _)| MenuItem::new(*name).icon(component_icon(name)))
+            .collect();
+        let mut add = MenuButton::with_items(
+            "Add component",
+            Some(icons::PLUS),
+            items,
             Box::new(move |index, _scene| {
                 if let Some((_, data)) = ComponentData::catalog().into_iter().nth(index) {
                     send(&add_state, Command::AddComponent(id, data));
                 }
             }),
         );
+        add.set_button_style(ButtonStyle::Secondary);
         self.body.add_child(Box::new(add));
     }
 
-    fn add_property(&mut self, component: usize, property: Property) {
+    fn add_property(&mut self, component: usize, property: Property, width: f32) -> Box<dyn UIElement> {
+        let value_w = width - LABEL_COLUMN - 16.0;
         let widgets: Vec<Box<dyn UIElement>>;
         let field = if property.read_only {
             let source = DataSource::new(display_value(&property.value));
-            widgets = vec![Box::new(Label::bound(source.clone(), 14.0))];
+            let mut label = Label::bound(source.clone(), theme::FONT_SIZE_SMALL + 0.5);
+            label.set_color(theme::TEXT_MUTED);
+            widgets = vec![Box::new(label)];
             Field::ReadOnly { source }
         } else {
             match &property.value {
@@ -222,10 +266,10 @@ impl InspectorPanel {
                     let source = DataSource::new(round3(*v));
                     widgets = match property.range {
                         Some((min, max)) => vec![
-                            UI::slider_sized(source.clone(), min, max, Size::new(110.0, 18.0)),
+                            UI::slider_sized(source.clone(), min, max, Size::new(value_w - 74.0, 20.0)),
                             number_input(&source, 66.0),
                         ],
-                        None => vec![number_input(&source, 120.0)],
+                        None => vec![number_input(&source, value_w.min(140.0))],
                     };
                     Field::Float {
                         source,
@@ -234,7 +278,7 @@ impl InspectorPanel {
                 }
                 PropertyValue::Int(v) => {
                     let source = DataSource::new(*v);
-                    widgets = vec![UI::input_sized(source.clone(), Size::new(120.0, 20.0))];
+                    widgets = vec![UI::input_sized(source.clone(), Size::new(value_w.min(140.0), 24.0))];
                     Field::Int { source, last: *v }
                 }
                 PropertyValue::Bool(v) => {
@@ -244,7 +288,7 @@ impl InspectorPanel {
                 }
                 PropertyValue::Text(v) => {
                     let source = DataSource::new(v.clone());
-                    widgets = vec![UI::input_sized(source.clone(), Size::new(180.0, 20.0))];
+                    widgets = vec![UI::input_sized(source.clone(), Size::new(value_w, 24.0))];
                     Field::Text {
                         source,
                         last: v.clone(),
@@ -252,13 +296,12 @@ impl InspectorPanel {
                 }
             }
         };
-        self.body
-            .add_child(Box::new(FieldRow::new(property.name, widgets)));
         self.properties.push(PropertyBinding {
             component,
             name: property.name,
             field,
         });
+        Box::new(FieldRow::new(property.name, widgets))
     }
 
     /// Two-way sync: a source whose value differs from what we last wrote was

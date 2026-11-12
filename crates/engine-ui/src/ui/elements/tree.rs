@@ -1,10 +1,11 @@
+use crate::ui::theme;
 use std::collections::HashSet;
 
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::{
         plane::{Plane, PlaneBuilder},
-        text::{Fonts, Text as FerriteText},
+        text::{icons, Text as FerriteText},
     },
     scene::Scene,
     utils::DataSource,
@@ -24,6 +25,8 @@ pub struct TreeItem {
     pub label: String,
     pub depth: usize,
     pub has_children: bool,
+    /// Optional Lucide icon shown before the label.
+    pub icon: Option<&'static str>,
 }
 
 /// Value written to the selection source when nothing is selected.
@@ -33,6 +36,7 @@ struct Row {
     item: usize,
     bg: Plane,
     arrow: FerriteText,
+    icon: FerriteText,
     text: FerriteText,
     region: Region,
     arrow_region: Region,
@@ -64,8 +68,8 @@ impl TreeView {
         let frame = PlaneBuilder::new()
             .position(position)
             .size(size)
-            .color((0.13, 0.13, 0.13, 1.0))
-            .border_radius_uniform(3.0)
+            .color(theme::TRANSPARENT)
+            .border_radius_uniform(theme::RADIUS)
             .build();
         Self {
             handle: UIElementHandle::new(),
@@ -76,8 +80,8 @@ impl TreeView {
             rows: Vec::new(),
             hover: None,
             is_hovering: false,
-            row_height: 20.0,
-            indent: 14.0,
+            row_height: 26.0,
+            indent: 16.0,
             scroll_y: 0.0,
             font_size: 14.0,
             frame,
@@ -168,11 +172,12 @@ impl TreeView {
             self.rows.push(Row {
                 item: 0,
                 bg: PlaneBuilder::new()
-                    .color((0.0, 0.0, 0.0, 0.0))
-                    .border_radius_uniform(2.0)
+                    .color(theme::TRANSPARENT)
+                    .border_radius_uniform(theme::RADIUS_SMALL)
                     .build(),
-                arrow: FerriteText::new(Fonts::RobotoMono, 0, 0, 0, self.font_size, String::new()),
-                text: FerriteText::new(Fonts::RobotoMono, 0, 0, 0, self.font_size, String::new()),
+                arrow: theme::icon("", 14.0, theme::TEXT_DIM),
+                icon: theme::icon("", 15.0, theme::TEXT_MUTED),
+                text: theme::text("", self.font_size, theme::TEXT),
                 region: Region::default(),
                 arrow_region: Region::default(),
             });
@@ -189,42 +194,56 @@ impl TreeView {
             let y = row_index as f32 * self.row_height - self.scroll_y;
             let row_pos = Position::new(base.x, base.y + y, z + 1.0);
             row.region = Region::new(row_pos, Size::new(width, self.row_height));
-            row.bg.set_position(row_pos);
-            row.bg.set_size(Size::new(width, self.row_height));
+            row.bg.set_position(Position::new(row_pos.x + 2.0, row_pos.y + 1.0, row_pos.z));
+            row.bg.set_size(Size::new(width - 4.0, self.row_height - 2.0));
             row.bg.set_z_index(z + 1.0);
 
-            let indent = 4.0 + item.depth as f32 * self.indent;
+            let indent = 6.0 + item.depth as f32 * self.indent;
             let arrow = match (item.has_children, self.collapsed.contains(&item.id)) {
                 (false, _) => "",
-                (true, true) => "+",
-                (true, false) => "-",
+                (true, true) => icons::CHEVRON_RIGHT,
+                (true, false) => icons::CHEVRON_DOWN,
             };
             row.arrow.set_content(arrow);
-            row.arrow
-                .prepare_render_at(Position::new(row_pos.x + indent, row_pos.y + 2.0, z + 2.0));
+            let arrow_y = theme::center_y(&row.arrow, self.row_height);
+            row.arrow.prepare_render_at(Position::new(
+                row_pos.x + indent,
+                row_pos.y + arrow_y,
+                z + 2.0,
+            ));
             row.arrow.set_z_index(z + 2.0);
             row.arrow_region = Region::new(
                 Position::new(row_pos.x + indent - 2.0, row_pos.y, z),
-                Size::new(self.indent, self.row_height),
+                Size::new(self.indent + 2.0, self.row_height),
             );
+            let mut x = row_pos.x + indent + self.indent + 2.0;
+            row.icon.set_content(item.icon.unwrap_or(""));
+            if item.icon.is_some() {
+                let icon_y = theme::center_y(&row.icon, self.row_height);
+                row.icon
+                    .prepare_render_at(Position::new(x, row_pos.y + icon_y, z + 2.0));
+                row.icon.set_z_index(z + 2.0);
+                x += 22.0;
+            }
             row.text.set_content(&item.label);
-            row.text.prepare_render_at(Position::new(
-                row_pos.x + indent + self.indent,
-                row_pos.y + 2.0,
-                z + 2.0,
-            ));
+            let text_y = theme::center_y(&row.text, self.row_height);
+            row.text
+                .prepare_render_at(Position::new(x, row_pos.y + text_y, z + 2.0));
             row.text.set_z_index(z + 2.0);
         }
     }
 
+    fn is_selected(&self, row_index: usize) -> bool {
+        self.items[self.rows[row_index].item].id == self.selected.read()
+    }
+
     fn row_color(&self, row_index: usize) -> (f32, f32, f32, f32) {
-        let item = &self.items[self.rows[row_index].item];
-        if item.id == self.selected.read() {
-            (0.25, 0.4, 0.6, 1.0)
+        if self.is_selected(row_index) {
+            theme::ACCENT_SOFT
         } else if self.hover == Some(row_index) {
-            (0.22, 0.22, 0.22, 1.0)
+            theme::BG_ROW_HOVER
         } else {
-            (0.0, 0.0, 0.0, 0.0)
+            theme::TRANSPARENT
         }
     }
 
@@ -241,7 +260,13 @@ impl UIElement for TreeView {
         self.layout();
         for i in 0..self.rows.len() {
             let color = self.row_color(i);
-            self.rows[i].bg.set_color(color);
+            let selected = self.is_selected(i);
+            let row = &mut self.rows[i];
+            row.bg.set_color(color);
+            row.text
+                .set_color(if selected { theme::ACCENT_TEXT } else { theme::TEXT });
+            row.icon
+                .set_color(if selected { theme::ACCENT_TEXT } else { theme::TEXT_MUTED });
         }
         self.frame.set_position(self.region.get_absolute_position());
     }
@@ -252,6 +277,7 @@ impl UIElement for TreeView {
         for row in &self.rows {
             row.bg.render();
             row.arrow.render();
+            row.icon.render();
             row.text.render();
         }
         crate::ui::clip::pop(&self.frame);

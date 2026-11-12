@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use std::collections::BTreeMap;
 
 use ferrite::core::{
@@ -25,8 +26,8 @@ impl Container {
             plane: PlaneBuilder::new()
                 .position(position)
                 .size(size)
-                .color((0.0, 0.0, 0.0, 0.0))
-                .border_color((0.0, 0.0, 0.0, 0.0))
+                .color(theme::TRANSPARENT)
+                .border_color(theme::TRANSPARENT)
                 .build(),
         }
     }

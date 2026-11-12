@@ -114,23 +114,22 @@ impl UI {
     }
 
     pub fn button(text: &str, on_click: Box<dyn Fn(&mut Scene)>) -> Box<Button> {
-        // Width follows the label (≈ 9 px per glyph at 15 pt + padding) so
-        // short labels like "x" or "+" stay compact.
-        let width = (text.chars().count() as f32 * 9.0 + 16.0).max(24.0);
-        let mut button = Button::new(
-            Position::default(),
-            Size {
-                width,
-                height: 20.0,
-            },
-            on_click,
-        );
+        let mut button = Button::new(Position::default(), Size::new(10.0, 26.0), on_click);
         button.set_label(text);
+        button.fit(26.0);
         Box::new(button)
     }
 
     pub fn input<T: Clone + ToString + FromStr>(data_source: DataSource<T>) -> Box<Input<T>> {
         Self::input_sized(data_source, Size::new(140.0, 22.0))
+    }
+
+    /// A button showing only a Lucide icon, in the ghost style.
+    pub fn icon_button(icon: &str, on_click: Box<dyn Fn(&mut Scene)>) -> Box<Button> {
+        let mut button = Button::new(Position::default(), Size::new(26.0, 26.0), on_click);
+        button.set_style(super::elements::button::ButtonStyle::Ghost);
+        button.set_icon(icon);
+        Box::new(button)
     }
 
     pub fn input_sized<T: Clone + ToString + FromStr>(

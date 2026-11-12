@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::plane::{Plane, PlaneBuilder},
@@ -28,16 +29,16 @@ impl Radio {
         let outer = PlaneBuilder::new()
             .position(position)
             .size(size)
-            .color((0.15, 0.15, 0.15, 1.0))
-            .border_color((0.6, 0.6, 0.6, 1.0))
+            .color(theme::BG_FIELD)
+            .border_color(theme::BORDER_STRONG)
             .border_thickness(1.0)
             .border_radius_uniform(9.0)
             .build();
         let inner = PlaneBuilder::new()
             .position(&position + (4.0, 4.0, 1.0))
             .size(Size::new(10.0, 10.0))
-            .color((0.3, 0.7, 0.4, 1.0))
-            .border_radius_uniform(5.0)
+            .color(theme::ACCENT)
+            .border_radius_uniform(theme::RADIUS)
             .build();
         Self {
             handle: UIElementHandle::new(),
@@ -82,11 +83,11 @@ impl UIElement for Radio {
                 if inside && !self.is_hovering {
                     window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
                     self.is_hovering = true;
-                    self.outer.set_color((0.22, 0.22, 0.22, 1.0));
+                    self.outer.set_color(theme::BG_CONTROL);
                 } else if !inside && self.is_hovering {
                     window.set_cursor(None);
                     self.is_hovering = false;
-                    self.outer.set_color((0.15, 0.15, 0.15, 1.0));
+                    self.outer.set_color(theme::BG_FIELD);
                 }
                 false
             }

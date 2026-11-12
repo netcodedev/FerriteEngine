@@ -21,7 +21,21 @@ pub struct Button {
 
     is_hovering: bool,
     is_active: bool,
+    style: ButtonStyle,
 
     label: Option<(String, Text)>,
+    icon: Option<(String, Text)>,
     plane: Plane,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonStyle {
+    /// Filled control surface with a subtle border (default).
+    Secondary,
+    /// No background until hovered; for toolbars and icon actions.
+    Ghost,
+    /// Accent-filled call to action.
+    Primary,
+    /// Ghost that turns red on hover (close, delete).
+    Danger,
 }

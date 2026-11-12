@@ -5,6 +5,7 @@ mod application;
 pub struct Application {
     window: Window,
     layers: Vec<Box<dyn Layer>>,
+    clear_color: (f32, f32, f32, f32),
 }
 
 pub trait Layer {

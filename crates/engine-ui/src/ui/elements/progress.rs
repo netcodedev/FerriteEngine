@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::plane::{Plane, PlaneBuilder},
@@ -22,15 +23,15 @@ impl ProgressBar {
         let track = PlaneBuilder::new()
             .position(position)
             .size(size)
-            .color((0.15, 0.15, 0.15, 1.0))
-            .border_color((0.5, 0.5, 0.5, 1.0))
+            .color(theme::BG_FIELD)
+            .border_color(theme::BORDER)
             .border_thickness(1.0)
             .border_radius_uniform(size.height * 0.5)
             .build();
         let fill = PlaneBuilder::new()
             .position(&position + (0.0, 0.0, 1.0))
             .size(Size::new(0.0, size.height))
-            .color((0.3, 0.7, 0.4, 1.0))
+            .color(theme::ACCENT)
             .border_radius_uniform(size.height * 0.5)
             .build();
         Self {

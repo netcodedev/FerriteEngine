@@ -8,6 +8,7 @@ use ferrite::core::{
 use glfw::{Glfw, Window, WindowEvent};
 
 pub mod clip;
+pub mod theme;
 pub mod element_handle;
 pub mod elements;
 mod ui;

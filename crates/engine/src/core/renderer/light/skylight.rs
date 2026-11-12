@@ -252,6 +252,10 @@ impl Component for SkyLight {
 
     fn handle_event(&mut self, _: &mut Glfw, _: &mut glfw::Window, _: &WindowEvent) {}
 
+    fn display_name(&self) -> String {
+        "Sky light".into()
+    }
+
     fn to_data(&self) -> Option<ComponentData> {
         Some(ComponentData::SkyLight {
             time_of_day: self.time_of_day,

@@ -1,8 +1,9 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::{
         plane::{Plane, PlaneBuilder},
-        text::{Fonts, Text as FerriteText},
+        text::{icons, Fonts, Text as FerriteText},
     },
     scene::Scene,
     utils::DataSource,
@@ -35,6 +36,7 @@ pub struct Dropdown {
 
     button: Plane,
     button_text: FerriteText,
+    chevron: FerriteText,
     menu: Plane,
 }
 
@@ -44,19 +46,19 @@ impl Dropdown {
         let button = PlaneBuilder::new()
             .position(position)
             .size(size)
-            .color((0.2, 0.2, 0.2, 1.0))
-            .border_color((0.6, 0.6, 0.6, 1.0))
+            .color(theme::BG_CONTROL)
+            .border_color(theme::BORDER)
             .border_thickness(1.0)
-            .border_radius_uniform(3.0)
+            .border_radius_uniform(theme::RADIUS)
             .build();
-        let button_text = FerriteText::new(Fonts::RobotoMono, 0, 0, 0, 14.0, String::new());
+        let button_text = FerriteText::new(Fonts::Inter, 0, 0, 0, 14.0, String::new());
         let menu = PlaneBuilder::new()
             .position(&position + (0.0, size.height, 1.0))
             .size(Size::new(size.width, row_height * items.len() as f32))
-            .color((0.15, 0.15, 0.15, 1.0))
-            .border_color((0.6, 0.6, 0.6, 1.0))
+            .color(theme::BG_MENU)
+            .border_color(theme::BORDER)
             .border_thickness(1.0)
-            .border_radius_uniform(3.0)
+            .border_radius_uniform(theme::RADIUS)
             .build();
         let options = items
             .into_iter()
@@ -66,9 +68,9 @@ impl Dropdown {
                 let bg = PlaneBuilder::new()
                     .position(row_pos)
                     .size(Size::new(size.width, row_height))
-                    .color((0.0, 0.0, 0.0, 0.0))
+                    .color(theme::TRANSPARENT)
                     .build();
-                let text = FerriteText::new(Fonts::RobotoMono, 0, 0, 0, 14.0, label.clone());
+                let text = FerriteText::new(Fonts::Inter, 0, 0, 0, 14.0, label.clone());
                 Option_ {
                     label,
                     text,
@@ -88,6 +90,7 @@ impl Dropdown {
             row_height,
             button,
             button_text,
+            chevron: theme::icon(icons::CHEVRONS_UP_DOWN, 14.0, theme::TEXT_DIM),
             menu,
         }
     }
@@ -104,8 +107,13 @@ impl UIElement for Dropdown {
         self.button.set_position(base);
         self.button_text
             .set_content(&self.selected_label().to_owned());
+        let text_y = theme::center_y(&self.button_text, self.region.size.height);
         self.button_text
-            .prepare_render_at(&base + (6.0, 3.0, 1.0));
+            .prepare_render_at(&base + (8.0, text_y, 1.0));
+        let chevron_y = theme::center_y(&self.chevron, self.region.size.height);
+        let chevron_x = self.region.size.width - self.chevron.measure_width() - 8.0;
+        self.chevron
+            .prepare_render_at(&base + (chevron_x, chevron_y, 1.0));
         if self.is_open {
             // Lift the open menu well above sibling widgets so later-rendered
             // siblings (tabs, pickers, …) do not z-fight it.
@@ -122,9 +130,9 @@ impl UIElement for Dropdown {
                 opt.region.position = p;
                 opt.bg.set_position(p);
                 opt.bg.set_color(if self.hover_index == Some(i) {
-                    (0.25, 0.4, 0.6, 1.0)
+                    theme::ACCENT_SOFT
                 } else {
-                    (0.0, 0.0, 0.0, 0.0)
+                    theme::TRANSPARENT
                 });
                 opt.text.set_content(&opt.label);
                 opt.text.prepare_render_at(&p + (6.0, 3.0, 1.0));
@@ -138,6 +146,7 @@ impl UIElement for Dropdown {
     fn render(&self) {
         self.button.render();
         self.button_text.render();
+        self.chevron.render();
     }
 
     /// The open menu belongs to the overlay pass: it is drawn after every
@@ -199,11 +208,11 @@ impl UIElement for Dropdown {
                 if should_hover && !self.is_hovering {
                     window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
                     self.is_hovering = true;
-                    self.button.set_color((0.26, 0.26, 0.26, 1.0));
+                    self.button.set_color(theme::BG_CONTROL_HOVER);
                 } else if !should_hover && self.is_hovering {
                     window.set_cursor(None);
                     self.is_hovering = false;
-                    self.button.set_color((0.2, 0.2, 0.2, 1.0));
+                    self.button.set_color(theme::BG_CONTROL);
                 }
                 over_menu
             }
@@ -229,6 +238,7 @@ impl UIElement for Dropdown {
         self.region.position.z = z_index;
         self.button.set_z_index(z_index);
         self.button_text.set_z_index(z_index + 1.0);
+        self.chevron.set_z_index(z_index + 1.0);
         self.menu.set_z_index(z_index + 2.0);
         for opt in &mut self.options {
             opt.bg.set_z_index(z_index + 3.0);

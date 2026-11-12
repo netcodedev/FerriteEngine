@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::plane::{Plane, PlaneBuilder},
@@ -27,15 +28,15 @@ impl Toggle {
         let track = PlaneBuilder::new()
             .position(position)
             .size(size)
-            .color((0.2, 0.2, 0.2, 1.0))
-            .border_color((0.5, 0.5, 0.5, 1.0))
+            .color(theme::BG_CONTROL)
+            .border_color(theme::BORDER_STRONG)
             .border_thickness(1.0)
             .border_radius_uniform(9.0)
             .build();
         let knob = PlaneBuilder::new()
             .position(&position + (2.0, 2.0, 1.0))
             .size(Size::new(14.0, 14.0))
-            .color((0.85, 0.85, 0.85, 1.0))
+            .color(theme::TEXT)
             .border_radius_uniform(7.0)
             .build();
         Self {
@@ -54,9 +55,9 @@ impl Toggle {
         let x_off = if on { 20.0 } else { 2.0 };
         self.knob.set_position(&base + (x_off, 2.0, 1.0));
         self.track.set_color(if on {
-            (0.25, 0.55, 0.35, 1.0)
+            theme::ACCENT
         } else {
-            (0.2, 0.2, 0.2, 1.0)
+            theme::BG_CONTROL
         });
     }
 }

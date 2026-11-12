@@ -25,12 +25,26 @@ impl Font {
 impl Fonts {
     fn get(&self) -> &Font {
         static ROBOTO_MONO: OnceLock<Font> = OnceLock::new();
+        static INTER: OnceLock<Font> = OnceLock::new();
+        static INTER_SEMIBOLD: OnceLock<Font> = OnceLock::new();
+        static LUCIDE: OnceLock<Font> = OnceLock::new();
 
         match self {
             Fonts::RobotoMono => {
                 ROBOTO_MONO.get_or_init(|| Font::new(include_bytes!("RobotoMono.ttf")))
             }
+            Fonts::Inter => {
+                INTER.get_or_init(|| Font::new(include_bytes!("fonts/Inter-Regular.ttf")))
+            }
+            Fonts::InterSemiBold => INTER_SEMIBOLD
+                .get_or_init(|| Font::new(include_bytes!("fonts/Inter-SemiBold.ttf"))),
+            Fonts::Lucide => LUCIDE.get_or_init(|| Font::new(include_bytes!("fonts/Lucide.ttf"))),
         }
+    }
+
+    /// Font id in the glyph cache.
+    fn cache_id(&self) -> usize {
+        *self as usize
     }
 }
 
@@ -39,6 +53,7 @@ impl Text {
         let mut text = Text {
             content,
             font,
+            color: (1.0, 1.0, 1.0, 1.0),
             size,
             glyphs: Vec::new(),
             dirty: true,
@@ -55,6 +70,39 @@ impl Text {
 
     pub fn render(&self) -> (i32, i32) {
         TextRenderer::render(self)
+    }
+
+    pub fn set_color(&mut self, color: (f32, f32, f32, f32)) {
+        self.color = color;
+    }
+
+    pub fn get_color(&self) -> (f32, f32, f32, f32) {
+        self.color
+    }
+
+    pub fn get_font(&self) -> Fonts {
+        self.font
+    }
+
+    pub fn get_font_size(&self) -> f32 {
+        self.size
+    }
+
+    /// Change font and/or size; re-lays out the text.
+    pub fn set_font(&mut self, font: Fonts, size: f32) {
+        if self.font == font && self.size == size {
+            return;
+        }
+        self.font = font;
+        self.size = size;
+        self.dirty = true;
+        self.layout(TextRenderer::get_size().0);
+    }
+
+    /// Height of one line in this font and size (ascent + descent).
+    pub fn line_height(&self) -> f32 {
+        let v = self.font.get().font.v_metrics(Scale::uniform(self.size));
+        v.ascent - v.descent
     }
 
     pub fn prepare_render_at(&mut self, position: Position) {
@@ -125,10 +173,13 @@ impl Text {
     }
 
     fn update_mesh(&mut self) {
+        // Measured fresh each time so the size shrinks with shorter content.
+        self.max_x = 0;
+        self.max_y = 0;
         let vertices: Vec<TextVertex> = self
             .glyphs
             .iter()
-            .filter_map(|g| TextRenderer::rect_for(0, g.clone()))
+            .filter_map(|g| TextRenderer::rect_for(self.font.cache_id(), g.clone()))
             .flat_map(|(uv_rect, screen_rect)| {
                 if self.max_x < screen_rect.max.x as i32 {
                     self.max_x = screen_rect.max.x as i32;
@@ -217,13 +268,16 @@ impl Text {
 
 impl TextRenderer {
     fn new(width: u32, height: u32) -> TextRenderer {
-        let cache: Cache<'static> = Cache::builder().dimensions(1024, 1024).build();
+        // Room for several fonts and sizes (UI text, headings, icons): if
+        // the cache had to evict glyphs, already-built text meshes would
+        // point at reused texture regions.
+        let cache: Cache<'static> = Cache::builder().dimensions(2048, 2048).build();
 
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
         TextRenderer {
             cache,
             shader,
-            texture_buffer: Texture::new(1024, 1024),
+            texture_buffer: Texture::new(2048, 2048),
             width,
             height,
         }
@@ -259,7 +313,8 @@ impl TextRenderer {
             100.0,
         );
         renderer.shader.set_uniform_mat4("projection", &projection);
-        renderer.shader.set_uniform_3f("color", 1.0, 1.0, 1.0);
+        let (r, g, b, a) = text.color;
+        renderer.shader.set_uniform_4f("color", r, g, b, a);
 
         unsafe {
             // draw text
@@ -313,7 +368,7 @@ impl TextRenderer {
         glyph: PositionedGlyph<'static>,
     ) -> Option<(Rect<f32>, Rect<i32>)> {
         let mut renderer = RENDERER.lock().unwrap();
-        renderer.cache.queue_glyph(0, glyph.clone());
+        renderer.cache.queue_glyph(font_id, glyph.clone());
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             renderer.texture_buffer.bind();

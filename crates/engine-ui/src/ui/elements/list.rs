@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::{
@@ -38,10 +39,10 @@ impl List {
         let frame = PlaneBuilder::new()
             .position(position)
             .size(size)
-            .color((0.12, 0.12, 0.12, 1.0))
-            .border_color((0.5, 0.5, 0.5, 1.0))
+            .color(theme::BG_FIELD)
+            .border_color(theme::BORDER)
             .border_thickness(1.0)
-            .border_radius_uniform(3.0)
+            .border_radius_uniform(theme::RADIUS)
             .build();
         let rows = items
             .into_iter()
@@ -51,9 +52,9 @@ impl List {
                 let bg = PlaneBuilder::new()
                     .position(row_pos)
                     .size(Size::new(size.width, row_height))
-                    .color((0.0, 0.0, 0.0, 0.0))
+                    .color(theme::TRANSPARENT)
                     .build();
-                let text = FerriteText::new(Fonts::RobotoMono, 0, 0, 0, 14.0, label.clone());
+                let text = FerriteText::new(Fonts::Inter, 0, 0, 0, 14.0, label.clone());
                 Row {
                     label,
                     text,
@@ -83,11 +84,11 @@ impl UIElement for List {
             row.region.position = p;
             row.bg.set_position(p);
             row.bg.set_color(if i == sel {
-                (0.25, 0.4, 0.6, 1.0)
+                theme::ACCENT_SOFT
             } else if self.hover_index == Some(i) {
-                (0.22, 0.22, 0.22, 1.0)
+                theme::BG_ROW_HOVER
             } else {
-                (0.0, 0.0, 0.0, 0.0)
+                theme::TRANSPARENT
             });
             row.text.set_content(&row.label);
             row.text.prepare_render_at(&p + (6.0, 3.0, 1.0));

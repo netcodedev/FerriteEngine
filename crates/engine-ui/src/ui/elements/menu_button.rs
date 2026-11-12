@@ -2,7 +2,7 @@ use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::{
         plane::{Plane, PlaneBuilder},
-        text::{Fonts, Text as FerriteText},
+        text::Text,
     },
     scene::Scene,
 };
@@ -12,13 +12,44 @@ use glfw::{
     WindowEvent::{self, CursorPos, MouseButton},
 };
 
-use crate::ui::{element_handle::UIElementHandle, UIElement};
+use crate::ui::{element_handle::UIElementHandle, theme, UIElement};
 
-use super::button::Button;
+use super::button::{Button, ButtonStyle};
+
+/// One entry of a `MenuButton`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MenuItem {
+    pub icon: Option<&'static str>,
+    pub label: String,
+    /// Shown right-aligned and dimmed, e.g. "Ctrl+S".
+    pub shortcut: Option<String>,
+}
+
+impl MenuItem {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            icon: None,
+            label: label.into(),
+            shortcut: None,
+        }
+    }
+
+    pub fn icon(mut self, icon: &'static str) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
+        self.shortcut = Some(shortcut.into());
+        self
+    }
+}
 
 struct Entry {
-    label: String,
-    text: FerriteText,
+    item: MenuItem,
+    icon: Option<Text>,
+    label: Text,
+    shortcut: Option<Text>,
     bg: Plane,
     region: Region,
 }
@@ -40,17 +71,30 @@ pub struct MenuButton {
 }
 
 const OVERLAY_Z: f32 = 40.0;
+const MENU_PADDING: f32 = 4.0;
 
 impl MenuButton {
-    pub fn new(
+    /// Plain text items.
+    pub fn new(label: &str, items: Vec<String>, on_select: Box<dyn Fn(usize, &mut Scene)>) -> Self {
+        Self::with_items(label, None, items.into_iter().map(MenuItem::new).collect(), on_select)
+    }
+
+    pub fn with_items(
         label: &str,
-        items: Vec<String>,
+        icon: Option<&str>,
+        items: Vec<MenuItem>,
         on_select: Box<dyn Fn(usize, &mut Scene)>,
     ) -> Self {
-        let width = (label.chars().count() as f32 * 9.0 + 16.0).max(24.0);
-        let size = Size::new(width, 20.0);
-        let mut button = Button::new(Position::default(), size, Box::new(|_| {}));
-        button.set_label(label);
+        let mut button = Button::new(Position::default(), Size::new(10.0, 26.0), Box::new(|_| {}));
+        button.set_style(ButtonStyle::Ghost);
+        if let Some(icon) = icon {
+            button.set_icon(icon);
+        }
+        if !label.is_empty() {
+            button.set_label(label);
+        }
+        button.fit(26.0);
+        let size = *button.get_size();
         let mut menu_button = Self {
             handle: UIElementHandle::new(),
             region: Region::new(Position::default(), size),
@@ -60,65 +104,113 @@ impl MenuButton {
             pending: None,
             is_open: false,
             hover: None,
-            row_height: 20.0,
+            row_height: 28.0,
             menu_width: 0.0,
             menu: PlaneBuilder::new()
-                .color((0.15, 0.15, 0.15, 1.0))
-                .border_color((0.6, 0.6, 0.6, 1.0))
+                .color(theme::BG_MENU)
+                .border_color(theme::BORDER_STRONG)
                 .border_thickness(1.0)
-                .border_radius_uniform(3.0)
+                .border_radius_uniform(theme::RADIUS)
                 .build(),
         };
-        menu_button.set_items(items);
+        menu_button.set_menu_items(items);
         menu_button
     }
 
+    /// Use another trigger look than the default ghost button.
+    pub fn set_button_style(&mut self, style: ButtonStyle) {
+        self.button.set_style(style);
+    }
+
     pub fn set_items(&mut self, items: Vec<String>) {
-        let current: Vec<&String> = self.entries.iter().map(|e| &e.label).collect();
-        if current == items.iter().collect::<Vec<_>>() {
+        self.set_menu_items(items.into_iter().map(MenuItem::new).collect());
+    }
+
+    pub fn set_menu_items(&mut self, items: Vec<MenuItem>) {
+        if self.entries.iter().map(|e| &e.item).eq(items.iter()) {
             return;
         }
         self.entries = items
             .into_iter()
-            .map(|label| Entry {
-                text: FerriteText::new(Fonts::RobotoMono, 0, 0, 0, 14.0, label.clone()),
-                label,
-                bg: PlaneBuilder::new().color((0.0, 0.0, 0.0, 0.0)).build(),
+            .map(|item| Entry {
+                icon: item
+                    .icon
+                    .map(|i| theme::icon(i, theme::ICON_SIZE, theme::TEXT_MUTED)),
+                label: theme::text(&item.label, theme::FONT_SIZE, theme::TEXT),
+                shortcut: item
+                    .shortcut
+                    .as_deref()
+                    .map(|s| theme::text(s, theme::FONT_SIZE_SMALL, theme::TEXT_DIM)),
+                item,
+                bg: PlaneBuilder::new()
+                    .color(theme::TRANSPARENT)
+                    .border_radius_uniform(theme::RADIUS_SMALL)
+                    .build(),
                 region: Region::default(),
             })
             .collect();
+        let has_icons = self.entries.iter().any(|e| e.icon.is_some());
         let widest = self
             .entries
             .iter()
-            .map(|e| e.text.measure_width())
+            .map(|e| {
+                e.label.measure_width()
+                    + e.shortcut.as_ref().map_or(0.0, |s| s.measure_width() + 32.0)
+            })
             .fold(0.0f32, f32::max);
-        self.menu_width = (widest + 20.0).max(self.region.size.width).max(100.0);
+        let icon_column = if has_icons { 26.0 } else { 0.0 };
+        self.menu_width = (widest + icon_column + 28.0)
+            .max(self.region.size.width)
+            .max(160.0)
+            .ceil();
     }
 
     fn layout_menu(&mut self) {
         let base = self.region.get_absolute_position();
-        let top = base.y + self.region.size.height;
+        let top = base.y + self.region.size.height + 4.0;
+        let has_icons = self.entries.iter().any(|e| e.icon.is_some());
         self.menu.set_position(Position::new(base.x, top, OVERLAY_Z));
         self.menu.set_size(Size::new(
             self.menu_width,
-            self.entries.len() as f32 * self.row_height + 4.0,
+            self.entries.len() as f32 * self.row_height + MENU_PADDING * 2.0,
         ));
         for (i, entry) in self.entries.iter_mut().enumerate() {
             let p = Position::new(
-                base.x + 2.0,
-                top + 2.0 + i as f32 * self.row_height,
+                base.x + MENU_PADDING,
+                top + MENU_PADDING + i as f32 * self.row_height,
                 OVERLAY_Z + 1.0,
             );
-            entry.region = Region::new(p, Size::new(self.menu_width - 4.0, self.row_height));
+            let width = self.menu_width - MENU_PADDING * 2.0;
+            entry.region = Region::new(p, Size::new(width, self.row_height));
             entry.bg.set_position(p);
             entry.bg.set_size(entry.region.size);
-            entry.bg.set_color(if self.hover == Some(i) {
-                (0.25, 0.4, 0.6, 1.0)
+            let hovered = self.hover == Some(i);
+            entry.bg.set_color(if hovered {
+                theme::ACCENT_SOFT
             } else {
-                (0.0, 0.0, 0.0, 0.0)
+                theme::TRANSPARENT
             });
-            entry.text.prepare_render_at(&p + (6.0, 2.0, 1.0));
-            entry.text.set_z_index(OVERLAY_Z + 2.0);
+            let mut x = p.x + 10.0;
+            if let Some(icon) = &mut entry.icon {
+                icon.set_color(if hovered { theme::ACCENT_TEXT } else { theme::TEXT_MUTED });
+                let y = theme::center_y(icon, self.row_height);
+                icon.prepare_render_at(Position::new(x, p.y + y, OVERLAY_Z + 2.0));
+                icon.set_z_index(OVERLAY_Z + 2.0);
+            }
+            if has_icons {
+                x += 26.0;
+            }
+            let y = theme::center_y(&entry.label, self.row_height);
+            entry
+                .label
+                .prepare_render_at(Position::new(x, p.y + y, OVERLAY_Z + 2.0));
+            entry.label.set_z_index(OVERLAY_Z + 2.0);
+            if let Some(shortcut) = &mut entry.shortcut {
+                let sx = p.x + width - 10.0 - shortcut.measure_width();
+                let y = theme::center_y(shortcut, self.row_height);
+                shortcut.prepare_render_at(Position::new(sx, p.y + y, OVERLAY_Z + 2.0));
+                shortcut.set_z_index(OVERLAY_Z + 2.0);
+            }
         }
     }
 }
@@ -143,7 +235,13 @@ impl UIElement for MenuButton {
             self.menu.render();
             for entry in &self.entries {
                 entry.bg.render();
-                entry.text.render();
+                if let Some(icon) = &entry.icon {
+                    icon.render();
+                }
+                entry.label.render();
+                if let Some(shortcut) = &entry.shortcut {
+                    shortcut.render();
+                }
             }
         }
     }

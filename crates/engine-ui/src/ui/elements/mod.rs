@@ -17,6 +17,7 @@ pub mod popup;
 pub mod progress;
 pub mod radio;
 pub mod scroll;
+pub mod section;
 pub mod slider;
 pub mod tabs;
 pub mod text;

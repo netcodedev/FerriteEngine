@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::plane::{Plane, PlaneBuilder},
@@ -30,7 +31,7 @@ impl Divider {
         let plane = PlaneBuilder::new()
             .position(position)
             .size(size)
-            .color((0.4, 0.4, 0.4, 1.0))
+            .color(theme::BORDER)
             .build();
         Self {
             handle: UIElementHandle::new(),

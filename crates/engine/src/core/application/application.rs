@@ -28,13 +28,14 @@ impl Application {
         Self {
             window,
             layers: Vec::new(),
+            clear_color: (0.3, 0.3, 0.5, 1.0),
         }
     }
 
     pub fn start(&mut self) {
         while !self.window.should_close() {
             self.window.clear(
-                (0.3, 0.3, 0.5, 1.0),
+                self.clear_color,
                 gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
             );
 
@@ -53,6 +54,11 @@ impl Application {
 
             self.window.swap_buffers();
         }
+    }
+
+    /// Colour the window is cleared to every frame.
+    pub fn set_clear_color(&mut self, color: (f32, f32, f32, f32)) {
+        self.clear_color = color;
     }
 
     pub fn add_layer(&mut self, mut layer: Box<dyn Layer>) {
