@@ -13,7 +13,6 @@ use ferrite::{
         renderer::{
             line::{Line, LineRenderer},
             text::{icons, Text},
-            texture::{Texture, TextureRenderer},
         },
         scene::Scene,
         utils::DataSource,
@@ -25,6 +24,7 @@ use ferrite_ui::ui::{
     elements::{
         button::{Button, ButtonStyle},
         dropdown::Dropdown,
+        image::Image,
         label::Label,
         panel::Panel,
         scroll::ScrollArea,
@@ -652,12 +652,7 @@ enum Shown {
         radius: f32,
         floor: f32,
     },
-    Texture {
-        texture: Texture,
-        renderer: TextureRenderer,
-        /// Size of the image in pixels.
-        size: (u32, u32),
-    },
+    Texture(Image),
     Failed(String),
 }
 
@@ -732,14 +727,14 @@ impl AssetPreview {
         };
         self.shown = match &edit.meta.kind {
             AssetKind::Texture(_) => {
-                let texture = Texture::new();
-                match texture.try_load_from_file(&edit.source_path()) {
-                    Ok(size) => Shown::Texture {
-                        texture,
-                        renderer: TextureRenderer::new(),
-                        size,
-                    },
-                    Err(e) => Shown::Failed(e.to_string()),
+                let image = Image::new(
+                    Position::default(),
+                    Size::new(TEXTURE_SIDE, TEXTURE_SIDE),
+                    edit.source_path(),
+                );
+                match image.error() {
+                    Some(error) => Shown::Failed(error.to_string()),
+                    None => Shown::Texture(image),
                 }
             }
             AssetKind::Model(model) => {
@@ -835,7 +830,10 @@ impl UIElement for AssetPreview {
         let message = match &self.shown {
             Shown::Nothing => "No asset is open.".to_string(),
             Shown::Failed(error) => format!("The asset could not be loaded: {error}"),
-            Shown::Texture { size, .. } => format!("{} x {} px", size.0, size.1),
+            Shown::Texture(image) => image
+                .natural_size()
+                .map(|(w, h)| format!("{w} x {h} px"))
+                .unwrap_or_default(),
             Shown::Model { .. } => String::new(),
         };
         self.message.set_content(&message);
@@ -846,6 +844,19 @@ impl UIElement for AssetPreview {
             view.y + view.h - 24.0,
             3.0,
         ));
+        if let Shown::Texture(image) = &mut self.shown {
+            // As large as fits, keeping the image's proportions.
+            let (w, h) = image.natural_size().unwrap_or((1, 1));
+            let (w, h) = (w.max(1) as f32, h.max(1) as f32);
+            let room = ((view.w - 48.0).max(16.0), (view.h - 72.0).max(16.0));
+            let scale = (TEXTURE_SIDE / w.max(h)).min(room.0 / w).min(room.1 / h);
+            let (w, h) = ((w * scale).round(), (h * scale).round());
+            image.set_size(Size::new(w, h));
+            image.set_offset(Offset {
+                x: (view.x + (view.w - w) * 0.5).round(),
+                y: (view.y + (view.h - h) * 0.5).round(),
+            });
+        }
         self.panel.update(scene);
     }
 
@@ -921,30 +932,8 @@ impl UIElement for AssetPreview {
                 }
                 self.hint.render();
             }
-            Shown::Texture {
-                texture,
-                renderer,
-                size,
-            } => {
-                // As large as fits, keeping the image's proportions.
-                let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
-                let room = ((view.w - 48.0).max(16.0), (view.h - 72.0).max(16.0));
-                let scale = (TEXTURE_SIDE / w.max(h)).min(room.0 / w).min(room.1 / h);
-                let (w, h) = ((w * scale).round(), (h * scale).round());
-                let x = (view.x + (view.w - w) * 0.5).round();
-                let y = (view.y + (view.h - h) * 0.5).round();
-                // The texture renderer works in clip space.
-                let (window_w, window_h) = {
-                    let state = self.state.borrow();
-                    (state.layout.window_w, state.layout.window_h)
-                };
-                renderer.render_color(
-                    texture,
-                    x / window_w * 2.0 - 1.0,
-                    1.0 - (y + h) / window_h * 2.0,
-                    w / window_w * 2.0,
-                    h / window_h * 2.0,
-                );
+            Shown::Texture(image) => {
+                image.render();
                 self.message.render();
             }
             Shown::Nothing | Shown::Failed(_) => {
