@@ -35,7 +35,7 @@ pub struct InputsPanel {
     body: ScrollArea,
     add: Button,
     bindings: Vec<InputBinding>,
-    built_for: Option<u64>,
+    built_for: Option<(u64, i32)>,
 }
 
 impl InputsPanel {
@@ -171,9 +171,10 @@ impl UIElement for InputsPanel {
             (rect.w - 8.0).max(10.0),
             (rect.h - header - 8.0).max(10.0),
         ));
-        if self.built_for != Some(structure) {
+        let key = (structure, rect.w as i32);
+        if self.built_for != Some(key) {
             self.rebuild();
-            self.built_for = Some(structure);
+            self.built_for = Some(key);
         }
         self.sync();
         self.panel.update(scene);

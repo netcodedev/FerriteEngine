@@ -36,6 +36,7 @@ use super::{
 struct Signature {
     entity: Option<EntityHandle>,
     components: Vec<(String, Vec<&'static str>)>,
+    width: i32,
 }
 
 enum Field {
@@ -83,6 +84,8 @@ pub struct InspectorPanel {
     signature: Option<Signature>,
     transform: Option<TransformBinding>,
     properties: Vec<PropertyBinding>,
+    /// Open/closed state per section title, kept across rebuilds.
+    section_open: std::collections::HashMap<String, DataSource<bool>>,
 }
 
 fn round3(v: f32) -> f32 {
@@ -128,6 +131,7 @@ impl InspectorPanel {
             signature: None,
             transform: None,
             properties: Vec::new(),
+            section_open: std::collections::HashMap::new(),
         }
     }
 
@@ -150,7 +154,19 @@ impl InspectorPanel {
         Signature {
             entity: id.filter(|id| scene.get_entity(id).is_some()),
             components,
+            width: 0,
         }
+    }
+
+    fn section(&mut self, title: &str, icon: &str, width: f32) -> Section {
+        let mut section = Section::new(title, Some(icon), width);
+        let flag = self
+            .section_open
+            .entry(title.to_owned())
+            .or_insert_with(|| DataSource::new(true))
+            .clone();
+        section.bind_open(flag);
+        section
     }
 
     fn rebuild(&mut self, scene: &Scene, signature: &Signature) {
@@ -177,7 +193,7 @@ impl InspectorPanel {
 
         // Entity name.
         let name = entity.get_name_ref();
-        let mut header = Section::new("Entity", Some(entity_icon(entity)), width);
+        let mut header = self.section("Entity", entity_icon(entity), width);
         header.add_child(Box::new(FieldRow::new(
             "Name",
             vec![UI::input_sized(name.clone(), Size::new(width - LABEL_COLUMN - 16.0, 24.0))],
@@ -188,7 +204,7 @@ impl InspectorPanel {
         let position: [DataSource<f32>; 3] = std::array::from_fn(|_| DataSource::new(0.0));
         let rotation: [DataSource<f32>; 3] = std::array::from_fn(|_| DataSource::new(0.0));
         let field_w = ((width - LABEL_COLUMN - 16.0 - 8.0) / 3.0).floor();
-        let mut transform = Section::new("Transform", Some(icons::AXIS_3D), width);
+        let mut transform = self.section("Transform", icons::AXIS_3D, width);
         transform.add_child(Box::new(FieldRow::new(
             "Position",
             position.iter().map(|s| number_input(s, field_w)).collect(),
@@ -210,7 +226,7 @@ impl InspectorPanel {
         // One section per component, with a remove action in its header.
         for (index, component) in entity.components().iter().enumerate() {
             let display = component.display_name();
-            let mut section = Section::new(&display, Some(component_icon(&display)), width);
+            let mut section = self.section(&display, component_icon(&display), width);
             let remove_state = self.state.clone();
             let mut remove = Button::new(
                 Position::default(),
@@ -459,7 +475,8 @@ impl UIElement for InspectorPanel {
             (rect.h - header - 8.0).max(10.0),
         ));
 
-        let signature = Self::signature(scene, selected);
+        let mut signature = Self::signature(scene, selected);
+        signature.width = rect.w as i32;
         if self.signature.as_ref() != Some(&signature) {
             self.rebuild(scene, &signature);
             self.body.set_z_index(2.0);

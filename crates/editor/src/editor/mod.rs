@@ -17,6 +17,7 @@ pub mod inspector;
 pub mod layout;
 pub mod outline;
 pub mod showcase;
+pub mod splitter;
 pub mod stats;
 pub mod titlebar;
 pub mod toolbar;
@@ -111,6 +112,8 @@ pub struct EditorState {
     status: Option<(String, Instant)>,
     pub commands: Vec<Command>,
     pub layout: layout::Layout,
+    /// Sizes the user dragged the panels to.
+    pub panel_sizes: layout::PanelSizes,
     pub show_widgets: DataSource<bool>,
     pub show_stats: DataSource<bool>,
     pub stats: stats::Stats,
@@ -135,7 +138,13 @@ impl EditorState {
             dirty: false,
             status: None,
             commands: Vec::new(),
-            layout: layout::Layout::compute(1280.0, 720.0, layout::RightColumn::Stats),
+            layout: layout::Layout::compute(
+                1280.0,
+                720.0,
+                layout::RightColumn::Stats,
+                &layout::PanelSizes::default(),
+            ),
+            panel_sizes: layout::PanelSizes::default(),
             show_widgets: DataSource::new(false),
             show_stats: DataSource::new(true),
             stats: stats::Stats::new(),

@@ -161,7 +161,15 @@ impl Plane {
         plane
     }
 
+    /// Draw the plane. Fully invisible planes (transparent fill, no visible
+    /// border) are skipped: they would only write depth and could hide
+    /// whatever is drawn behind them later. Stencil clipping calls
+    /// `PlaneRenderer::render` directly and is unaffected.
     pub fn render(&self) {
+        let border_visible = self.border_thickness > 0.0 && self.border_color.3 > 0.0;
+        if self.color.3 <= 0.0 && !border_visible {
+            return;
+        }
         PlaneRenderer::render(self);
     }
 

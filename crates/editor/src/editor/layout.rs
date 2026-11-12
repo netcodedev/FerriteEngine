@@ -29,16 +29,35 @@ pub struct Layout {
 
 pub const TITLEBAR_HEIGHT: f32 = 28.0;
 pub const TOOLBAR_HEIGHT: f32 = 32.0;
-const TOP: f32 = TITLEBAR_HEIGHT + TOOLBAR_HEIGHT;
-/// Left column holding the hierarchy (top) and inspector (bottom). Wide
-/// enough for the inspector's label column plus three number fields.
-const SIDE_WIDTH: f32 = 330.0;
-/// Share of the column height given to the hierarchy.
-const HIERARCHY_SHARE: f32 = 0.4;
-const MIN_HIERARCHY: f32 = 140.0;
-const MIN_VIEWPORT: f32 = 64.0;
-const STATS_WIDTH: f32 = 300.0;
-const PREVIEW_WIDTH: f32 = 360.0;
+pub const TOP: f32 = TITLEBAR_HEIGHT + TOOLBAR_HEIGHT;
+/// Smallest the viewport may get when columns are resized or the window
+/// shrinks.
+const MIN_VIEWPORT: f32 = 200.0;
+/// Smallest panel width / height reachable by dragging.
+pub const MIN_COLUMN: f32 = 220.0;
+pub const MIN_PANEL_HEIGHT: f32 = 120.0;
+
+/// User-adjustable panel sizes (dragged with the splitters).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PanelSizes {
+    /// Left column holding hierarchy (top) and inspector (bottom).
+    pub side: f32,
+    /// Share of the left column's height given to its top panel.
+    pub top_share: f32,
+    pub stats: f32,
+    pub preview: f32,
+}
+
+impl Default for PanelSizes {
+    fn default() -> Self {
+        Self {
+            side: 330.0,
+            top_share: 0.4,
+            stats: 300.0,
+            preview: 360.0,
+        }
+    }
+}
 
 /// What occupies the right-hand column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,19 +68,18 @@ pub enum RightColumn {
 }
 
 impl Layout {
-    pub fn compute(window_w: f32, window_h: f32, right: RightColumn) -> Self {
-        let body_h = (window_h - TOP).max(MIN_VIEWPORT);
-        // Columns shrink before the viewport disappears on tiny windows.
-        let side_w = SIDE_WIDTH.min((window_w - MIN_VIEWPORT).max(0.0)).floor();
+    pub fn compute(window_w: f32, window_h: f32, right: RightColumn, sizes: &PanelSizes) -> Self {
+        let body_h = (window_h - TOP).max(64.0);
+        // Columns shrink before the viewport disappears on small windows.
+        let side_w = sizes.side.min((window_w - MIN_VIEWPORT).max(0.0)).floor();
         let wanted = match right {
             RightColumn::None => 0.0,
-            RightColumn::Stats => STATS_WIDTH,
-            RightColumn::Preview => PREVIEW_WIDTH,
+            RightColumn::Stats => sizes.stats,
+            RightColumn::Preview => sizes.preview,
         };
         let stats_w = wanted.min((window_w - side_w - MIN_VIEWPORT).max(0.0)).floor();
-        let hierarchy_h = (body_h * HIERARCHY_SHARE)
-            .max(MIN_HIERARCHY)
-            .min(body_h * 0.8)
+        let hierarchy_h = (body_h * sizes.top_share)
+            .clamp(MIN_PANEL_HEIGHT.min(body_h * 0.5), (body_h - MIN_PANEL_HEIGHT).max(body_h * 0.5))
             .floor();
         Self {
             window_w,

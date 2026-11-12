@@ -5,6 +5,7 @@ use ferrite::core::{
         text::{icons, Text},
     },
     scene::Scene,
+    utils::DataSource,
 };
 use glfw::{
     Action::Press,
@@ -34,6 +35,9 @@ pub struct Section {
     title: Text,
     accessory: Option<Box<dyn UIElement>>,
     children: Vec<Box<dyn UIElement>>,
+    /// Shared open/closed flag, so the state survives when the owner
+    /// rebuilds its sections.
+    open_flag: Option<DataSource<bool>>,
 }
 
 impl Section {
@@ -55,6 +59,7 @@ impl Section {
             title: theme::heading(title, theme::FONT_SIZE_SMALL + 0.5, theme::TEXT),
             accessory: None,
             children: Vec::new(),
+            open_flag: None,
         };
         section.layout();
         section
@@ -69,8 +74,20 @@ impl Section {
         self.width = width;
     }
 
+    /// Keep the open/closed state in `flag` (read now and on every update).
+    pub fn bind_open(&mut self, flag: DataSource<bool>) {
+        let open = flag.read();
+        self.open_flag = Some(flag);
+        self.set_open(open);
+    }
+
     pub fn set_open(&mut self, open: bool) {
         self.open = open;
+        if let Some(flag) = &self.open_flag {
+            if flag.read() != open {
+                flag.write(open);
+            }
+        }
         self.chevron.set_content(if open {
             icons::CHEVRON_DOWN
         } else {
@@ -150,6 +167,11 @@ impl Section {
 
 impl UIElement for Section {
     fn update(&mut self, scene: &mut Scene) {
+        if let Some(open) = self.open_flag.as_ref().map(|f| f.read()) {
+            if open != self.open {
+                self.set_open(open);
+            }
+        }
         self.layout();
         if let Some(accessory) = &mut self.accessory {
             accessory.update(scene);

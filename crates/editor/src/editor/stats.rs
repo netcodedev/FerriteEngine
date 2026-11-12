@@ -631,10 +631,11 @@ pub struct StatsPanel {
     panel: Panel,
     body: ScrollArea,
     values: Vec<(Key, DataSource<String>)>,
+    /// Open/closed state per section, kept across rebuilds.
+    open: Vec<DataSource<bool>>,
+    built_width: Option<i32>,
     last_refresh: Option<Instant>,
 }
-
-const CONTENT_WIDTH: f32 = 276.0;
 
 impl StatsPanel {
     pub fn new(state: Shared) -> Self {
@@ -644,30 +645,39 @@ impl StatsPanel {
         panel.set_flat(true);
         let mut body = ScrollArea::new(Position::default(), Size::new(290.0, 300.0));
         body.set_gap(4.0);
-
-        let mut values = Vec::new();
-        for (index, (title, icon, rows)) in SECTIONS.iter().enumerate() {
-            let mut section = Section::new(title, Some(icon), CONTENT_WIDTH);
-            if index == 0 {
-                section.add_child(Box::new(FrameGraph::new(state.clone(), CONTENT_WIDTH - 8.0)));
-            }
-            for (key, label) in rows.iter() {
-                let source = DataSource::new(String::from("-"));
-                section.add_child(Box::new(StatRow::new(label, source.clone(), CONTENT_WIDTH - 8.0)));
-                values.push((*key, source));
-            }
-            body.add_child(Box::new(section));
-        }
-        body.set_z_index(2.0);
-
         Self {
             handle: UIElementHandle::new(),
             state,
             panel,
             body,
-            values,
+            values: Vec::new(),
+            open: SECTIONS.iter().map(|_| DataSource::new(true)).collect(),
+            built_width: None,
             last_refresh: None,
         }
+    }
+
+    /// (Re)create the sections for the current column width.
+    fn build(&mut self, width: f32) {
+        self.body.clear();
+        self.values.clear();
+        let content = (width - 24.0).max(160.0);
+        for (index, (title, icon, rows)) in SECTIONS.iter().enumerate() {
+            let mut section = Section::new(title, Some(icon), content);
+            section.bind_open(self.open[index].clone());
+            if index == 0 {
+                section.add_child(Box::new(FrameGraph::new(self.state.clone(), content - 8.0)));
+            }
+            for (key, label) in rows.iter() {
+                let source = DataSource::new(String::from("-"));
+                section.add_child(Box::new(StatRow::new(label, source.clone(), content - 8.0)));
+                self.values.push((*key, source));
+            }
+            self.body.add_child(Box::new(section));
+        }
+        self.body.set_z_index(2.0);
+        // Show values right away instead of "-" until the next refresh.
+        self.last_refresh = None;
     }
 
     fn value_text(key: Key, stats: &Stats, layout: &super::layout::Layout, mode: Mode) -> String {
@@ -746,6 +756,10 @@ impl UIElement for StatsPanel {
             (rect.w - 8.0).max(10.0),
             (rect.h - header - 8.0).max(10.0),
         ));
+        if self.built_width != Some(rect.w as i32) {
+            self.build(rect.w);
+            self.built_width = Some(rect.w as i32);
+        }
 
         let due = self
             .last_refresh

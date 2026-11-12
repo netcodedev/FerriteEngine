@@ -44,6 +44,7 @@ struct BuiltFor {
     selection: AnimSelection,
     structure: u64,
     labels: u64,
+    width: i32,
 }
 
 /// Left-bottom panel of the animation workspace: edits the selected state
@@ -613,6 +614,7 @@ impl UIElement for GraphInspector {
                     selection: s.anim.selection.clone(),
                     structure: s.anim.structure,
                     labels: s.anim.labels,
+                    width: s.layout.inspector.w as i32,
                 },
             )
         };

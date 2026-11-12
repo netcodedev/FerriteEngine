@@ -17,6 +17,7 @@ use editor::{
     layout::{Layout, RightColumn},
     outline::Outline,
     showcase,
+    splitter::Splitter,
     stats::{GpuTimer, StatsPanel},
     titlebar::TitleBar,
     toggle_window::ToggleWindow,
@@ -84,6 +85,8 @@ impl EditorLayer {
         };
         add(&mut ui, Box::new(TitleBar::new(state.clone())));
         add(&mut ui, Box::new(Toolbar::new(state.clone())));
+        // Before the panels, so it gets first claim on clicks at the edges.
+        add(&mut ui, Box::new(Splitter::new(state.clone())));
         let (scene_panels, anim_panels) = {
             let s = state.borrow();
             (s.scene_panels.clone(), s.anim_panels.clone())
@@ -608,7 +611,8 @@ impl Layer for EditorLayer {
             (Workspace::Scene, true) => RightColumn::Stats,
             (Workspace::Scene, false) => RightColumn::None,
         };
-        let layout = Layout::compute(window.width as f32, window.height as f32, right);
+        let sizes = self.state.borrow().panel_sizes;
+        let layout = Layout::compute(window.width as f32, window.height as f32, right, &sizes);
         self.state.borrow_mut().layout = layout;
         let mode = self.state.borrow().mode;
 

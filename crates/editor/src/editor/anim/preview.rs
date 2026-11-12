@@ -62,7 +62,7 @@ pub struct PreviewPanel {
     /// Content of the last built graph, without node positions (moving a
     /// node must not restart the preview).
     built_file: Option<AnimGraphFile>,
-    inputs_built: Option<(u64, u64)>,
+    inputs_built: Option<(u64, u64, i32)>,
     input_values: HashMap<String, DataSource<f32>>,
     input_order: Vec<String>,
     paused: DataSource<bool>,
@@ -203,10 +203,11 @@ impl PreviewPanel {
                 s.layout.stats.w,
             )
         };
-        if self.inputs_built == Some((structure, labels)) {
+        let key = (structure, labels, width as i32);
+        if self.inputs_built == Some(key) {
             return;
         }
-        self.inputs_built = Some((structure, labels));
+        self.inputs_built = Some(key);
         self.controls.clear();
         self.input_order.clear();
         let slider_w = (width - 16.0 - 96.0 - 64.0 - 24.0).max(60.0);
