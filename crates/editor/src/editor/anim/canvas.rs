@@ -121,7 +121,8 @@ impl NodeCanvas {
                 anim.touch_structure();
             }),
         );
-        let fit_button = header_button("", icons::SCAN, ButtonStyle::Ghost, Box::new(|_| {}));
+        let mut fit_button = header_button("", icons::SCAN, ButtonStyle::Ghost, Box::new(|_| {}));
+        fit_button.set_tooltip("Fit graph to view");
         let back_state = state.clone();
         let back_button = header_button(
             "Back to scene",
@@ -683,6 +684,10 @@ impl UIElement for NodeCanvas {
         ] {
             button.render();
         }
+    }
+
+    fn render_overlay(&self) {
+        self.fit_button.render_overlay();
     }
 
     fn handle_events(

@@ -15,10 +15,14 @@ use glfw::{
     WindowEvent::{self, CursorPos, MouseButton},
 };
 
-use super::{Button, ButtonStyle};
+use super::{Button, ButtonStyle, Tooltip};
+use std::time::{Duration, Instant};
 
 const ICON_LABEL_GAP: f32 = 6.0;
 const PADDING_X: f32 = 10.0;
+const TOOLTIP_DELAY: Duration = Duration::from_millis(450);
+const TOOLTIP_Z: f32 = 60.0;
+const TOOLTIP_HEIGHT: f32 = 22.0;
 
 impl Button {
     pub fn new(position: Position, size: Size, on_click: Box<dyn Fn(&mut Scene)>) -> Self {
@@ -45,7 +49,34 @@ impl Button {
                 .border_color(theme::BORDER)
                 .color(theme::BG_CONTROL)
                 .build(),
+            tooltip: None,
         }
+    }
+
+    /// Hint shown below the button after hovering it briefly. Icon-only
+    /// buttons should always have one.
+    pub fn set_tooltip(&mut self, text: &str) {
+        let mut label = theme::text(text, theme::FONT_SIZE_SMALL, theme::TEXT);
+        label.set_z_index(TOOLTIP_Z + 1.0);
+        let mut background = PlaneBuilder::new()
+            .color(theme::BG_MENU)
+            .border_color(theme::BORDER_STRONG)
+            .border_thickness(1.0)
+            .border_radius_uniform(theme::RADIUS_SMALL)
+            .build();
+        background.set_z_index(TOOLTIP_Z);
+        self.tooltip = Some(Tooltip {
+            text: label,
+            background,
+            hover_since: None,
+        });
+    }
+
+    fn tooltip_visible(&self) -> bool {
+        self.tooltip
+            .as_ref()
+            .and_then(|t| t.hover_since)
+            .is_some_and(|since| since.elapsed() >= TOOLTIP_DELAY)
     }
 
     pub fn set_style(&mut self, style: ButtonStyle) {
@@ -184,6 +215,20 @@ impl UIElement for Button {
             let y = theme::center_y(text, size.height);
             text.prepare_render_at(&origin + (x, y, 1.0));
         }
+        if let Some(tooltip) = &mut self.tooltip {
+            if tooltip.hover_since.is_some() {
+                let width = (tooltip.text.measure_width() + 16.0).ceil();
+                // Centred under the button, kept inside the window's left edge.
+                let tx = (origin.x + (size.width - width) * 0.5).round().max(4.0);
+                let ty = origin.y + size.height + 6.0;
+                tooltip.background.set_position(Position::new(tx, ty, TOOLTIP_Z));
+                tooltip.background.set_size(Size::new(width, TOOLTIP_HEIGHT));
+                let y = theme::center_y(&tooltip.text, TOOLTIP_HEIGHT);
+                tooltip
+                    .text
+                    .prepare_render_at(Position::new(tx + 8.0, ty + y, TOOLTIP_Z + 1.0));
+            }
+        }
         for child in self.children.values_mut() {
             child.update(scene);
         }
@@ -202,6 +247,18 @@ impl UIElement for Button {
         }
     }
 
+    fn render_overlay(&self) {
+        if self.tooltip_visible() {
+            if let Some(tooltip) = &self.tooltip {
+                tooltip.background.render();
+                tooltip.text.render();
+            }
+        }
+        for child in self.children.values() {
+            child.render_overlay();
+        }
+    }
+
     fn handle_events(
         &mut self,
         scene: &mut Scene,
@@ -214,6 +271,9 @@ impl UIElement for Button {
                 let (x, y) = window.get_cursor_pos();
                 let (x, y) = (x as f32, y as f32);
                 if self.region.contains(x, y) {
+                    if let Some(tooltip) = &mut self.tooltip {
+                        tooltip.hover_since = None;
+                    }
                     (self.on_click)(scene);
                     return true;
                 }
@@ -224,11 +284,17 @@ impl UIElement for Button {
                     if !self.is_hovering {
                         window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
                         self.is_hovering = true;
+                        if let Some(tooltip) = &mut self.tooltip {
+                            tooltip.hover_since = Some(Instant::now());
+                        }
                         self.refresh_colors();
                     }
                 } else if self.is_hovering {
                     window.set_cursor(None);
                     self.is_hovering = false;
+                    if let Some(tooltip) = &mut self.tooltip {
+                        tooltip.hover_since = None;
+                    }
                     self.refresh_colors();
                 }
                 false

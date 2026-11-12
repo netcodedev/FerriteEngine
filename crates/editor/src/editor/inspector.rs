@@ -241,6 +241,7 @@ impl InspectorPanel {
             );
             remove.set_style(ButtonStyle::Danger);
             remove.set_icon(icons::TRASH);
+            remove.set_tooltip("Remove component");
             section.set_accessory(Box::new(remove));
             let properties = component.properties();
             if properties.is_empty() {

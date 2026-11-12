@@ -26,6 +26,16 @@ pub struct Button {
     label: Option<(String, Text)>,
     icon: Option<(String, Text)>,
     plane: Plane,
+    tooltip: Option<Tooltip>,
+}
+
+/// Hint shown under the button after hovering it for a moment.
+struct Tooltip {
+    text: Text,
+    background: Plane,
+    /// When the cursor entered the button; `None` while not hovering or
+    /// after a click.
+    hover_since: Option<std::time::Instant>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

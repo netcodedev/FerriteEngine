@@ -111,6 +111,7 @@ impl HierarchyPanel {
         );
         duplicate.set_style(ButtonStyle::Ghost);
         duplicate.set_icon(icons::COPY_PLUS);
+        duplicate.set_tooltip("Duplicate selected (Ctrl+D)");
         let del_state = state.clone();
         let mut delete = Button::new(
             Position::default(),
@@ -125,6 +126,7 @@ impl HierarchyPanel {
         );
         delete.set_style(ButtonStyle::Danger);
         delete.set_icon(icons::TRASH);
+        delete.set_tooltip("Delete selected (Del)");
 
         Self {
             handle: UIElementHandle::new(),
@@ -221,6 +223,8 @@ impl UIElement for HierarchyPanel {
 
     fn render_overlay(&self) {
         self.add_menu.render_overlay();
+        self.duplicate.render_overlay();
+        self.delete.render_overlay();
     }
 
     fn handle_events(
