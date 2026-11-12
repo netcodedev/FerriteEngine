@@ -4,20 +4,20 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-as-any = "0.3.1"
+as-any = "0.3.2"
 cgmath = "0.18.0"
-env_logger = "0.11.5"
+env_logger = "0.11.11"
 fast-surface-nets = "0.2.1"
 gl = "0.14.0"
-glfw = "0.62.0"
-image = "0.25.5"
-lazy_static = "1.5.0"
-libnoise = "1.1.2"
-log = "0.4.25"
+glfw = "0.63.0"
+image = "0.25.10"
+lazy_static = "1.5.1"
+libnoise = "1.2.0"
+log = "0.4.35"
 ndarray = "0.17.2"
-rand = "0.10.1"
-rapier3d = { version = "0.32.0", features = ["parallel"] }
-ron = "0.8.1"
-russimp-ng = { version = "3.2.1" }
+rand = "0.10.3"
+rapier3d = { version = "0.36.1", features = ["parallel"] }
+ron = "0.12.3"
+russimp-ng = { version = "3.2.7" }
 rusttype = { version = "0.9.3", features = ["gpu_cache"] }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }

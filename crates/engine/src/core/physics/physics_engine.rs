@@ -5,6 +5,7 @@ pub struct PhysicsEngine {
     pub colliders: ColliderSet,
     pub impulse_joints: ImpulseJointSet,
     pub multibody_joints: MultibodyJointSet,
+    pub soft_bodies: SoftBodySet,
 
     physics_pipeline: PhysicsPipeline,
 
@@ -31,6 +32,7 @@ impl PhysicsEngine {
         let colliders = ColliderSet::new();
         let impulse_joints = ImpulseJointSet::new();
         let multibody_joints = MultibodyJointSet::new();
+        let soft_bodies = SoftBodySet::new();
         let ccd_solver = CCDSolver::new();
         let physics_hooks = ();
         let physics_events = ();
@@ -40,6 +42,7 @@ impl PhysicsEngine {
             colliders,
             impulse_joints,
             multibody_joints,
+            soft_bodies,
 
             physics_pipeline,
             gravity,
@@ -66,6 +69,7 @@ impl PhysicsEngine {
             &mut self.colliders,
             &mut self.impulse_joints,
             &mut self.multibody_joints,
+            &mut self.soft_bodies,
             &mut self.ccd_solver,
             &self.physics_hooks,
             &self.physics_events,
@@ -129,6 +133,7 @@ impl PhysicsEngine {
             &mut self.colliders,
             &mut self.impulse_joints,
             &mut self.multibody_joints,
+            &mut self.soft_bodies,
             true,
         );
     }

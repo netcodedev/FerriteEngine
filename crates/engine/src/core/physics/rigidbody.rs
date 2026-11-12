@@ -27,7 +27,9 @@ impl RigidBody {
         let translation = entity.get_position();
         let rigid_body_builder = match rigid_body_type {
             RigidBodyType::Fixed => RigidBodyBuilder::fixed(),
-            RigidBodyType::Dynamic => RigidBodyBuilder::dynamic(),
+            // Soft-frame proxies are created by rapier itself and can't be
+            // built directly; they behave as dynamic bodies, so fall back to that.
+            RigidBodyType::Dynamic | RigidBodyType::SoftFrame => RigidBodyBuilder::dynamic(),
             RigidBodyType::KinematicPositionBased => RigidBodyBuilder::kinematic_position_based(),
             RigidBodyType::KinematicVelocityBased => RigidBodyBuilder::kinematic_velocity_based(),
         };
