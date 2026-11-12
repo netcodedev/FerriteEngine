@@ -16,7 +16,7 @@ use ferrite_ui::ui::{
 };
 use glfw::{Glfw, WindowEvent};
 
-use super::{send, Command, GizmoMode, Mode, Shared};
+use super::{send, Command, GizmoMode, Mode, Shared, Workspace};
 
 const BUTTON_HEIGHT: f32 = 26.0;
 
@@ -31,6 +31,8 @@ pub struct Toolbar {
     separator: Plane,
     file_menu: MenuButton,
     window_menu: MenuButton,
+    scene_tab: Button,
+    anim_tab: Button,
     move_button: Button,
     rotate_button: Button,
     play_button: Button,
@@ -88,6 +90,19 @@ impl Toolbar {
             }),
         );
 
+        let scene_state = state.clone();
+        let scene_tab = tool_button(
+            "Scene",
+            icons::BOXES,
+            Box::new(move |_| send(&scene_state, Command::SetWorkspace(Workspace::Scene))),
+        );
+        let anim_state = state.clone();
+        let anim_tab = tool_button(
+            "Animation",
+            icons::ACTIVITY,
+            Box::new(move |_| send(&anim_state, Command::SetWorkspace(Workspace::Animation))),
+        );
+
         let move_state = state.clone();
         let move_button = tool_button(
             "Move",
@@ -133,6 +148,8 @@ impl Toolbar {
             separator: PlaneBuilder::new().color(theme::BORDER).build(),
             file_menu,
             window_menu,
+            scene_tab,
+            anim_tab,
             move_button,
             rotate_button,
             play_button,
@@ -141,30 +158,42 @@ impl Toolbar {
         }
     }
 
-    fn widgets_mut(&mut self) -> [&mut dyn UIElement; 5] {
-        [
+    fn widgets_mut(&mut self) -> Vec<&mut dyn UIElement> {
+        let scene = self.state.borrow().workspace == Workspace::Scene;
+        let mut widgets: Vec<&mut dyn UIElement> = vec![
             &mut self.file_menu,
             &mut self.window_menu,
-            &mut self.move_button,
-            &mut self.rotate_button,
+            &mut self.scene_tab,
+            &mut self.anim_tab,
             &mut self.play_button,
-        ]
+        ];
+        if scene {
+            widgets.push(&mut self.move_button);
+            widgets.push(&mut self.rotate_button);
+        }
+        widgets
     }
 
-    fn widgets(&self) -> [&dyn UIElement; 5] {
-        [
+    fn widgets(&self) -> Vec<&dyn UIElement> {
+        let scene = self.state.borrow().workspace == Workspace::Scene;
+        let mut widgets: Vec<&dyn UIElement> = vec![
             &self.file_menu,
             &self.window_menu,
-            &self.move_button,
-            &self.rotate_button,
+            &self.scene_tab,
+            &self.anim_tab,
             &self.play_button,
-        ]
+        ];
+        if scene {
+            widgets.push(&self.move_button);
+            widgets.push(&self.rotate_button);
+        }
+        widgets
     }
 }
 
 impl UIElement for Toolbar {
     fn update(&mut self, scene: &mut Scene) {
-        let (rect, viewport, mode, gizmo, status) = {
+        let (rect, viewport, mode, gizmo, status, workspace) = {
             let state = self.state.borrow();
             (
                 state.layout.toolbar,
@@ -172,6 +201,7 @@ impl UIElement for Toolbar {
                 state.mode,
                 state.gizmo,
                 state.status().map(str::to_owned),
+                state.workspace,
             )
         };
         self.size = Size::new(rect.w, rect.h);
@@ -195,9 +225,18 @@ impl UIElement for Toolbar {
         self.separator
             .set_size(Size::new(1.0, rect.h - 16.0));
         x += 9.0;
-        for widget in [&mut self.move_button, &mut self.rotate_button] {
+        for widget in [&mut self.scene_tab, &mut self.anim_tab] {
             widget.set_offset(Offset { x, y });
             x += widget.get_size().width + 4.0;
+        }
+        self.scene_tab.set_active(workspace == Workspace::Scene);
+        self.anim_tab.set_active(workspace == Workspace::Animation);
+        x += 12.0;
+        if workspace == Workspace::Scene {
+            for widget in [&mut self.move_button, &mut self.rotate_button] {
+                widget.set_offset(Offset { x, y });
+                x += widget.get_size().width + 4.0;
+            }
         }
         let editing = mode == Mode::Edit;
         self.move_button
@@ -239,7 +278,7 @@ impl UIElement for Toolbar {
     fn render(&self) {
         self.background.render();
         self.separator.render();
-        for widget in self.widgets() {
+        for widget in self.widgets().into_iter() {
             widget.render();
         }
         self.status_icon.render();

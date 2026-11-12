@@ -16,6 +16,21 @@ impl AnimationComponent {
     pub fn set_input(&mut self, name: &str, value: f32) {
         self.animation_graph.set_input(name, value);
     }
+
+    /// Swap in a rebuilt graph (e.g. after editing it), keeping the current
+    /// input values.
+    pub fn replace_graph(&mut self, mut graph: AnimationGraph, input_names: &[String]) {
+        for name in input_names {
+            if let Some(value) = self.animation_graph.get_input(name) {
+                graph.set_input(name, value);
+            }
+        }
+        self.animation_graph = graph;
+    }
+
+    pub fn graph(&self) -> &AnimationGraph {
+        &self.animation_graph
+    }
 }
 
 impl Component for AnimationComponent {

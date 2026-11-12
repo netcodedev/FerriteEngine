@@ -1,0 +1,439 @@
+(
+    version: 1,
+    inputs: [
+        (name: "forward", default: 0.0),
+        (name: "backward", default: 0.0),
+        (name: "left", default: 0.0),
+        (name: "right", default: 0.0),
+        (name: "sprint", default: 0.0),
+        (name: "jump", default: 0.0),
+    ],
+    default_state: "idle",
+    states: [
+        (
+            name: "idle",
+            clips: [
+                (name: "idle", file: "Idle.fbx"),
+            ],
+            sync: false,
+            position: (280.0, 200.0),
+        ),
+        (
+            name: "walk",
+            clips: [
+                (name: "walk", file: "Walk.fbx"),
+            ],
+            sync: false,
+            position: (280.0, 0.0),
+        ),
+        (
+            name: "fast_run",
+            clips: [
+                (name: "fast_run", file: "Fast Run.fbx"),
+            ],
+            sync: false,
+            position: (560.0, 0.0),
+        ),
+        (
+            name: "back",
+            clips: [
+                (name: "back", file: "Walk_Backwards.fbx"),
+            ],
+            sync: false,
+            position: (280.0, 400.0),
+        ),
+        (
+            name: "left",
+            clips: [
+                (name: "left", file: "Walk_Left.fbx"),
+            ],
+            sync: false,
+            position: (0.0, 200.0),
+        ),
+        (
+            name: "right",
+            clips: [
+                (name: "right", file: "Walk_Right.fbx"),
+            ],
+            sync: false,
+            position: (840.0, 200.0),
+        ),
+        (
+            name: "forward_left",
+            clips: [
+                (name: "walk", file: "Walk.fbx"),
+                (name: "left", file: "Walk_Left.fbx"),
+            ],
+            sync: true,
+            position: (0.0, 0.0),
+        ),
+        (
+            name: "forward_right",
+            clips: [
+                (name: "walk", file: "Walk.fbx"),
+                (name: "right", file: "Walk_Right.fbx"),
+            ],
+            sync: true,
+            position: (840.0, 0.0),
+        ),
+        (
+            name: "backward_left",
+            clips: [
+                (name: "back", file: "Walk_Backwards.fbx"),
+                (name: "left", file: "Walk_Left.fbx"),
+            ],
+            sync: true,
+            position: (0.0, 400.0),
+        ),
+        (
+            name: "backward_right",
+            clips: [
+                (name: "back", file: "Walk_Backwards.fbx"),
+                (name: "right", file: "Walk_Right.fbx"),
+            ],
+            sync: true,
+            position: (840.0, 400.0),
+        ),
+        (
+            name: "jump",
+            clips: [
+                (name: "jump", file: "Jump.fbx"),
+            ],
+            sync: false,
+            position: (560.0, 200.0),
+        ),
+    ],
+    transitions: [
+        (
+            from: "idle",
+            to: "walk",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "idle",
+            to: "back",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "idle",
+            to: "left",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "idle",
+            to: "right",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "idle",
+            to: "jump",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "walk",
+            to: "idle",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "walk",
+            to: "forward_left",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "walk",
+            to: "forward_right",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "walk",
+            to: "fast_run",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "sprint", sign: 1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "walk",
+            to: "jump",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "idle",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: LessEq, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "walk",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "jump",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "idle",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "backward_left",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "backward_right",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "jump",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "left",
+            to: "idle",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "left",
+            to: "forward_left",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "left",
+            to: "backward_left",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "left",
+            to: "jump",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "right",
+            to: "idle",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "right",
+            to: "forward_right",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "right",
+            to: "backward_right",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "right",
+            to: "jump",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "walk",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "left",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "jump",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "walk",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "right",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "jump",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "back",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "left",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "jump",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "back",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "right",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "jump",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "jump",
+            to: "idle",
+            blend: 0.5,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+    ],
+)

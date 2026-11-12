@@ -23,6 +23,8 @@ pub struct Slider {
     value: DataSource<f32>,
     min: f32,
     max: f32,
+    /// Dragging snaps to multiples of this (typed values are not snapped).
+    step: Option<f32>,
     is_hovering: bool,
     is_dragging: bool,
     track: Plane,
@@ -60,6 +62,7 @@ impl Slider {
             value,
             min,
             max,
+            step: Some(default_step(min, max)),
             is_hovering: false,
             is_dragging: false,
             track,
@@ -73,10 +76,16 @@ impl Slider {
         ((v - self.min) / (self.max - self.min)).clamp(0.0, 1.0)
     }
 
+    /// Snap dragged values to `step`; `None` keeps them continuous.
+    pub fn set_step(&mut self, step: Option<f32>) {
+        self.step = step.filter(|s| *s > 0.0);
+    }
+
     fn set_from_cursor(&mut self, cursor_x: f32) {
         let origin_x = self.region.position.x + self.region.offset.x;
         let f = ((cursor_x - origin_x) / self.region.size.width).clamp(0.0, 1.0);
-        self.value.write(self.min + f * (self.max - self.min));
+        let raw = self.min + f * (self.max - self.min);
+        self.value.write(snap(raw, self.min, self.max, self.step));
     }
 
     fn sync_visual(&mut self) {
@@ -168,5 +177,47 @@ impl UIElement for Slider {
         self.track.set_z_index(z_index);
         self.fill.set_z_index(z_index + 1.0);
         self.knob.set_z_index(z_index + 2.0);
+    }
+}
+
+/// A "nice" step of about a hundredth of the range: 0..1 -> 0.01,
+/// 0..2 -> 0.01, 10..120 -> 1.
+pub fn default_step(min: f32, max: f32) -> f32 {
+    let range = (max - min).abs().max(f32::EPSILON);
+    10f32.powf((range / 100.0).log10().floor())
+}
+
+/// Round `value` to the nearest multiple of `step` from `min`, cleaned of
+/// float noise (0.35000002 -> 0.35) and kept inside `[min, max]`.
+pub fn snap(value: f32, min: f32, max: f32, step: Option<f32>) -> f32 {
+    let Some(step) = step else {
+        return value.clamp(min, max);
+    };
+    let steps = ((value - min) / step).round();
+    let decimals = (-step.log10().floor()).max(0.0) as i32;
+    let factor = 10f32.powi(decimals);
+    let snapped = ((min + steps * step) * factor).round() / factor;
+    snapped.clamp(min.min(max), max.max(min))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_step, snap};
+
+    #[test]
+    fn default_steps_scale_with_the_range() {
+        assert_eq!(default_step(0.0, 1.0), 0.01);
+        assert_eq!(default_step(0.0, 2.0), 0.01);
+        assert_eq!(default_step(10.0, 120.0), 1.0);
+        assert_eq!(default_step(-89.0, 89.0), 1.0);
+    }
+
+    #[test]
+    fn snapping_rounds_to_clean_values() {
+        assert_eq!(snap(0.123456, 0.0, 1.0, Some(0.01)).to_string(), "0.12");
+        assert_eq!(snap(0.355, 0.0, 1.0, Some(0.01)).to_string(), "0.36");
+        assert_eq!(snap(64.4, 10.0, 120.0, Some(1.0)), 64.0);
+        assert_eq!(snap(1.5, 0.0, 1.0, Some(0.01)), 1.0);
+        assert_eq!(snap(0.123456, 0.0, 1.0, None), 0.123456);
     }
 }

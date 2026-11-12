@@ -3,6 +3,9 @@ use std::collections::HashMap;
 use super::Animation;
 
 mod animation_graph;
+pub mod graph_file;
+
+use graph_file::Comparison;
 
 pub struct AnimationGraph {
     inputs: HashMap<String, f32>,
@@ -28,6 +31,8 @@ pub struct State {
 
 pub struct Transition {
     to_state: String,
-    condition: Box<dyn Fn(&HashMap<String, f32>) -> bool>,
+    /// All must hold; data instead of a closure so graphs can be saved and
+    /// edited (see `graph_file`).
+    conditions: Vec<Comparison>,
     transition_time: f32,
 }

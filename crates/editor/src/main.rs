@@ -7,10 +7,14 @@ use std::{
 
 use cgmath::{EuclideanSpace, Point3, Vector3};
 use editor::{
+    anim::{
+        canvas::NodeCanvas, graph_inspector::GraphInspector, inputs::InputsPanel,
+        preview::PreviewPanel, AnimSelection,
+    },
     dialogs::{self, ModalHost},
     hierarchy::HierarchyPanel,
     inspector::InspectorPanel,
-    layout::Layout,
+    layout::{Layout, RightColumn},
     outline::Outline,
     showcase,
     stats::{GpuTimer, StatsPanel},
@@ -18,11 +22,14 @@ use editor::{
     toggle_window::ToggleWindow,
     toolbar::Toolbar,
     viewport::{Viewport, ViewportAction},
-    Command, EditorState, EntityTemplate, GizmoMode, Mode, Shared,
+    Command, EditorState, EntityTemplate, GizmoMode, Mode, Shared, Workspace,
 };
 use ferrite::core::{
     application::{Application, Layer},
-    entity::{component::camera_component::CameraComponent, EntityHandle},
+    entity::{
+        component::{animation_component::AnimationComponent, camera_component::CameraComponent},
+        Entity, EntityHandle,
+    },
     renderer::line::LineRenderer,
     scene::{
         scene_file::{default_scene_file, ComponentData, EntityData, SceneFile, SceneSettings},
@@ -30,6 +37,7 @@ use ferrite::core::{
     },
     window::Window,
 };
+use ferrite::player::{build_animation_graph, PlayerController};
 use ferrite_ui::ui::{UIElement, UI};
 use glfw::{Action, CursorMode, Glfw, Key, Modifiers, WindowEvent};
 
@@ -76,9 +84,27 @@ impl EditorLayer {
         };
         add(&mut ui, Box::new(TitleBar::new(state.clone())));
         add(&mut ui, Box::new(Toolbar::new(state.clone())));
-        add(&mut ui, Box::new(HierarchyPanel::new(state.clone())));
-        add(&mut ui, Box::new(InspectorPanel::new(state.clone())));
-        add(&mut ui, Box::new(StatsPanel::new(state.clone())));
+        let (scene_panels, anim_panels) = {
+            let s = state.borrow();
+            (s.scene_panels.clone(), s.anim_panels.clone())
+        };
+        // Scene workspace.
+        for panel in [
+            Box::new(HierarchyPanel::new(state.clone())) as Box<dyn UIElement>,
+            Box::new(InspectorPanel::new(state.clone())),
+            Box::new(StatsPanel::new(state.clone())),
+        ] {
+            add(&mut ui, Box::new(ToggleWindow::new(scene_panels.clone(), panel)));
+        }
+        // Animation workspace.
+        for panel in [
+            Box::new(NodeCanvas::new(state.clone())) as Box<dyn UIElement>,
+            Box::new(InputsPanel::new(state.clone())),
+            Box::new(GraphInspector::new(state.clone())),
+            Box::new(PreviewPanel::new(state.clone())),
+        ] {
+            add(&mut ui, Box::new(ToggleWindow::new(anim_panels.clone(), panel)));
+        }
 
         // Floating windows from the Window menu (hidden by default).
         let (widgets, widgets_popup) = showcase::widget_showcase();
@@ -290,8 +316,12 @@ impl EditorLayer {
             Command::SaveAsDialog => dialogs::save_as(&self.state),
             Command::SaveAs(path) => self.save(path),
             Command::ConfirmDiscard(then) => {
-                if self.state.borrow().dirty {
-                    dialogs::confirm_discard(&self.state, *then);
+                let (scene_dirty, graph_dirty) = {
+                    let s = self.state.borrow();
+                    (s.dirty, s.anim.dirty && matches!(*then, Command::Quit))
+                };
+                if scene_dirty || graph_dirty {
+                    dialogs::confirm_discard(&self.state, *then, graph_dirty);
                 } else {
                     self.state.borrow_mut().push(*then);
                 }
@@ -299,6 +329,9 @@ impl EditorLayer {
             Command::Play => {
                 if mode == Mode::Play {
                     return;
+                }
+                if self.state.borrow().workspace == Workspace::Animation {
+                    self.run(Command::SetWorkspace(Workspace::Scene));
                 }
                 self.play_snapshot = Some(self.scene.to_file());
                 self.scene.set_editor_camera(None);
@@ -393,6 +426,68 @@ impl EditorLayer {
             }
             Command::Focus(id) => self.viewport.focus(&self.scene, id),
             Command::Quit => self.pending_quit = true,
+            Command::SetWorkspace(workspace) => {
+                if mode == Mode::Play && workspace == Workspace::Animation {
+                    self.state
+                        .borrow_mut()
+                        .set_status("Stop play mode before editing animations");
+                    return;
+                }
+                let mut state = self.state.borrow_mut();
+                state.workspace = workspace;
+                state.scene_panels.write(workspace == Workspace::Scene);
+                state.anim_panels.write(workspace == Workspace::Animation);
+            }
+            Command::SaveGraph => {
+                let result = self.state.borrow_mut().anim.save();
+                match result {
+                    Ok(()) => {
+                        let (file, path) = {
+                            let s = self.state.borrow();
+                            (s.anim.file.clone(), s.anim.path.clone())
+                        };
+                        let names: Vec<String> = file.inputs.iter().map(|i| i.name.clone()).collect();
+                        let applied = apply_graph_to_players(self.scene.get_entities_mut(), &file, &names);
+                        let message = match applied {
+                            Ok(0) => format!("Saved {}", path.display()),
+                            Ok(n) => format!(
+                                "Saved {} and applied it to {n} player{}",
+                                path.display(),
+                                if n == 1 { "" } else { "s" }
+                            ),
+                            Err(e) => format!("Saved {}, but applying it failed: {e}", path.display()),
+                        };
+                        self.state.borrow_mut().set_status(message);
+                    }
+                    Err(e) => self
+                        .state
+                        .borrow_mut()
+                        .set_status(format!("Could not save the animation graph: {e}")),
+                }
+            }
+            Command::RevertGraph => {
+                let result = self.state.borrow_mut().anim.reload();
+                let mut state = self.state.borrow_mut();
+                match result {
+                    Ok(()) => state.set_status("Animation graph reverted"),
+                    Err(e) => state.set_status(format!("Could not reload the graph: {e}")),
+                }
+            }
+            Command::DeleteGraphSelection => {
+                let mut state = self.state.borrow_mut();
+                let anim = &mut state.anim;
+                match anim.selection.clone() {
+                    AnimSelection::State(name) => anim.file.remove_state(&name),
+                    AnimSelection::Transition(index) => {
+                        if index < anim.file.transitions.len() {
+                            anim.file.transitions.remove(index);
+                        }
+                    }
+                    AnimSelection::None => return,
+                }
+                anim.selection = AnimSelection::None;
+                anim.touch_structure();
+            }
         }
     }
 
@@ -417,6 +512,29 @@ impl EditorLayer {
         let shift = modifiers.contains(Modifiers::Shift);
         let mode = self.state.borrow().mode;
         let selected = self.state.borrow().selected();
+        let workspace = self.state.borrow().workspace;
+        if workspace == Workspace::Animation {
+            let command = match (key, ctrl) {
+                (Key::S, true) => Some(Command::SaveGraph),
+                (Key::Delete, false) => Some(Command::DeleteGraphSelection),
+                (Key::P, true) => {
+                    self.state.borrow_mut().push(Command::SetWorkspace(Workspace::Scene));
+                    Some(Command::Play)
+                }
+                (Key::Escape, false) => {
+                    self.state.borrow_mut().anim.selection = AnimSelection::None;
+                    return true;
+                }
+                _ => None,
+            };
+            return match command {
+                Some(command) => {
+                    self.state.borrow_mut().push(command);
+                    true
+                }
+                None => false,
+            };
+        }
         let command = match (key, ctrl, shift) {
             (Key::P, true, _) => Some(match mode {
                 Mode::Edit => Command::Play,
@@ -481,8 +599,16 @@ impl EditorLayer {
 
 impl Layer for EditorLayer {
     fn on_update(&mut self, window: &Window, delta_time: f64) {
-        let show_stats = self.state.borrow().show_stats.read();
-        let layout = Layout::compute(window.width as f32, window.height as f32, show_stats);
+        let (show_stats, workspace) = {
+            let s = self.state.borrow();
+            (s.show_stats.read(), s.workspace)
+        };
+        let right = match (workspace, show_stats) {
+            (Workspace::Animation, _) => RightColumn::Preview,
+            (Workspace::Scene, true) => RightColumn::Stats,
+            (Workspace::Scene, false) => RightColumn::None,
+        };
+        let layout = Layout::compute(window.width as f32, window.height as f32, right);
         self.state.borrow_mut().layout = layout;
         let mode = self.state.borrow().mode;
 
@@ -512,10 +638,13 @@ impl Layer for EditorLayer {
         let render_start = Instant::now();
         let gpu_timer = self.gpu_timer.get_or_insert_with(GpuTimer::new);
         gpu_timer.begin();
-        self.scene.set_viewport(Some(layout.viewport_gl()));
-        self.scene.render(window);
-        self.render_colliders();
-        if mode == Mode::Edit {
+        let scene_visible = workspace == Workspace::Scene;
+        if scene_visible {
+            self.scene.set_viewport(Some(layout.viewport_gl()));
+            self.scene.render(window);
+            self.render_colliders();
+        }
+        if mode == Mode::Edit && scene_visible {
             let (selected, gizmo) = {
                 let state = self.state.borrow();
                 (state.selected(), state.gizmo)
@@ -578,6 +707,9 @@ impl Layer for EditorLayer {
             }
         }
 
+        if self.state.borrow().workspace == Workspace::Animation {
+            return;
+        }
         match mode {
             Mode::Edit => {
                 let (selected, gizmo) = {
@@ -640,4 +772,24 @@ impl EditorLayer {
             window.set_should_close(true);
         }
     }
+}
+
+/// Swap the animation graph of every player in the scene for one built from
+/// `file`, so saved edits show up without reloading the scene.
+fn apply_graph_to_players(
+    entities: &mut [Entity],
+    file: &ferrite::core::model::animation_graph::graph_file::AnimGraphFile,
+    input_names: &[String],
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut count = 0;
+    for entity in entities.iter_mut() {
+        if entity.get_own_component::<PlayerController>().is_some() {
+            if let Some(animation) = entity.get_component_mut::<AnimationComponent>() {
+                animation.replace_graph(build_animation_graph(file)?, input_names);
+                count += 1;
+            }
+        }
+        count += apply_graph_to_players(entity.get_children_mut(), file, input_names)?;
+    }
+    Ok(count)
 }

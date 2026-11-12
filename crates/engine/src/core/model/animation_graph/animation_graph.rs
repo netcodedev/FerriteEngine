@@ -40,7 +40,7 @@ impl AnimationGraph {
         if let Some(state) = self.states.get_mut(&self.current_state) {
             if self.previous_state.is_none() {
                 for transitions in &state.transitions {
-                    if (transitions.condition)(&self.inputs) {
+                    if transitions.conditions.iter().all(|c| c.evaluate(&self.inputs)) {
                         self.previous_state = Some(self.current_state.clone());
                         self.current_state = transitions.to_state.clone();
                         self.transition_progress = 0.0;
@@ -121,6 +121,50 @@ impl AnimationGraph {
             *input = value;
         }
     }
+
+    pub fn get_input(&self, name: &str) -> Option<f32> {
+        self.inputs.get(name).copied()
+    }
+
+    pub fn current_state(&self) -> &str {
+        &self.current_state
+    }
+
+    /// The state being blended out, while a transition is running.
+    pub fn previous_state(&self) -> Option<&str> {
+        self.previous_state.as_deref()
+    }
+
+    /// 0 at the start of a transition, 1 when it has finished.
+    pub fn transition_progress(&self) -> f32 {
+        self.transition_progress
+    }
+
+    /// Jump to `name` without blending. Returns false if it does not exist.
+    pub fn set_state(&mut self, name: &str) -> bool {
+        if !self.states.contains_key(name) {
+            return false;
+        }
+        self.current_state = name.to_owned();
+        self.previous_state = None;
+        self.transition_progress = 1.0;
+        self.cumulative_translation_error.clear();
+        if let Some(state) = self.states.get_mut(name) {
+            state.reset();
+        }
+        true
+    }
+
+    /// Jump back to the default state without blending.
+    pub fn reset(&mut self) {
+        self.current_state = self.default_state.clone();
+        self.previous_state = None;
+        self.transition_progress = 1.0;
+        self.cumulative_translation_error.clear();
+        if let Some(state) = self.states.get_mut(&self.current_state) {
+            state.reset();
+        }
+    }
 }
 
 impl State {
@@ -194,12 +238,12 @@ impl State {
     pub fn add_transition(
         &mut self,
         to_state: &str,
-        condition: Box<dyn Fn(&HashMap<String, f32>) -> bool>,
+        conditions: Vec<super::graph_file::Comparison>,
         transition_time: f32,
     ) {
         self.transitions.push(Transition {
             to_state: to_state.to_string(),
-            condition,
+            conditions,
             transition_time,
         });
     }

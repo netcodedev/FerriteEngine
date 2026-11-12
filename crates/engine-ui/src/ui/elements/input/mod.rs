@@ -8,18 +8,25 @@ use ferrite::core::{
 
 use crate::ui::element_handle::UIElementHandle;
 
+mod edit;
 mod input;
+
+pub use edit::TextEdit;
 
 pub struct Input<T: Clone + ToString> {
     handle: UIElementHandle,
 
     region: Region,
     data_source: Option<DataSource<T>>,
-    content: String,
+    edit: TextEdit,
     text: Text,
 
     is_hovering: bool,
     is_focused: bool,
+    /// Mouse button held after a click inside: dragging extends the
+    /// selection.
+    dragging: bool,
+    last_click: Option<(Instant, u8)>,
 
     scroll_offset: f32,
     blink_start: Instant,
@@ -27,4 +34,5 @@ pub struct Input<T: Clone + ToString> {
     plane: Plane,
     stencil_plane: Plane,
     cursor_plane: Plane,
+    selection_plane: Plane,
 }

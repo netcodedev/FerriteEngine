@@ -146,11 +146,17 @@ impl Text {
     /// proportional fonts, since it sums each glyph's `advance_width` and the
     /// pair kerning between adjacent glyphs.
     pub fn measure_width(&self) -> f32 {
+        self.measure_str(&self.content)
+    }
+
+    /// Width of `s` in this text's font and size (e.g. a prefix, to place a
+    /// caret).
+    pub fn measure_str(&self, s: &str) -> f32 {
         let font = &self.font.get().font;
         let scale = Scale::uniform(self.size);
         let mut width = 0.0f32;
         let mut last_id = None;
-        for c in self.content.chars() {
+        for c in s.chars() {
             if c.is_control() {
                 continue;
             }

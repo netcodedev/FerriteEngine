@@ -2,7 +2,9 @@ mod animation;
 mod bone_colliders;
 mod player;
 
-pub use animation::default_animation_graph;
+pub use animation::{
+    build_animation_graph, default_animation_graph, player_graph_file, PLAYER_GRAPH_PATH,
+};
 
 pub use bone_colliders::BoneColliders;
 use cgmath::{Rad, Vector3};

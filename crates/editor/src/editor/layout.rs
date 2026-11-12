@@ -22,7 +22,8 @@ pub struct Layout {
     pub hierarchy: Rect,
     pub inspector: Rect,
     pub viewport: Rect,
-    /// Right column with render statistics; zero width when hidden.
+    /// Right column (statistics or animation preview); zero width when
+    /// hidden.
     pub stats: Rect,
 }
 
@@ -37,17 +38,27 @@ const HIERARCHY_SHARE: f32 = 0.4;
 const MIN_HIERARCHY: f32 = 140.0;
 const MIN_VIEWPORT: f32 = 64.0;
 const STATS_WIDTH: f32 = 300.0;
+const PREVIEW_WIDTH: f32 = 360.0;
+
+/// What occupies the right-hand column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RightColumn {
+    None,
+    Stats,
+    Preview,
+}
 
 impl Layout {
-    pub fn compute(window_w: f32, window_h: f32, show_stats: bool) -> Self {
+    pub fn compute(window_w: f32, window_h: f32, right: RightColumn) -> Self {
         let body_h = (window_h - TOP).max(MIN_VIEWPORT);
         // Columns shrink before the viewport disappears on tiny windows.
         let side_w = SIDE_WIDTH.min((window_w - MIN_VIEWPORT).max(0.0)).floor();
-        let stats_w = if show_stats {
-            STATS_WIDTH.min((window_w - side_w - MIN_VIEWPORT).max(0.0)).floor()
-        } else {
-            0.0
+        let wanted = match right {
+            RightColumn::None => 0.0,
+            RightColumn::Stats => STATS_WIDTH,
+            RightColumn::Preview => PREVIEW_WIDTH,
         };
+        let stats_w = wanted.min((window_w - side_w - MIN_VIEWPORT).max(0.0)).floor();
         let hierarchy_h = (body_h * HIERARCHY_SHARE)
             .max(MIN_HIERARCHY)
             .min(body_h * 0.8)

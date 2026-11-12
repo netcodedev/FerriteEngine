@@ -116,7 +116,7 @@ pub fn open(state: &Shared) {
     show(state, "Open scene", open_flag, children);
 }
 
-pub fn confirm_discard(state: &Shared, then: Command) {
+pub fn confirm_discard(state: &Shared, then: Command, includes_graph: bool) {
     let open_flag = DataSource::new(true);
     let discard_state = state.clone();
     let discard_open = open_flag.clone();
@@ -125,12 +125,24 @@ pub fn confirm_discard(state: &Shared, then: Command) {
     let save_then = then.clone();
     let cancel_open = open_flag.clone();
     let children: Vec<Box<dyn UIElement>> = vec![
-        UI::label("The scene has unsaved changes.", 14.0),
+        UI::label(
+            if includes_graph {
+                "There are unsaved changes (scene or animation graph)."
+            } else {
+                "The scene has unsaved changes."
+            },
+            14.0,
+        ),
         button_row(vec![
             UI::button(
                 "Save first",
                 Box::new(move |_| {
-                    send(&save_state, Command::Save);
+                    if save_state.borrow().dirty {
+                        send(&save_state, Command::Save);
+                    }
+                    if includes_graph {
+                        send(&save_state, Command::SaveGraph);
+                    }
                     send(&save_state, save_then.clone());
                     save_open.write(false);
                 }),

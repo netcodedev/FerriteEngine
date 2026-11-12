@@ -9,6 +9,7 @@ use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Instant};
 use ferrite::core::{entity::EntityHandle, scene::scene_file::ComponentData, utils::DataSource};
 use ferrite_ui::ui::elements::tree::NO_SELECTION;
 
+pub mod anim;
 pub mod dialogs;
 pub mod field_row;
 pub mod hierarchy;
@@ -26,6 +27,12 @@ pub mod viewport;
 pub enum Mode {
     Edit,
     Play,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Workspace {
+    Scene,
+    Animation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,6 +84,12 @@ pub enum Command {
     Focus(EntityHandle),
     /// Close the editor window.
     Quit,
+    SetWorkspace(Workspace),
+    /// Save the animation graph and apply it to players in the scene.
+    SaveGraph,
+    RevertGraph,
+    /// Delete the selected state or transition of the animation graph.
+    DeleteGraphSelection,
 }
 
 pub struct EditorState {
@@ -84,6 +97,14 @@ pub struct EditorState {
     /// when empty).
     pub selection: DataSource<u64>,
     pub mode: Mode,
+    pub workspace: Workspace,
+    /// Visibility flags for the panels of each workspace.
+    pub scene_panels: DataSource<bool>,
+    pub anim_panels: DataSource<bool>,
+    pub anim: anim::AnimEditor,
+    /// Graph-space point at the centre of the node canvas (new states go
+    /// there).
+    pub anim_canvas_center: Option<(f32, f32)>,
     pub gizmo: GizmoMode,
     pub scene_path: Option<PathBuf>,
     pub dirty: bool,
@@ -104,12 +125,17 @@ impl EditorState {
         Rc::new(RefCell::new(Self {
             selection: DataSource::new(NO_SELECTION),
             mode: Mode::Edit,
+            workspace: Workspace::Scene,
+            scene_panels: DataSource::new(true),
+            anim_panels: DataSource::new(false),
+            anim: anim::AnimEditor::new(),
+            anim_canvas_center: None,
             gizmo: GizmoMode::Translate,
             scene_path: None,
             dirty: false,
             status: None,
             commands: Vec::new(),
-            layout: layout::Layout::compute(1280.0, 720.0, true),
+            layout: layout::Layout::compute(1280.0, 720.0, layout::RightColumn::Stats),
             show_widgets: DataSource::new(false),
             show_stats: DataSource::new(true),
             stats: stats::Stats::new(),
