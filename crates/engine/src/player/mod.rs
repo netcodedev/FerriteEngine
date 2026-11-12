@@ -3,7 +3,8 @@ mod bone_colliders;
 mod player;
 
 pub use animation::{
-    build_animation_graph, default_animation_graph, player_graph_file, PLAYER_GRAPH_PATH,
+    animation_graph_files, build_animation_graph, default_animation_graph, load_graph_file,
+    player_graph_file, GRAPH_DIR, GRAPH_EXTENSION, PLAYER_GRAPH_PATH,
 };
 
 pub use bone_colliders::BoneColliders;

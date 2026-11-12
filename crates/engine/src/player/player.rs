@@ -37,7 +37,10 @@ impl Player {
         let mut model = ModelBuilder::new("Mannequin.fbx")?.build();
         model.init();
 
-        let animation_component = AnimationComponent::new(animation_graph);
+        // Player::new is given the default player graph; a scene's own graph
+        // file replaces it via ComponentData::AnimationGraph.
+        let animation_component =
+            AnimationComponent::with_path(animation_graph, super::PLAYER_GRAPH_PATH);
 
         let collider = ColliderBuilder::capsule_y(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS)
             .friction(0.0)

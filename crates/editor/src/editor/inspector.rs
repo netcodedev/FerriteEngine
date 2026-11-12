@@ -13,6 +13,7 @@ use ferrite_ui::ui::{
     element_handle::UIElementHandle,
     elements::{
         button::{Button, ButtonStyle},
+        dropdown::Dropdown,
         label::Label,
         menu_button::{MenuButton, MenuItem},
         panel::Panel,
@@ -58,6 +59,11 @@ enum Field {
     },
     ReadOnly {
         source: DataSource<String>,
+    },
+    Choice {
+        source: DataSource<u32>,
+        last: u32,
+        options: Vec<String>,
     },
 }
 
@@ -109,7 +115,7 @@ fn component_icon(name: &str) -> &'static str {
         "Debug controller" => icons::BUG,
         "Player controller" => icons::USER,
         "Collider" | "Bone colliders" => icons::SCAN,
-        "AnimationComponent" => icons::ACTIVITY,
+        "Animation" | "AnimationComponent" => icons::ACTIVITY,
         "ModelComponent" => icons::PACKAGE,
         _ => icons::COMPONENT,
     }
@@ -244,6 +250,19 @@ impl InspectorPanel {
                 let row = self.add_property(index, property, width);
                 section.add_child(row);
             }
+            if display == "Animation" {
+                let edit_state = self.state.clone();
+                let mut edit = Button::new(
+                    Position::default(),
+                    Size::new(10.0, 26.0),
+                    Box::new(move |_| send(&edit_state, Command::EditAnimationGraph(id))),
+                );
+                edit.set_style(ButtonStyle::Primary);
+                edit.set_icon(icons::PENCIL);
+                edit.set_label("Edit graph");
+                edit.fit(26.0);
+                section.add_child(Box::new(FieldRow::new("", vec![Box::new(edit)])));
+            }
             self.body.add_child(Box::new(section));
         }
 
@@ -301,6 +320,22 @@ impl InspectorPanel {
                     let source = DataSource::new(*v);
                     widgets = vec![UI::checkbox(source.clone())];
                     Field::Bool { source, last: *v }
+                }
+                PropertyValue::Text(v) if property.options.is_some() => {
+                    let options = property.options.clone().unwrap_or_default();
+                    let index = options.iter().position(|o| o == v).unwrap_or(0) as u32;
+                    let source = DataSource::new(index);
+                    widgets = vec![Box::new(Dropdown::new(
+                        Position::default(),
+                        Size::new(value_w, 24.0),
+                        options.clone(),
+                        source.clone(),
+                    ))];
+                    Field::Choice {
+                        source,
+                        last: index,
+                        options,
+                    }
                 }
                 PropertyValue::Text(v) => {
                     let source = DataSource::new(v.clone());
@@ -435,6 +470,21 @@ impl InspectorPanel {
                     } else if actual != *last {
                         source.write(actual.clone());
                         *last = actual;
+                    }
+                }
+                (Field::Choice { source, last, options }, PropertyValue::Text(actual)) => {
+                    let typed = source.read();
+                    if typed != *last {
+                        *last = typed;
+                        if let Some(option) = options.get(typed as usize) {
+                            component.set_property(binding.name, PropertyValue::Text(option.clone()));
+                            edited = true;
+                        }
+                    } else if let Some(index) = options.iter().position(|o| *o == actual) {
+                        if index as u32 != *last {
+                            source.write(index as u32);
+                            *last = index as u32;
+                        }
                     }
                 }
                 (Field::ReadOnly { source }, value) => {

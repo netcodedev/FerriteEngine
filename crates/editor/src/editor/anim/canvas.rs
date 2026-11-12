@@ -66,12 +66,15 @@ pub struct NodeCanvas {
     header_bg: Plane,
     title: Text,
     hint: Text,
+    back_button: Button,
     add_button: Button,
     fit_button: Button,
     revert_button: Button,
     save_button: Button,
     nodes: Vec<NodeVisual>,
     nodes_structure: Option<u64>,
+    /// Graph file the view was fitted for; opening another one refits.
+    fitted_path: Option<std::path::PathBuf>,
     drag: Option<Drag>,
     hover_node: Option<usize>,
     hover_handle: Option<usize>,
@@ -119,6 +122,13 @@ impl NodeCanvas {
             }),
         );
         let fit_button = header_button("", icons::SCAN, ButtonStyle::Ghost, Box::new(|_| {}));
+        let back_state = state.clone();
+        let back_button = header_button(
+            "Back to scene",
+            icons::ARROW_LEFT,
+            ButtonStyle::Ghost,
+            Box::new(move |_| send(&back_state, Command::CloseGraphEditor)),
+        );
         let revert_state = state.clone();
         let revert_button = header_button(
             "Revert",
@@ -154,12 +164,14 @@ impl NodeCanvas {
                 theme::FONT_SIZE_SMALL,
                 theme::TEXT_DIM,
             ),
+            back_button,
             add_button,
             fit_button,
             revert_button,
             save_button,
             nodes: Vec::new(),
             nodes_structure: None,
+            fitted_path: None,
             drag: None,
             hover_node: None,
             hover_handle: None,
@@ -337,8 +349,9 @@ impl NodeCanvas {
             .map(|(i, _)| i)
     }
 
-    fn header_widgets_mut(&mut self) -> [&mut Button; 4] {
+    fn header_widgets_mut(&mut self) -> [&mut Button; 5] {
         [
+            &mut self.back_button,
             &mut self.add_button,
             &mut self.fit_button,
             &mut self.revert_button,
@@ -420,6 +433,11 @@ impl UIElement for NodeCanvas {
     fn update(&mut self, scene: &mut Scene) {
         let rect = self.rect();
         self.size = Size::new(rect.w, rect.h);
+        let path = self.state.borrow().anim.path.clone();
+        if self.fitted_path.as_ref() != Some(&path) {
+            self.fitted = false;
+            self.fitted_path = Some(path);
+        }
         if !self.fitted && rect.w > 10.0 {
             self.fit_view();
             self.fitted = true;
@@ -435,12 +453,14 @@ impl UIElement for NodeCanvas {
             .set_position(Position::new(rect.x - 1.0, rect.y, Z));
         self.header_bg
             .set_size(Size::new(rect.w + 2.0, HEADER_HEIGHT));
+        let by = rect.y + ((HEADER_HEIGHT - 28.0) * 0.5).round();
+        self.back_button.set_offset(Offset { x: rect.x + 8.0, y: by });
         let title = format!("Animation graph  \u{b7}  {}", self.state.borrow().anim.file_name());
         self.title.set_content(&title);
         let ty = theme::center_y(&self.title, HEADER_HEIGHT);
+        let title_x = rect.x + 8.0 + self.back_button.get_size().width + 12.0;
         self.title
-            .prepare_render_at(Position::new(rect.x + 14.0, rect.y + ty, Z + 2.0));
-        let by = rect.y + ((HEADER_HEIGHT - 28.0) * 0.5).round();
+            .prepare_render_at(Position::new(title_x, rect.y + ty, Z + 2.0));
         let mut bx = rect.x + rect.w - 10.0;
         for button in [&mut self.save_button, &mut self.revert_button, &mut self.fit_button]
             .into_iter()
@@ -654,7 +674,13 @@ impl UIElement for NodeCanvas {
         self.header_bg.render();
         self.title.render();
         self.hint.render();
-        for button in [&self.add_button, &self.fit_button, &self.revert_button, &self.save_button] {
+        for button in [
+            &self.back_button,
+            &self.add_button,
+            &self.fit_button,
+            &self.revert_button,
+            &self.save_button,
+        ] {
             button.render();
         }
     }

@@ -105,8 +105,20 @@ impl UIElement for Dropdown {
     fn update(&mut self, _scene: &mut Scene) {
         let base = &self.region.position + &self.region.offset;
         self.button.set_position(base);
-        self.button_text
-            .set_content(&self.selected_label().to_owned());
+        // Keep the label clear of the chevron: cut with "…" if needed.
+        let label = self.selected_label().to_owned();
+        let room = (self.region.size.width - 8.0 - self.chevron.measure_width() - 14.0).max(0.0);
+        let shown = if self.button_text.measure_str(&label) <= room {
+            label
+        } else {
+            let chars: Vec<char> = label.chars().collect();
+            (0..chars.len())
+                .rev()
+                .map(|keep| chars[..keep].iter().collect::<String>() + "\u{2026}")
+                .find(|candidate| self.button_text.measure_str(candidate) <= room)
+                .unwrap_or_else(|| "\u{2026}".into())
+        };
+        self.button_text.set_content(&shown);
         let text_y = theme::center_y(&self.button_text, self.region.size.height);
         self.button_text
             .prepare_render_at(&base + (8.0, text_y, 1.0));
@@ -118,8 +130,19 @@ impl UIElement for Dropdown {
             // Lift the open menu well above sibling widgets so later-rendered
             // siblings (tabs, pickers, …) do not z-fight it.
             let overlay_z = 40.0;
+            // The open list is as wide as its longest entry (at least the
+            // button), so long options stay readable.
+            let menu_w = self
+                .options
+                .iter()
+                .map(|o| o.text.measure_str(&o.label) + 20.0)
+                .fold(self.region.size.width, f32::max);
             self.menu
                 .set_position(&base + (0.0, self.region.size.height, overlay_z));
+            self.menu.set_size(Size::new(
+                menu_w,
+                self.row_height * self.options.len() as f32,
+            ));
             for (i, opt) in self.options.iter_mut().enumerate() {
                 let p = &base
                     + (
@@ -128,7 +151,9 @@ impl UIElement for Dropdown {
                         overlay_z + 1.0,
                     );
                 opt.region.position = p;
+                opt.region.size.width = menu_w;
                 opt.bg.set_position(p);
+                opt.bg.set_size(Size::new(menu_w, self.row_height));
                 opt.bg.set_color(if self.hover_index == Some(i) {
                     theme::ACCENT_SOFT
                 } else {

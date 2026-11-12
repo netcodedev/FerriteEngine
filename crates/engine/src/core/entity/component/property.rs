@@ -15,6 +15,8 @@ pub struct Property {
     pub read_only: bool,
     /// Inclusive range for float values; tools may show a slider when set.
     pub range: Option<(f32, f32)>,
+    /// For text values: the allowed choices; tools show a picker.
+    pub options: Option<Vec<String>>,
 }
 
 impl Property {
@@ -24,6 +26,7 @@ impl Property {
             value: PropertyValue::Float(value),
             read_only: false,
             range: None,
+            options: None,
         }
     }
 
@@ -40,6 +43,7 @@ impl Property {
             value: PropertyValue::Int(value),
             read_only: false,
             range: None,
+            options: None,
         }
     }
 
@@ -49,6 +53,18 @@ impl Property {
             value: PropertyValue::Bool(value),
             read_only: false,
             range: None,
+            options: None,
+        }
+    }
+
+    /// Text value picked from `options`.
+    pub fn choice(name: &'static str, value: String, options: Vec<String>) -> Self {
+        Self {
+            name,
+            value: PropertyValue::Text(value),
+            read_only: false,
+            range: None,
+            options: Some(options),
         }
     }
 

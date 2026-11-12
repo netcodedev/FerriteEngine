@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use ferrite::{
     core::model::animation_graph::graph_file::AnimGraphFile,
-    player::{player_graph_file, PLAYER_GRAPH_PATH},
+    player::{load_graph_file, player_graph_file, PLAYER_GRAPH_PATH},
 };
 
 pub mod canvas;
@@ -101,6 +101,18 @@ impl AnimEditor {
         };
         self.file = file;
         self.dirty = false;
+        self.selection = AnimSelection::None;
+        self.touch_structure();
+        self.dirty = false;
+        Ok(())
+    }
+
+    /// Switch to another graph file (the player graph falls back to the
+    /// built-in graph until saved).
+    pub fn open(&mut self, path: &str) -> Result<(), String> {
+        let file = load_graph_file(path).map_err(|e| e.to_string())?;
+        self.file = file;
+        self.path = PathBuf::from(path);
         self.selection = AnimSelection::None;
         self.touch_structure();
         self.dirty = false;

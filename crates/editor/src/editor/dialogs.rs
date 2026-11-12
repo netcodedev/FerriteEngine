@@ -161,6 +161,37 @@ pub fn confirm_discard(state: &Shared, then: Command, includes_graph: bool) {
     show(state, "Unsaved changes", open_flag, children);
 }
 
+/// The open graph has unsaved edits and another graph should be opened.
+pub fn confirm_graph_switch(state: &Shared, current: &str, then: Command) {
+    let open_flag = DataSource::new(true);
+    let (save_state, save_open, save_then) = (state.clone(), open_flag.clone(), then.clone());
+    let (discard_state, discard_open) = (state.clone(), open_flag.clone());
+    let cancel_open = open_flag.clone();
+    let children: Vec<Box<dyn UIElement>> = vec![
+        UI::label(&format!("{current} has unsaved changes."), 14.0),
+        button_row(vec![
+            UI::button(
+                "Save first",
+                Box::new(move |_| {
+                    send(&save_state, Command::SaveGraph);
+                    send(&save_state, save_then.clone());
+                    save_open.write(false);
+                }),
+            ),
+            UI::button(
+                "Discard",
+                Box::new(move |_| {
+                    discard_state.borrow_mut().anim.dirty = false;
+                    send(&discard_state, then.clone());
+                    discard_open.write(false);
+                }),
+            ),
+            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+        ]),
+    ];
+    show(state, "Unsaved animation graph", open_flag, children);
+}
+
 fn scene_files() -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(SCENE_DIR)
         .map(|entries| {

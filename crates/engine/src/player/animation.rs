@@ -31,6 +31,39 @@ pub fn player_graph_file() -> AnimGraphFile {
     AnimGraphFile::from_ron(BUILT_IN_PLAYER_GRAPH).expect("built-in player graph is valid")
 }
 
+/// Directory scanned for graph files offered in pickers.
+pub const GRAPH_DIR: &str = "animations";
+pub const GRAPH_EXTENSION: &str = ".animgraph.ron";
+
+/// Load a graph description. The player graph path falls back to the
+/// built-in graph while it has not been saved yet.
+pub fn load_graph_file(path: &str) -> Result<AnimGraphFile, Box<dyn Error>> {
+    if path == PLAYER_GRAPH_PATH && !Path::new(path).exists() {
+        return Ok(player_graph_file());
+    }
+    AnimGraphFile::load(Path::new(path))
+}
+
+/// Graph files in `animations/` (plus the player graph, which may only
+/// exist built-in), sorted.
+pub fn animation_graph_files() -> Vec<String> {
+    let mut files: Vec<String> = std::fs::read_dir(GRAPH_DIR)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(GRAPH_EXTENSION))
+                .map(|n| format!("{GRAPH_DIR}/{n}"))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !files.iter().any(|f| f == PLAYER_GRAPH_PATH) {
+        files.push(PLAYER_GRAPH_PATH.to_owned());
+    }
+    files.sort();
+    files
+}
+
 /// Build a runtime graph, reusing clips loaded by earlier builds.
 pub fn build_animation_graph(file: &AnimGraphFile) -> Result<AnimationGraph, Box<dyn Error>> {
     CLIP_CACHE.with(|cache| AnimationGraph::from_file(file, &mut cache.borrow_mut()))

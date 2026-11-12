@@ -91,6 +91,11 @@ pub enum Command {
     RevertGraph,
     /// Delete the selected state or transition of the animation graph.
     DeleteGraphSelection,
+    /// Open the graph editor on the graph file of this entity's animation
+    /// component.
+    EditAnimationGraph(EntityHandle),
+    /// Leave the graph editor (unsaved edits stay in memory).
+    CloseGraphEditor,
 }
 
 pub struct EditorState {

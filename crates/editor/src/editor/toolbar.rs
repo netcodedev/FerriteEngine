@@ -31,8 +31,6 @@ pub struct Toolbar {
     separator: Plane,
     file_menu: MenuButton,
     window_menu: MenuButton,
-    scene_tab: Button,
-    anim_tab: Button,
     move_button: Button,
     rotate_button: Button,
     play_button: Button,
@@ -90,19 +88,6 @@ impl Toolbar {
             }),
         );
 
-        let scene_state = state.clone();
-        let scene_tab = tool_button(
-            "Scene",
-            icons::BOXES,
-            Box::new(move |_| send(&scene_state, Command::SetWorkspace(Workspace::Scene))),
-        );
-        let anim_state = state.clone();
-        let anim_tab = tool_button(
-            "Animation",
-            icons::ACTIVITY,
-            Box::new(move |_| send(&anim_state, Command::SetWorkspace(Workspace::Animation))),
-        );
-
         let move_state = state.clone();
         let move_button = tool_button(
             "Move",
@@ -148,8 +133,6 @@ impl Toolbar {
             separator: PlaneBuilder::new().color(theme::BORDER).build(),
             file_menu,
             window_menu,
-            scene_tab,
-            anim_tab,
             move_button,
             rotate_button,
             play_button,
@@ -163,8 +146,6 @@ impl Toolbar {
         let mut widgets: Vec<&mut dyn UIElement> = vec![
             &mut self.file_menu,
             &mut self.window_menu,
-            &mut self.scene_tab,
-            &mut self.anim_tab,
             &mut self.play_button,
         ];
         if scene {
@@ -179,8 +160,6 @@ impl Toolbar {
         let mut widgets: Vec<&dyn UIElement> = vec![
             &self.file_menu,
             &self.window_menu,
-            &self.scene_tab,
-            &self.anim_tab,
             &self.play_button,
         ];
         if scene {
@@ -225,13 +204,6 @@ impl UIElement for Toolbar {
         self.separator
             .set_size(Size::new(1.0, rect.h - 16.0));
         x += 9.0;
-        for widget in [&mut self.scene_tab, &mut self.anim_tab] {
-            widget.set_offset(Offset { x, y });
-            x += widget.get_size().width + 4.0;
-        }
-        self.scene_tab.set_active(workspace == Workspace::Scene);
-        self.anim_tab.set_active(workspace == Workspace::Animation);
-        x += 12.0;
         if workspace == Workspace::Scene {
             for widget in [&mut self.move_button, &mut self.rotate_button] {
                 widget.set_offset(Offset { x, y });

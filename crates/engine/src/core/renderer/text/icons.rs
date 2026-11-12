@@ -62,3 +62,5 @@ pub const HEART_PULSE: &str = "\u{e36e}";
 pub const SERVER: &str = "\u{e153}";
 pub const SPARKLES: &str = "\u{e412}";
 pub const SCAN: &str = "\u{e257}";
+pub const ARROW_LEFT: &str = "\u{e048}";
+pub const PENCIL: &str = "\u{e1f9}";

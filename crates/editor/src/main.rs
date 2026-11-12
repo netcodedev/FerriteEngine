@@ -38,7 +38,7 @@ use ferrite::core::{
     },
     window::Window,
 };
-use ferrite::player::{build_animation_graph, PlayerController};
+use ferrite::player::PLAYER_GRAPH_PATH;
 use ferrite_ui::ui::{UIElement, UI};
 use glfw::{Action, CursorMode, Glfw, Key, Modifiers, WindowEvent};
 
@@ -268,6 +268,7 @@ impl EditorLayer {
                 | Command::Delete(_)
                 | Command::Duplicate(_)
                 | Command::ConfirmDiscard(_)
+                | Command::EditAnimationGraph(_)
         );
         if mode == Mode::Play && edits_scene {
             self.state
@@ -445,18 +446,17 @@ impl EditorLayer {
                 let result = self.state.borrow_mut().anim.save();
                 match result {
                     Ok(()) => {
-                        let (file, path) = {
-                            let s = self.state.borrow();
-                            (s.anim.file.clone(), s.anim.path.clone())
-                        };
-                        let names: Vec<String> = file.inputs.iter().map(|i| i.name.clone()).collect();
-                        let applied = apply_graph_to_players(self.scene.get_entities_mut(), &file, &names);
+                        let path = self.state.borrow().anim.path.clone();
+                        let applied = apply_saved_graph(
+                            self.scene.get_entities_mut(),
+                            &path.to_string_lossy(),
+                        );
                         let message = match applied {
                             Ok(0) => format!("Saved {}", path.display()),
                             Ok(n) => format!(
-                                "Saved {} and applied it to {n} player{}",
+                                "Saved {} and applied it to {n} entit{}",
                                 path.display(),
-                                if n == 1 { "" } else { "s" }
+                                if n == 1 { "y" } else { "ies" }
                             ),
                             Err(e) => format!("Saved {}, but applying it failed: {e}", path.display()),
                         };
@@ -476,6 +476,33 @@ impl EditorLayer {
                     Err(e) => state.set_status(format!("Could not reload the graph: {e}")),
                 }
             }
+            Command::EditAnimationGraph(id) => {
+                let path = self
+                    .scene
+                    .get_entity(&id)
+                    .and_then(|e| e.get_own_component::<AnimationComponent>())
+                    .and_then(|a| a.graph_path().map(str::to_owned))
+                    .unwrap_or_else(|| PLAYER_GRAPH_PATH.to_owned());
+                let (current, dirty) = {
+                    let s = self.state.borrow();
+                    (s.anim.path.to_string_lossy().into_owned(), s.anim.dirty)
+                };
+                if current != path {
+                    if dirty {
+                        dialogs::confirm_graph_switch(&self.state, &current, Command::EditAnimationGraph(id));
+                        return;
+                    }
+                    let opened = self.state.borrow_mut().anim.open(&path);
+                    if let Err(e) = opened {
+                        self.state
+                            .borrow_mut()
+                            .set_status(format!("Could not open {path}: {e}"));
+                        return;
+                    }
+                }
+                self.run(Command::SetWorkspace(Workspace::Animation));
+            }
+            Command::CloseGraphEditor => self.run(Command::SetWorkspace(Workspace::Scene)),
             Command::DeleteGraphSelection => {
                 let mut state = self.state.borrow_mut();
                 let anim = &mut state.anim;
@@ -778,22 +805,18 @@ impl EditorLayer {
     }
 }
 
-/// Swap the animation graph of every player in the scene for one built from
-/// `file`, so saved edits show up without reloading the scene.
-fn apply_graph_to_players(
-    entities: &mut [Entity],
-    file: &ferrite::core::model::animation_graph::graph_file::AnimGraphFile,
-    input_names: &[String],
-) -> Result<usize, Box<dyn std::error::Error>> {
+/// Reload `path` into every animation component that uses it, so saved
+/// graph edits show up without reloading the scene.
+fn apply_saved_graph(entities: &mut [Entity], path: &str) -> Result<usize, Box<dyn std::error::Error>> {
     let mut count = 0;
     for entity in entities.iter_mut() {
-        if entity.get_own_component::<PlayerController>().is_some() {
-            if let Some(animation) = entity.get_component_mut::<AnimationComponent>() {
-                animation.replace_graph(build_animation_graph(file)?, input_names);
+        if let Some(animation) = entity.get_component_mut::<AnimationComponent>() {
+            if animation.graph_path() == Some(path) {
+                animation.load_graph(path)?;
                 count += 1;
             }
         }
-        count += apply_graph_to_players(entity.get_children_mut(), file, input_names)?;
+        count += apply_saved_graph(entity.get_children_mut(), path)?;
     }
     Ok(count)
 }

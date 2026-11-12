@@ -10,12 +10,15 @@ use crate::{
     core::{
         camera::{Camera, CameraController, Projection},
         entity::{
-            component::{camera_component::CameraComponent, debug_component::DebugController},
+            component::{
+                animation_component::AnimationComponent, camera_component::CameraComponent,
+                debug_component::DebugController,
+            },
             Entity, EntityHandle,
         },
         renderer::light::skylight::SkyLight,
     },
-    player::{default_animation_graph, Player},
+    player::{build_animation_graph, default_animation_graph, load_graph_file, Player},
     terrain::{dual_contouring::DualContouringChunk, Terrain},
 };
 
@@ -80,6 +83,11 @@ pub enum ComponentData {
     /// Prefab marker: the entity is rebuilt with `Player::new`, which brings
     /// its model, animation graph, physics capsule and bone colliders.
     Player,
+    /// Animation graph file of the entity's animation component (replaces
+    /// the graph a prefab created).
+    AnimationGraph {
+        path: String,
+    },
 }
 
 impl ComponentData {
@@ -152,6 +160,17 @@ impl ComponentData {
             }
             ComponentData::DebugController => entity.add_component(DebugController::new()),
             ComponentData::Player => {}
+            ComponentData::AnimationGraph { path } => {
+                let result = match entity.get_component_mut::<AnimationComponent>() {
+                    Some(animation) => animation.load_graph(path),
+                    None => load_graph_file(path)
+                        .and_then(|file| build_animation_graph(&file))
+                        .map(|graph| entity.add_component(AnimationComponent::with_path(graph, path))),
+                };
+                if let Err(e) = result {
+                    log::warn!("could not load animation graph {path}: {e}");
+                }
+            }
         }
     }
 }
