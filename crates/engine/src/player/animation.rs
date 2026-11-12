@@ -1,8 +1,11 @@
 use std::{cell::RefCell, error::Error, path::Path};
 
-use crate::core::model::animation_graph::{
-    graph_file::{AnimGraphFile, ClipCache},
-    AnimationGraph,
+use crate::core::{
+    assets,
+    model::animation_graph::{
+        graph_file::{AnimGraphFile, ClipCache},
+        AnimationGraph,
+    },
 };
 
 /// Where the editor saves the player's graph; preferred over the built-in
@@ -19,16 +22,22 @@ thread_local! {
 }
 
 /// The player graph description: the project's saved file if it exists and
-/// parses, otherwise the built-in one.
+/// parses, otherwise the built-in one. Clips refer to assets wherever
+/// their files are registered.
 pub fn player_graph_file() -> AnimGraphFile {
     let path = Path::new(PLAYER_GRAPH_PATH);
+    let mut file = None;
     if path.exists() {
         match AnimGraphFile::load(path) {
-            Ok(file) => return file,
+            Ok(loaded) => file = Some(loaded),
             Err(e) => log::warn!("{PLAYER_GRAPH_PATH} is invalid, using the built-in graph: {e}"),
         }
     }
-    AnimGraphFile::from_ron(BUILT_IN_PLAYER_GRAPH).expect("built-in player graph is valid")
+    let mut file = file.unwrap_or_else(|| {
+        AnimGraphFile::from_ron(BUILT_IN_PLAYER_GRAPH).expect("built-in player graph is valid")
+    });
+    file.use_assets(&assets::database());
+    file
 }
 
 /// Directory scanned for graph files offered in pickers.
@@ -41,7 +50,9 @@ pub fn load_graph_file(path: &str) -> Result<AnimGraphFile, Box<dyn Error>> {
     if path == PLAYER_GRAPH_PATH && !Path::new(path).exists() {
         return Ok(player_graph_file());
     }
-    AnimGraphFile::load(Path::new(path))
+    let mut file = AnimGraphFile::load(Path::new(path))?;
+    file.use_assets(&assets::database());
+    Ok(file)
 }
 
 /// Graph files in `animations/` (plus the player graph, which may only

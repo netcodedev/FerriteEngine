@@ -21,7 +21,7 @@ use glfw::{Glfw, WindowEvent};
 
 use super::{
     super::{field_row::FieldRow, send, Command, Shared},
-    animation_files, AnimSelection,
+    clip_choices, AnimSelection, ClipChoice,
 };
 
 const NONE_LABEL: &str = "-";
@@ -30,7 +30,7 @@ enum Binding {
     StateName { source: DataSource<String>, last: String },
     Sync { source: DataSource<bool>, last: bool },
     ClipName { clip: usize, source: DataSource<String>, last: String },
-    ClipFile { clip: usize, source: DataSource<u32>, last: u32, files: Vec<String> },
+    ClipFile { clip: usize, source: DataSource<u32>, last: u32, choices: Vec<ClipChoice> },
     Blend { source: DataSource<f32>, last: f32 },
     TermA { cond: usize, source: DataSource<u32>, last: u32 },
     Sign { cond: usize, source: DataSource<u32>, last: u32 },
@@ -175,17 +175,23 @@ impl GraphInspector {
         self.body.add_child(Box::new(section));
 
         // Clips.
-        let files = animation_files();
+        let choices = clip_choices();
         let mut clips = Section::new("Clips", Some(icons::PACKAGE), width);
         if def.clips.is_empty() {
             clips.add_child(Box::new(Label::muted("No clips: the state plays nothing.", theme::FONT_SIZE_SMALL + 0.5)));
         }
         for (i, clip) in def.clips.iter().enumerate() {
-            let mut items = files.clone();
-            if !items.contains(&clip.file) {
-                items.insert(0, clip.file.clone());
+            // What the clip plays now is always on offer, even a raw file or
+            // an asset that has gone missing.
+            let mut clip_options = choices.clone();
+            if !clip_options.iter().any(|choice| choice.is(clip)) {
+                clip_options.insert(0, ClipChoice::of(clip));
             }
-            let selected = items.iter().position(|f| *f == clip.file).unwrap_or(0) as u32;
+            let items: Vec<String> = clip_options.iter().map(|c| c.label.clone()).collect();
+            let selected = clip_options
+                .iter()
+                .position(|choice| choice.is(clip))
+                .unwrap_or(0) as u32;
             let file_source = DataSource::new(selected);
             let name_source = DataSource::new(clip.name.clone());
             let remove_state = self.state.clone();
@@ -221,12 +227,12 @@ impl GraphInspector {
                 clip: i,
                 source: file_source,
                 last: selected,
-                files: items,
+                choices: clip_options,
             });
         }
         let add_state = self.state.clone();
         let state_name = def.name.clone();
-        let first_file = files.first().cloned().unwrap_or_else(|| "Idle.fbx".into());
+        let first_choice = choices.first().cloned();
         clips.add_child(action_button(
             "Add clip",
             icons::PLUS,
@@ -235,10 +241,11 @@ impl GraphInspector {
                 let mut s = add_state.borrow_mut();
                 if let Some(st) = s.anim.file.states.iter_mut().find(|st| st.name == state_name) {
                     let name = format!("clip{}", st.clips.len() + 1);
-                    st.clips.push(ClipDef {
-                        name,
-                        file: first_file.clone(),
-                    });
+                    let mut clip = ClipDef::file(name, "");
+                    if let Some(choice) = &first_choice {
+                        choice.apply(&mut clip);
+                    }
+                    st.clips.push(clip);
                 }
                 s.anim.touch_structure();
             }),
@@ -480,20 +487,20 @@ impl GraphInspector {
                         changed = true;
                     }
                 }
-                (Binding::ClipFile { clip, source, last, files }, AnimSelection::State(name)) => {
+                (Binding::ClipFile { clip, source, last, choices }, AnimSelection::State(name)) => {
                     let value = source.read();
                     if value != *last {
                         *last = value;
-                        if let (Some(c), Some(file)) = (
+                        if let (Some(c), Some(choice)) = (
                             s.anim
                                 .file
                                 .states
                                 .iter_mut()
                                 .find(|st| st.name == *name)
                                 .and_then(|st| st.clips.get_mut(*clip)),
-                            files.get(value as usize),
+                            choices.get(value as usize),
                         ) {
-                            c.file = file.clone();
+                            choice.apply(c);
                         }
                         changed = true;
                     }

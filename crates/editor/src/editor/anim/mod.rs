@@ -1,10 +1,13 @@
 //! Animation workspace: node canvas, inputs, inspector and live preview for
 //! animation graphs (`*.animgraph.ron`).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use ferrite::{
-    core::model::animation_graph::graph_file::AnimGraphFile,
+    core::{
+        assets::{self, AssetRef},
+        model::animation_graph::graph_file::{AnimGraphFile, ClipDef},
+    },
     player::{load_graph_file, player_graph_file, PLAYER_GRAPH_PATH},
 };
 
@@ -136,20 +139,63 @@ fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
         .expect("unbounded range")
 }
 
-/// Clip files offered in the clip pickers.
-pub fn animation_files() -> Vec<String> {
-    let mut files: Vec<String> = std::fs::read_dir(Path::new("assets/animations"))
-        .map(|entries| {
-            entries
-                .filter_map(|e| e.ok())
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .filter(|n| {
-                    let lower = n.to_lowercase();
-                    lower.ends_with(".fbx") || lower.ends_with(".gltf") || lower.ends_with(".glb")
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    files.sort();
-    files
+/// Something a clip of a state can play.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClipChoice {
+    pub label: String,
+    pub asset: Option<AssetRef>,
+    /// Raw file in `assets/animations/`, for clips that are no assets.
+    pub file: String,
+}
+
+impl ClipChoice {
+    /// The choice a clip currently stands for.
+    pub fn of(clip: &ClipDef) -> Self {
+        Self {
+            label: clip.source_label(&assets::database()),
+            asset: clip.asset.clone(),
+            file: clip.file.clone(),
+        }
+    }
+
+    pub fn is(&self, clip: &ClipDef) -> bool {
+        self.asset == clip.asset && self.file == clip.file
+    }
+
+    pub fn apply(&self, clip: &mut ClipDef) {
+        clip.asset = self.asset.clone();
+        clip.file = self.file.clone();
+    }
+}
+
+/// The clips offered in the clip pickers: every clip of every animation
+/// asset, and those model assets bring along.
+pub fn clip_choices() -> Vec<ClipChoice> {
+    let database = assets::database();
+    let mut entries: Vec<_> = database
+        .iter()
+        .filter(|entry| !entry.meta.clips().is_empty())
+        .collect();
+    entries.sort_by_key(|entry| entry.meta.name.to_lowercase());
+    let mut choices = Vec::new();
+    for entry in entries {
+        let clips = entry.meta.clips();
+        for clip in clips {
+            // A file with one clip is just called by its own name.
+            let (label, asset) = if clips.len() == 1 {
+                (entry.meta.name.clone(), AssetRef::whole(entry.meta.id))
+            } else {
+                (
+                    format!("{} / {}", entry.meta.name, clip.name),
+                    AssetRef::part(entry.meta.id, clip.name.clone()),
+                )
+            };
+            choices.push(ClipChoice {
+                label,
+                asset: Some(asset),
+                file: String::new(),
+            });
+        }
+    }
+    choices
 }

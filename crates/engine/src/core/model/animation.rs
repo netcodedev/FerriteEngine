@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 use russimp_ng::scene::Scene;
 
-use super::{Animation, Channel, Pose};
+use super::{outline, Animation, Channel, Pose};
 
 impl Animation {
     pub fn new(animation: &russimp_ng::animation::Animation) -> Animation {
@@ -19,12 +19,30 @@ impl Animation {
         }
     }
 
+    /// Load the first clip of a file in `assets/animations/`.
     pub fn from_file(name: &str, path: &str) -> Result<Animation, Box<dyn std::error::Error>> {
-        let scene = Scene::from_file(format!("assets/animations/{path}").as_str(), vec![])?;
-        if scene.animations.len() == 0 {
+        Self::load(name, Path::new(&format!("assets/animations/{path}")), None)
+    }
+
+    /// Load a clip from a file anywhere: the one called `clip` (as listed
+    /// by `outline::clip_names`), or the first without a name.
+    pub fn load(
+        name: &str,
+        source: &Path,
+        clip: Option<&str>,
+    ) -> Result<Animation, Box<dyn std::error::Error>> {
+        let scene = Scene::from_file(&source.to_string_lossy(), vec![])?;
+        if scene.animations.is_empty() {
             return Err("No animations found".into());
         }
-        let mut animation = Animation::new(&scene.animations[0]);
+        let index = match clip {
+            None => 0,
+            Some(wanted) => outline::clip_names(&scene)
+                .iter()
+                .position(|found| found == wanted)
+                .ok_or_else(|| format!("the file has no clip '{wanted}'"))?,
+        };
+        let mut animation = Animation::new(&scene.animations[index]);
         animation.set_name(name);
         Ok(animation)
     }

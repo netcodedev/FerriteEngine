@@ -4,7 +4,7 @@
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-mod database;
+pub(crate) mod database;
 mod id;
 mod import;
 mod meta;
