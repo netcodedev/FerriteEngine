@@ -202,6 +202,11 @@ impl UIElement for HierarchyPanel {
             (rect.y + rect.h - tree_top - 6.0).max(10.0),
         ));
         self.tree.set_items(Self::build_items(scene));
+        // Duplicate and delete act on the selection; without one they are
+        // greyed out.
+        let has_selection = self.state.borrow().selected().is_some();
+        self.duplicate.set_enabled(has_selection);
+        self.delete.set_enabled(has_selection);
         if selection != self.last_selection {
             self.last_selection = selection;
             self.tree.reveal(selection);

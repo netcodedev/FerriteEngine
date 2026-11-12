@@ -21,6 +21,10 @@ pub struct Button {
 
     is_hovering: bool,
     is_active: bool,
+    /// Disabled buttons are greyed out and ignore clicks.
+    is_enabled: bool,
+    /// Whether this button set the hand cursor (only while enabled).
+    shows_hand: bool,
     style: ButtonStyle,
 
     label: Option<(String, Text)>,

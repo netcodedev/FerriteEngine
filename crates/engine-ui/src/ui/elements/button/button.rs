@@ -37,6 +37,8 @@ impl Button {
 
             is_hovering: false,
             is_active: false,
+            is_enabled: true,
+            shows_hand: false,
             style: ButtonStyle::Secondary,
 
             label: None,
@@ -143,6 +145,10 @@ impl Button {
     }
 
     fn text_color(&self) -> (f32, f32, f32, f32) {
+        if !self.is_enabled {
+            let (r, g, b, _) = theme::TEXT_DIM;
+            return (r, g, b, 0.55);
+        }
         match (self.style, self.is_active, self.is_hovering) {
             (ButtonStyle::Primary, _, _) => (1.0, 1.0, 1.0, 1.0),
             (ButtonStyle::Danger, _, true) => (1.0, 1.0, 1.0, 1.0),
@@ -183,7 +189,30 @@ impl Button {
         }
     }
 
+    /// Grey the button out and ignore clicks while `false`. The tooltip
+    /// still shows, so it can explain why.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        if self.is_enabled != enabled {
+            self.is_enabled = enabled;
+            self.refresh_colors();
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.is_enabled
+    }
+
     fn base_color(&self) -> (f32, f32, f32, f32) {
+        if !self.is_enabled {
+            return match self.style {
+                ButtonStyle::Secondary => theme::BG_CONTROL,
+                ButtonStyle::Primary => {
+                    let (r, g, b, _) = theme::ACCENT;
+                    (r, g, b, 0.35)
+                }
+                _ => theme::TRANSPARENT,
+            };
+        }
         match (self.style, self.is_active, self.is_hovering) {
             (ButtonStyle::Primary, _, false) => theme::ACCENT,
             (ButtonStyle::Primary, _, true) => theme::ACCENT_HOVER,
@@ -274,15 +303,23 @@ impl UIElement for Button {
                     if let Some(tooltip) = &mut self.tooltip {
                         tooltip.hover_since = None;
                     }
-                    (self.on_click)(scene);
+                    if self.is_enabled {
+                        (self.on_click)(scene);
+                    }
                     return true;
                 }
                 false
             }
             CursorPos(x, y) => {
                 if self.region.contains(*x as f32, *y as f32) {
+                    if self.shows_hand != self.is_enabled {
+                        self.shows_hand = self.is_enabled;
+                        window.set_cursor(
+                            self.is_enabled
+                                .then(|| glfw::Cursor::standard(glfw::StandardCursor::Hand)),
+                        );
+                    }
                     if !self.is_hovering {
-                        window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
                         self.is_hovering = true;
                         if let Some(tooltip) = &mut self.tooltip {
                             tooltip.hover_since = Some(Instant::now());
@@ -290,7 +327,10 @@ impl UIElement for Button {
                         self.refresh_colors();
                     }
                 } else if self.is_hovering {
-                    window.set_cursor(None);
+                    if self.shows_hand {
+                        window.set_cursor(None);
+                        self.shows_hand = false;
+                    }
                     self.is_hovering = false;
                     if let Some(tooltip) = &mut self.tooltip {
                         tooltip.hover_since = None;
