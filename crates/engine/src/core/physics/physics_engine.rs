@@ -1,5 +1,14 @@
 use rapier3d::prelude::*;
 
+/// Where a ray hit: the collider, how far along the ray, and the surface
+/// normal there.
+#[derive(Clone, Copy, Debug)]
+pub struct RayHit {
+    pub collider: ColliderHandle,
+    pub distance: f32,
+    pub normal: [f32; 3],
+}
+
 pub struct PhysicsEngine {
     pub rigid_bodies: RigidBodySet,
     pub colliders: ColliderSet,
@@ -135,23 +144,49 @@ impl PhysicsEngine {
         max_distance: f32,
         ignore: &[RigidBodyHandle],
     ) -> Option<(ColliderHandle, f32)> {
+        self.cast_ray(origin, dir, max_distance, ignore)
+            .map(|hit| (hit.collider, hit.distance))
+    }
+
+    /// Like `cast_ray_colliders`, with the surface normal where it hits.
+    pub fn cast_ray(
+        &mut self,
+        origin: [f32; 3],
+        dir: [f32; 3],
+        max_distance: f32,
+        ignore: &[RigidBodyHandle],
+    ) -> Option<RayHit> {
+        use rapier3d::parry::query::RayCast;
+
         self.rigid_bodies
             .propagate_modified_body_positions_to_colliders(&mut self.colliders);
         let ray = Ray::new(
             Vector::new(origin[0], origin[1], origin[2]),
             Vector::new(dir[0], dir[1], dir[2]),
         );
-        let mut best: Option<(ColliderHandle, f32)> = None;
+        let mut best: Option<RayHit> = None;
         for (handle, collider) in self.colliders.iter() {
             if collider.is_sensor() || collider.parent().is_some_and(|p| ignore.contains(&p)) {
                 continue;
             }
-            let limit = best.map_or(max_distance, |(_, t)| t);
-            if let Some(t) = collider
-                .shape()
-                .cast_ray(collider.position(), &ray, limit, true)
+            let limit = best.as_ref().map_or(max_distance, |hit| hit.distance);
+            if collider
+                .compute_aabb()
+                .cast_local_ray(&ray, limit, true)
+                .is_none()
             {
-                best = Some((handle, t));
+                continue;
+            }
+            if let Some(hit) =
+                collider
+                    .shape()
+                    .cast_ray_and_get_normal(collider.position(), &ray, limit, true)
+            {
+                best = Some(RayHit {
+                    collider: handle,
+                    distance: hit.time_of_impact,
+                    normal: [hit.normal.x, hit.normal.y, hit.normal.z],
+                });
             }
         }
         best

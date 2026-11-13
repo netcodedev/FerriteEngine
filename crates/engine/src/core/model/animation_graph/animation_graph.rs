@@ -38,21 +38,32 @@ impl AnimationGraph {
         }
         let mut transition = false;
         if let Some(state) = self.states.get_mut(&self.current_state) {
-            if self.previous_state.is_none() {
-                for transitions in &state.transitions {
-                    if transitions.conditions.iter().all(|c| c.evaluate(&self.inputs)) {
-                        self.previous_state = Some(self.current_state.clone());
-                        self.current_state = transitions.to_state.clone();
-                        self.transition_progress = 0.0;
-                        self.transition_speed = 1.0 / transitions.transition_time;
-                        self.cumulative_translation_error.clear();
-                        self.delta_progress = delta_time * self.transition_speed;
-                        transition = true;
-                        break;
-                    }
-                }
-            }
+            // Also while a blend is running, so the graph follows inputs
+            // that change quickly instead of finishing what it started.
+            let fired = state
+                .transitions
+                .iter()
+                .find(|t| t.conditions.iter().all(|c| c.evaluate(&self.inputs)))
+                .map(|t| (t.to_state.clone(), t.transition_time));
             state.update(delta_time);
+            if let Some((to_state, transition_time)) = fired {
+                let speed = 1.0 / transition_time.max(1e-3);
+                if self.previous_state.as_deref() == Some(to_state.as_str()) {
+                    // Back to the state being blended out: the blend runs
+                    // backwards from where it is, without a jump.
+                    self.previous_state = Some(std::mem::replace(&mut self.current_state, to_state));
+                    self.transition_progress = 1.0 - self.transition_progress;
+                } else {
+                    // The state being blended out (if any) is dropped; the
+                    // one being blended in is blended out from here.
+                    self.previous_state = Some(std::mem::replace(&mut self.current_state, to_state));
+                    self.transition_progress = 0.0;
+                    transition = true;
+                }
+                self.transition_speed = speed;
+                self.cumulative_translation_error.clear();
+                self.delta_progress = delta_time * self.transition_speed;
+            }
         }
         if transition {
             if let Some(state) = self.states.get_mut(&self.current_state) {

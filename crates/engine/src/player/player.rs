@@ -1,5 +1,5 @@
 use cgmath::Point3;
-use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder};
+use rapier3d::prelude::{CoefficientCombineRule, ColliderBuilder, RigidBodyBuilder};
 
 use crate::core::{
     assets::{self, AssetRef},
@@ -70,8 +70,12 @@ impl Player {
         let animation_component =
             AnimationComponent::with_path(animation_graph, super::PLAYER_GRAPH_PATH);
 
+        // No friction with anything, also not the ground's own: the
+        // controller sets how the body moves, and friction would hold it on
+        // slopes it walks up.
         let collider = ColliderBuilder::capsule_y(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS)
             .friction(0.0)
+            .friction_combine_rule(CoefficientCombineRule::Min)
             .build();
 
         let translation = entity.get_position();

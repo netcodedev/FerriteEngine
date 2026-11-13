@@ -51,17 +51,21 @@ fn main() {
 }
 
 fn open_project() -> Result<Project, String> {
-    let path = match std::env::args().nth(1) {
+    // A project file, or a folder with one (the working directory if none
+    // is given).
+    let given = match std::env::args().nth(1) {
         Some(path) => PathBuf::from(path),
-        None => {
-            let here = std::env::current_dir().map_err(|e| e.to_string())?;
-            Project::find_in(&here).ok_or_else(|| {
-                format!(
-                    "no project (.fp file) in {}; give one as the first argument",
-                    here.display()
-                )
-            })?
-        }
+        None => std::env::current_dir().map_err(|e| e.to_string())?,
+    };
+    let path = if given.is_dir() {
+        Project::find_in(&given).ok_or_else(|| {
+            format!(
+                "no project (.fp file) in {}; give one as the first argument",
+                given.display()
+            )
+        })?
+    } else {
+        given
     };
     let project = Project::load(&path)?;
     project.enter()?;

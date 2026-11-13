@@ -1,3 +1,6 @@
+// Locomotion of the player. Every state can go to every other one, under
+// the conditions of the state it goes to, so the graph always ends up in
+// the state the inputs ask for. `jump` is whether the player is in the air.
 (
     version: 1,
     inputs: [
@@ -105,19 +108,143 @@
     ],
     transitions: [
         (
+            from: "jump",
+            to: "idle",
+            blend: 0.2,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "jump",
+            to: "walk",
+            blend: 0.2,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "jump",
+            to: "fast_run",
+            blend: 0.2,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "jump",
+            to: "back",
+            blend: 0.2,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "jump",
+            to: "left",
+            blend: 0.2,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "jump",
+            to: "right",
+            blend: 0.2,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "jump",
+            to: "forward_left",
+            blend: 0.2,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "jump",
+            to: "forward_right",
+            blend: 0.2,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "jump",
+            to: "backward_left",
+            blend: 0.2,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "jump",
+            to: "backward_right",
+            blend: 0.2,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "idle",
+            to: "jump",
+            blend: 0.15,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
             from: "idle",
             to: "walk",
-            blend: 0.5,
+            blend: 0.25,
             conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
             ],
         ),
         (
             from: "idle",
-            to: "back",
-            blend: 0.5,
+            to: "fast_run",
+            blend: 0.25,
             conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "idle",
+            to: "back",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
             ],
@@ -125,8 +252,9 @@
         (
             from: "idle",
             to: "left",
-            blend: 0.5,
+            blend: 0.25,
             conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
             ],
@@ -134,16 +262,59 @@
         (
             from: "idle",
             to: "right",
-            blend: 0.5,
+            blend: 0.25,
             conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
             ],
         ),
         (
             from: "idle",
+            to: "forward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "idle",
+            to: "forward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "idle",
+            to: "backward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "idle",
+            to: "backward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "walk",
             to: "jump",
-            blend: 0.5,
+            blend: 0.15,
             conditions: [
                 (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
             ],
@@ -151,96 +322,192 @@
         (
             from: "walk",
             to: "idle",
-            blend: 0.5,
+            blend: 0.3,
             conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
-            ],
-        ),
-        (
-            from: "walk",
-            to: "forward_left",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
-                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
-            ],
-        ),
-        (
-            from: "walk",
-            to: "forward_right",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
-                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
             ],
         ),
         (
             from: "walk",
             to: "fast_run",
-            blend: 0.5,
+            blend: 0.25,
             conditions: [
-                (terms: [(input: "sprint", sign: 1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "walk",
+            to: "back",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
             ],
         ),
         (
             from: "walk",
-            to: "jump",
-            blend: 0.5,
+            to: "left",
+            blend: 0.25,
             conditions: [
-                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
-            ],
-        ),
-        (
-            from: "fast_run",
-            to: "idle",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: LessEq, value: 0.0),
-            ],
-        ),
-        (
-            from: "fast_run",
-            to: "walk",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
-            ],
-        ),
-        (
-            from: "fast_run",
-            to: "jump",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
-            ],
-        ),
-        (
-            from: "back",
-            to: "idle",
-            blend: 0.5,
-            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
-                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
             ],
         ),
         (
-            from: "back",
-            to: "backward_left",
-            blend: 0.5,
+            from: "walk",
+            to: "right",
+            blend: 0.25,
             conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "walk",
+            to: "forward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "walk",
+            to: "forward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "walk",
+            to: "backward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
             ],
         ),
         (
-            from: "back",
+            from: "walk",
             to: "backward_right",
-            blend: 0.5,
+            blend: 0.25,
             conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "jump",
+            blend: 0.15,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "idle",
+            blend: 0.3,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "walk",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "back",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "forward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "forward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "backward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "fast_run",
+            to: "backward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
             ],
@@ -248,7 +515,108 @@
         (
             from: "back",
             to: "jump",
-            blend: 0.5,
+            blend: 0.15,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "idle",
+            blend: 0.3,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "walk",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "fast_run",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "forward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "forward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "backward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "back",
+            to: "backward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "left",
+            to: "jump",
+            blend: 0.15,
             conditions: [
                 (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
             ],
@@ -256,34 +624,100 @@
         (
             from: "left",
             to: "idle",
-            blend: 0.5,
+            blend: 0.3,
             conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "left",
+            to: "walk",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "left",
+            to: "fast_run",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "left",
+            to: "back",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "left",
+            to: "right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
             ],
         ),
         (
             from: "left",
             to: "forward_left",
-            blend: 0.5,
+            blend: 0.25,
             conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "left",
+            to: "forward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
             ],
         ),
         (
             from: "left",
             to: "backward_left",
-            blend: 0.5,
+            blend: 0.25,
             conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
             ],
         ),
         (
             from: "left",
+            to: "backward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "right",
             to: "jump",
-            blend: 0.5,
+            blend: 0.15,
             conditions: [
                 (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
             ],
@@ -291,148 +725,496 @@
         (
             from: "right",
             to: "idle",
-            blend: 0.5,
+            blend: 0.3,
             conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "right",
+            to: "walk",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "right",
+            to: "fast_run",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "right",
+            to: "back",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "right",
+            to: "left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "right",
+            to: "forward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
             ],
         ),
         (
             from: "right",
             to: "forward_right",
-            blend: 0.5,
+            blend: 0.25,
             conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
                 (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "right",
+            to: "backward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
             ],
         ),
         (
             from: "right",
             to: "backward_right",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
-                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
-            ],
-        ),
-        (
-            from: "right",
-            to: "jump",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
-            ],
-        ),
-        (
-            from: "forward_left",
-            to: "walk",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
-                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
-            ],
-        ),
-        (
-            from: "forward_left",
-            to: "left",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
-                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
-            ],
-        ),
-        (
-            from: "forward_left",
-            to: "jump",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
-            ],
-        ),
-        (
-            from: "forward_right",
-            to: "walk",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
-                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
-            ],
-        ),
-        (
-            from: "forward_right",
-            to: "right",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
-                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
-            ],
-        ),
-        (
-            from: "forward_right",
-            to: "jump",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
-            ],
-        ),
-        (
-            from: "backward_left",
-            to: "back",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
-                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
-            ],
-        ),
-        (
-            from: "backward_left",
-            to: "left",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
-                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
-            ],
-        ),
-        (
-            from: "backward_left",
-            to: "jump",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
-            ],
-        ),
-        (
-            from: "backward_right",
-            to: "back",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
-                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
-            ],
-        ),
-        (
-            from: "backward_right",
-            to: "right",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
-                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
-            ],
-        ),
-        (
-            from: "backward_right",
-            to: "jump",
-            blend: 0.5,
-            conditions: [
-                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
-            ],
-        ),
-        (
-            from: "jump",
-            to: "idle",
-            blend: 0.5,
+            blend: 0.25,
             conditions: [
                 (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "jump",
+            blend: 0.15,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "idle",
+            blend: 0.3,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "walk",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "fast_run",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "back",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "forward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "backward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_left",
+            to: "backward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "jump",
+            blend: 0.15,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "idle",
+            blend: 0.3,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "walk",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "fast_run",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "back",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "forward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "backward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "forward_right",
+            to: "backward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "jump",
+            blend: 0.15,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "idle",
+            blend: 0.3,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "walk",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "fast_run",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "back",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "forward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "forward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_left",
+            to: "backward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "jump",
+            blend: 0.15,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "idle",
+            blend: 0.3,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "walk",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "fast_run",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "back",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Equal, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "forward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "forward_right",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Greater, value: 0.0),
+                (terms: [(input: "sprint", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Less, value: 0.0),
+            ],
+        ),
+        (
+            from: "backward_right",
+            to: "backward_left",
+            blend: 0.25,
+            conditions: [
+                (terms: [(input: "jump", sign: 1.0)], op: Equal, value: 0.0),
+                (terms: [(input: "forward", sign: 1.0), (input: "backward", sign: -1.0)], op: Less, value: 0.0),
+                (terms: [(input: "left", sign: 1.0), (input: "right", sign: -1.0)], op: Greater, value: 0.0),
             ],
         ),
     ],

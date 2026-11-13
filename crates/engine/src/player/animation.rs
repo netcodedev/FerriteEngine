@@ -90,28 +90,56 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn built_in_graph_matches_former_hard_coded_graph() {
-        let file = AnimGraphFile::from_ron(BUILT_IN_PLAYER_GRAPH).unwrap();
-        assert_eq!(file.states.len(), 11);
-        assert_eq!(file.transitions.len(), 38);
-        assert_eq!(file.default_state, "idle");
-
-        // idle -> walk: forward - backward > 0 && left - right == 0
-        let walk = file
-            .transitions
+    /// The state the inputs ask for: the one a transition leads to from
+    /// `from`, or `from` if none fires.
+    fn next(file: &AnimGraphFile, from: &str, inputs: &HashMap<String, f32>) -> String {
+        file.transitions
             .iter()
-            .find(|t| t.from == "idle" && t.to == "walk")
-            .unwrap();
-        let holds = |pairs: &[(&str, f32)]| {
-            let inputs: HashMap<String, f32> =
-                pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect();
-            walk.conditions.iter().all(|c| c.evaluate(&inputs))
-        };
-        assert!(holds(&[("forward", 1.0)]));
-        assert!(!holds(&[("forward", 1.0), ("left", 1.0)]));
-        assert!(!holds(&[("forward", 1.0), ("backward", 1.0)]));
-        assert_eq!(walk.conditions[0].describe(), "forward - backward > 0");
+            .filter(|t| t.from == from)
+            .find(|t| t.conditions.iter().all(|c| c.evaluate(inputs)))
+            .map_or(from.to_string(), |t| t.to.clone())
+    }
+
+    #[test]
+    fn every_state_reaches_what_the_inputs_ask_for() {
+        let file = AnimGraphFile::from_ron(BUILT_IN_PLAYER_GRAPH).unwrap();
+        assert_eq!(file.default_state, "idle");
+        let names = ["forward", "backward", "left", "right", "sprint", "jump"];
+        for bits in 0..(1u32 << names.len()) {
+            let inputs: HashMap<String, f32> = names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| (n.to_string(), ((bits >> i) & 1) as f32))
+                .collect();
+            let fb = inputs["forward"] - inputs["backward"];
+            let lr = inputs["left"] - inputs["right"];
+            let side = |left: &str, right: &str, none: &'static str| -> String {
+                if lr > 0.0 {
+                    left.into()
+                } else if lr < 0.0 {
+                    right.into()
+                } else {
+                    none.into()
+                }
+            };
+            let expected = if inputs["jump"] > 0.0 {
+                "jump".to_string()
+            } else if fb > 0.0 && inputs["sprint"] > 0.0 {
+                "fast_run".to_string()
+            } else if fb > 0.0 {
+                side("forward_left", "forward_right", "walk")
+            } else if fb < 0.0 {
+                side("backward_left", "backward_right", "back")
+            } else {
+                side("left", "right", "idle")
+            };
+            for state in &file.states {
+                // One transition there, and it stays.
+                let reached = next(&file, &state.name, &inputs);
+                assert_eq!(reached, expected, "from {} with {inputs:?}", state.name);
+                assert_eq!(next(&file, &reached, &inputs), reached);
+            }
+        }
     }
 
     #[test]
