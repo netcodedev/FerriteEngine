@@ -5,6 +5,7 @@ use glfw::{Action, CursorMode, Glfw, Key, WindowEvent};
 use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder};
 
 use crate::core::{
+    assets::{self, AssetRef},
     entity::{
         component::{
             animation_component::AnimationComponent, camera_component::CameraComponent,
@@ -25,17 +26,54 @@ const JUMP_VELOCITY: f32 = 4.0;
 
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
+/// The model the player has unless it is given another one, as a file in
+/// `assets/models/`.
+pub const PLAYER_MODEL_FILE: &str = "Mannequin.fbx";
+/// The player's models are authored in centimetres.
+const PLAYER_MODEL_SCALE: f32 = 0.01;
+
+/// The asset of the default player model, if that file is registered.
+pub fn default_player_model() -> Option<AssetRef> {
+    let database = assets::database();
+    let source = database.root().join("models").join(PLAYER_MODEL_FILE);
+    database.find_by_source(&source).map(AssetRef::whole)
+}
+
+/// Load a player model: the given asset, or the default model — as an asset
+/// if it is registered, from its file otherwise. Must run on the GL thread.
+pub fn load_player_model(
+    asset: Option<&AssetRef>,
+) -> Result<ModelComponent, Box<dyn std::error::Error>> {
+    if let Some(asset) = asset.cloned().or_else(default_player_model) {
+        return Ok(ModelComponent::from_asset_scaled(&asset, PLAYER_MODEL_SCALE)?);
+    }
+    let mut model = ModelBuilder::new(PLAYER_MODEL_FILE)?.build();
+    model.init();
+    Ok(ModelComponent::new(model))
+}
+
 impl Player {
     pub fn new<P: Into<Point3<f32>>>(
         scene: &mut Scene,
         position: P,
         animation_graph: AnimationGraph,
     ) -> Result<Entity, Box<dyn std::error::Error>> {
+        Self::with_model(scene, position, animation_graph, None)
+    }
+
+    /// A player showing `model` instead of the default player model.
+    pub fn with_model<P: Into<Point3<f32>>>(
+        scene: &mut Scene,
+        position: P,
+        animation_graph: AnimationGraph,
+        model: Option<&AssetRef>,
+    ) -> Result<Entity, Box<dyn std::error::Error>> {
+        // Before anything is added to the scene: this is the step that
+        // fails when assets are missing.
+        let model_component = load_player_model(model)?;
+
         let mut entity = Entity::new("player");
         entity.set_position(scene, position);
-
-        let mut model = ModelBuilder::new("Mannequin.fbx")?.build();
-        model.init();
 
         // Player::new is given the default player graph; a scene's own graph
         // file replaces it via ComponentData::AnimationGraph.
@@ -68,7 +106,7 @@ impl Player {
 
         entity.add_component(animation_component);
         entity.add_component(rigidbody_component);
-        entity.add_component(ModelComponent::new(model));
+        entity.add_component(model_component);
         entity.add_component(controller);
 
         let bone_colliders = BoneColliders::build(scene, &entity);

@@ -1,2 +1,5 @@
 target
-assets
+/assets
+ruvector.db
+.claude-flow/
+agentdb.rvf*

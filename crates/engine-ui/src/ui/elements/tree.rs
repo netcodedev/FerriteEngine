@@ -247,6 +247,17 @@ impl TreeView {
         }
     }
 
+    /// Id of the item whose row is at this point. The expand arrow of a row
+    /// does not count: pressing it folds the row instead of picking it.
+    pub fn item_at(&self, x: f32, y: f32) -> Option<u64> {
+        let row = &self.rows[self.row_at(x, y)?];
+        let item = &self.items[row.item];
+        if item.has_children && row.arrow_region.contains(x, y) {
+            return None;
+        }
+        Some(item.id)
+    }
+
     fn row_at(&self, x: f32, y: f32) -> Option<usize> {
         if !self.region.contains(x, y) {
             return None;

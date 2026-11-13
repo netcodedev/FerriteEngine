@@ -11,7 +11,10 @@ use editor::{
         canvas::NodeCanvas, graph_inspector::GraphInspector, inputs::InputsPanel,
         preview::PreviewPanel, AnimSelection,
     },
+    asset_browser::AssetBrowser,
+    asset_editor::{AssetEdit, AssetInspector, AssetPreview},
     dialogs::{self, ModalHost},
+    drag::{DragLayer, DropAction, DropTarget},
     hierarchy::HierarchyPanel,
     inspector::InspectorPanel,
     layout::{Layout, RightColumn},
@@ -27,8 +30,12 @@ use editor::{
 };
 use ferrite::core::{
     application::{Application, Layer},
+    assets,
     entity::{
-        component::{animation_component::AnimationComponent, camera_component::CameraComponent},
+        component::{
+            animation_component::AnimationComponent, camera_component::CameraComponent,
+            model_component::ModelComponent,
+        },
         Entity, EntityHandle,
     },
     renderer::line::LineRenderer,
@@ -78,7 +85,19 @@ struct EditorLayer {
 impl EditorLayer {
     fn new() -> Self {
         let state = EditorState::new();
+        // Files that were put into the asset folder by hand become assets,
+        // so everything in there can be referred to the same way.
+        let (registered, problems) = assets::database().register_new_files();
+        for problem in &problems {
+            log::warn!("assets: {problem}");
+        }
         let (scene, path) = Self::startup_scene(&state);
+        Self::report_scene_problems(&state, &scene);
+        if registered > 0 && state.borrow().status().is_none() {
+            state
+                .borrow_mut()
+                .set_status(format!("Registered {registered} new assets"));
+        }
         state.borrow_mut().scene_path = path;
 
         let mut ui = UI::new();
@@ -90,9 +109,17 @@ impl EditorLayer {
         add(&mut ui, Box::new(Toolbar::new(state.clone())));
         // Before the panels, so it gets first claim on clicks at the edges.
         add(&mut ui, Box::new(Splitter::new(state.clone())));
-        let (scene_panels, anim_panels) = {
+        // Also ahead of the panels: it has to see the release that ends a
+        // drag before the panel under the cursor does.
+        add(&mut ui, Box::new(DragLayer::new(state.clone())));
+        let (scene_panels, anim_panels, asset_panels, browser_panel) = {
             let s = state.borrow();
-            (s.scene_panels.clone(), s.anim_panels.clone())
+            (
+                s.scene_panels.clone(),
+                s.anim_panels.clone(),
+                s.asset_panels.clone(),
+                s.browser_panel.clone(),
+            )
         };
         // Scene workspace.
         for panel in [
@@ -102,6 +129,21 @@ impl EditorLayer {
         ] {
             add(&mut ui, Box::new(ToggleWindow::new(scene_panels.clone(), panel)));
         }
+        // Asset workspace.
+        for panel in [
+            Box::new(AssetInspector::new(state.clone())) as Box<dyn UIElement>,
+            Box::new(AssetPreview::new(state.clone())),
+        ] {
+            add(&mut ui, Box::new(ToggleWindow::new(asset_panels.clone(), panel)));
+        }
+        // Shared by the scene and the asset workspace.
+        add(
+            &mut ui,
+            Box::new(ToggleWindow::new(
+                browser_panel,
+                Box::new(AssetBrowser::new(state.clone())),
+            )),
+        );
         // Animation workspace.
         for panel in [
             Box::new(NodeCanvas::new(state.clone())) as Box<dyn UIElement>,
@@ -154,6 +196,20 @@ impl EditorLayer {
             Scene::new()
         });
         (scene, None)
+    }
+
+    /// Tell the user about components that could not be built on load.
+    fn report_scene_problems(state: &Shared, scene: &Scene) {
+        let problems = scene.problems();
+        if let Some(first) = problems.first() {
+            let more = match problems.len() - 1 {
+                0 => String::new(),
+                n => format!(" (and {n} more)"),
+            };
+            state
+                .borrow_mut()
+                .set_status(format!("Not loaded: {first}{more}"));
+        }
     }
 
     /// Camera + sky light, like a fresh scene in most editors.
@@ -237,6 +293,37 @@ impl EditorLayer {
             .get_component_mut::<Terrain<DualContouringChunk>>()
     }
 
+    /// Ask for files and import each as an asset.
+    fn import_assets(&mut self) {
+        let files = dialogs::pick_import_files();
+        if files.is_empty() {
+            return;
+        }
+        let mut imported = Vec::new();
+        let mut failed = Vec::new();
+        {
+            let mut database = assets::database();
+            for file in &files {
+                match database.import(file) {
+                    Ok(id) => {
+                        if let Some(entry) = database.get(id) {
+                            imported.push(entry.meta.name.clone());
+                        }
+                    }
+                    Err(e) => failed.push(e.to_string()),
+                }
+            }
+        }
+        let message = match (imported.as_slice(), failed.first()) {
+            (_, Some(error)) if imported.is_empty() => format!("Import failed: {error}"),
+            (names, Some(error)) => {
+                format!("Imported {}, but: {error}", names.join(", "))
+            }
+            (names, None) => format!("Imported {}", names.join(", ")),
+        };
+        self.state.borrow_mut().set_status(message);
+    }
+
     fn replace_scene(&mut self, scene: Scene) {
         self.scene = scene;
         // The viewport re-installs its camera on the next update.
@@ -275,7 +362,11 @@ impl EditorLayer {
                 | Command::AddEntity { .. }
                 | Command::AddComponent(..)
                 | Command::RemoveComponent(..)
-                | Command::PickScatterModel { .. }
+                | Command::PickScatterAsset { .. }
+                | Command::SetScatterAsset { .. }
+                | Command::PickModelAsset(_)
+                | Command::SetEntityModel { .. }
+                | Command::SpawnModel(_)
                 | Command::RemoveScatterModel(..)
                 | Command::Delete(_)
                 | Command::Duplicate(_)
@@ -305,11 +396,14 @@ impl EditorLayer {
             Command::Open(path) => match Scene::load_from_path(&path) {
                 Ok(scene) => {
                     self.replace_scene(scene);
-                    let mut state = self.state.borrow_mut();
-                    state.set_status(format!("Opened {}", path.display()));
-                    state.scene_path = Some(path);
-                    state.dirty = false;
-                    state.select(None);
+                    {
+                        let mut state = self.state.borrow_mut();
+                        state.set_status(format!("Opened {}", path.display()));
+                        state.scene_path = Some(path);
+                        state.dirty = false;
+                        state.select(None);
+                    }
+                    Self::report_scene_problems(&self.state, &self.scene);
                 }
                 Err(e) => self
                     .state
@@ -346,7 +440,7 @@ impl EditorLayer {
                 if mode == Mode::Play {
                     return;
                 }
-                if self.state.borrow().workspace == Workspace::Animation {
+                if self.state.borrow().workspace != Workspace::Scene {
                     self.run(Command::SetWorkspace(Workspace::Scene));
                 }
                 self.play_snapshot = Some(self.scene.to_file());
@@ -409,19 +503,83 @@ impl EditorLayer {
                     self.state.borrow_mut().dirty = true;
                 }
             }
-            Command::PickScatterModel { entity, layer } => match dialogs::pick_model() {
-                Ok(Some(model)) => {
-                    if let Some(terrain) = self.terrain_mut(&entity) {
-                        match layer {
-                            Some(layer) => terrain.scatter_mut().set_model(layer, model),
-                            None => terrain.scatter_mut().add_layer(model, DEFAULT_DENSITY),
-                        }
-                        self.state.borrow_mut().dirty = true;
-                    }
+            Command::ImportAssets => self.import_assets(),
+            Command::RefreshAssets => {
+                let (count, problems) = {
+                    let mut database = assets::database();
+                    let mut problems = database.scan();
+                    // Files added by hand since the last look become assets.
+                    problems.extend(database.register_new_files().1);
+                    (database.len(), problems)
+                };
+                let mut state = self.state.borrow_mut();
+                match problems.first() {
+                    Some(problem) => state.set_status(format!("Assets: {problem}")),
+                    None => state.set_status(format!("{count} assets")),
                 }
-                Ok(None) => {}
-                Err(e) => self.state.borrow_mut().set_status(e),
-            },
+            }
+            Command::PickScatterAsset { entity, layer } => {
+                dialogs::pick_scatter_asset(&self.state, entity, layer)
+            }
+            Command::SetScatterAsset {
+                entity,
+                layer,
+                asset,
+            } => {
+                if let Some(terrain) = self.terrain_mut(&entity) {
+                    match layer {
+                        Some(layer) => terrain.scatter_mut().set_asset(layer, asset),
+                        None => terrain.scatter_mut().add_asset_layer(asset, DEFAULT_DENSITY),
+                    }
+                    self.state.borrow_mut().dirty = true;
+                }
+            }
+            Command::PickModelAsset(entity) => dialogs::pick_entity_model(&self.state, entity),
+            Command::SetEntityModel { entity, asset } => {
+                let Some(target) = self.scene.get_entity_mut(&entity) else {
+                    return;
+                };
+                let result = match target.get_component_mut::<ModelComponent>() {
+                    Some(model) => model.set_asset(asset),
+                    None => {
+                        // Reports a failure through a placeholder component.
+                        ComponentData::Model { asset }.attach(target);
+                        Ok(())
+                    }
+                };
+                let mut state = self.state.borrow_mut();
+                match result {
+                    Ok(()) => state.dirty = true,
+                    Err(e) => state.set_status(format!("Could not load the model: {e}")),
+                }
+            }
+            Command::SpawnModel(asset) => {
+                let name = assets::database()
+                    .display_name(&asset)
+                    .unwrap_or_else(|| "model".into());
+                let spawn = self.viewport.spawn_point();
+                let data = EntityData {
+                    id: u64::from(EntityHandle::new()),
+                    name,
+                    position: [spawn.x, spawn.y, spawn.z],
+                    rotation: [1.0, 0.0, 0.0, 0.0],
+                    components: vec![ComponentData::Model { asset }],
+                    children: Vec::new(),
+                };
+                match self.scene.instantiate(&data, true) {
+                    Ok(entity) => {
+                        let id = entity.id;
+                        self.scene.add_entity(entity);
+                        let mut state = self.state.borrow_mut();
+                        state.select(Some(id));
+                        state.dirty = true;
+                    }
+                    Err(e) => self
+                        .state
+                        .borrow_mut()
+                        .set_status(format!("Could not create entity: {e}")),
+                }
+            }
             Command::RemoveScatterModel(entity, layer) => {
                 if let Some(terrain) = self.terrain_mut(&entity) {
                     terrain.scatter_mut().remove_layer(layer);
@@ -472,6 +630,89 @@ impl EditorLayer {
                 state.workspace = workspace;
                 state.scene_panels.write(workspace == Workspace::Scene);
                 state.anim_panels.write(workspace == Workspace::Animation);
+                state.asset_panels.write(workspace == Workspace::Asset);
+                state.browser_panel.write(workspace != Workspace::Animation);
+            }
+            Command::EditAsset { id, variant } => {
+                let unsaved = self
+                    .state
+                    .borrow()
+                    .asset_edit
+                    .as_ref()
+                    .filter(|edit| edit.dirty && edit.meta.id != id)
+                    .map(|edit| edit.meta.name.clone());
+                if let Some(name) = unsaved {
+                    self.state
+                        .borrow_mut()
+                        .set_status(format!("Save or revert '{name}' first"));
+                    self.run(Command::SetWorkspace(Workspace::Asset));
+                    return;
+                }
+                let already_open = self
+                    .state
+                    .borrow()
+                    .asset_edit
+                    .as_ref()
+                    .is_some_and(|edit| edit.meta.id == id);
+                if already_open {
+                    // Keep its unsaved edits; just show the asked variant.
+                    let mut state = self.state.borrow_mut();
+                    if let (Some(edit), Some(variant)) = (state.asset_edit.as_mut(), variant) {
+                        let index = edit
+                            .meta
+                            .as_model()
+                            .and_then(|model| model.variants.iter().position(|v| v.name == variant));
+                        if let Some(index) = index.filter(|index| *index != edit.variant) {
+                            edit.variant = index;
+                            edit.lod = None;
+                            edit.structure += 1;
+                            edit.preview += 1;
+                        }
+                    }
+                } else {
+                    match AssetEdit::open(id, variant.as_deref()) {
+                        Ok(edit) => self.state.borrow_mut().asset_edit = Some(edit),
+                        Err(e) => {
+                            self.state.borrow_mut().set_status(e);
+                            return;
+                        }
+                    }
+                }
+                self.run(Command::SetWorkspace(Workspace::Asset));
+            }
+            Command::SaveAsset => {
+                let mut state = self.state.borrow_mut();
+                let result = state
+                    .asset_edit
+                    .as_mut()
+                    .map(|edit| edit.save().map(|()| edit.meta.name.clone()));
+                match result {
+                    Some(Ok(name)) => state.set_status(format!("Saved asset '{name}'")),
+                    Some(Err(e)) => state.set_status(format!("Could not save the asset: {e}")),
+                    None => {}
+                }
+            }
+            Command::RevertAsset => {
+                let mut state = self.state.borrow_mut();
+                let result = state.asset_edit.as_mut().map(|edit| edit.revert());
+                match result {
+                    Some(Ok(())) => state.set_status("Asset reverted"),
+                    Some(Err(e)) => state.set_status(e),
+                    None => {}
+                }
+            }
+            Command::CloseAssetEditor => self.run(Command::SetWorkspace(Workspace::Scene)),
+            Command::PickAssetTexture { material, slot } => {
+                dialogs::pick_asset_texture(&self.state, material, slot)
+            }
+            Command::SetAssetTexture {
+                material,
+                slot,
+                texture,
+            } => {
+                if let Some(edit) = self.state.borrow_mut().asset_edit.as_mut() {
+                    edit.set_texture(material, slot, texture);
+                }
             }
             Command::SaveGraph => {
                 let result = self.state.borrow_mut().anim.save();
@@ -574,6 +815,21 @@ impl EditorLayer {
         let mode = self.state.borrow().mode;
         let selected = self.state.borrow().selected();
         let workspace = self.state.borrow().workspace;
+        if workspace == Workspace::Asset {
+            // Scene shortcuts (delete, gizmos, ...) do not apply here.
+            let command = match (key, ctrl) {
+                (Key::S, true) => Some(Command::SaveAsset),
+                (Key::Escape, false) => Some(Command::CloseAssetEditor),
+                _ => None,
+            };
+            return match command {
+                Some(command) => {
+                    self.state.borrow_mut().push(command);
+                    true
+                }
+                None => false,
+            };
+        }
         if workspace == Workspace::Animation {
             let command = match (key, ctrl) {
                 (Key::S, true) => Some(Command::SaveGraph),
@@ -660,9 +916,14 @@ impl EditorLayer {
 
 impl Layer for EditorLayer {
     fn on_update(&mut self, window: &Window, delta_time: f64) {
-        let (show_stats, show_widgets, workspace) = {
+        let (show_stats, show_widgets, show_assets, workspace) = {
             let s = self.state.borrow();
-            (s.show_stats.read(), s.show_widgets.read(), s.workspace)
+            (
+                s.show_stats.read(),
+                s.show_widgets.read(),
+                s.show_assets.read(),
+                s.workspace,
+            )
         };
         let right = match workspace {
             Workspace::Animation => RightColumn::Preview,
@@ -670,9 +931,20 @@ impl Layer for EditorLayer {
                 stats: show_stats,
                 widgets: show_widgets,
             },
+            // Settings on the left, the preview takes the rest.
+            Workspace::Asset => RightColumn::Panels {
+                stats: false,
+                widgets: false,
+            },
         };
         let sizes = self.state.borrow().panel_sizes;
-        let layout = Layout::compute(window.width as f32, window.height as f32, right, &sizes);
+        let layout = Layout::compute(
+            window.width as f32,
+            window.height as f32,
+            right,
+            show_assets && workspace != Workspace::Animation,
+            &sizes,
+        );
         self.state.borrow_mut().layout = layout;
         let mode = self.state.borrow().mode;
 
@@ -730,6 +1002,14 @@ impl Layer for EditorLayer {
 
         let ui_start = Instant::now();
         self.ui.update(&mut self.scene);
+        // A model asset dropped on the viewport becomes an entity. Panels
+        // registered their (smaller) targets during the update.
+        if workspace == Workspace::Scene && mode == Mode::Edit {
+            self.state.borrow_mut().drop_targets.push(DropTarget {
+                rect: layout.viewport,
+                action: DropAction::SpawnModel,
+            });
+        }
         self.run_commands();
         self.ui.render();
         let ui_ms = ui_start.elapsed().as_secs_f32() * 1000.0;
@@ -771,7 +1051,7 @@ impl Layer for EditorLayer {
             }
         }
 
-        if self.state.borrow().workspace == Workspace::Animation {
+        if self.state.borrow().workspace != Workspace::Scene {
             return;
         }
         match mode {

@@ -8,6 +8,7 @@ pub use animation::{
 };
 
 pub use bone_colliders::BoneColliders;
+pub use player::{default_player_model, load_player_model, PLAYER_MODEL_FILE};
 use cgmath::{Rad, Vector3};
 use rapier3d::prelude::RigidBodyHandle;
 

@@ -6,11 +6,19 @@
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Instant};
 
-use ferrite::core::{entity::EntityHandle, scene::scene_file::ComponentData, utils::DataSource};
+use ferrite::core::{
+    assets::{AssetId, AssetRef},
+    entity::EntityHandle,
+    scene::scene_file::ComponentData,
+    utils::DataSource,
+};
 use ferrite_ui::ui::elements::tree::NO_SELECTION;
 
 pub mod anim;
+pub mod asset_browser;
+pub mod asset_editor;
 pub mod dialogs;
+pub mod drag;
 pub mod field_row;
 pub mod hierarchy;
 pub mod inspector;
@@ -34,6 +42,8 @@ pub enum Mode {
 pub enum Workspace {
     Scene,
     Animation,
+    /// Settings and preview of one asset.
+    Asset,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,12 +90,55 @@ pub enum Command {
     },
     AddComponent(EntityHandle, ComponentData),
     RemoveComponent(EntityHandle, usize),
-    /// Choose a model file for a scatter layer of this entity's terrain.
-    /// Without a layer index a new layer is added.
-    PickScatterModel {
+    /// Let the user import files as assets (system file dialog).
+    ImportAssets,
+    /// Scan the assets folder again.
+    RefreshAssets,
+    /// Let the user choose a model asset for a scatter layer of this
+    /// entity's terrain. Without a layer index a new layer is added.
+    PickScatterAsset {
         entity: EntityHandle,
         layer: Option<usize>,
     },
+    /// Use a model asset for a scatter layer of this entity's terrain.
+    /// Without a layer index a new layer is added.
+    SetScatterAsset {
+        entity: EntityHandle,
+        layer: Option<usize>,
+        asset: AssetRef,
+    },
+    /// Open an asset in the asset workspace, showing this variant if given.
+    EditAsset {
+        id: AssetId,
+        variant: Option<String>,
+    },
+    /// Write the edited asset to disk; whatever uses it reloads.
+    SaveAsset,
+    /// Discard the unsaved changes of the edited asset.
+    RevertAsset,
+    /// Leave the asset workspace (unsaved edits stay in memory).
+    CloseAssetEditor,
+    /// Let the user choose a texture asset for a material of the edited
+    /// asset.
+    PickAssetTexture {
+        material: usize,
+        slot: asset_editor::TextureSlot,
+    },
+    /// Give a material of the edited asset a texture; `None` goes back to
+    /// the automatic one.
+    SetAssetTexture {
+        material: usize,
+        slot: asset_editor::TextureSlot,
+        texture: Option<AssetId>,
+    },
+    /// Let the user choose the model asset an entity shows; an entity
+    /// without a model component gets one.
+    PickModelAsset(EntityHandle),
+    /// Make an entity show a model asset; an entity without a model
+    /// component gets one.
+    SetEntityModel { entity: EntityHandle, asset: AssetRef },
+    /// Add an entity showing a model asset in front of the camera.
+    SpawnModel(AssetRef),
     /// Remove a scatter layer from this entity's terrain.
     RemoveScatterModel(EntityHandle, usize),
     Delete(EntityHandle),
@@ -115,6 +168,11 @@ pub struct EditorState {
     /// Visibility flags for the panels of each workspace.
     pub scene_panels: DataSource<bool>,
     pub anim_panels: DataSource<bool>,
+    pub asset_panels: DataSource<bool>,
+    /// The asset browser is part of the scene and the asset workspace.
+    pub browser_panel: DataSource<bool>,
+    /// The asset open in the asset workspace.
+    pub asset_edit: Option<asset_editor::AssetEdit>,
     pub anim: anim::AnimEditor,
     /// Graph-space point at the centre of the node canvas (new states go
     /// there).
@@ -129,6 +187,15 @@ pub struct EditorState {
     pub panel_sizes: layout::PanelSizes,
     pub show_widgets: DataSource<bool>,
     pub show_stats: DataSource<bool>,
+    /// Asset browser below the viewport.
+    pub show_assets: DataSource<bool>,
+    /// What is selected in the asset browser.
+    pub asset_selection: Option<AssetRef>,
+    /// The asset pressed or being dragged in the asset browser.
+    pub drag: Option<drag::AssetDrag>,
+    /// Where an asset can be dropped this frame; panels register their
+    /// targets on every update.
+    pub drop_targets: Vec<drag::DropTarget>,
     pub stats: stats::Stats,
     /// A popup the modal host should show next (save-as, open, confirm).
     pub pending_modal: Option<dialogs::Modal>,
@@ -144,6 +211,9 @@ impl EditorState {
             workspace: Workspace::Scene,
             scene_panels: DataSource::new(true),
             anim_panels: DataSource::new(false),
+            asset_panels: DataSource::new(false),
+            browser_panel: DataSource::new(true),
+            asset_edit: None,
             anim: anim::AnimEditor::new(),
             anim_canvas_center: None,
             gizmo: GizmoMode::Translate,
@@ -158,11 +228,16 @@ impl EditorState {
                     stats: true,
                     widgets: false,
                 },
+                true,
                 &layout::PanelSizes::default(),
             ),
             panel_sizes: layout::PanelSizes::default(),
             show_widgets: DataSource::new(false),
             show_stats: DataSource::new(true),
+            show_assets: DataSource::new(true),
+            asset_selection: None,
+            drag: None,
+            drop_targets: Vec::new(),
             stats: stats::Stats::new(),
             pending_modal: None,
         }))

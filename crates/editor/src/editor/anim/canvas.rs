@@ -560,7 +560,12 @@ impl UIElement for NodeCanvas {
             let clips = if def.clips.is_empty() {
                 "no clips".to_owned()
             } else {
-                def.clips.iter().map(|c| c.file.trim_end_matches(".fbx")).collect::<Vec<_>>().join(" + ")
+                let database = ferrite::core::assets::database();
+                def.clips
+                    .iter()
+                    .map(|c| c.source_label(&database).trim_end_matches(".fbx").to_owned())
+                    .collect::<Vec<_>>()
+                    .join(" + ")
             };
             node.subtitle.set_content(&clips);
             let pad = 14.0 * zoom;

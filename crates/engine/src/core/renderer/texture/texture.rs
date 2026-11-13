@@ -70,6 +70,15 @@ impl Texture {
         }
     }
 
+    /// Like `load_from_file`, but reports a file that cannot be read as an
+    /// image instead of panicking. Returns the image's size in pixels.
+    pub fn try_load_from_file(&self, path: &Path) -> Result<(u32, u32), image::ImageError> {
+        let img = image::open(path)?.flipv().to_rgba8();
+        let size = (img.width(), img.height());
+        self.load_from_data(size.0, size.1, img.into_raw());
+        Ok(size)
+    }
+
     pub fn load_from_file(&self, path: &Path) {
         self.bind();
         let img = image::open(path)
