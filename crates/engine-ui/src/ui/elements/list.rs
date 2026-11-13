@@ -10,7 +10,7 @@ use ferrite::core::{
 };
 use glfw::{
     Action::Press, Glfw, MouseButtonLeft, Window,
-    WindowEvent::{self, CursorPos, MouseButton},
+    WindowEvent::{self, CursorPos, MouseButton, Scroll},
 };
 
 use crate::ui::{element_handle::UIElementHandle, UIElement};
@@ -23,6 +23,7 @@ struct Row {
 }
 
 /// Vertical list of selectable string items bound to `DataSource<u32>`.
+/// Rows beyond its height are clipped and reached with the scroll wheel.
 pub struct List {
     handle: UIElementHandle,
     region: Region,
@@ -30,6 +31,7 @@ pub struct List {
     rows: Vec<Row>,
     hover_index: Option<usize>,
     row_height: f32,
+    scroll_y: f32,
     frame: Plane,
 }
 
@@ -70,8 +72,27 @@ impl List {
             rows,
             hover_index: None,
             row_height,
+            scroll_y: 0.0,
             frame,
         }
+    }
+
+    fn max_scroll(&self) -> f32 {
+        (self.rows.len() as f32 * self.row_height - self.region.size.height).max(0.0)
+    }
+
+    fn is_row_visible(&self, row: &Row) -> bool {
+        let top = self.region.position.y + self.region.offset.y;
+        let bottom = top + self.region.size.height;
+        row.region.position.y < bottom && row.region.position.y + self.row_height > top
+    }
+
+    /// The row under the cursor, if it is inside the list's visible area.
+    fn row_at(&self, x: f32, y: f32) -> Option<usize> {
+        if !self.region.contains(x, y) {
+            return None;
+        }
+        self.rows.iter().position(|r| r.region.contains(x, y))
     }
 }
 
@@ -80,7 +101,7 @@ impl UIElement for List {
         let base = &self.region.position + &self.region.offset;
         let sel = self.selected.read() as usize;
         for (i, row) in self.rows.iter_mut().enumerate() {
-            let p = &base + (0.0, i as f32 * self.row_height, 1.0);
+            let p = &base + (0.0, i as f32 * self.row_height - self.scroll_y, 1.0);
             row.region.position = p;
             row.bg.set_position(p);
             row.bg.set_color(if i == sel {
@@ -98,10 +119,12 @@ impl UIElement for List {
 
     fn render(&self) {
         self.frame.render();
-        for row in &self.rows {
+        crate::ui::clip::push(&self.frame);
+        for row in self.rows.iter().filter(|row| self.is_row_visible(row)) {
             row.bg.render();
             row.text.render();
         }
+        crate::ui::clip::pop(&self.frame);
     }
 
     fn handle_events(
@@ -114,22 +137,27 @@ impl UIElement for List {
         match event {
             MouseButton(MouseButtonLeft, Press, _) => {
                 let (x, y) = window.get_cursor_pos();
-                let (x, y) = (x as f32, y as f32);
-                for (i, row) in self.rows.iter().enumerate() {
-                    if row.region.contains(x, y) {
+                match self.row_at(x as f32, y as f32) {
+                    Some(i) => {
                         self.selected.write(i as u32);
-                        return true;
+                        true
                     }
+                    None => false,
                 }
-                false
+            }
+            Scroll(_, dy) => {
+                let (x, y) = window.get_cursor_pos();
+                if !self.region.contains(x as f32, y as f32) {
+                    return false;
+                }
+                let before = self.scroll_y;
+                self.scroll_y = (self.scroll_y - *dy as f32 * self.row_height)
+                    .clamp(0.0, self.max_scroll());
+                (self.scroll_y - before).abs() > f32::EPSILON
             }
             CursorPos(x, y) => {
-                let (x, y) = (*x as f32, *y as f32);
                 let was_hovering = self.hover_index.is_some();
-                self.hover_index = self
-                    .rows
-                    .iter()
-                    .position(|r| r.region.contains(x, y));
+                self.hover_index = self.row_at(*x as f32, *y as f32);
                 let is_hovering = self.hover_index.is_some();
                 if is_hovering && !was_hovering {
                     window.set_cursor(Some(glfw::Cursor::standard(glfw::StandardCursor::Hand)));
