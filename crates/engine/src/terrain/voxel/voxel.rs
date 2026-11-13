@@ -434,7 +434,7 @@ impl Chunk for VoxelChunk {
         )
     }
 
-    fn get_textures() -> Vec<Texture> {
+    fn get_textures(_: &crate::core::renderer::shader::Shader) -> Vec<Texture> {
         let grass_texture = Texture::new();
         grass_texture.load_from_file(std::path::Path::new("assets/grass.png"));
         let stone_texture = Texture::new();

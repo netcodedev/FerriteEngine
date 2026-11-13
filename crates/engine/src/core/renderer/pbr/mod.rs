@@ -11,15 +11,18 @@ use crate::core::{
     scene::Scene,
 };
 
-const PBR_GLSL: &str = include_str!("pbr.glsl");
+/// Sun, sky, shadows and the BRDF (`shadeSurface`, `toDisplay`). Goes
+/// right after a fragment shader's `#version` line.
+pub const LIGHTING_GLSL: &str = include_str!("lighting.glsl");
+const MATERIAL_GLSL: &str = include_str!("material.glsl");
 
 /// Texture unit the scene binds the sun's shadow map to.
 const SHADOW_MAP_UNIT: i32 = 15;
 
-/// A fragment shader with the shared PBR code (`shadePbr`) put in front of
-/// `body`.
+/// A model fragment shader: the shared lighting and material code
+/// (`shadePbr`) put in front of `body`.
 pub fn fragment_source(body: &str) -> String {
-    format!("#version 330 core\n{PBR_GLSL}\n{body}")
+    format!("#version 330 core\n{LIGHTING_GLSL}\n{MATERIAL_GLSL}\n{body}")
 }
 
 /// The light a PBR shader is drawn with.

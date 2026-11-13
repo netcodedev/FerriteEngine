@@ -1,7 +1,6 @@
-// Shared physically based shading for model materials (metal/roughness
-// workflow). Inserted after the `#version` line of a fragment shader; the
-// shader calls `shadePbr`. Lighting is computed in linear space and returned
-// in display (gamma) space, like the rest of the renderer writes it.
+// Shared physically based lighting (metal/roughness workflow): the sun with
+// its shadow map and cloud cover, the sky as ambient light, and the BRDF.
+// Inserted after the `#version` line; colours are linear until `toDisplay`.
 
 const float PI = 3.14159265;
 
@@ -11,7 +10,10 @@ const float SUN_INTENSITY = 3.5;
 const vec3 SKY_DAY = vec3(0.27, 0.29, 0.32);
 const vec3 SKY_NIGHT = vec3(0.004, 0.005, 0.009);
 const vec3 GROUND_TINT = vec3(0.45, 0.42, 0.38);
-const float DEFAULT_ROUGHNESS = 0.8;
+// Sky light that comes from around the sun (relative to the sun's own
+// light), and the share of the even sky light it replaces.
+const float SUN_GLOW = 0.06;
+const float SUN_GLOW_SHARE = 0.25;
 
 uniform vec3 sunDirection;     // normalized, points toward the sun
 uniform vec3 cameraPosition;
@@ -20,43 +22,6 @@ uniform int isShadowPass;
 uniform int useShadowMap;
 uniform sampler2D shadowMap;
 uniform mat4 lightProjection;
-
-uniform sampler2D baseColorMap;
-uniform sampler2D normalMap;
-uniform sampler2D roughnessMap;
-uniform sampler2D metallicMap;
-uniform sampler2D occlusionMap;
-uniform int hasBaseColorMap;
-uniform int hasNormalMap;
-uniform int hasRoughnessMap;
-uniform int hasMetallicMap;
-uniform int hasOcclusionMap;
-
-// Tangent frame from screen-space derivatives ("normal mapping without
-// precomputed tangents"), so meshes need no tangent attribute.
-vec3 perturbNormal(vec3 N, vec3 worldPos, vec2 uv) {
-    if (hasNormalMap == 0) {
-        return N;
-    }
-    vec3 dp1 = dFdx(worldPos);
-    vec3 dp2 = dFdy(worldPos);
-    vec2 duv1 = dFdx(uv);
-    vec2 duv2 = dFdy(uv);
-    vec3 dp2perp = cross(dp2, N);
-    vec3 dp1perp = cross(N, dp1);
-    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
-    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
-    float len = max(dot(T, T), dot(B, B));
-    if (len < 1e-20) {
-        return N; // no usable UVs
-    }
-    float invmax = inversesqrt(len);
-    vec3 t = texture(normalMap, uv).xyz * 2.0 - 1.0;
-    // OpenGL-style maps: green points up in the image. Images are uploaded
-    // top row first, so v grows downwards and "up" is -B.
-    t.y = -t.y;
-    return normalize(mat3(T * invmax, B * invmax, N) * t);
-}
 
 float sunShadow(vec3 worldPos, vec3 geometryNormal, vec3 L) {
     if (useShadowMap == 0) {
@@ -69,15 +34,24 @@ float sunShadow(vec3 worldPos, vec3 geometryNormal, vec3 L) {
         return 1.0;
     }
     float bias = max(0.0004 * (1.0 - dot(geometryNormal, L)), 0.0002);
-    vec2 texel = 1.0 / vec2(textureSize(shadowMap, 0));
-    float shadow = 0.0;
-    for (int x = -1; x <= 1; ++x) {
-        for (int y = -1; y <= 1; ++y) {
-            float depth = texture(shadowMap, p.xy + vec2(x, y) * texel).r;
-            shadow += p.z - bias > depth ? 1.0 : 0.0;
+    float reference = p.z - bias;
+    // Bilinear 3x3 PCF: 4x4 texel tests weighted by where the point falls
+    // between texels, so shadow edges are smooth instead of texel steps.
+    ivec2 size = textureSize(shadowMap, 0);
+    vec2 texel = p.xy * vec2(size) - 0.5;
+    ivec2 base = ivec2(floor(texel));
+    vec2 f = texel - floor(texel);
+    vec4 wx = vec4(1.0 - f.x, 1.0, 1.0, f.x);
+    vec4 wy = vec4(1.0 - f.y, 1.0, 1.0, f.y);
+    float lit = 0.0;
+    for (int j = 0; j < 4; ++j) {
+        for (int i = 0; i < 4; ++i) {
+            ivec2 at = clamp(base + ivec2(i - 1, j - 1), ivec2(0), size - 1);
+            float depth = texelFetch(shadowMap, at, 0).r;
+            lit += wx[i] * wy[j] * (reference > depth ? 0.0 : 1.0);
         }
     }
-    return 1.0 - shadow / 9.0;
+    return lit / 9.0;
 }
 
 vec3 sunRadiance() {
@@ -90,11 +64,17 @@ vec3 sunRadiance() {
 }
 
 // Light arriving from the sky in direction `dir`: sky above, a darker
-// ground bounce below.
+// ground bounce below, and a brighter glow toward the sun. The glow also
+// reaches surfaces the sun itself is blocked from, so bumps in shadow still
+// have a lit and a dark side.
 vec3 skyLight(vec3 dir) {
     float day = smoothstep(-0.10, 0.20, sunDirection.y);
-    vec3 sky = mix(SKY_NIGHT, SKY_DAY, day) * (1.0 - 0.3 * clamp(cloudCoverage, 0.0, 1.0));
-    return mix(sky * GROUND_TINT, sky, clamp(dir.y * 0.5 + 0.5, 0.0, 1.0));
+    float cover = clamp(cloudCoverage, 0.0, 1.0);
+    vec3 sky = mix(SKY_NIGHT, SKY_DAY, day) * (1.0 - 0.3 * cover);
+    vec3 hemisphere = mix(sky * GROUND_TINT, sky, clamp(dir.y * 0.5 + 0.5, 0.0, 1.0));
+    float towardSun = max(dot(dir, normalize(sunDirection)), 0.0);
+    vec3 glow = sunRadiance() * SUN_GLOW * towardSun * towardSun * (1.0 - 0.5 * cover);
+    return hemisphere * (1.0 - SUN_GLOW_SHARE) + glow;
 }
 
 float distributionGGX(float NdotH, float a) {
@@ -124,30 +104,14 @@ vec3 envBrdf(vec3 F0, float roughness, float NdotV) {
     return F0 * ab.x + ab.y;
 }
 
-// Shade one fragment. Discards texels the colour map's alpha cuts out
-// (foliage cards); in the shadow pass only that cut-out matters.
-vec4 shadePbr(vec3 worldPos, vec3 vertexNormal, vec2 uv) {
-    vec4 base = hasBaseColorMap == 1 ? texture(baseColorMap, uv) : vec4(1.0);
-    if (base.a < 0.5) {
-        discard;
-    }
-    if (isShadowPass == 1) {
-        return vec4(0.0, 0.0, 0.0, 1.0);
-    }
-
-    vec3 Ng = normalize(vertexNormal);
-    if (!gl_FrontFacing) {
-        Ng = -Ng; // two-sided geometry such as leaves
-    }
-    vec3 N = perturbNormal(Ng, worldPos, uv);
+// Light leaving a surface toward the camera, in linear space. `N` is the
+// shading normal, `Ng` the geometric one (for shadow lookups); `sunFactor`
+// dims the direct sun, e.g. for cloud shadows.
+vec3 shadeSurface(vec3 worldPos, vec3 N, vec3 Ng, vec3 albedo, float roughness,
+                  float metallic, float ao, float sunFactor) {
     vec3 V = normalize(cameraPosition - worldPos);
     vec3 L = normalize(sunDirection);
-
-    float roughness = hasRoughnessMap == 1 ? texture(roughnessMap, uv).r : DEFAULT_ROUGHNESS;
     roughness = clamp(roughness, 0.04, 1.0);
-    float metallic = hasMetallicMap == 1 ? texture(metallicMap, uv).r : 0.0;
-    float ao = hasOcclusionMap == 1 ? texture(occlusionMap, uv).r : 1.0;
-    vec3 albedo = base.rgb;
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
 
     float NdotV = max(dot(N, V), 1e-4);
@@ -162,11 +126,14 @@ vec4 shadePbr(vec3 worldPos, vec3 vertexNormal, vec2 uv) {
         / max(4.0 * NdotV * NdotL, 1e-4);
     vec3 kd = (1.0 - F) * (1.0 - metallic);
     float shadow = NdotL > 0.0 ? sunShadow(worldPos, Ng, L) : 0.0;
-    vec3 direct = (kd * albedo / PI + specular) * sunRadiance() * NdotL * shadow;
+    vec3 direct = (kd * albedo / PI + specular) * sunRadiance() * NdotL * shadow * sunFactor;
 
     vec3 ambient = skyLight(N) * albedo * (1.0 - metallic)
         + skyLight(reflect(-V, N)) * envBrdf(F0, roughness, NdotV);
+    return direct + ambient * ao;
+}
 
-    vec3 color = direct + ambient * ao;
-    return vec4(pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
+// Linear colour to what the framebuffer expects (gamma 2.2, clamped).
+vec3 toDisplay(vec3 color) {
+    return pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2));
 }

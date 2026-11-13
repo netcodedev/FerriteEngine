@@ -15,7 +15,10 @@ impl Texture {
         unsafe {
             gl::GenTextures(1, &mut id);
         }
-        Texture { id }
+        Texture {
+            id,
+            target: gl::TEXTURE_2D,
+        }
     }
 
     pub fn set_as_depth_texture(&self, width: u32, height: u32) {
@@ -158,9 +161,68 @@ impl Texture {
         Texture::unbind();
     }
 
+    /// Load `layers` (RGBA8, all `width` x `height`) as a 2D array texture
+    /// with mipmaps and anisotropic filtering. `srgb` as for
+    /// `load_material_map`.
+    pub fn load_array(&mut self, width: u32, height: u32, layers: &[Vec<u8>], srgb: bool) {
+        self.target = gl::TEXTURE_2D_ARRAY;
+        let internal = if srgb { gl::SRGB8_ALPHA8 } else { gl::RGBA8 };
+        self.bind();
+        unsafe {
+            gl::TexImage3D(
+                gl::TEXTURE_2D_ARRAY,
+                0,
+                internal as GLint,
+                width as GLsizei,
+                height as GLsizei,
+                layers.len() as GLsizei,
+                0,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                std::ptr::null(),
+            );
+            for (index, layer) in layers.iter().enumerate() {
+                gl::TexSubImage3D(
+                    gl::TEXTURE_2D_ARRAY,
+                    0,
+                    0,
+                    0,
+                    index as GLint,
+                    width as GLsizei,
+                    height as GLsizei,
+                    1,
+                    gl::RGBA,
+                    gl::UNSIGNED_BYTE,
+                    layer.as_ptr() as *const _,
+                );
+            }
+            gl::TexParameteri(
+                gl::TEXTURE_2D_ARRAY,
+                gl::TEXTURE_MIN_FILTER,
+                gl::LINEAR_MIPMAP_LINEAR as i32,
+            );
+            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::REPEAT as i32);
+            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::REPEAT as i32);
+            // GL_TEXTURE_MAX_ANISOTROPY (core in 4.6, EXT before); the
+            // generated bindings predate it.
+            const TEXTURE_MAX_ANISOTROPY: gl::types::GLenum = 0x84FE;
+            gl::TexParameterf(gl::TEXTURE_2D_ARRAY, TEXTURE_MAX_ANISOTROPY, 8.0);
+            gl::GenerateMipmap(gl::TEXTURE_2D_ARRAY);
+            gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
+        }
+    }
+
     pub fn bind(&self) {
         unsafe {
-            gl::BindTexture(gl::TEXTURE_2D, self.id);
+            gl::BindTexture(self.target, self.id);
+        }
+    }
+
+    /// Unbind whatever is bound to this texture's target on the active unit.
+    pub fn unbind_target(&self) {
+        unsafe {
+            gl::BindTexture(self.target, 0);
         }
     }
 

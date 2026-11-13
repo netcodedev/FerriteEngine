@@ -24,6 +24,7 @@ use crate::core::{
     renderer::{
         light::skylight::SkyLight,
         line::Line,
+        pbr::Lighting,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
     },
     scene::{scene_file::ComponentData, Scene},
@@ -106,6 +107,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
     pub fn new(seed: u64) -> Self {
         let shader_source = T::get_shader_source();
         let shader = Shader::new(&shader_source.0, &shader_source.1);
+        let textures = T::get_textures(&shader);
 
         Self {
             seed,
@@ -114,7 +116,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
             show_colliders: false,
             chunk_receiver: Self::start_chunkloaders(seed),
             shader,
-            textures: T::get_textures(),
+            textures,
             mouse_picker: MousePicker::new(),
         }
     }
@@ -277,6 +279,18 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         &self.shader
     }
 
+    /// Bind the terrain's textures to units 0, 1, ... Chunks call this
+    /// before drawing: what is drawn between them (scattered models) uses
+    /// the same units.
+    pub fn bind_textures(&self) {
+        for (i, texture) in self.textures.iter().enumerate() {
+            unsafe {
+                gl::ActiveTexture(gl::TEXTURE0 + i as u32);
+            }
+            texture.bind();
+        }
+    }
+
     pub fn get_mouse_picker(&self) -> &MousePicker {
         &self.mouse_picker
     }
@@ -409,19 +423,13 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
     fn render(
         &self,
         scene: &Scene,
-        entity: &Entity,
-        view_projection: &Matrix4<f32>,
-        parent_transform: &Matrix4<f32>,
+        _: &Entity,
+        _: &Matrix4<f32>,
+        _: &Matrix4<f32>,
     ) {
         if let Some(skylight) = scene.get_component::<SkyLight>() {
             let light_position = skylight.get_position();
             let light_projection = skylight.get_projection();
-            for (i, texture) in self.textures.iter().enumerate() {
-                unsafe {
-                    gl::ActiveTexture(gl::TEXTURE0 + i as u32);
-                }
-                texture.bind();
-            }
             self.shader.bind();
             self.shader.set_uniform_3f(
                 "lightPosition",
@@ -447,23 +455,11 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             }
             self.shader
                 .set_uniform_1i("isShadowPass", if bound_fbo != 0 { 1 } else { 0 });
-
-            // Opaque pass — all terrain geometry
-            for chunk in entity.get_with_own_component::<T>() {
-                if let Some(chunk) = chunk.get_component::<T>() {
-                    if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_bounds())
-                    {
-                        chunk.render(scene, entity, parent_transform, &view_projection);
-                    }
-                }
+            if let Some(lighting) = Lighting::from_scene(scene) {
+                lighting.apply(&self.shader);
             }
-
-            for (i, _) in self.textures.iter().enumerate() {
-                unsafe {
-                    gl::ActiveTexture(gl::TEXTURE0 + i as u32);
-                    gl::BindTexture(gl::TEXTURE_2D, 0);
-                }
-            }
+            // The chunks are child entities and draw themselves right after
+            // this, with the uniforms set here (see `bind_textures`).
         }
     }
 

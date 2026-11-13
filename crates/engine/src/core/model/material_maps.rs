@@ -20,6 +20,8 @@ pub enum MapKind {
     Metallic,
     Occlusion,
     Opacity,
+    /// Height or displacement.
+    Height,
 }
 
 impl MapKind {
@@ -31,7 +33,7 @@ impl MapKind {
             MapKind::Roughness | MapKind::Gloss => Some(MaterialMap::Roughness),
             MapKind::Metallic => Some(MaterialMap::Metallic),
             MapKind::Occlusion => Some(MaterialMap::Occlusion),
-            MapKind::Opacity => None,
+            MapKind::Opacity | MapKind::Height => None,
         }
     }
 }
@@ -89,6 +91,7 @@ pub fn map_kind(file_name: &str, prefix: &str) -> Option<MapKind> {
             "ao" | "ambientocclusion" | "occlusion" => Some(MapKind::Occlusion),
             "ambient" if next == "occlusion" => Some(MapKind::Occlusion),
             "opacity" | "alpha" | "mask" | "transparency" => Some(MapKind::Opacity),
+            "displacement" | "disp" | "height" => Some(MapKind::Height),
             _ => None,
         }
     })
@@ -210,7 +213,9 @@ mod tests {
         assert_eq!(map_kind("bark_ambientocclusion.png", "bark"), Some(MapKind::Occlusion));
         assert_eq!(map_kind("Metal_Base_Color.png", "metal"), Some(MapKind::BaseColor));
         assert_eq!(map_kind("rock_metallic.png", "rock"), Some(MapKind::Metallic));
-        assert_eq!(map_kind("rock_height.png", "rock"), None);
+        assert_eq!(map_kind("rock_height.png", "rock"), Some(MapKind::Height));
+        assert_eq!(map_kind("Rock_1K_Displacement.jpg", "rock"), Some(MapKind::Height));
+        assert_eq!(map_kind("rock_bump.png", "rock"), None);
         assert_eq!(map_kind("rock_normal.txt", "rock"), None);
         assert_eq!(map_kind("other_normal.png", "rock"), None);
     }

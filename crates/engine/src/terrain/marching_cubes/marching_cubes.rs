@@ -209,7 +209,7 @@ impl Chunk for MarchingCubesChunk {
         )
     }
 
-    fn get_textures() -> Vec<Texture> {
+    fn get_textures(_: &crate::core::renderer::shader::Shader) -> Vec<Texture> {
         Vec::new()
     }
 

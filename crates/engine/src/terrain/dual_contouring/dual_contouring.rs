@@ -8,10 +8,18 @@ use libnoise::prelude::*;
 use crate::{
     core::{
         entity::{component::Component, Entity},
-        renderer::{light::skylight::SkyLight, line::Line, shader::{Shader, VertexAttributes}, texture::Texture},
+        renderer::{
+            light::skylight::SkyLight,
+            line::Line,
+            pbr,
+            shader::{Shader, VertexAttributes},
+            texture::Texture,
+        },
         scene::Scene,
+        view_frustum::ViewFrustum,
     },
     terrain::{
+        materials,
         scatter::{SCATTER_MAX_Y, SCATTER_MIN_Y},
         Chunk, ChunkBounds, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT, USE_LOD,
     },
@@ -328,12 +336,16 @@ impl Chunk for DualContouringChunk {
     fn get_shader_source() -> (String, String) {
         (
             include_str!("vertex.glsl").to_string(),
-            include_str!("fragment.glsl").to_string(),
+            format!(
+                "#version 460 core\n{}\n{}",
+                pbr::LIGHTING_GLSL,
+                include_str!("fragment.glsl")
+            ),
         )
     }
 
-    fn get_textures() -> Vec<Texture> {
-        Vec::new()
+    fn get_textures(shader: &Shader) -> Vec<Texture> {
+        materials::load(shader)
     }
 
     fn get_triangle_count(&self) -> usize {
@@ -453,25 +465,21 @@ impl Component for DualContouringChunk {
         view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
     ) {
+        if !ViewFrustum::is_bounds_in_frustum_matrix(view_projection, self.get_bounds()) {
+            return;
+        }
         if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
             let shader = terrain.get_shader();
             if let Some(mesh) = &self.mesh {
                 if !mesh.is_buffered() {
                     panic!("Mesh is not buffered");
                 }
+                terrain.bind_textures();
                 shader.bind();
                 shader.set_uniform_mat4("viewProjection", &view_projection);
                 unsafe {
                     gl::Enable(gl::CULL_FACE);
                 }
-                // Pass the chunk's stable world-space offset so the vertex
-                // shader can compute camera-independent world coordinates.
-                shader.set_uniform_3f(
-                    "chunkWorldOffset",
-                    self.position.0 * CHUNK_SIZE_FLOAT,
-                    self.position.1 * CHUNK_SIZE_FLOAT,
-                    self.position.2 * CHUNK_SIZE_FLOAT,
-                );
                 mesh.render(
                     &shader,
                     &(parent_transform

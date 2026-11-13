@@ -20,6 +20,7 @@ pub const USE_LOD: bool = false;
 
 pub mod dual_contouring;
 pub mod marching_cubes;
+pub mod materials;
 pub mod scatter;
 mod terrain;
 pub mod voxel;
@@ -45,7 +46,9 @@ pub trait Chunk {
     fn process_line(&mut self, line: &Line, button: &MouseButton) -> bool;
     fn get_position(&self) -> Point3<f32>;
     fn get_shader_source() -> (String, String);
-    fn get_textures() -> Vec<Texture>;
+    /// Textures bound to units 0, 1, ... while the terrain draws. May set
+    /// uniforms of `shader` that stay fixed.
+    fn get_textures(shader: &Shader) -> Vec<Texture>;
     fn get_triangle_count(&self) -> usize;
     fn get_vertices(&self) -> Vec<[f32; 3]>;
     fn get_indices(&self) -> Vec<[u32; 3]>;
