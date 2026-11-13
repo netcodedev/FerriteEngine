@@ -4,7 +4,7 @@ use ferrite::core::{
     assets::{self, AssetDatabase, AssetId, AssetKind, AssetRef},
     entity::EntityHandle,
     primitives::{Offset, Size},
-    scene::Scene,
+    scene::{scene_file::ComponentData, Scene},
     utils::DataSource,
 };
 use ferrite_ui::ui::{element_handle::UIElementHandle, elements::popup::Popup, UIElement, UI};
@@ -65,6 +65,80 @@ pub fn pick_scatter_asset(state: &Shared, entity: EntityHandle, layer: Option<us
         layer,
         asset,
     });
+}
+
+/// Let the user choose one of the project's scripts to add to `entity`.
+pub fn pick_script(state: &Shared, entity: EntityHandle) {
+    let names = ferrite::core::script::names();
+    let open_flag = DataSource::new(true);
+    let cancel_open = open_flag.clone();
+    if names.is_empty() {
+        let children: Vec<Box<dyn UIElement>> = vec![
+            UI::label("The project has no scripts yet.", 14.0),
+            UI::label("Create one with File > New script.", 14.0),
+            button_row(vec![UI::button(
+                "Close",
+                Box::new(move |_| cancel_open.write(false)),
+            )]),
+        ];
+        show(state, "Add a script", open_flag, children);
+        return;
+    }
+    let selected = DataSource::new(0u32);
+    let height = (names.len().min(10) as f32) * 20.0 + 4.0;
+    let use_state = state.clone();
+    let use_open = open_flag.clone();
+    let use_selected = selected.clone();
+    let choices = names.clone();
+    let children: Vec<Box<dyn UIElement>> = vec![
+        UI::label("Scripts of the project:", 14.0),
+        UI::list(names, selected, Size::new(380.0, height)),
+        button_row(vec![
+            UI::button(
+                "Add",
+                Box::new(move |_| {
+                    if let Some(name) = choices.get(use_selected.read() as usize) {
+                        send(
+                            &use_state,
+                            Command::AddComponent(entity, ComponentData::script(name)),
+                        );
+                        use_open.write(false);
+                    }
+                }),
+            ),
+            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+        ]),
+    ];
+    show(state, "Add a script", open_flag, children);
+}
+
+/// Ask for the name of a new script.
+pub fn new_script(state: &Shared) {
+    let name = DataSource::new(String::new());
+    let open_flag = DataSource::new(true);
+    let create_state = state.clone();
+    let create_name = name.clone();
+    let create_open = open_flag.clone();
+    let cancel_open = open_flag.clone();
+    let children: Vec<Box<dyn UIElement>> = vec![
+        UI::label("Name of the script (e.g. Rotator):", 14.0),
+        UI::input_sized(name, Size::new(380.0, 22.0)),
+        button_row(vec![
+            UI::button(
+                "Create",
+                Box::new(move |_| {
+                    let name = create_name.read().trim().to_owned();
+                    if name.is_empty() {
+                        return;
+                    }
+                    send(&create_state, Command::NewScript(name));
+                    create_open.write(false);
+                }),
+            ),
+            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+        ]),
+    ];
+    show(state, "New script", open_flag, children);
 }
 
 /// Ask which model asset `entity` should show.

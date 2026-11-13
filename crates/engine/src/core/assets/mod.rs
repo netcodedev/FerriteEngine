@@ -24,6 +24,16 @@ pub const ASSET_ROOT: &str = "assets";
 
 static DATABASE: OnceLock<Mutex<AssetDatabase>> = OnceLock::new();
 
+/// Scan the assets again from scratch, e.g. after the working directory
+/// changed to another project.
+pub fn reopen() {
+    let mut fresh = AssetDatabase::new(ASSET_ROOT);
+    for problem in fresh.scan() {
+        log::warn!("assets: {problem}");
+    }
+    *database() = fresh;
+}
+
 /// The project's asset database, rooted at `ASSET_ROOT`. Scanned on first
 /// use. Keep the guard short-lived: loading code and the editor share it.
 pub fn database() -> MutexGuard<'static, AssetDatabase> {

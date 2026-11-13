@@ -24,6 +24,9 @@ impl Window {
 
         glfw.window_hint(glfw::WindowHint::Samples(Some(8)));
         glfw.window_hint(glfw::WindowHint::Decorated(decorated));
+        // Shown once the first frame is drawn (see `show`), so it never
+        // appears empty while the application is still starting.
+        glfw.window_hint(glfw::WindowHint::Visible(false));
 
         let (mut window, events) = glfw
             .create_window(width, height, title, glfw::WindowMode::Windowed)
@@ -55,6 +58,11 @@ impl Window {
             width,
             height,
         }
+    }
+
+    /// Make the window visible (it is created hidden).
+    pub fn show(&mut self) {
+        self.window.show();
     }
 
     pub fn clear(&self, clear_color: (f32, f32, f32, f32), mask: u32) {

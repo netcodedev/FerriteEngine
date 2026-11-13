@@ -1,4 +1,10 @@
+// Links the engine as a shared library, which the game scripts share.
+#[allow(unused_imports)]
+use ferrite_dylib;
+
 mod editor;
+mod launcher;
+mod loading;
 
 use std::{
     path::{Path, PathBuf},
@@ -19,6 +25,8 @@ use editor::{
     inspector::InspectorPanel,
     layout::{Layout, RightColumn},
     outline::Outline,
+    project_settings::EditorSettings,
+    scripts::{ScriptEvent, Scripts},
     showcase,
     splitter::Splitter,
     stats::{GpuTimer, StatsPanel},
@@ -31,6 +39,7 @@ use editor::{
 use ferrite::core::{
     application::{Application, Layer},
     assets,
+    project::Project,
     entity::{
         component::{
             animation_component::AnimationComponent, camera_component::CameraComponent,
@@ -40,7 +49,7 @@ use ferrite::core::{
     },
     renderer::line::LineRenderer,
     scene::{
-        scene_file::{default_scene_file, ComponentData, EntityData, SceneFile, SceneSettings},
+        scene_file::{ComponentData, EntityData, SceneFile, SceneSettings},
         Scene,
     },
     window::Window,
@@ -50,9 +59,12 @@ use ferrite::terrain::{
     dual_contouring::DualContouringChunk, scatter::DEFAULT_DENSITY, Terrain,
 };
 use ferrite_ui::ui::{UIElement, UI};
+use launcher::Launcher;
+use loading::{Loading, Prepared, Progress};
 use glfw::{Action, CursorMode, Glfw, Key, Modifiers, WindowEvent};
 
-const STARTUP_SCENE: &str = "scenes/default.ron";
+/// How often the editor's arrangement is checked and saved to the project.
+const SETTINGS_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 /// Terrain collider triangles are drawn only this close to the camera.
 const COLLIDER_MESH_DISTANCE: f32 = 96.0;
 
@@ -60,8 +72,67 @@ fn main() {
     // The editor draws its own title bar.
     let mut application = Application::with_decorations(1280, 720, "Ferrite Editor", false);
     application.set_clear_color(ferrite_ui::ui::theme::BG_APP);
-    application.add_layer(Box::new(EditorLayer::new()));
+    // A project in the working directory is opened right away; without one
+    // the user picks or creates one.
+    let here = std::env::current_dir().ok();
+    let project = here.as_deref().and_then(Project::find_in);
+    application.add_layer(Box::new(EditorApp::new(project)));
     application.start();
+}
+
+/// The launcher until a project is chosen, the loading screen while it is
+/// opened, then the editor.
+enum EditorApp {
+    Launcher(Launcher),
+    Loading(Loading),
+    Editor(Box<EditorLayer>),
+}
+
+impl EditorApp {
+    fn new(project: Option<PathBuf>) -> Self {
+        let Some(path) = project else {
+            return EditorApp::Launcher(Launcher::new(None));
+        };
+        match Project::load(&path) {
+            Ok(project) => EditorApp::Loading(Loading::new(project)),
+            Err(e) => EditorApp::Launcher(Launcher::new(Some(e))),
+        }
+    }
+}
+
+impl Layer for EditorApp {
+    fn on_update(&mut self, window: &Window, delta_time: f64) {
+        match self {
+            EditorApp::Launcher(launcher) => match launcher.update(window) {
+                Some(project) => *self = EditorApp::Loading(Loading::new(project)),
+                None => launcher.render(),
+            },
+            EditorApp::Loading(loading) => match loading.update(window) {
+                Progress::Working => {}
+                Progress::Ready(project, prepared) => {
+                    *self = EditorApp::Editor(Box::new(EditorLayer::new(project, prepared)));
+                }
+                Progress::Failed(e) => *self = EditorApp::Launcher(Launcher::new(Some(e))),
+            },
+            EditorApp::Editor(editor) => editor.on_update(window, delta_time),
+        }
+    }
+
+    fn on_event(&mut self, glfw: &mut Glfw, window: &mut glfw::Window, event: &WindowEvent) {
+        match self {
+            EditorApp::Launcher(launcher) => launcher.handle_event(glfw, window, event),
+            EditorApp::Loading(_) => {
+                if window.get_cursor_mode() != CursorMode::Normal {
+                    window.set_cursor_mode(CursorMode::Normal);
+                }
+            }
+            EditorApp::Editor(editor) => editor.on_event(glfw, window, event),
+        }
+    }
+
+    fn get_name(&self) -> &str {
+        "Editor"
+    }
 }
 
 struct EditorLayer {
@@ -80,18 +151,43 @@ struct EditorLayer {
     /// Set by `Command::Quit`; the window is closed on the next event.
     pending_quit: bool,
     cursor_initialised: bool,
+    scripts: Scripts,
+    project: Project,
+    /// The arrangement last saved to the project file.
+    saved_settings: EditorSettings,
+    settings_checked: Instant,
+    /// Window size and state, as last seen by an event (the window is only
+    /// reachable there).
+    window_state: Option<((u32, u32), bool)>,
+    /// The project's window size has been applied to the window.
+    window_restored: bool,
 }
 
 impl EditorLayer {
-    fn new() -> Self {
+    /// The editor for `project`, which `loading` prepared (entered it,
+    /// registered its assets, built its scripts).
+    fn new(project: Project, prepared: Prepared) -> Self {
         let state = EditorState::new();
-        // Files that were put into the asset folder by hand become assets,
-        // so everything in there can be referred to the same way.
-        let (registered, problems) = assets::database().register_new_files();
-        for problem in &problems {
+        let settings = EditorSettings::from_value(&project.file.editor);
+        {
+            let mut state = state.borrow_mut();
+            settings.apply(&mut state);
+            state.project_name = project.name().to_string();
+        }
+        for problem in &prepared.asset_problems {
             log::warn!("assets: {problem}");
         }
-        let (scene, path) = Self::startup_scene(&state);
+        let registered = prepared.registered;
+        // The project's scripts, before the first scene is built from them.
+        let mut scripts = Scripts::new(project.scripts());
+        let loaded = prepared.scripts.and_then(|()| match scripts.load_built() {
+            ScriptEvent::Failed(e) => Err(e),
+            _ => Ok(()),
+        });
+        if let Err(e) = loaded {
+            state.borrow_mut().set_status(format!("Scripts: {e}"));
+        }
+        let (scene, path) = Self::startup_scene(&state, &project);
         Self::report_scene_problems(&state, &scene);
         if registered > 0 && state.borrow().status().is_none() {
             state
@@ -174,28 +270,81 @@ impl EditorLayer {
             pending_cursor: None,
             pending_quit: false,
             cursor_initialised: false,
+            scripts,
+            project,
+            saved_settings: settings,
+            settings_checked: Instant::now(),
+            window_state: None,
+            window_restored: false,
         }
     }
 
-    /// `scenes/default.ron` if it exists, otherwise the built-in default
-    /// scene (camera, sky, terrain with player, debug controller).
-    fn startup_scene(state: &Shared) -> (Scene, Option<PathBuf>) {
-        let path = Path::new(STARTUP_SCENE);
-        if path.exists() {
-            match Scene::load_from_path(path) {
-                Ok(scene) => return (scene, Some(path.to_path_buf())),
-                Err(e) => state
-                    .borrow_mut()
-                    .set_status(format!("Could not load {STARTUP_SCENE}: {e}")),
+    /// Keep the project file up to date with how the editor is arranged.
+    fn save_settings_if_changed(&mut self) {
+        if self.settings_checked.elapsed() < SETTINGS_SAVE_INTERVAL {
+            return;
+        }
+        self.settings_checked = Instant::now();
+        let (window, maximized) = match self.window_state {
+            // A maximized window keeps the size it had before.
+            Some((_, true)) => (self.saved_settings.window, true),
+            Some((size, false)) => (Some(size), false),
+            None => (self.saved_settings.window, self.saved_settings.maximized),
+        };
+        let settings = EditorSettings::capture(&self.state.borrow(), window, maximized);
+        if settings != self.saved_settings {
+            self.project.file.editor = settings.to_value();
+            if let Err(e) = self.project.save() {
+                log::warn!("could not save the project: {e}");
+            }
+            self.saved_settings = settings;
+        }
+    }
+
+    /// The project opens with `path` from now on.
+    fn remember_scene(&mut self, path: &Path) {
+        let relative = path.strip_prefix(self.project.dir()).unwrap_or(path);
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        if self.project.file.startup_scene.as_deref() != Some(relative.as_str()) {
+            self.project.file.startup_scene = Some(relative);
+            if let Err(e) = self.project.save() {
+                log::warn!("could not save the project: {e}");
             }
         }
-        let scene = Scene::from_file(&default_scene_file()).unwrap_or_else(|e| {
-            state
-                .borrow_mut()
-                .set_status(format!("Default scene failed: {e}"));
-            Scene::new()
-        });
-        (scene, None)
+    }
+
+    fn on_script_event(&mut self, event: ScriptEvent) {
+        let message = match event {
+            ScriptEvent::Building => "Building scripts...".to_string(),
+            ScriptEvent::Failed(e) => format!("Scripts: {e}"),
+            ScriptEvent::Loaded { count } => {
+                let problems = self.scene.rebuild_scripts();
+                // The scene the editor returns to after play mode is rebuilt
+                // from data on stop anyway.
+                match problems.first() {
+                    Some(first) => format!("Scripts reloaded, but: {first}"),
+                    None => format!("Scripts reloaded ({count})"),
+                }
+            }
+        };
+        self.state.borrow_mut().set_status(message);
+    }
+
+    /// The project's startup scene, or an empty one.
+    fn startup_scene(state: &Shared, project: &Project) -> (Scene, Option<PathBuf>) {
+        let Some(path) = &project.file.startup_scene else {
+            return (Scene::new(), None);
+        };
+        let path = PathBuf::from(path);
+        match Scene::load_from_path(&path) {
+            Ok(scene) => (scene, Some(path)),
+            Err(e) => {
+                state
+                    .borrow_mut()
+                    .set_status(format!("Could not load {}: {e}", path.display()));
+                (Scene::new(), None)
+            }
+        }
     }
 
     /// Tell the user about components that could not be built on load.
@@ -374,6 +523,7 @@ impl EditorLayer {
                 | Command::PickScatterAsset { .. }
                 | Command::SetScatterAsset { .. }
                 | Command::PickModelAsset(_)
+                | Command::PickScript(_)
                 | Command::SetEntityModel { .. }
                 | Command::SpawnModel(_)
                 | Command::RemoveScatterModel(..)
@@ -405,6 +555,7 @@ impl EditorLayer {
             Command::Open(path) => match Scene::load_from_path(&path) {
                 Ok(scene) => {
                     self.replace_scene(scene);
+                    self.remember_scene(&path);
                     {
                         let mut state = self.state.borrow_mut();
                         state.set_status(format!("Opened {}", path.display()));
@@ -513,6 +664,11 @@ impl EditorLayer {
                 }
             }
             Command::ImportAssets => self.import_assets(),
+            Command::ReloadScripts => {
+                if let Some(event) = self.scripts.rebuild() {
+                    self.on_script_event(event);
+                }
+            }
             Command::RefreshAssets => {
                 let (count, problems) = {
                     let mut database = assets::database();
@@ -544,6 +700,15 @@ impl EditorLayer {
                 }
             }
             Command::PickModelAsset(entity) => dialogs::pick_entity_model(&self.state, entity),
+            Command::PickScript(entity) => dialogs::pick_script(&self.state, entity),
+            Command::NewScriptDialog => dialogs::new_script(&self.state),
+            Command::NewScript(name) => {
+                let message = match new_script_file(self.scripts.folder(), &name) {
+                    Ok(file) => format!("Created scripts/{file}; it is built now"),
+                    Err(e) => format!("Could not create the script: {e}"),
+                };
+                self.state.borrow_mut().set_status(message);
+            }
             Command::SetEntityModel { entity, asset } => {
                 let Some(target) = self.scene.get_entity_mut(&entity) else {
                     return;
@@ -806,6 +971,7 @@ impl EditorLayer {
     fn save(&mut self, path: PathBuf) {
         match self.scene.save_to_path(&path) {
             Ok(()) => {
+                self.remember_scene(&path);
                 let mut state = self.state.borrow_mut();
                 state.set_status(format!("Saved {}", path.display()));
                 state.scene_path = Some(path);
@@ -863,6 +1029,7 @@ impl EditorLayer {
             };
         }
         let command = match (key, ctrl, shift) {
+            (Key::R, true, _) => Some(Command::ReloadScripts),
             (Key::P, true, _) => Some(match mode {
                 Mode::Edit => Command::Play,
                 Mode::Play => Command::Stop,
@@ -930,6 +1097,10 @@ impl EditorLayer {
 
 impl Layer for EditorLayer {
     fn on_update(&mut self, window: &Window, delta_time: f64) {
+        if let Some(event) = self.scripts.poll() {
+            self.on_script_event(event);
+        }
+        self.save_settings_if_changed();
         let (show_stats, show_widgets, show_assets, workspace) = {
             let s = self.state.borrow();
             (
@@ -1043,6 +1214,17 @@ impl Layer for EditorLayer {
             window.set_cursor_mode(CursorMode::Normal);
             self.cursor_initialised = true;
         }
+        if !self.window_restored {
+            self.window_restored = true;
+            if let Some((width, height)) = self.saved_settings.window {
+                window.set_size(width as i32, height as i32);
+            }
+            if self.saved_settings.maximized {
+                window.maximize();
+            }
+        }
+        let (width, height) = window.get_size();
+        self.window_state = Some(((width.max(1) as u32, height.max(1) as u32), window.is_maximized()));
         self.apply_pending_cursor(window);
 
         let mode = self.state.borrow().mode;
@@ -1051,7 +1233,18 @@ impl Layer for EditorLayer {
         // While flying or dragging, the viewport owns the mouse and keys.
         let viewport_busy =
             mode == Mode::Edit && (self.viewport.is_flying() || self.viewport.is_dragging());
-        if !viewport_busy && self.ui.handle_events(&mut self.scene, window, glfw, event) {
+        // While the game holds the mouse, its clicks belong to the game: the
+        // hidden cursor still has a position, over whatever panel or button.
+        let game_has_mouse = mode == Mode::Play
+            && window.get_cursor_mode() == CursorMode::Disabled
+            && matches!(
+                event,
+                WindowEvent::MouseButton(..) | WindowEvent::CursorPos(..) | WindowEvent::Scroll(..)
+            );
+        if !viewport_busy
+            && !game_has_mouse
+            && self.ui.handle_events(&mut self.scene, window, glfw, event)
+        {
             self.run_commands();
             self.apply_pending_cursor(window);
             return;
@@ -1147,3 +1340,98 @@ fn apply_saved_graph(entities: &mut [Entity], path: &str) -> Result<usize, Box<d
     }
     Ok(count)
 }
+
+/// Write a new script named `name` (`rotator`, `Rotator`, `my rotator` all
+/// give a struct `Rotator`, file `rotator.rs`) into `folder` from a
+/// template. Returns the file name.
+fn new_script_file(folder: &Path, name: &str) -> Result<String, String> {
+    let words: Vec<String> = name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .flat_map(split_camel_case)
+        .collect();
+    if words.is_empty() || words[0].starts_with(|c: char| c.is_ascii_digit()) {
+        return Err(format!("'{name}' is not a usable name"));
+    }
+    let type_name: String = words
+        .iter()
+        .map(|w| {
+            let mut chars = w.chars();
+            chars
+                .next()
+                .map(|c| c.to_ascii_uppercase().to_string() + &chars.as_str().to_lowercase())
+                .unwrap_or_default()
+        })
+        .collect();
+    let file_name = format!(
+        "{}.rs",
+        words.iter().map(|w| w.to_lowercase()).collect::<Vec<_>>().join("_")
+    );
+    let path = folder.join(&file_name);
+    if path.exists() {
+        return Err(format!("scripts/{file_name} already exists"));
+    }
+    let source = format!(
+        r#"use ferrite::prelude::*;
+
+/// What this script does.
+#[derive(Script)]
+pub struct {type_name} {{
+    /// Public fields are parameters: shown in the inspector, saved with the
+    /// scene.
+    pub speed: f32,
+    /// Other fields are the script's own state.
+    elapsed: f64,
+}}
+
+impl Default for {type_name} {{
+    fn default() -> Self {{
+        Self {{
+            speed: 1.0,
+            elapsed: 0.0,
+        }}
+    }}
+}}
+
+impl Behaviour for {type_name} {{
+    fn update(&mut self, _scene: &mut Scene, _entity: &mut Entity, delta_time: f64) {{
+        self.elapsed += delta_time * self.speed as f64;
+    }}
+}}
+"#
+    );
+    std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+    std::fs::write(&path, source).map_err(|e| e.to_string())?;
+    Ok(file_name)
+}
+
+/// `MyRotator` → `My`, `Rotator`.
+fn split_camel_case(word: &str) -> Vec<String> {
+    let mut words = vec![String::new()];
+    for c in word.chars() {
+        if c.is_ascii_uppercase() && !words.last().unwrap().is_empty() {
+            words.push(String::new());
+        }
+        words.last_mut().unwrap().push(c);
+    }
+    words
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_script_is_named_after_what_the_user_typed() {
+        let dir = std::env::temp_dir().join(format!("ferrite-new-script-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(new_script_file(&dir, "MyRotator").unwrap(), "my_rotator.rs");
+        let text = std::fs::read_to_string(dir.join("my_rotator.rs")).unwrap();
+        assert!(text.contains("pub struct MyRotator {"));
+        assert_eq!(new_script_file(&dir, "door opener").unwrap(), "door_opener.rs");
+        assert!(new_script_file(&dir, "my rotator").is_err(), "already exists");
+        assert!(new_script_file(&dir, "!!").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+

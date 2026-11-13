@@ -17,6 +17,7 @@ pub const COPY_PLUS: &str = "\u{e3fd}";
 pub const CPU: &str = "\u{e0a9}";
 pub const EYE: &str = "\u{e0ba}";
 pub const EYE_OFF: &str = "\u{e0bb}";
+pub const FILE_CODE: &str = "\u{e0c3}";
 pub const FILE_PLUS: &str = "\u{e0c9}";
 pub const FOLDER_OPEN: &str = "\u{e247}";
 pub const GAUGE: &str = "\u{e1bf}";

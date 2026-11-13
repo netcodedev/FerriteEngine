@@ -32,4 +32,6 @@ pub struct Scene {
     /// GL viewport `[x, y, width, height]` (bottom-left origin) for the main
     /// render pass. `None` uses the whole window.
     viewport: Option<[i32; 4]>,
+    /// Work queued with `Scene::defer`, run once every entity is updated.
+    deferred: Vec<Box<dyn FnOnce(&mut Scene)>>,
 }

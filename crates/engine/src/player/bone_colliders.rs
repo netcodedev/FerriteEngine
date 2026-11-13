@@ -7,7 +7,7 @@ use crate::core::{
         Entity,
     },
     physics::physics_engine::PhysicsEngine,
-    scene::Scene,
+    scene::{scene_file::ComponentData, Scene},
 };
 
 const MIN_BONE_LENGTH: f32 = 0.04;
@@ -21,6 +21,11 @@ pub struct BoneColliders {
 }
 
 impl BoneColliders {
+    /// The bodies of the bone capsules.
+    pub fn bodies(&self) -> impl Iterator<Item = RigidBodyHandle> + '_ {
+        self.handles.iter().map(|(handle, _)| *handle)
+    }
+
     pub fn build(scene: &mut Scene, entity: &Entity) -> Self {
         let segments = entity
             .get_component::<ModelComponent>()
@@ -96,6 +101,13 @@ impl Component for BoneColliders {
         _: &mut glfw::Window,
         _: &glfw::WindowEvent,
     ) {
+    }
+
+    /// Only the player prefab has bone colliders: they stand for the whole
+    /// prefab (model, animation, capsule, bones), which `Scene::instantiate`
+    /// rebuilds from this marker.
+    fn to_data(&self) -> Option<ComponentData> {
+        Some(ComponentData::Player)
     }
 
     fn display_name(&self) -> String {

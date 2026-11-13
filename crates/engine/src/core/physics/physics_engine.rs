@@ -125,6 +125,38 @@ impl PhysicsEngine {
         best
     }
 
+    /// The nearest non-sensor collider the ray hits within `max_distance`,
+    /// with the distance, leaving out colliders of the `ignore`d bodies.
+    /// `dir` must be normalized.
+    pub fn cast_ray_colliders(
+        &mut self,
+        origin: [f32; 3],
+        dir: [f32; 3],
+        max_distance: f32,
+        ignore: &[RigidBodyHandle],
+    ) -> Option<(ColliderHandle, f32)> {
+        self.rigid_bodies
+            .propagate_modified_body_positions_to_colliders(&mut self.colliders);
+        let ray = Ray::new(
+            Vector::new(origin[0], origin[1], origin[2]),
+            Vector::new(dir[0], dir[1], dir[2]),
+        );
+        let mut best: Option<(ColliderHandle, f32)> = None;
+        for (handle, collider) in self.colliders.iter() {
+            if collider.is_sensor() || collider.parent().is_some_and(|p| ignore.contains(&p)) {
+                continue;
+            }
+            let limit = best.map_or(max_distance, |(_, t)| t);
+            if let Some(t) = collider
+                .shape()
+                .cast_ray(collider.position(), &ray, limit, true)
+            {
+                best = Some((handle, t));
+            }
+        }
+        best
+    }
+
     /// Remove a body together with every collider attached to it.
     pub fn remove_rigid_body(&mut self, handle: RigidBodyHandle) {
         self.rigid_bodies.remove(

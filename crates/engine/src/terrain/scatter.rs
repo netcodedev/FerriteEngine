@@ -12,7 +12,7 @@
 //! bucket it actually contains.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -521,6 +521,15 @@ fn pick_variant_index(x: f32, z: f32, variant_count: usize) -> usize {
     (h as usize) % variant_count
 }
 
+/// An instance taken out of a `ScatterInstances`.
+pub struct TakenInstance {
+    pub spec: ScatterSpec,
+    pub variant: usize,
+    /// Where it stood (its base).
+    pub position: Point3<f32>,
+    pub yaw: f32,
+}
+
 /// One layer's instances on one chunk.
 pub struct ScatterInstances {
     spec: ScatterSpec,
@@ -530,6 +539,8 @@ pub struct ScatterInstances {
     center: Point3<f32>,
     /// Box around every instance, for frustum culling.
     bounds: ChunkBounds,
+    /// `(x, y, z, yaw)` of each instance, in the order of `colliders`.
+    placements: Vec<(f32, f32, f32, f32)>,
     /// Colliders these instances added, so they can be taken out again
     /// without removing the chunk they stand on.
     colliders: Vec<ColliderHandle>,
@@ -575,6 +586,7 @@ impl ScatterInstances {
                     min: (0, 0, 0),
                     max: (0, 0, 0),
                 },
+                placements: Vec::new(),
                 colliders: Vec::new(),
                 gpu: RefCell::new(None),
             };
@@ -621,6 +633,7 @@ impl ScatterInstances {
             instances_by_variant,
             center,
             bounds,
+            placements: placements.to_vec(),
             colliders: Vec::new(),
             gpu: RefCell::new(None),
         }
@@ -628,6 +641,61 @@ impl ScatterInstances {
 
     pub fn is_empty(&self) -> bool {
         self.instances_by_variant.iter().all(|v| v.is_empty())
+    }
+
+    /// One instance of `variant` at the origin, turned by `yaw`; place it
+    /// with the parent transform when drawing.
+    pub fn single(spec: &ScatterSpec, variant: usize, yaw: f32) -> Self {
+        let mut instances_by_variant: Vec<Vec<Matrix4<f32>>> =
+            (0..spec.model.variants.len()).map(|_| Vec::new()).collect();
+        if let Some(slot) = instances_by_variant.get_mut(variant) {
+            slot.push(Quaternion::from_angle_y(Rad(yaw)).into());
+        }
+        Self {
+            spec: spec.clone(),
+            instances_by_variant,
+            center: Point3::new(0.0, 0.0, 0.0),
+            bounds: ChunkBounds {
+                min: (0, 0, 0),
+                max: (0, 0, 0),
+            },
+            placements: Vec::new(),
+            colliders: Vec::new(),
+            gpu: RefCell::new(None),
+        }
+    }
+
+    /// Take out the instance whose collider is `collider` (and the
+    /// collider), e.g. a tree that was felled. `None` if it is not one of
+    /// these instances.
+    pub fn take_instance(
+        &mut self,
+        collider: ColliderHandle,
+        physics: &mut PhysicsEngine,
+    ) -> Option<TakenInstance> {
+        let index = self.colliders.iter().position(|c| *c == collider)?;
+        physics.remove_collider(self.colliders.remove(index));
+        let (x, y, z, yaw) = self.placements.remove(index);
+        let variant_count = self.spec.model.variants.len();
+        let variant = pick_variant_index(x, z, variant_count);
+        // Rebuilt from what is left; the GPU buffers follow on the next draw.
+        let rest = Self::new(&self.spec, &self.placements);
+        self.instances_by_variant = rest.instances_by_variant;
+        *self.gpu.borrow_mut() = None;
+        Some(TakenInstance {
+            spec: self.spec.clone(),
+            variant,
+            position: Point3::new(x, y, z),
+            yaw,
+        })
+    }
+
+    /// Height of the tallest part of `variant`, from its base.
+    pub fn variant_height(spec: &ScatterSpec, variant: usize) -> f32 {
+        spec.model
+            .variants
+            .get(variant)
+            .map_or(1.0, |v| v.bounds.1[1].max(0.1))
     }
 
     /// Whether these instances are exactly what `spec` asks for.
@@ -1047,6 +1115,9 @@ impl ScatterLayer {
 /// The scatter layers of one terrain.
 pub struct Scatter {
     layers: Vec<ScatterLayer>,
+    /// Instances that were taken out (felled trees), by layer salt and
+    /// position, so chunks loaded again leave them out. Not saved.
+    removed: HashSet<(u64, [i32; 3])>,
 }
 
 impl Scatter {
@@ -1055,6 +1126,7 @@ impl Scatter {
     pub fn new(layers: Vec<ScatterLayerData>) -> Self {
         Self {
             layers: layers.into_iter().map(ScatterLayer::new).collect(),
+            removed: HashSet::new(),
         }
     }
 
@@ -1147,6 +1219,18 @@ impl Scatter {
                 layer.apply();
             }
         }
+    }
+
+    /// Leave the instance of the layer with `salt` at `position` out from
+    /// now on.
+    pub fn mark_removed(&mut self, salt: u64, position: Point3<f32>) {
+        self.removed.insert((salt, removal_key(position)));
+    }
+
+    /// Whether the instance of the layer with `salt` at `position` was
+    /// taken out.
+    pub fn is_removed(&self, salt: u64, position: Point3<f32>) -> bool {
+        self.removed.contains(&(salt, removal_key(position)))
     }
 
     /// What every chunk should carry right now, one entry per active layer.
@@ -1255,6 +1339,16 @@ impl Scatter {
 /// Property name prefixes of a layer; the 1-based layer number follows.
 const MODEL_PROPERTY: &str = "model ";
 const DENSITY_PROPERTY: &str = "density ";
+
+/// A placement's position to the millimetre: placements are recomputed
+/// identically when a chunk loads again.
+fn removal_key(position: Point3<f32>) -> [i32; 3] {
+    [
+        (position.x * 1000.0).round() as i32,
+        (position.y * 1000.0).round() as i32,
+        (position.z * 1000.0).round() as i32,
+    ]
+}
 
 fn property_layer(name: &str, prefix: &str) -> Option<usize> {
     name.strip_prefix(prefix)?

@@ -68,13 +68,17 @@ impl Toolbar {
                 MenuItem::new("Open...").icon(icons::FOLDER_OPEN).shortcut("Ctrl+O"),
                 MenuItem::new("Save").icon(icons::SAVE).shortcut("Ctrl+S"),
                 MenuItem::new("Save as...").icon(icons::SAVE).shortcut("Ctrl+Shift+S"),
+                MenuItem::new("New script...").icon(icons::FILE_CODE),
+                MenuItem::new("Reload scripts").icon(icons::ROTATE_CW).shortcut("Ctrl+R"),
             ],
             Box::new(move |index, _scene| {
                 let command = match index {
                     0 => Command::ConfirmDiscard(Box::new(Command::NewScene)),
                     1 => Command::ConfirmDiscard(Box::new(Command::OpenDialog)),
                     2 => Command::Save,
-                    _ => Command::SaveAsDialog,
+                    3 => Command::SaveAsDialog,
+                    4 => Command::NewScriptDialog,
+                    _ => Command::ReloadScripts,
                 };
                 send(&file_state, command);
             }),

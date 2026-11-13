@@ -14,16 +14,10 @@ impl Application {
     /// false.
     pub fn with_decorations(width: u32, height: u32, title: &str, decorated: bool) -> Self {
         env_logger::init();
-        let mut window = Window::with_decorations(width, height, title, decorated);
+        let window = Window::with_decorations(width, height, title, decorated);
 
         TextRenderer::resize(width, height);
         PlaneRenderer::resize(width, height);
-
-        window.clear(
-            (0.3, 0.3, 0.5, 1.0),
-            gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
-        );
-        window.swap_buffers();
 
         Self {
             window,
@@ -33,6 +27,7 @@ impl Application {
     }
 
     pub fn start(&mut self) {
+        let mut shown = false;
         while !self.window.should_close() {
             self.window.clear(
                 self.clear_color,
@@ -53,6 +48,11 @@ impl Application {
             }
 
             self.window.swap_buffers();
+            if !shown {
+                // The first frame is drawn: now the window can be seen.
+                self.window.show();
+                shown = true;
+            }
         }
     }
 

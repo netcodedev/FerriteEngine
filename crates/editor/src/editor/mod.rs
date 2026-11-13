@@ -24,6 +24,8 @@ pub mod hierarchy;
 pub mod inspector;
 pub mod layout;
 pub mod outline;
+pub mod project_settings;
+pub mod scripts;
 pub mod showcase;
 pub mod splitter;
 pub mod stats;
@@ -95,6 +97,8 @@ pub enum Command {
     ImportAssets,
     /// Scan the assets folder again.
     RefreshAssets,
+    /// Build the game's scripts and load them again.
+    ReloadScripts,
     /// Let the user choose a model asset for a scatter layer of this
     /// entity's terrain. Without a layer index a new layer is added.
     PickScatterAsset {
@@ -135,6 +139,12 @@ pub enum Command {
     /// Let the user choose the model asset an entity shows; an entity
     /// without a model component gets one.
     PickModelAsset(EntityHandle),
+    /// Let the user choose one of the project's scripts to add to an entity.
+    PickScript(EntityHandle),
+    /// Ask for the name of a new script.
+    NewScriptDialog,
+    /// Create a script file with this name in the project's scripts folder.
+    NewScript(String),
     /// Make an entity show a model asset; an entity without a model
     /// component gets one.
     SetEntityModel { entity: EntityHandle, asset: AssetRef },
@@ -179,6 +189,8 @@ pub struct EditorState {
     /// there).
     pub anim_canvas_center: Option<(f32, f32)>,
     pub gizmo: GizmoMode,
+    /// Name of the open project, for the title.
+    pub project_name: String,
     pub scene_path: Option<PathBuf>,
     pub dirty: bool,
     status: Option<(String, Instant)>,
@@ -218,6 +230,7 @@ impl EditorState {
             anim: anim::AnimEditor::new(),
             anim_canvas_center: None,
             gizmo: GizmoMode::Translate,
+            project_name: String::new(),
             scene_path: None,
             dirty: false,
             status: None,
@@ -279,6 +292,11 @@ impl EditorState {
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "untitled".into());
+        let name = if self.project_name.is_empty() {
+            name
+        } else {
+            format!("{} - {name}", self.project_name)
+        };
         if self.dirty {
             format!("{name} *")
         } else {

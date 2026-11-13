@@ -201,6 +201,20 @@ impl Entity {
         self.components.push(Box::new(component));
     }
 
+    pub fn add_boxed_component(&mut self, component: Box<dyn Component>) {
+        self.components.push(component);
+    }
+
+    /// Put `component` in place of the one at `index`; returns the old one.
+    pub fn replace_component_at(
+        &mut self,
+        index: usize,
+        component: Box<dyn Component>,
+    ) -> Option<Box<dyn Component>> {
+        let slot = self.components.get_mut(index)?;
+        Some(std::mem::replace(slot, component))
+    }
+
     pub fn get_component<T>(&self) -> Option<&T>
     where
         T: Component,

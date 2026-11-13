@@ -65,6 +65,7 @@ impl Model {
             position: position.into(),
             scale: 0.01,
             visible: None,
+            hidden_bones: Vec::new(),
         })
     }
 
@@ -257,6 +258,11 @@ impl Model {
     ) {
         self.shader.bind();
         lighting.apply(&self.shader);
+        // Shadow maps and the editor's selection mask draw into their own
+        // framebuffers and keep every bone.
+        let mut framebuffer = 0;
+        unsafe { gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut framebuffer) };
+        let draws_to_screen = framebuffer == 0;
         self.shader
             .set_uniform_mat4("viewProjection", &camera_projection);
         for (name, mesh) in self.meshes.iter() {
@@ -267,8 +273,9 @@ impl Model {
                 panic!("Mesh is not buffered");
             }
             if let Some(root_bone) = &mesh.root_bone {
+                let hidden: &[String] = if draws_to_screen { &self.hidden_bones } else { &[] };
                 let bone_transforms =
-                    Model::get_bone_transformations(root_bone, Matrix4::identity());
+                    Model::get_bone_transformations(root_bone, Matrix4::identity(), hidden, None);
                 let max_id = bone_transforms.iter().map(|(id, _)| *id).max().unwrap_or(0);
                 let array_size = std::cmp::min(max_id + 1, 100);
                 let mut sorted = vec![Matrix4::identity(); array_size];
@@ -729,24 +736,47 @@ impl Model {
         Some(children)
     }
 
+    /// Skinning matrices of `bone` and its descendants. A bone named in
+    /// `hidden`, and everything below it, maps all its vertices onto the
+    /// joint `collapse_to` (the hidden bone's own joint).
     fn get_bone_transformations(
         bone: &Bone,
         parent_transform: Matrix4<f32>,
+        hidden: &[String],
+        collapse_to: Option<Vector3<f32>>,
     ) -> Vec<(usize, Matrix4<f32>)> {
         let mut transformations = Vec::<(usize, Matrix4<f32>)>::new();
         let global_transformation = parent_transform * bone.current_transform;
+        let collapse_to = collapse_to.or_else(|| {
+            hidden
+                .contains(&bone.name)
+                .then(|| global_transformation.w.truncate())
+        });
 
         if bone.id != usize::MAX {
-            transformations.push((bone.id, global_transformation * bone.offset_matrix));
+            let transform = match collapse_to {
+                Some(joint) => Matrix4::from_translation(joint) * Matrix4::from_scale(0.0),
+                None => global_transformation * bone.offset_matrix,
+            };
+            transformations.push((bone.id, transform));
         }
 
         if let Some(children) = &bone.children {
             for child in children {
-                transformations
-                    .extend(Self::get_bone_transformations(child, global_transformation));
+                transformations.extend(Self::get_bone_transformations(
+                    child,
+                    global_transformation,
+                    hidden,
+                    collapse_to,
+                ));
             }
         }
         transformations
+    }
+
+    /// Bones to draw collapsed when drawing to the screen; see the field.
+    pub fn set_hidden_bones(&mut self, names: Vec<String>) {
+        self.hidden_bones = names;
     }
 }
 

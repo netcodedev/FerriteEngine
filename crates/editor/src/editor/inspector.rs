@@ -136,6 +136,7 @@ fn component_icon(name: &str) -> &'static str {
         "Collider" | "Bone colliders" => icons::SCAN,
         "Animation" | "AnimationComponent" => icons::ACTIVITY,
         "Model" | "ModelComponent" => icons::PACKAGE,
+        name if name.starts_with("Script") => icons::FILE_CODE,
         _ => icons::COMPONENT,
     }
 }
@@ -349,19 +350,23 @@ impl InspectorPanel {
         let add_state = self.state.clone();
         let mut items: Vec<MenuItem> = ComponentData::catalog()
             .iter()
-            .map(|(name, _)| MenuItem::new(*name).icon(component_icon(name)))
+            .map(|(name, _)| MenuItem::new(name).icon(component_icon(name)))
             .collect();
-        // Not in the catalog: a model component needs an asset to exist.
+        // Not in the catalog: these are picked from what the project has.
         items.push(MenuItem::new("Model").icon(component_icon("Model")));
+        items.push(MenuItem::new("Script...").icon(icons::FILE_CODE));
+        let catalog_len = ComponentData::catalog().len();
         let mut add = MenuButton::with_items(
             "Add component",
             Some(icons::PLUS),
             items,
             Box::new(move |index, _scene| {
-                match ComponentData::catalog().into_iter().nth(index) {
-                    Some((_, data)) => send(&add_state, Command::AddComponent(id, data)),
-                    None => send(&add_state, Command::PickModelAsset(id)),
-                }
+                let command = match ComponentData::catalog().into_iter().nth(index) {
+                    Some((_, data)) => Command::AddComponent(id, data),
+                    None if index == catalog_len => Command::PickModelAsset(id),
+                    None => Command::PickScript(id),
+                };
+                send(&add_state, command);
             }),
         );
         add.set_button_style(ButtonStyle::Secondary);

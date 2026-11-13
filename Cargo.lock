@@ -671,10 +671,12 @@ dependencies = [
  "cgmath",
  "env_logger",
  "fast-surface-nets",
+ "ferrite_macros",
  "gl",
  "glfw",
  "image",
  "lazy_static",
+ "libloading",
  "libnoise",
  "log",
  "ndarray",
@@ -694,8 +696,10 @@ dependencies = [
  "env_logger",
  "ferrite",
  "ferrite-ui",
+ "ferrite_dylib",
  "gl",
  "glfw",
+ "libloading",
  "log",
  "rfd",
 ]
@@ -710,6 +714,30 @@ dependencies = [
  "glfw",
  "log",
  "rand 0.10.3",
+]
+
+[[package]]
+name = "ferrite_dylib"
+version = "0.1.0"
+dependencies = [
+ "ferrite",
+]
+
+[[package]]
+name = "ferrite_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "ferrite_scripts"
+version = "0.1.0"
+dependencies = [
+ "ferrite",
+ "ferrite_dylib",
 ]
 
 [[package]]
@@ -2728,9 +2756,8 @@ dependencies = [
 name = "sandbox"
 version = "0.1.0"
 dependencies = [
- "cgmath",
  "ferrite",
- "ferrite-ui",
+ "ferrite_dylib",
  "glfw",
 ]
 

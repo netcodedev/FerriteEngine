@@ -1,0 +1,17 @@
+[package]
+name = "ferrite_scripts"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+# The scripts of the project that is open: the editor builds this crate with
+# FERRITE_SCRIPTS set to the project's `scripts` folder, and the build script
+# includes every file in it. Being part of the engine's workspace, it links
+# the very engine library the editor runs with.
+[lib]
+path = "src/lib.rs"
+crate-type = ["dylib"]
+
+[dependencies]
+ferrite = { path = "../engine" }
+ferrite_dylib = { path = "../engine-dylib" }

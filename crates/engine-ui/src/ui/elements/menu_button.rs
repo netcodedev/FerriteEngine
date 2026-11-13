@@ -180,13 +180,19 @@ impl MenuButton {
 
     fn layout_menu(&mut self) {
         let base = self.region.get_absolute_position();
-        let top = base.y + self.region.size.height + 4.0;
+        let menu_height = self.entries.len() as f32 * self.row_height + MENU_PADDING * 2.0;
+        // Below the button, or above it where it would run out of the window.
+        let below = base.y + self.region.size.height + 4.0;
+        let above = base.y - 4.0 - menu_height;
+        let (_, window_height) = ferrite::core::renderer::plane::PlaneRenderer::get_size();
+        let top = if below + menu_height > window_height && above >= 0.0 {
+            above
+        } else {
+            below
+        };
         let has_icons = self.entries.iter().any(|e| e.icon.is_some());
         self.menu.set_position(Position::new(base.x, top, OVERLAY_Z));
-        self.menu.set_size(Size::new(
-            self.menu_width,
-            self.entries.len() as f32 * self.row_height + MENU_PADDING * 2.0,
-        ));
+        self.menu.set_size(Size::new(self.menu_width, menu_height));
         for (i, entry) in self.entries.iter_mut().enumerate() {
             let p = Position::new(
                 base.x + MENU_PADDING,

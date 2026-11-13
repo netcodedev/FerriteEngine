@@ -39,6 +39,10 @@ pub struct Model {
     /// Names of the meshes that are drawn; all of them without. Set by
     /// `show_variant` for files that hold several variants or LODs.
     visible: Option<HashSet<String>>,
+    /// Bones drawn collapsed to their joint, with everything below them,
+    /// when the model is drawn to the screen (shadows keep them), e.g. the
+    /// head of a first-person player so the camera does not see into it.
+    hidden_bones: Vec<String>,
 }
 
 /// Raw per-submesh geometry extracted from a `Model` for callers that need

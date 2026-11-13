@@ -1,0 +1,14 @@
+[package]
+name = "ferrite_dylib"
+version = "0.1.0"
+edition = "2021"
+
+# The engine as a shared library. Everything that depends on this crate
+# links the engine (and its dependencies) dynamically, so the editor and the
+# game scripts it loads at runtime share one copy of the engine: one set of
+# GL function pointers, one asset database, one script registry.
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+ferrite = { path = "../engine" }

@@ -46,7 +46,8 @@ pub const MIN_PANEL_HEIGHT: f32 = 120.0;
 pub const MIN_VIEWPORT_HEIGHT: f32 = 160.0;
 
 /// User-adjustable panel sizes (dragged with the splitters).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, ferrite::serde::Serialize, ferrite::serde::Deserialize)]
+#[serde(crate = "ferrite::serde", default)]
 pub struct PanelSizes {
     /// Left column holding hierarchy (top) and inspector (bottom).
     pub side: f32,

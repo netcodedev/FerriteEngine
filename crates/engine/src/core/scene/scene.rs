@@ -3,7 +3,9 @@ use glfw::{Action, Glfw, Key, WindowEvent};
 
 use crate::core::{
     entity::{
-        component::{camera_component::CameraComponent, Component},
+        component::{
+            camera_component::CameraComponent, missing_component::MissingComponent, Component,
+        },
         Entity, EntityHandle,
     },
     physics::{collider_debug, physics_engine::PhysicsEngine, rigidbody::RigidBody},
@@ -14,6 +16,8 @@ use crate::core::{
         sky::SkyRenderer,
         texture::TextureRenderer,
     },
+    scene::scene_file::ComponentData,
+    script,
     window::Window,
 };
 
@@ -34,7 +38,71 @@ impl Scene {
             editor_camera: None,
             physics_enabled: true,
             viewport: None,
+            deferred: Vec::new(),
         }
+    }
+
+    /// Do `work` once every entity is updated this frame. While an entity
+    /// (and what is below it) is updated, it is out of the scene: whatever
+    /// needs to reach other entities through the scene, from any entity,
+    /// goes here.
+    pub fn defer(&mut self, work: impl FnOnce(&mut Scene) + 'static) {
+        self.deferred.push(Box::new(work));
+    }
+
+    /// The queued work, and the work that queues, until there is none.
+    fn run_deferred(&mut self) {
+        while !self.deferred.is_empty() {
+            for work in std::mem::take(&mut self.deferred) {
+                work(self);
+            }
+        }
+    }
+
+    /// Build every script component again with the scripts installed now
+    /// (after a game library was reloaded): from its data, which it hands
+    /// over itself, or from what a placeholder kept for a script that was
+    /// not loaded. Returns one message per script that could not be built.
+    pub fn rebuild_scripts(&mut self) -> Vec<String> {
+        fn visit(entity: &mut Entity, physics: &mut PhysicsEngine, problems: &mut Vec<String>) {
+            for index in 0..entity.components().len() {
+                let component = &entity.components()[index];
+                let data = match component.as_any().downcast_ref::<MissingComponent>() {
+                    Some(missing) => Some(missing.data().clone()),
+                    None => component.to_data(),
+                };
+                let Some(data @ ComponentData::Script { .. }) = data else {
+                    continue;
+                };
+                let ComponentData::Script { name, data: value } = &data else {
+                    continue;
+                };
+                let rebuilt: Box<dyn Component> = match script::create(name, value) {
+                    Ok(component) => component,
+                    Err(e) => {
+                        problems.push(format!("{}: {e}", entity.get_name()));
+                        Box::new(MissingComponent::new(data.clone(), e))
+                    }
+                };
+                if let Some(mut old) = entity.replace_component_at(index, rebuilt) {
+                    old.on_remove(physics);
+                }
+            }
+            for child in entity.get_children_mut() {
+                visit(child, physics, problems);
+            }
+        }
+        let mut problems = Vec::new();
+        for entity in self.entities.iter_mut() {
+            visit(entity, &mut self.physics_engine, &mut problems);
+        }
+        problems
+    }
+
+    /// The entities and the physics world at once, for code that changes
+    /// both (e.g. removes a collider an entity's component owns).
+    pub fn entities_and_physics_mut(&mut self) -> (&mut Vec<Entity>, &mut PhysicsEngine) {
+        (&mut self.entities, &mut self.physics_engine)
     }
 
     pub fn add_shadow_map(&mut self, width: u32, height: u32) {
@@ -98,6 +166,7 @@ impl Scene {
             entity.update_in_editor(self, delta_time);
             self.entities.insert(i, entity);
         }
+        self.run_deferred();
     }
 
     /// Returns whether the currently-bound framebuffer allows water rendering.
@@ -141,6 +210,7 @@ impl Scene {
             entity.update(self, delta_time);
             self.entities.insert(i, entity);
         }
+        self.run_deferred();
     }
 
     pub fn render(&self, window: &Window) {

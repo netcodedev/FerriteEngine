@@ -19,6 +19,7 @@ use crate::{
             Entity, EntityHandle,
         },
         renderer::light::skylight::SkyLight,
+        script,
     },
     player::{build_animation_graph, default_animation_graph, load_graph_file, Player},
     terrain::{
@@ -93,7 +94,8 @@ pub enum ComponentData {
     },
     DebugController,
     /// Prefab marker: the entity is rebuilt with `Player::new`, which brings
-    /// its model, animation graph, physics capsule and bone colliders.
+    /// its model, animation graph, physics capsule and bone colliders. What
+    /// moves it is a script of the game.
     Player,
     /// Animation graph file of the entity's animation component (replaces
     /// the graph a prefab created).
@@ -105,11 +107,22 @@ pub enum ComponentData {
     Model {
         asset: AssetRef,
     },
+    /// A component written in a game crate (see `core::script`), by name,
+    /// with the data it is built from.
+    Script {
+        name: String,
+        #[serde(default = "unit_value")]
+        data: ron::Value,
+    },
+}
+
+fn unit_value() -> ron::Value {
+    ron::Value::Unit
 }
 
 impl ComponentData {
     /// Short name of the kind, for messages.
-    pub fn label(&self) -> &'static str {
+    pub fn label(&self) -> String {
         match self {
             ComponentData::Camera { .. } => "Camera",
             ComponentData::SkyLight { .. } => "Sky light",
@@ -118,16 +131,27 @@ impl ComponentData {
             ComponentData::Player => "Player",
             ComponentData::AnimationGraph { .. } => "Animation",
             ComponentData::Model { .. } => "Model",
+            ComponentData::Script { name, .. } => return format!("Script {name}"),
+        }
+        .to_string()
+    }
+
+    /// The script `name` with its default data.
+    pub fn script(name: &str) -> Self {
+        ComponentData::Script {
+            name: name.to_string(),
+            data: ron::Value::Unit,
         }
     }
 
     /// Kinds the editor offers in "Add component", with their default data.
-    pub fn catalog() -> Vec<(&'static str, ComponentData)> {
+    /// Scripts are added by picking one of `script::names()`.
+    pub fn catalog() -> Vec<(String, ComponentData)> {
         vec![
-            ("Camera", ComponentData::default_camera()),
-            ("Sky light", ComponentData::default_sky_light()),
-            ("Terrain", ComponentData::bare_terrain(2)),
-            ("Debug controller", ComponentData::DebugController),
+            ("Camera".into(), ComponentData::default_camera()),
+            ("Sky light".into(), ComponentData::default_sky_light()),
+            ("Terrain".into(), ComponentData::bare_terrain(2)),
+            ("Debug controller".into(), ComponentData::DebugController),
         ]
     }
 
@@ -199,6 +223,13 @@ impl ComponentData {
                 );
             }
             ComponentData::DebugController => entity.add_component(DebugController::new()),
+            ComponentData::Script { name, data } => match script::create(name, data) {
+                Ok(component) => entity.add_boxed_component(component),
+                Err(e) => {
+                    log::warn!("could not build script '{name}': {e}");
+                    entity.add_component(MissingComponent::new(self.clone(), e));
+                }
+            },
             ComponentData::Player => {}
             ComponentData::AnimationGraph { path } => {
                 let result = match entity.get_component_mut::<AnimationComponent>() {

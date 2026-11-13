@@ -5,6 +5,5 @@ edition = "2021"
 
 [dependencies]
 ferrite = { path = "../engine" }
-ferrite-ui = { path = "../engine-ui" }
-cgmath = "0.18.0"
+ferrite_dylib = { path = "../engine-dylib" }
 glfw = "0.63.0"

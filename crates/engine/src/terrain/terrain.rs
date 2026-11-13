@@ -27,12 +27,13 @@ use crate::core::{
         pbr::Lighting,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
     },
+    physics::physics_engine::PhysicsEngine,
     scene::{scene_file::ComponentData, Scene},
     view_frustum::ViewFrustum,
 };
 
 use super::{
-    scatter::{Scatter, ScatterInstances, ScatterLayerData},
+    scatter::{Scatter, ScatterInstances, ScatterLayerData, TakenInstance},
     Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
 };
 
@@ -172,6 +173,46 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         self.chunk_receiver = Self::start_chunkloaders(self.seed);
     }
 
+    /// Take the scattered instance whose collider is `collider` out of the
+    /// terrain in `scene` (e.g. a tree that was felled): out of its chunk,
+    /// with its collider, and for good: a chunk loaded again leaves it out.
+    /// `None` if no scattered instance has that collider.
+    pub fn take_scattered_instance(
+        scene: &mut Scene,
+        collider: ColliderHandle,
+    ) -> Option<TakenInstance> {
+        fn visit<T: Chunk + Component + Send + 'static>(
+            entity: &mut Entity,
+            physics: &mut PhysicsEngine,
+            collider: ColliderHandle,
+        ) -> Option<TakenInstance> {
+            if entity.get_own_component::<Terrain<T>>().is_some() {
+                let taken = entity.get_children_mut().iter_mut().find_map(|chunk| {
+                    chunk.components_mut().iter_mut().find_map(|component| {
+                        component
+                            .as_any_mut()
+                            .downcast_mut::<ScatterInstances>()?
+                            .take_instance(collider, physics)
+                    })
+                });
+                if let Some(taken) = taken {
+                    if let Some(terrain) = entity.get_component_mut::<Terrain<T>>() {
+                        terrain.scatter.mark_removed(taken.spec.salt, taken.position);
+                    }
+                    return Some(taken);
+                }
+            }
+            entity
+                .get_children_mut()
+                .iter_mut()
+                .find_map(|child| visit::<T>(child, physics, collider))
+        }
+        let (entities, physics) = scene.entities_and_physics_mut();
+        entities
+            .iter_mut()
+            .find_map(|entity| visit::<T>(entity, physics, collider))
+    }
+
     pub fn process_line(&mut self, line: Option<(Line, MouseButton)>) {
         if let Some((line, _button)) = line {
             for _chunk_bounds in ChunkBounds::get_chunk_bounds_on_line(&line) {
@@ -252,7 +293,10 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
                 let Some(chunk) = chunk_entity.get_own_component::<T>() else {
                     break;
                 };
-                let points = chunk.scatter_points(spec.salt, spec.attempts);
+                let mut points = chunk.scatter_points(spec.salt, spec.attempts);
+                points.retain(|&(x, y, z, _)| {
+                    !self.scatter.is_removed(spec.salt, Point3::new(x, y, z))
+                });
                 let chunk_body = chunk_entity
                     .get_own_component::<RigidBody>()
                     .map(|body| body.rigid_body_handle);

@@ -7,8 +7,10 @@ edition = "2021"
 cgmath = "0.18.0"
 env_logger = "0.11.11"
 ferrite = { path = "../engine" }
+ferrite_dylib = { path = "../engine-dylib" }
 ferrite-ui = { path = "../engine-ui" }
 gl = "0.14.0"
+libloading = "0.8"
 glfw = "0.63.0"
 log = "0.4.35"
 rfd = { version = "0.18.0", default-features = false, features = ["xdg-portal", "pollster"] }
