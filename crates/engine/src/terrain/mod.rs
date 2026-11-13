@@ -79,7 +79,7 @@ pub struct ChunkMesh<T: VertexAttributes> {
     vertices: Vec<T>,
 }
 
-#[derive(Eq, PartialEq, Hash, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
 pub struct ChunkBounds {
     pub min: (i32, i32, i32),
     pub max: (i32, i32, i32),

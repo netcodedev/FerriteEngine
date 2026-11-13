@@ -10,8 +10,16 @@ use crate::core::{
     scene::{scene_file::ComponentData, Scene},
 };
 
-const OFFSET: f32 = 150.0;
-const SHADOW_DISTANCE: f32 = 50.0;
+/// Number of shadow cascades; must match `SHADOW_CASCADES` in
+/// `pbr/lighting.glsl`.
+pub const SHADOW_CASCADES: usize = 4;
+/// How far from the camera shadows reach.
+const SHADOW_DISTANCE: f32 = 300.0;
+/// Mix between logarithmic (1) and even (0) cascade splits.
+const SPLIT_LAMBDA: f32 = 0.75;
+/// Shadow casters this far toward the sun beyond a cascade still cast into
+/// it (tall trees, hills between the sun and the view).
+const CASTER_MARGIN: f32 = 150.0;
 
 /// Default real-time length of one in-game day, in seconds.
 const DEFAULT_DAY_LENGTH_SECONDS: f32 = 240.0;
@@ -23,8 +31,7 @@ const SUN_DISTANCE: f32 = 200.0;
 
 pub struct SkyLight {
     position: Point3<f32>,
-    light_view: Matrix4<f32>,
-    shadow_box: ShadowBox,
+    cascades: [ShadowCascade; SHADOW_CASCADES],
 
     /// Current time of day, in [0, 1). 0.0 == midnight, 0.5 == solar noon.
     time_of_day: f32,
@@ -57,11 +64,12 @@ impl SkyLight {
             t
         };
 
-        let light_view = Matrix4::identity();
         let mut sl = Self {
             position: p,
-            light_view,
-            shadow_box: ShadowBox::new(light_view),
+            cascades: [ShadowCascade {
+                view_projection: Matrix4::identity(),
+                texel_size: 0.0,
+            }; SHADOW_CASCADES],
             time_of_day: initial_time,
             day_length_seconds: DEFAULT_DAY_LENGTH_SECONDS,
             paused: false,
@@ -126,90 +134,78 @@ impl SkyLight {
         ((total_minutes / 60) % 24, total_minutes % 60)
     }
 
-    pub fn update_light_view(&mut self, camera: &Camera, projection: &Projection) {
-        let camera_pos = camera.get_eye_position();
+    /// Fit the shadow cascades to the camera's view, each covering one
+    /// slice of it, for a shadow map of `resolution` texels per side.
+    pub fn update_light_view(&mut self, camera: &Camera, projection: &Projection, resolution: u32) {
+        let eye = camera.get_eye_position();
         let inv_view = camera.get_matrix().invert().unwrap();
+        let axis = |v: Vector4<f32>| (inv_view * v).truncate().normalize();
+        let forward = axis(Vector4::new(0.0, 0.0, -1.0, 0.0));
+        let up = axis(Vector4::new(0.0, 1.0, 0.0, 0.0));
+        let right = axis(Vector4::new(1.0, 0.0, 0.0, 0.0));
+        let tan_y = (projection.fovy.0 / 2.0).tan();
+        let tan_x = tan_y * projection.aspect;
 
-        let forward = (inv_view * Vector4::new(0.0, 0.0, -1.0, 0.0))
-            .truncate()
-            .normalize();
-        let up_cam = (inv_view * Vector4::new(0.0, 1.0, 0.0, 0.0))
-            .truncate()
-            .normalize();
-        let right_cam = (inv_view * Vector4::new(1.0, 0.0, 0.0, 0.0))
-            .truncate()
-            .normalize();
-
-        let fov = projection.fovy.0;
-        let aspect = projection.aspect;
-        let near = projection.znear;
-        let far = SHADOW_DISTANCE;
-
-        let nc = camera_pos + forward * near;
-        let fc = camera_pos + forward * far;
-
-        let near_height = 2.0 * (fov / 2.0).tan() * near;
-        let near_width = near_height * aspect;
-        let far_height = 2.0 * (fov / 2.0).tan() * far;
-        let far_width = far_height * aspect;
-
-        let frustum_corners = [
-            nc + up_cam * (near_height / 2.0) - right_cam * (near_width / 2.0),
-            nc + up_cam * (near_height / 2.0) + right_cam * (near_width / 2.0),
-            nc - up_cam * (near_height / 2.0) - right_cam * (near_width / 2.0),
-            nc - up_cam * (near_height / 2.0) + right_cam * (near_width / 2.0),
-            fc + up_cam * (far_height / 2.0) - right_cam * (far_width / 2.0),
-            fc + up_cam * (far_height / 2.0) + right_cam * (far_width / 2.0),
-            fc - up_cam * (far_height / 2.0) - right_cam * (far_width / 2.0),
-            fc - up_cam * (far_height / 2.0) + right_cam * (far_width / 2.0),
-        ];
-
-        let mut center = Point3::new(0.0, 0.0, 0.0);
-        for corner in &frustum_corners {
-            center += corner.to_vec();
-        }
-        center /= 8.0;
-
+        // Rotation into light space: looking along the sunlight.
         let light_direction = -self.position.to_vec().normalize();
-        let distance = SHADOW_DISTANCE;
-        let light_pos = center - light_direction * distance;
-
         let light_up = if light_direction.x.abs() < 0.001 && light_direction.z.abs() < 0.001 {
             Vector3::unit_z()
         } else {
             Vector3::unit_y()
         };
+        let light_view =
+            Matrix4::look_at_rh(Point3::origin(), Point3::from_vec(light_direction), light_up);
 
-        self.light_view = Matrix4::look_at_rh(light_pos, center, light_up);
+        let splits = cascade_splits(projection.znear, SHADOW_DISTANCE);
+        let mut near = projection.znear;
+        for (cascade, far) in self.cascades.iter_mut().zip(splits) {
+            let corners: Vec<Point3<f32>> = [near, far]
+                .iter()
+                .flat_map(|&d| {
+                    let c = eye + forward * d;
+                    let (h, w) = (up * tan_y * d, right * tan_x * d);
+                    [c + h - w, c + h + w, c - h - w, c - h + w]
+                })
+                .collect();
+            let center = Point3::centroid(&corners);
+            // A sphere around the slice keeps the cascade the same size
+            // whichever way the camera turns, so its texels do not swim.
+            let radius = corners
+                .iter()
+                .map(|c| (c - center).magnitude())
+                .fold(0.0, f32::max);
+            let radius = (radius * 16.0).ceil() / 16.0;
+            let texel = 2.0 * radius / resolution as f32;
 
-        let mut min_x = f32::MAX;
-        let mut max_x = f32::MIN;
-        let mut min_y = f32::MAX;
-        let mut max_y = f32::MIN;
-        let mut min_z = f32::MAX;
-        let mut max_z = f32::MIN;
-
-        for corner in &frustum_corners {
-            let trf = self.light_view * Vector4::new(corner.x, corner.y, corner.z, 1.0);
-            min_x = min_x.min(trf.x);
-            max_x = max_x.max(trf.x);
-            min_y = min_y.min(trf.y);
-            max_y = max_y.max(trf.y);
-            min_z = min_z.min(trf.z);
-            max_z = max_z.max(trf.z);
+            // Move the cascade in whole texels only, for the same reason.
+            let c = light_view * center.to_homogeneous();
+            let (cx, cy) = ((c.x / texel).floor() * texel, (c.y / texel).floor() * texel);
+            let depth = -c.z;
+            let projection = ortho(
+                cx - radius,
+                cx + radius,
+                cy - radius,
+                cy + radius,
+                depth - radius - CASTER_MARGIN,
+                depth + radius,
+            );
+            *cascade = ShadowCascade {
+                view_projection: projection * light_view,
+                texel_size: texel,
+            };
+            near = far;
         }
+    }
 
-        self.shadow_box
-            .update_tight(self.light_view, min_x, max_x, min_y, max_y, min_z, max_z);
+    /// The shadow cascades, nearest first.
+    pub fn shadow_cascades(&self) -> &[ShadowCascade; SHADOW_CASCADES] {
+        &self.cascades
     }
 
     pub fn get_position(&self) -> Point3<f32> {
         self.position
     }
 
-    pub fn get_projection(&self) -> Matrix4<f32> {
-        self.shadow_box.light_projection * self.light_view
-    }
 }
 
 impl SkyLight {
@@ -227,10 +223,12 @@ impl SkyLight {
     }
 
     fn refit_to_active_camera(&mut self, scene: &Scene) {
-        if let Some(camera_component) = scene.get_active_camera() {
+        if let (Some(camera_component), Some((resolution, _))) =
+            (scene.get_active_camera(), scene.get_shadow_map_size())
+        {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();
-            self.update_light_view(camera, projection);
+            self.update_light_view(camera, projection, resolution);
         }
     }
 }
@@ -285,61 +283,38 @@ impl Component for SkyLight {
     }
 }
 
-#[derive(Debug)]
-struct ShadowBox {
-    min_x: f32,
-    max_x: f32,
-    min_y: f32,
-    max_y: f32,
-    min_z: f32,
-    max_z: f32,
-
-    light_view: Matrix4<f32>,
-    light_projection: Matrix4<f32>,
+/// One cascade of the sun's shadow map.
+#[derive(Clone, Copy, Debug)]
+pub struct ShadowCascade {
+    /// World to the cascade's clip space.
+    pub view_projection: Matrix4<f32>,
+    /// World size of one shadow map texel.
+    pub texel_size: f32,
 }
 
-impl ShadowBox {
-    fn new(light_view: Matrix4<f32>) -> Self {
-        Self {
-            min_x: 0.0,
-            max_x: 0.0,
-            min_y: 0.0,
-            max_y: 0.0,
-            min_z: 0.0,
-            max_z: 0.0,
-            light_view,
-            light_projection: Matrix4::identity(),
+/// Far distance of each cascade: the "practical split scheme", a mix of
+/// logarithmic splits (even detail per distance) and even ones.
+fn cascade_splits(near: f32, far: f32) -> [f32; SHADOW_CASCADES] {
+    std::array::from_fn(|i| {
+        let t = (i + 1) as f32 / SHADOW_CASCADES as f32;
+        let logarithmic = near * (far / near).powf(t);
+        let even = near + (far - near) * t;
+        SPLIT_LAMBDA * logarithmic + (1.0 - SPLIT_LAMBDA) * even
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cascades_split_the_shadow_distance_closer_near_the_camera() {
+        let splits = cascade_splits(0.1, SHADOW_DISTANCE);
+        assert!((splits[SHADOW_CASCADES - 1] - SHADOW_DISTANCE).abs() < 1e-3);
+        for pair in splits.windows(2) {
+            assert!(pair[0] < pair[1]);
         }
-    }
-
-    fn update_tight(
-        &mut self,
-        light_view: Matrix4<f32>,
-        min_x: f32,
-        max_x: f32,
-        min_y: f32,
-        max_y: f32,
-        min_z: f32,
-        max_z: f32,
-    ) {
-        self.light_view = light_view;
-
-        // Use exact bounds of the view frustum in light space
-        self.min_x = min_x;
-        self.max_x = max_x;
-        self.min_y = min_y;
-        self.max_y = max_y;
-        self.min_z = min_z;
-        self.max_z = max_z;
-
-        self.update_projection();
-    }
-
-    fn update_projection(&mut self) {
-        // Extend the near plane significantly backwards to catch shadow casters in front of the camera
-        let near = -self.max_z - OFFSET;
-        // Extend the far plane slightly
-        let far = -self.min_z + OFFSET;
-        self.light_projection = ortho(self.min_x, self.max_x, self.min_y, self.max_y, near, far);
+        // The first cascade covers far less than an even share.
+        assert!(splits[0] < SHADOW_DISTANCE / SHADOW_CASCADES as f32);
     }
 }

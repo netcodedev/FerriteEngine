@@ -429,7 +429,6 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
     ) {
         if let Some(skylight) = scene.get_component::<SkyLight>() {
             let light_position = skylight.get_position();
-            let light_projection = skylight.get_projection();
             self.shader.bind();
             self.shader.set_uniform_3f(
                 "lightPosition",
@@ -437,9 +436,6 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 light_position.y,
                 light_position.z,
             );
-            self.shader
-                .set_uniform_mat4("lightProjection", &light_projection);
-            self.shader.set_uniform_1i("shadowMap", 15);
             self.shader
                 .set_uniform_1f("cloudCoverage", skylight.get_cloud_coverage());
             let sun = skylight.get_sun_direction();

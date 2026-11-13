@@ -52,6 +52,34 @@ impl Texture {
         }
     }
 
+    /// An array of `layers` depth maps (16 bit), one per shadow cascade.
+    /// Outside the maps the depth reads as far away, i.e. lit.
+    pub fn set_as_depth_array(&mut self, width: u32, height: u32, layers: u32) {
+        self.target = gl::TEXTURE_2D_ARRAY;
+        self.bind();
+        unsafe {
+            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_BORDER as i32);
+            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_BORDER as i32);
+            let border = [1.0f32, 1.0, 1.0, 1.0];
+            gl::TexParameterfv(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_BORDER_COLOR, border.as_ptr());
+            gl::TexImage3D(
+                gl::TEXTURE_2D_ARRAY,
+                0,
+                gl::DEPTH_COMPONENT16 as GLint,
+                width as GLsizei,
+                height as GLsizei,
+                layers as GLsizei,
+                0,
+                gl::DEPTH_COMPONENT,
+                gl::FLOAT,
+                std::ptr::null(),
+            );
+            gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
+        }
+    }
+
     pub fn set_as_color_texture(&self, width: u32, height: u32) {
         self.bind();
         unsafe {

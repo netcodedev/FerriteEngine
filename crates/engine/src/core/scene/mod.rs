@@ -1,7 +1,10 @@
 use super::{
     entity::{component::camera_component::CameraComponent, Entity},
     physics::physics_engine::PhysicsEngine,
-    renderer::{framebuffer::ShadowFrameBuffer, texture::TextureRenderer},
+    renderer::{
+        framebuffer::{CascadedShadowMap, ShadowFrameBuffer},
+        texture::TextureRenderer,
+    },
 };
 
 mod scene;
@@ -10,7 +13,7 @@ pub mod scene_file;
 pub struct Scene {
     entities: Vec<Entity>,
     pub physics_engine: PhysicsEngine,
-    shadow_fbo: Option<ShadowFrameBuffer>,
+    shadow_fbo: Option<CascadedShadowMap>,
     /// Camera-perspective depth capture — terrain only, no water.
     terrain_debug_fbo: Option<ShadowFrameBuffer>,
     /// Camera-perspective depth+colour capture — terrain depth + water on top.

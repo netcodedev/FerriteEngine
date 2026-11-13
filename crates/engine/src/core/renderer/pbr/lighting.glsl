@@ -20,24 +20,32 @@ uniform vec3 cameraPosition;
 uniform float cloudCoverage;   // 0..1
 uniform int isShadowPass;
 uniform int useShadowMap;
-uniform sampler2D shadowMap;
-uniform mat4 lightProjection;
 
-float sunShadow(vec3 worldPos, vec3 geometryNormal, vec3 L) {
-    if (useShadowMap == 0) {
-        return 1.0;
-    }
-    // Offsetting along the normal keeps a model from shadowing itself.
-    vec4 lightSpace = lightProjection * vec4(worldPos + geometryNormal * 0.03, 1.0);
-    vec3 p = lightSpace.xyz / lightSpace.w * 0.5 + 0.5;
-    if (p.z > 1.0) {
-        return 1.0;
-    }
-    float bias = max(0.0004 * (1.0 - dot(geometryNormal, L)), 0.0002);
+// Cascaded shadow map: one depth layer per cascade, nearest first. Must
+// match `SHADOW_CASCADES` in `light/skylight.rs`.
+const int SHADOW_CASCADES = 4;
+uniform sampler2DArray shadowMap;
+uniform mat4 lightProjections[SHADOW_CASCADES];
+// World size of one texel of each cascade.
+uniform float cascadeTexel[SHADOW_CASCADES];
+// Fraction at a cascade's border over which it fades into the next.
+const float CASCADE_BLEND = 0.1;
+
+vec3 cascadeCoord(int cascade, vec3 worldPos) {
+    vec4 lightSpace = lightProjections[cascade] * vec4(worldPos, 1.0);
+    return lightSpace.xyz / lightSpace.w * 0.5 + 0.5;
+}
+
+// Light reaching `worldPos` in one cascade, 0..1.
+float cascadeShadow(int cascade, vec3 worldPos, vec3 geometryNormal, vec3 L) {
+    // Offsetting along the normal by about a texel keeps surfaces from
+    // shadowing themselves; texels grow with the cascade.
+    vec3 p = cascadeCoord(cascade, worldPos + geometryNormal * cascadeTexel[cascade] * 1.5);
+    float bias = 0.0002 + 0.0004 * (1.0 - max(dot(geometryNormal, L), 0.0));
     float reference = p.z - bias;
     // Bilinear 3x3 PCF: 4x4 texel tests weighted by where the point falls
     // between texels, so shadow edges are smooth instead of texel steps.
-    ivec2 size = textureSize(shadowMap, 0);
+    ivec2 size = textureSize(shadowMap, 0).xy;
     vec2 texel = p.xy * vec2(size) - 0.5;
     ivec2 base = ivec2(floor(texel));
     vec2 f = texel - floor(texel);
@@ -47,11 +55,38 @@ float sunShadow(vec3 worldPos, vec3 geometryNormal, vec3 L) {
     for (int j = 0; j < 4; ++j) {
         for (int i = 0; i < 4; ++i) {
             ivec2 at = clamp(base + ivec2(i - 1, j - 1), ivec2(0), size - 1);
-            float depth = texelFetch(shadowMap, at, 0).r;
+            float depth = texelFetch(shadowMap, ivec3(at, cascade), 0).r;
             lit += wx[i] * wy[j] * (reference > depth ? 0.0 : 1.0);
         }
     }
     return lit / 9.0;
+}
+
+// Light reaching `worldPos` from the sun, 0..1, from the nearest cascade
+// that covers it, faded into the next one at its border. Beyond the last
+// cascade everything is lit.
+float sunShadow(vec3 worldPos, vec3 geometryNormal, vec3 L) {
+    if (useShadowMap == 0) {
+        return 1.0;
+    }
+    for (int i = 0; i < SHADOW_CASCADES; ++i) {
+        vec3 p = cascadeCoord(i, worldPos);
+        // How far toward the border, 0 at the centre, 1 at the edge.
+        float edge = max(abs(p.x * 2.0 - 1.0), abs(p.y * 2.0 - 1.0));
+        if (edge >= 0.98 || p.z <= 0.0 || p.z >= 1.0) {
+            continue;
+        }
+        float shadow = cascadeShadow(i, worldPos, geometryNormal, L);
+        float fade = smoothstep(0.98 - CASCADE_BLEND, 0.98, edge);
+        if (fade > 0.0) {
+            float next = i + 1 < SHADOW_CASCADES
+                ? cascadeShadow(i + 1, worldPos, geometryNormal, L)
+                : 1.0;
+            shadow = mix(shadow, next, fade);
+        }
+        return shadow;
+    }
+    return 1.0;
 }
 
 vec3 sunRadiance() {

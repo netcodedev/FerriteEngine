@@ -37,9 +37,10 @@ use crate::core::{
         shader::Shader,
     },
     scene::Scene,
+    view_frustum::ViewFrustum,
 };
 
-use super::{dual_contouring::WATER_LEVEL, CHUNK_SIZE_FLOAT};
+use super::{dual_contouring::WATER_LEVEL, ChunkBounds, CHUNK_SIZE_FLOAT};
 
 /// Height band scattered models may stand in: clear of the water and below
 /// the bare peaks.
@@ -527,6 +528,8 @@ pub struct ScatterInstances {
     /// are preserved so indices align with `ScatterModel::variants`.
     instances_by_variant: Vec<Vec<Matrix4<f32>>>,
     center: Point3<f32>,
+    /// Box around every instance, for frustum culling.
+    bounds: ChunkBounds,
     /// Colliders these instances added, so they can be taken out again
     /// without removing the chunk they stand on.
     colliders: Vec<ColliderHandle>,
@@ -568,6 +571,10 @@ impl ScatterInstances {
                 spec,
                 instances_by_variant: Vec::new(),
                 center: Point3::new(0.0, 0.0, 0.0),
+                bounds: ChunkBounds {
+                    min: (0, 0, 0),
+                    max: (0, 0, 0),
+                },
                 colliders: Vec::new(),
                 gpu: RefCell::new(None),
             };
@@ -590,10 +597,30 @@ impl ScatterInstances {
             });
         let center = Point3::from_vec(sum / placements.len() as f32);
 
+        // Every variant's box, turned any way around its upright axis.
+        let (mut reach, mut low, mut high) = (0.0f32, 0.0f32, 0.0f32);
+        for variant in &spec.model.variants {
+            let (min, max) = variant.bounds;
+            reach = reach.max(min[0].abs()).max(max[0].abs()).max(min[2].abs()).max(max[2].abs());
+            low = low.min(min[1]);
+            high = high.max(max[1]);
+        }
+        let mut min = [f32::MAX; 3];
+        let mut max = [f32::MIN; 3];
+        for &(x, y, z, _) in placements {
+            min = [min[0].min(x - reach), min[1].min(y + low), min[2].min(z - reach)];
+            max = [max[0].max(x + reach), max[1].max(y + high), max[2].max(z + reach)];
+        }
+        let bounds = ChunkBounds {
+            min: (min[0].floor() as i32, min[1].floor() as i32, min[2].floor() as i32),
+            max: (max[0].ceil() as i32, max[1].ceil() as i32, max[2].ceil() as i32),
+        };
+
         Self {
             spec,
             instances_by_variant,
             center,
+            bounds,
             colliders: Vec::new(),
             gpu: RefCell::new(None),
         }
@@ -783,6 +810,9 @@ impl Component for ScatterInstances {
         view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
     ) {
+        if !ViewFrustum::is_bounds_in_frustum_matrix(view_projection, self.bounds) {
+            return;
+        }
         let Some(lighting) = Lighting::from_scene(scene) else {
             return;
         };

@@ -3,11 +3,15 @@
 
 use std::collections::HashMap;
 
-use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, Vector3};
+use cgmath::{EuclideanSpace, InnerSpace, Point3, Vector3};
 use russimp_ng::material::TextureType;
 
 use crate::core::{
-    renderer::{light::skylight::SkyLight, shader::Shader, texture::Texture},
+    renderer::{
+        light::skylight::{ShadowCascade, SkyLight, SHADOW_CASCADES},
+        shader::Shader,
+        texture::Texture,
+    },
     scene::Scene,
 };
 
@@ -31,8 +35,8 @@ pub struct Lighting {
     pub sun_direction: Vector3<f32>,
     pub camera_position: Point3<f32>,
     pub cloud_coverage: f32,
-    /// The sun's view-projection, when the scene has a shadow map.
-    pub light_projection: Option<Matrix4<f32>>,
+    /// The sun's shadow cascades, when the scene has a shadow map.
+    pub shadow_cascades: Option<[ShadowCascade; SHADOW_CASCADES]>,
 }
 
 impl Lighting {
@@ -47,9 +51,9 @@ impl Lighting {
             sun_direction: skylight.get_sun_direction().normalize(),
             camera_position,
             cloud_coverage: skylight.get_cloud_coverage(),
-            light_projection: scene
+            shadow_cascades: scene
                 .get_shadow_map_size()
-                .map(|_| skylight.get_projection()),
+                .map(|_| *skylight.shadow_cascades()),
         })
     }
 
@@ -59,7 +63,7 @@ impl Lighting {
             sun_direction: sun_direction.normalize(),
             camera_position,
             cloud_coverage: 0.0,
-            light_projection: None,
+            shadow_cascades: None,
         }
     }
 
@@ -75,9 +79,15 @@ impl Lighting {
         shader.set_uniform_3f("cameraPosition", eye.x, eye.y, eye.z);
         shader.set_uniform_1f("cloudCoverage", self.cloud_coverage);
         shader.set_uniform_1i("shadowMap", SHADOW_MAP_UNIT);
-        match &self.light_projection {
-            Some(projection) => {
-                shader.set_uniform_mat4("lightProjection", projection);
+        match &self.shadow_cascades {
+            Some(cascades) => {
+                for (i, cascade) in cascades.iter().enumerate() {
+                    shader.set_uniform_mat4(
+                        &format!("lightProjections[{i}]"),
+                        &cascade.view_projection,
+                    );
+                    shader.set_uniform_1f(&format!("cascadeTexel[{i}]"), cascade.texel_size);
+                }
                 shader.set_uniform_1i("useShadowMap", 1);
             }
             None => shader.set_uniform_1i("useShadowMap", 0),

@@ -136,3 +136,54 @@ impl ShadowFrameBuffer {
         self.0.get_id()
     }
 }
+
+/// The sun's cascaded shadow map: one depth layer per cascade, drawn one at
+/// a time.
+pub struct CascadedShadowMap {
+    id: u32,
+    size: u32,
+    texture: Texture,
+}
+
+impl CascadedShadowMap {
+    pub fn new(size: u32, cascades: u32) -> Self {
+        let mut texture = Texture::new();
+        texture.set_as_depth_array(size, size, cascades);
+        let mut id = 0;
+        unsafe {
+            gl::GenFramebuffers(1, &mut id);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, id);
+            gl::DrawBuffer(gl::NONE);
+            gl::ReadBuffer(gl::NONE);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        }
+        Self { id, size, texture }
+    }
+
+    /// Draw into the depth layer of `cascade` from now on.
+    pub fn bind_cascade(&self, cascade: u32) {
+        unsafe {
+            gl::BindFramebuffer(gl::FRAMEBUFFER, self.id);
+            gl::FramebufferTextureLayer(
+                gl::FRAMEBUFFER,
+                gl::DEPTH_ATTACHMENT,
+                self.texture.id,
+                0,
+                cascade as i32,
+            );
+            gl::Viewport(0, 0, self.size as i32, self.size as i32);
+        }
+    }
+
+    pub fn texture(&self) -> &Texture {
+        &self.texture
+    }
+}
+
+impl Drop for CascadedShadowMap {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteFramebuffers(1, &self.id);
+        }
+    }
+}

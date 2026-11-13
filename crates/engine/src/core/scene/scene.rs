@@ -8,9 +8,9 @@ use crate::core::{
     },
     physics::{collider_debug, physics_engine::PhysicsEngine, rigidbody::RigidBody},
     renderer::{
-        framebuffer::{FrameBuffer, ShadowFrameBuffer},
+        framebuffer::{CascadedShadowMap, FrameBuffer, ShadowFrameBuffer},
         line::Line,
-        light::skylight::SkyLight,
+        light::skylight::{SkyLight, SHADOW_CASCADES},
         sky::SkyRenderer,
         texture::TextureRenderer,
     },
@@ -38,7 +38,8 @@ impl Scene {
     }
 
     pub fn add_shadow_map(&mut self, width: u32, height: u32) {
-        self.shadow_fbo = Some(ShadowFrameBuffer::new(width, height));
+        // One square layer per cascade; the scene file's size is a layer's.
+        self.shadow_fbo = Some(CascadedShadowMap::new(width.max(height), SHADOW_CASCADES as u32));
         self.shadow_map_size = Some((width, height));
     }
 
@@ -148,15 +149,17 @@ impl Scene {
         // Shadow Pass
         if let Some(shadow_fbo) = &self.shadow_fbo {
             if let Some(skylight) = self.get_component::<SkyLight>() {
-                let light_projection = skylight.get_projection();
                 unsafe {
+                    // Unbound while drawn into, to prevent a feedback loop.
                     gl::ActiveTexture(gl::TEXTURE15);
-                    gl::BindTexture(gl::TEXTURE_2D, 0); // Unbind to prevent read/write feedback loop
                 }
-                shadow_fbo.bind();
-                window.clear_mask(gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT);
-                for entity in self.entities.iter() {
-                    entity.render(self, &light_projection, parent_transform);
+                shadow_fbo.texture().unbind_target();
+                for (index, cascade) in skylight.shadow_cascades().iter().enumerate() {
+                    shadow_fbo.bind_cascade(index as u32);
+                    window.clear_mask(gl::DEPTH_BUFFER_BIT);
+                    for entity in self.entities.iter() {
+                        entity.render(self, &cascade.view_projection, parent_transform);
+                    }
                 }
                 FrameBuffer::unbind();
                 self.apply_viewport(window);
@@ -197,12 +200,10 @@ impl Scene {
             }
 
             if let Some(shadow_fbo) = &self.shadow_fbo {
-                if let Some(texture) = &shadow_fbo.get_depth_texture() {
-                    unsafe {
-                        gl::ActiveTexture(gl::TEXTURE15);
-                    }
-                    texture.bind();
+                unsafe {
+                    gl::ActiveTexture(gl::TEXTURE15);
                 }
+                shadow_fbo.texture().bind();
             }
             for entity in self.entities.iter() {
                 entity.render(self, &view_projection, parent_transform);
@@ -247,14 +248,14 @@ impl Scene {
 
             // ── 2 × 2 panel layout on the right half of the screen ───────
             //
-            //   x = 0.5 … 0.75           x = 0.75 … 1.0
-            //  ┌────────────────────┬────────────────────┐  y = 0.5
-            //  │  terrain depth     │  shadow depth      │
-            //  │  (camera POV)      │  (light POV)       │
-            //  ├────────────────────┼────────────────────┤  y = 0.0
-            //  │  water depth       │  shadow colour     │
-            //  │  (camera POV)      │                    │
-            //  └────────────────────┴────────────────────┘
+            //   x = 0.5 … 0.75
+            //  ┌────────────────────┐  y = 0.5
+            //  │  terrain depth     │
+            //  │  (camera POV)      │
+            //  ├────────────────────┤  y = 0.0
+            //  │  water depth       │
+            //  │  (camera POV)      │
+            //  └────────────────────┘
             //
             if let Some(tfbo) = &self.terrain_debug_fbo {
                 if let Some(tex) = tfbo.get_depth_texture() {
@@ -264,14 +265,6 @@ impl Scene {
             if let Some(wfbo) = &self.water_debug_fbo {
                 if let Some(tex) = wfbo.get_depth_texture() {
                     self.texture_renderer.render_depth(tex, 0.5, 0.0, 0.25, 0.5);
-                }
-            }
-            if let Some(sfbo) = &self.shadow_fbo {
-                if let Some(tex) = sfbo.get_depth_texture() {
-                    self.texture_renderer.render_depth(tex, 0.75, 0.5, 0.25, 0.5);
-                }
-                if let Some(tex) = sfbo.get_color_texture() {
-                    self.texture_renderer.render_color(tex, 0.75, 0.0, 0.25, 0.5);
                 }
             }
         }
