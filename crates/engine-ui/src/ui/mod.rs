@@ -22,6 +22,11 @@ pub trait UIElement {
     /// should forward this call to their children; leaf elements default to
     /// a no-op.
     fn render_overlay(&self) {}
+    /// While true, this top-level element gets every event before its
+    /// siblings, so a modal is not shadowed by a panel underneath it.
+    fn is_modal(&self) -> bool {
+        false
+    }
     fn handle_events(
         &mut self,
         scene: &mut Scene,

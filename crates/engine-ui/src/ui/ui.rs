@@ -94,6 +94,11 @@ impl UI {
         event: &WindowEvent,
     ) -> bool {
         for (_, child) in &mut self.children {
+            if child.is_modal() {
+                return child.handle_events(scene, window, glfw, event);
+            }
+        }
+        for (_, child) in &mut self.children {
             if child.handle_events(scene, window, glfw, event) {
                 return true;
             }

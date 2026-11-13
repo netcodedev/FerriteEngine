@@ -403,6 +403,10 @@ impl UIElement for ModalHost {
 
     fn render(&self) {}
 
+    fn is_modal(&self) -> bool {
+        self.current.is_some()
+    }
+
     fn render_overlay(&self) {
         if let Some(modal) = &self.current {
             modal.popup.render_overlay();
