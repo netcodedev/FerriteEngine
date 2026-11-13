@@ -1,3 +1,5 @@
+use std::cell::{Cell, RefCell};
+
 use cgmath::{InnerSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
 use glfw::{Action, Glfw, Key, WindowEvent};
 
@@ -14,6 +16,7 @@ use crate::core::{
         line::Line,
         light::skylight::{SkyLight, SHADOW_CASCADES},
         sky::SkyRenderer,
+        ssao::Ssao,
         texture::TextureRenderer,
     },
     scene::scene_file::ComponentData,
@@ -38,6 +41,8 @@ impl Scene {
             editor_camera: None,
             physics_enabled: true,
             viewport: None,
+            ssao: RefCell::new(None),
+            ambient_occlusion_origin: Cell::new(None),
             deferred: Vec::new(),
         }
     }
@@ -151,6 +156,18 @@ impl Scene {
         self.viewport = viewport;
     }
 
+    /// Window position of the ambient occlusion while the camera's view is
+    /// shaded with it (it is bound to `ssao::SSAO_UNIT` then).
+    pub fn ambient_occlusion_origin(&self) -> Option<[i32; 2]> {
+        self.ambient_occlusion_origin.get()
+    }
+
+    /// GL name of the last frame's ambient occlusion (one red channel, as big
+    /// as the viewport), for debug views.
+    pub fn ambient_occlusion_texture(&self) -> Option<u32> {
+        self.ssao.borrow().as_ref().and_then(Ssao::result_texture)
+    }
+
     fn apply_viewport(&self, window: &Window) {
         match self.viewport {
             Some([x, y, w, h]) => unsafe { gl::Viewport(x, y, w.max(1), h.max(1)) },
@@ -238,8 +255,31 @@ impl Scene {
 
         // Render Pass
         self.apply_viewport(window);
+        self.ambient_occlusion_origin.set(None);
         if let Some(camera) = self.get_active_camera() {
             let view_projection = camera.get_view_projection();
+
+            // Ambient occlusion — the opaque scene's depth from the camera,
+            // and from it the occlusion the lit shaders darken their ambient
+            // light by.
+            let ambient_occlusion = self
+                .get_component::<SkyLight>()
+                .map(|skylight| *skylight.ambient_occlusion())
+                .filter(|settings| settings.enabled);
+            if let Some(settings) = ambient_occlusion {
+                let mut viewport = [0; 4];
+                unsafe { gl::GetIntegerv(gl::VIEWPORT, viewport.as_mut_ptr()) };
+                let mut ssao = self.ssao.borrow_mut();
+                let ssao = ssao.get_or_insert_with(Ssao::new);
+                ssao.begin_depth_pass(viewport[2], viewport[3]);
+                for entity in self.entities.iter() {
+                    entity.render(self, &view_projection, parent_transform);
+                }
+                ssao.resolve(&camera.get_projection().get_matrix(), &settings);
+                ssao.bind_result();
+                self.apply_viewport(window);
+                self.ambient_occlusion_origin.set(Some([viewport[0], viewport[1]]));
+            }
 
             // Sky pass — runs before opaque geometry so terrain/water overdraw
             // it naturally via the depth test. Depth write is disabled inside
@@ -284,6 +324,7 @@ impl Scene {
             for entity in self.entities.iter() {
                 entity.render_transparent(self, &view_projection, parent_transform);
             }
+            self.ambient_occlusion_origin.set(None);
         }
 
         // ── Debug overlay (F10) ───────────────────────────────────────────

@@ -5,5 +5,6 @@ pub mod pbr;
 pub mod plane;
 pub mod shader;
 pub mod sky;
+pub mod ssao;
 pub mod text;
 pub mod texture;

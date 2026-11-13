@@ -31,6 +31,20 @@ uniform float cascadeTexel[SHADOW_CASCADES];
 // Fraction at a cascade's border over which it fades into the next.
 const float CASCADE_BLEND = 0.1;
 
+// Screen space ambient occlusion of the camera's view (`renderer/ssao`),
+// one texel per pixel of the viewport, which starts at `ssaoOrigin`.
+uniform int useSsao;
+uniform sampler2D ssaoMap;
+uniform ivec2 ssaoOrigin;
+
+// Share of the sky this pixel sees past the geometry around it, 0..1.
+float screenOcclusion() {
+    if (useSsao == 0 || isShadowPass == 1) {
+        return 1.0;
+    }
+    return texelFetch(ssaoMap, ivec2(gl_FragCoord.xy) - ssaoOrigin, 0).r;
+}
+
 vec3 cascadeCoord(int cascade, vec3 worldPos) {
     vec4 lightSpace = lightProjections[cascade] * vec4(worldPos, 1.0);
     return lightSpace.xyz / lightSpace.w * 0.5 + 0.5;
@@ -141,7 +155,8 @@ vec3 envBrdf(vec3 F0, float roughness, float NdotV) {
 
 // Light leaving a surface toward the camera, in linear space. `N` is the
 // shading normal, `Ng` the geometric one (for shadow lookups); `sunFactor`
-// dims the direct sun, e.g. for cloud shadows.
+// dims the direct sun, e.g. for cloud shadows. The ambient light is
+// darkened by `ao` and by the screen space occlusion.
 vec3 shadeSurface(vec3 worldPos, vec3 N, vec3 Ng, vec3 albedo, float roughness,
                   float metallic, float ao, float sunFactor) {
     vec3 V = normalize(cameraPosition - worldPos);
@@ -165,7 +180,7 @@ vec3 shadeSurface(vec3 worldPos, vec3 N, vec3 Ng, vec3 albedo, float roughness,
 
     vec3 ambient = skyLight(N) * albedo * (1.0 - metallic)
         + skyLight(reflect(-V, N)) * envBrdf(F0, roughness, NdotV);
-    return direct + ambient * ao;
+    return direct + ambient * ao * screenOcclusion();
 }
 
 // Linear colour to what the framebuffer expects (gamma 2.2, clamped).

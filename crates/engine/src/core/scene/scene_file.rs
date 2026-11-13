@@ -18,7 +18,7 @@ use crate::{
             },
             Entity, EntityHandle,
         },
-        renderer::light::skylight::SkyLight,
+        renderer::{light::skylight::SkyLight, ssao::AmbientOcclusionSettings},
         script,
     },
     player::{build_animation_graph, default_animation_graph, load_graph_file, Player},
@@ -85,6 +85,9 @@ pub enum ComponentData {
         day_length_seconds: f32,
         paused: bool,
         cloud_coverage: f32,
+        /// Missing in scenes saved before it existed: on, with defaults.
+        #[serde(default)]
+        ambient_occlusion: AmbientOcclusionSettings,
     },
     Terrain {
         seed: u64,
@@ -182,6 +185,7 @@ impl ComponentData {
             day_length_seconds: sky.get_day_length_seconds(),
             paused: sky.is_paused(),
             cloud_coverage: sky.get_cloud_coverage(),
+            ambient_occlusion: *sky.ambient_occlusion(),
         }
     }
 
@@ -209,12 +213,14 @@ impl ComponentData {
                 day_length_seconds,
                 paused,
                 cloud_coverage,
+                ambient_occlusion,
             } => {
                 let mut sky = SkyLight::new((30.0, 20.0, 10.0));
                 sky.set_time_of_day(*time_of_day);
                 sky.set_day_length_seconds(*day_length_seconds);
                 sky.set_paused(*paused);
                 sky.set_cloud_coverage(*cloud_coverage);
+                sky.set_ambient_occlusion(*ambient_occlusion);
                 entity.add_component(sky);
             }
             ComponentData::Terrain { seed, scatter } => {
