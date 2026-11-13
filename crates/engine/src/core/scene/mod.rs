@@ -1,8 +1,11 @@
+use std::cell::{Cell, RefCell};
+
 use super::{
     entity::{component::camera_component::CameraComponent, Entity},
     physics::physics_engine::PhysicsEngine,
     renderer::{
         framebuffer::{CascadedShadowMap, ShadowFrameBuffer},
+        ssao::Ssao,
         texture::TextureRenderer,
     },
 };
@@ -32,6 +35,11 @@ pub struct Scene {
     /// GL viewport `[x, y, width, height]` (bottom-left origin) for the main
     /// render pass. `None` uses the whole window.
     viewport: Option<[i32; 4]>,
+    /// Ambient occlusion targets, made on the first frame that uses them.
+    ssao: RefCell<Option<Ssao>>,
+    /// Window position of the ambient occlusion while the camera's view is
+    /// shaded with it, `None` otherwise (see `pbr::Lighting`).
+    ambient_occlusion_origin: Cell<Option<[i32; 2]>>,
     /// Work queued with `Scene::defer`, run once every entity is updated.
     deferred: Vec<Box<dyn FnOnce(&mut Scene)>>,
 }

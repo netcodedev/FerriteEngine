@@ -7,6 +7,7 @@ use crate::core::{
         component::{Component, Property, PropertyValue},
         Entity,
     },
+    renderer::ssao::AmbientOcclusionSettings,
     scene::{scene_file::ComponentData, Scene},
 };
 
@@ -41,6 +42,8 @@ pub struct SkyLight {
     paused: bool,
     /// Cloud coverage in [0, 1]. 0 ≈ clear sky, 1 ≈ overcast.
     cloud_coverage: f32,
+    /// How the sky light is shaded off in corners and crevices.
+    ambient_occlusion: AmbientOcclusionSettings,
 }
 
 impl SkyLight {
@@ -74,6 +77,7 @@ impl SkyLight {
             day_length_seconds: DEFAULT_DAY_LENGTH_SECONDS,
             paused: false,
             cloud_coverage: 0.45,
+            ambient_occlusion: AmbientOcclusionSettings::default(),
         };
         sl.position = Point3::from_vec(sl.compute_sun_direction() * SUN_DISTANCE);
         sl
@@ -117,6 +121,16 @@ impl SkyLight {
 
     pub fn adjust_cloud_coverage(&mut self, delta: f32) {
         self.set_cloud_coverage(self.cloud_coverage + delta);
+    }
+
+    pub fn ambient_occlusion(&self) -> &AmbientOcclusionSettings {
+        &self.ambient_occlusion
+    }
+
+    pub fn set_ambient_occlusion(&mut self, settings: AmbientOcclusionSettings) {
+        self.ambient_occlusion.enabled = settings.enabled;
+        self.ambient_occlusion.set_radius(settings.radius);
+        self.ambient_occlusion.set_intensity(settings.intensity);
     }
 
     /// Advance (or rewind) the clock by `delta` of a day. `delta = 1/24`
@@ -260,6 +274,7 @@ impl Component for SkyLight {
             day_length_seconds: self.day_length_seconds,
             paused: self.paused,
             cloud_coverage: self.cloud_coverage,
+            ambient_occlusion: self.ambient_occlusion,
         })
     }
 
@@ -269,6 +284,19 @@ impl Component for SkyLight {
             Property::float("day length (s)", self.day_length_seconds),
             Property::bool("paused", self.paused),
             Property::ranged("cloud coverage", self.cloud_coverage, 0.0, 1.0),
+            Property::bool("ambient occlusion", self.ambient_occlusion.enabled),
+            Property::ranged(
+                "AO radius",
+                self.ambient_occlusion.radius,
+                AmbientOcclusionSettings::RADIUS_RANGE.0,
+                AmbientOcclusionSettings::RADIUS_RANGE.1,
+            ),
+            Property::ranged(
+                "AO intensity",
+                self.ambient_occlusion.intensity,
+                AmbientOcclusionSettings::INTENSITY_RANGE.0,
+                AmbientOcclusionSettings::INTENSITY_RANGE.1,
+            ),
         ]
     }
 
@@ -278,6 +306,9 @@ impl Component for SkyLight {
             ("day length (s)", PropertyValue::Float(v)) => self.set_day_length_seconds(v),
             ("paused", PropertyValue::Bool(v)) => self.paused = v,
             ("cloud coverage", PropertyValue::Float(v)) => self.set_cloud_coverage(v),
+            ("ambient occlusion", PropertyValue::Bool(v)) => self.ambient_occlusion.enabled = v,
+            ("AO radius", PropertyValue::Float(v)) => self.ambient_occlusion.set_radius(v),
+            ("AO intensity", PropertyValue::Float(v)) => self.ambient_occlusion.set_intensity(v),
             _ => {}
         }
     }

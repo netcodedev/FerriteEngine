@@ -10,6 +10,7 @@ use crate::core::{
     renderer::{
         light::skylight::{ShadowCascade, SkyLight, SHADOW_CASCADES},
         shader::Shader,
+        ssao::SSAO_UNIT,
         texture::Texture,
     },
     scene::Scene,
@@ -37,6 +38,9 @@ pub struct Lighting {
     pub cloud_coverage: f32,
     /// The sun's shadow cascades, when the scene has a shadow map.
     pub shadow_cascades: Option<[ShadowCascade; SHADOW_CASCADES]>,
+    /// Window position of the scene's ambient occlusion (bound to
+    /// `SSAO_UNIT`) while it shades the camera's view.
+    pub ambient_occlusion_origin: Option<[i32; 2]>,
 }
 
 impl Lighting {
@@ -54,6 +58,7 @@ impl Lighting {
             shadow_cascades: scene
                 .get_shadow_map_size()
                 .map(|_| *skylight.shadow_cascades()),
+            ambient_occlusion_origin: scene.ambient_occlusion_origin(),
         })
     }
 
@@ -64,6 +69,7 @@ impl Lighting {
             camera_position,
             cloud_coverage: 0.0,
             shadow_cascades: None,
+            ambient_occlusion_origin: None,
         }
     }
 
@@ -91,6 +97,16 @@ impl Lighting {
                 shader.set_uniform_1i("useShadowMap", 1);
             }
             None => shader.set_uniform_1i("useShadowMap", 0),
+        }
+        // Set even when unused: a sampler left on unit 0 could clash with a
+        // texture array bound there.
+        shader.set_uniform_1i("ssaoMap", SSAO_UNIT as i32);
+        match self.ambient_occlusion_origin {
+            Some([x, y]) => {
+                shader.set_uniform_1i("useSsao", 1);
+                shader.set_uniform_2i("ssaoOrigin", x, y);
+            }
+            None => shader.set_uniform_1i("useSsao", 0),
         }
     }
 }
