@@ -1,6 +1,7 @@
 // Shared physically based lighting (metal/roughness workflow): the sun with
 // its shadow map and cloud cover, the sky as ambient light, and the BRDF.
-// Inserted after the `#version` line; colours are linear until `toDisplay`.
+// Inserted after the `#version` line (after `hdr/tonemap.glsl`); colours
+// are linear until `toDisplay`.
 
 const float PI = 3.14159265;
 
@@ -183,7 +184,16 @@ vec3 shadeSurface(vec3 worldPos, vec3 N, vec3 Ng, vec3 albedo, float roughness,
     return direct + ambient * ao * screenOcclusion();
 }
 
-// Linear colour to what the framebuffer expects (gamma 2.2, clamped).
+// 1 while drawing into the HDR target (`renderer/hdr`), which wants
+// linear light; tone mapping and the sRGB transfer happen after the scene.
+uniform int hdrOutput;
+
+// Linear light to what the framebuffer expects: unchanged for the HDR
+// target, otherwise (previews drawn straight to the window) tone mapped
+// with the default curve. `tonemap.glsl` comes before this file.
 vec3 toDisplay(vec3 color) {
-    return pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2));
+    if (hdrOutput == 1) {
+        return max(color, vec3(0.0));
+    }
+    return linearToSrgb(tonemap(color, TONEMAP_ACES));
 }

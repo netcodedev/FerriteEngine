@@ -11,6 +11,7 @@ use crate::core::{
     assets::MaterialMap,
     renderer::{
         line::{Line, LineRenderer},
+        hdr,
         pbr::{self, Lighting},
         shader::Shader,
         ssao,
@@ -262,9 +263,7 @@ impl Model {
         // Shadow maps and the editor's selection mask draw into their own
         // framebuffers and keep every bone. The ambient occlusion's depth
         // pass has its own too, but sees what the camera sees.
-        let mut framebuffer = 0;
-        unsafe { gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut framebuffer) };
-        let draws_to_screen = framebuffer == 0 || ssao::in_depth_pass();
+        let draws_to_screen = hdr::draws_to_view() || ssao::in_depth_pass();
         self.shader
             .set_uniform_mat4("viewProjection", &camera_projection);
         for (name, mesh) in self.meshes.iter() {

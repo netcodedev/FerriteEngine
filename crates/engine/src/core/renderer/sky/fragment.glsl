@@ -6,6 +6,9 @@ out vec4 FragColor;
 
 uniform sampler2D cloudTexture;
 
+// Linear brightness of the sun disk, relative to a white sky.
+const float SUN_DISK_RADIANCE = 40.0;
+
 void main() {
     vec3 dir = viewRay(ndcPos);
 
@@ -47,7 +50,6 @@ void main() {
     float sunVisible = smoothstep(-0.04, 0.05, sunAlt);
     float sunDisk = smoothstep(0.9994, 0.9998, sunDot);
     float sunHalo = pow(max(sunDot, 0.0), 180.0) * 0.55;
-    sky += vec3(1.00, 0.95, 0.85) * sunDisk * sunVisible;
     sky += vec3(1.00, 0.80, 0.55) * sunHalo * sunVisible;
 
     // ── Clouds ─────────────────────────────────────────────────────────
@@ -90,5 +92,11 @@ void main() {
              * starNight * horizonFade * cloudHide;
     }
 
+    // The colours above are display colours; the HDR target holds linear
+    // light. The sun is far brighter than the sky around it: past what a
+    // display shows, so it rolls off to white and blooms.
+    sky = pow(max(sky, vec3(0.0)), vec3(2.2));
+    float sunCover = 1.0 - clouds.a;
+    sky += vec3(1.00, 0.95, 0.85) * SUN_DISK_RADIANCE * sunDisk * sunVisible * sunCover;
     FragColor = vec4(sky, 1.0);
 }

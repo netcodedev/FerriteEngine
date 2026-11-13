@@ -7,7 +7,10 @@ use crate::core::{
         component::{Component, Property, PropertyValue},
         Entity,
     },
-    renderer::ssao::AmbientOcclusionSettings,
+    renderer::{
+        hdr::{HdrSettings, Tonemapper},
+        ssao::AmbientOcclusionSettings,
+    },
     scene::{scene_file::ComponentData, Scene},
 };
 
@@ -44,6 +47,8 @@ pub struct SkyLight {
     cloud_coverage: f32,
     /// How the sky light is shaded off in corners and crevices.
     ambient_occlusion: AmbientOcclusionSettings,
+    /// Exposure, tone mapping and bloom of the camera's view.
+    hdr: HdrSettings,
 }
 
 impl SkyLight {
@@ -78,6 +83,7 @@ impl SkyLight {
             paused: false,
             cloud_coverage: 0.45,
             ambient_occlusion: AmbientOcclusionSettings::default(),
+            hdr: HdrSettings::default(),
         };
         sl.position = Point3::from_vec(sl.compute_sun_direction() * SUN_DISTANCE);
         sl
@@ -131,6 +137,14 @@ impl SkyLight {
         self.ambient_occlusion.enabled = settings.enabled;
         self.ambient_occlusion.set_radius(settings.radius);
         self.ambient_occlusion.set_intensity(settings.intensity);
+    }
+
+    pub fn hdr(&self) -> &HdrSettings {
+        &self.hdr
+    }
+
+    pub fn set_hdr(&mut self, settings: HdrSettings) {
+        self.hdr = settings.sanitized();
     }
 
     /// Advance (or rewind) the clock by `delta` of a day. `delta = 1/24`
@@ -275,6 +289,7 @@ impl Component for SkyLight {
             paused: self.paused,
             cloud_coverage: self.cloud_coverage,
             ambient_occlusion: self.ambient_occlusion,
+            hdr: self.hdr,
         })
     }
 
@@ -297,6 +312,37 @@ impl Component for SkyLight {
                 AmbientOcclusionSettings::INTENSITY_RANGE.0,
                 AmbientOcclusionSettings::INTENSITY_RANGE.1,
             ),
+            Property::choice(
+                "tonemapping",
+                self.hdr.tonemapper.name().to_string(),
+                Tonemapper::ALL.iter().map(|t| t.name().to_string()).collect(),
+            ),
+            Property::ranged(
+                "exposure (EV)",
+                self.hdr.exposure,
+                HdrSettings::EXPOSURE_RANGE.0,
+                HdrSettings::EXPOSURE_RANGE.1,
+            ),
+            Property::bool("auto exposure", self.hdr.auto_exposure),
+            Property::ranged(
+                "adaptation speed",
+                self.hdr.adaptation_speed,
+                HdrSettings::ADAPTATION_SPEED_RANGE.0,
+                HdrSettings::ADAPTATION_SPEED_RANGE.1,
+            ),
+            Property::bool("bloom", self.hdr.bloom),
+            Property::ranged(
+                "bloom intensity",
+                self.hdr.bloom_intensity,
+                HdrSettings::BLOOM_INTENSITY_RANGE.0,
+                HdrSettings::BLOOM_INTENSITY_RANGE.1,
+            ),
+            Property::ranged(
+                "bloom threshold",
+                self.hdr.bloom_threshold,
+                HdrSettings::BLOOM_THRESHOLD_RANGE.0,
+                HdrSettings::BLOOM_THRESHOLD_RANGE.1,
+            ),
         ]
     }
 
@@ -309,6 +355,17 @@ impl Component for SkyLight {
             ("ambient occlusion", PropertyValue::Bool(v)) => self.ambient_occlusion.enabled = v,
             ("AO radius", PropertyValue::Float(v)) => self.ambient_occlusion.set_radius(v),
             ("AO intensity", PropertyValue::Float(v)) => self.ambient_occlusion.set_intensity(v),
+            ("tonemapping", PropertyValue::Text(v)) => {
+                if let Some(tonemapper) = Tonemapper::from_name(&v) {
+                    self.hdr.tonemapper = tonemapper;
+                }
+            }
+            ("exposure (EV)", PropertyValue::Float(v)) => self.hdr.set_exposure(v),
+            ("auto exposure", PropertyValue::Bool(v)) => self.hdr.auto_exposure = v,
+            ("adaptation speed", PropertyValue::Float(v)) => self.hdr.set_adaptation_speed(v),
+            ("bloom", PropertyValue::Bool(v)) => self.hdr.bloom = v,
+            ("bloom intensity", PropertyValue::Float(v)) => self.hdr.set_bloom_intensity(v),
+            ("bloom threshold", PropertyValue::Float(v)) => self.hdr.set_bloom_threshold(v),
             _ => {}
         }
     }

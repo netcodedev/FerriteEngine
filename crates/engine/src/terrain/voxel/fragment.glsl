@@ -46,5 +46,6 @@ void main()
         texColor = texture(texture0, TexCoords);
     else if(BlockType == 2)
         texColor = texture(texture1, TexCoords);
-    FragColor = texColor * vec4(diffuse, 1.0);
+    // Lit in display colour; the HDR target holds linear light.
+    FragColor = vec4(pow(texColor.rgb * diffuse, vec3(2.2)), texColor.a);
 }

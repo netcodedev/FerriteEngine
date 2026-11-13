@@ -22,6 +22,7 @@ A personal project to get a better understanding of Rust and OpenGL: a 3D engine
 - Chunked, multithreaded terrain generation (voxel with greedy meshing, marching cubes, dual contouring)
 - Instanced tree forests
 - Sky, sky light and shadow mapping
+- HDR rendering: exposure (manual or auto), ACES/filmic tone mapping and bloom
 - 3D model loading via Assimp, skeletal animation with blending and root motion
 - Animation graphs (states, blends and transitions) defined in RON files
 - Physics with [Rapier](https://rapier.rs): rigid bodies, colliders, a player capsule and per-bone colliders
