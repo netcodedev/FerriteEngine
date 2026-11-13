@@ -1,4 +1,4 @@
-//! Editor camera, click selection and translate/rotate gizmos.
+//! Editor camera, click selection and translate/rotate/scale gizmos.
 
 use cgmath::{
     Deg, EuclideanSpace, InnerSpace, Matrix3, Matrix4, Point3, Quaternion, Rad, Rotation,
@@ -25,6 +25,13 @@ const AXIS_COLORS: [Vector3<f32>; 3] = [
     Vector3::new(0.3, 0.5, 1.0),
 ];
 const HIGHLIGHT: Vector3<f32> = Vector3::new(1.0, 0.85, 0.2);
+const UNIFORM_COLOR: Vector3<f32> = Vector3::new(0.85, 0.85, 0.85);
+/// Handle index of the scale gizmo's centre cube (scales all axes).
+const UNIFORM_HANDLE: usize = 3;
+/// Half the side of a scale handle's cube, relative to the gizmo size.
+const SCALE_CUBE: f32 = 0.04;
+/// Smallest scale a drag leaves on an axis.
+const MIN_SCALE: f32 = 0.001;
 const CIRCLE_SEGMENTS: usize = 48;
 /// Translate arrows relative to the rotate rings.
 const ARROW_SCALE: f32 = 0.5;
@@ -53,6 +60,35 @@ enum Drag {
         start_local: Quaternion<f32>,
         parent_rotation: Quaternion<f32>,
     },
+    Scale {
+        id: EntityHandle,
+        /// 0..3: a local axis, `UNIFORM_HANDLE`: all of them.
+        handle: usize,
+        /// World direction the drag is measured along.
+        axis: Vector3<f32>,
+        center: Point3<f32>,
+        /// Where the drag started: the parameter along `axis` for an axis
+        /// handle, the hit on the view plane for the uniform one.
+        start_param: f32,
+        start_hit: Point3<f32>,
+        /// Normal of the plane the uniform handle is dragged on.
+        plane_normal: Vector3<f32>,
+        start_scale: Vector3<f32>,
+        /// Dragging this far doubles the scale.
+        length: f32,
+    },
+}
+
+impl Drag {
+    /// Index of the handle being dragged, for highlighting.
+    fn handle(&self) -> Option<usize> {
+        match self {
+            Drag::Translate { axis, .. } | Drag::Rotate { axis, .. } => {
+                AXES.iter().position(|a| a == axis)
+            }
+            Drag::Scale { handle, .. } => Some(*handle),
+        }
+    }
 }
 
 /// Result of a viewport event, applied by the editor layer.
@@ -205,20 +241,31 @@ impl Viewport {
         (center - self.position).magnitude().max(1.0) * 0.16
     }
 
-    /// Which gizmo axis the ray touches, if any.
-    fn hit_gizmo(&self, ray: &Ray, center: Point3<f32>, mode: GizmoMode) -> Option<usize> {
+    /// Which gizmo handle the ray touches, if any: an axis (0..3) or, for
+    /// the scale gizmo, `UNIFORM_HANDLE`.
+    fn hit_gizmo(
+        &self,
+        ray: &Ray,
+        center: Point3<f32>,
+        axes: [Vector3<f32>; 3],
+        mode: GizmoMode,
+    ) -> Option<usize> {
         let size = self.gizmo_size(center);
+        if mode == GizmoMode::Scale
+            && distance_to_ray(ray, center) < size * SCALE_CUBE * 2.0
+        {
+            return Some(UNIFORM_HANDLE);
+        }
         let mut best: Option<(usize, f32)> = None;
-        for (i, axis) in AXES.iter().enumerate() {
+        for (i, axis) in axes.iter().enumerate() {
             let error = match mode {
-                GizmoMode::Translate => {
+                GizmoMode::Translate | GizmoMode::Scale => {
                     let length = size * ARROW_SCALE;
-                    let (_, s) = closest_params(ray, center, *axis)?;
-                    let s = s.clamp(0.0, length);
-                    let point = center + axis * s;
-                    let t = (point - ray.origin).dot(ray.dir).max(0.0);
-                    let on_ray = ray.origin + ray.dir * t;
-                    (on_ray - point).magnitude() / (size * 0.07)
+                    let Some((_, s)) = closest_params(ray, center, *axis) else {
+                        continue;
+                    };
+                    let point = center + axis * s.clamp(0.0, length);
+                    distance_to_ray(ray, point) / (size * 0.07)
                 }
                 GizmoMode::Rotate => {
                     let Some(hit) = ray_plane(ray, center, *axis) else {
@@ -234,11 +281,17 @@ impl Viewport {
         best.map(|(i, _)| i)
     }
 
-    /// Entity under the cursor: the closest physics shape hit (player
-    /// capsule, terrain, trees → terrain), or an entity marker within a few
-    /// pixels of the cursor for entities without a shape (camera, light).
+    /// Entity under the cursor: the closest of a physics shape hit (player
+    /// capsule, terrain, trees → terrain), a hit on drawn geometry (models
+    /// without a collider) and an entity marker within a few pixels of the
+    /// cursor (entities that draw nothing, such as a camera or light).
     fn pick(&self, scene: &mut Scene, ray: &Ray, rect: Rect) -> Option<EntityHandle> {
         let mut best = scene.raycast_entity(ray.origin, ray.dir, 5000.0);
+        if let Some((id, t)) = scene.raycast_components(ray.origin, ray.dir) {
+            if best.map_or(true, |(_, bt)| t < bt) {
+                best = Some((id, t));
+            }
+        }
         let vp = scene.get_active_camera()?.get_view_projection();
         for (id, position) in collect_world_positions(scene) {
             let Some((sx, sy)) = project(&vp, rect, position) else {
@@ -308,8 +361,9 @@ impl Viewport {
                 }
                 self.hover_axis = selected.and_then(|id| {
                     let center = world_position(scene, &id)?;
+                    let axes = gizmo_axes(scene, &id, gizmo)?;
                     let ray = self.ray(scene, rect, self.cursor.0, self.cursor.1)?;
-                    self.hit_gizmo(&ray, center, gizmo)
+                    self.hit_gizmo(&ray, center, axes, gizmo)
                 });
                 ViewportAction::None
             }
@@ -320,8 +374,9 @@ impl Viewport {
                 let Some(ray) = self.ray(scene, rect, self.cursor.0, self.cursor.1) else {
                     return ViewportAction::Consumed;
                 };
-                if let (Some(id), Some(axis)) = (selected, self.hover_axis) {
-                    if let Some(drag) = begin_drag(scene, id, axis, gizmo, &ray) {
+                if let (Some(id), Some(handle)) = (selected, self.hover_axis) {
+                    let size = world_position(scene, &id).map_or(1.0, |c| self.gizmo_size(c));
+                    if let Some(drag) = begin_drag(scene, id, handle, gizmo, &ray, size) {
                         self.drag = Some(drag);
                         return ViewportAction::Consumed;
                     }
@@ -389,23 +444,37 @@ impl Viewport {
         let Some(center) = world_position(scene, &id) else {
             return;
         };
+        let Some(axes) = gizmo_axes(scene, &id, gizmo) else {
+            return;
+        };
         let size = self.gizmo_size(center);
-        let active_axis = match &self.drag {
-            Some(Drag::Translate { axis, .. }) | Some(Drag::Rotate { axis, .. }) => {
-                AXES.iter().position(|a| a == axis)
-            }
+        let active = match &self.drag {
+            Some(drag) => drag.handle(),
             None => self.hover_axis,
         };
-        for (i, axis) in AXES.iter().enumerate() {
-            let color = if active_axis == Some(i) {
+        let color_of = |handle: usize, normal: Vector3<f32>| {
+            if active == Some(handle) {
                 HIGHLIGHT
             } else {
-                AXIS_COLORS[i]
-            };
+                normal
+            }
+        };
+        for (i, axis) in axes.iter().enumerate() {
             let lines = match gizmo {
                 GizmoMode::Translate => arrow_lines(center, *axis, size * ARROW_SCALE),
                 GizmoMode::Rotate => circle_lines(center, *axis, size),
+                GizmoMode::Scale => {
+                    let length = size * ARROW_SCALE;
+                    let mut lines = vec![Line::new(center, *axis, length)];
+                    lines.extend(cube_lines(center + axis * length, axes, size * SCALE_CUBE));
+                    lines
+                }
             };
+            render_thick_lines(&vp, &lines, color_of(i, AXIS_COLORS[i]), rect, GIZMO_LINE_WIDTH);
+        }
+        if gizmo == GizmoMode::Scale {
+            let lines = cube_lines(center, axes, size * SCALE_CUBE);
+            let color = color_of(UNIFORM_HANDLE, UNIFORM_COLOR);
             render_thick_lines(&vp, &lines, color, rect, GIZMO_LINE_WIDTH);
         }
     }
@@ -445,6 +514,19 @@ fn arrow_lines(center: Point3<f32>, axis: Vector3<f32>, size: f32) -> Vec<Line> 
         let start = tip - axis * head + side * head * 0.4;
         let dir = tip - start;
         lines.push(Line::new(start, dir.normalize(), dir.magnitude()));
+    }
+    lines
+}
+
+/// The 12 edges of a cube around `center`, aligned with `axes`.
+fn cube_lines(center: Point3<f32>, axes: [Vector3<f32>; 3], half: f32) -> Vec<Line> {
+    let mut lines = Vec::with_capacity(12);
+    for i in 0..3 {
+        let (a, b) = (axes[(i + 1) % 3], axes[(i + 2) % 3]);
+        for (sa, sb) in [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
+            let start = center + (a * sa + b * sb - axes[i]) * half;
+            lines.push(Line::new(start, axes[i], half * 2.0));
+        }
     }
     lines
 }
@@ -489,6 +571,21 @@ fn closest_params(ray: &Ray, origin: Point3<f32>, axis: Vector3<f32>) -> Option<
     Some(((b * e - d) / denom, (e - b * d) / denom))
 }
 
+fn distance_to_ray(ray: &Ray, point: Point3<f32>) -> f32 {
+    let t = (point - ray.origin).dot(ray.dir).max(0.0);
+    (ray.origin + ray.dir * t - point).magnitude()
+}
+
+/// Directions of the gizmo's axes: the world axes for moving and rotating,
+/// the entity's own (rotated) axes for scaling, which acts on those.
+fn gizmo_axes(scene: &Scene, id: &EntityHandle, mode: GizmoMode) -> Option<[Vector3<f32>; 3]> {
+    if mode != GizmoMode::Scale {
+        return Some(AXES);
+    }
+    let rotation = rotation_of(&scene.get_world_transform(id)?);
+    Some(AXES.map(|axis| rotation.rotate_vector(axis)))
+}
+
 fn ray_plane(ray: &Ray, center: Point3<f32>, normal: Vector3<f32>) -> Option<Point3<f32>> {
     let denom = ray.dir.dot(normal);
     if denom.abs() < 1e-4 {
@@ -516,11 +613,15 @@ fn rotation_of(matrix: &Matrix4<f32>) -> Quaternion<f32> {
 fn begin_drag(
     scene: &Scene,
     id: EntityHandle,
-    axis_index: usize,
+    handle: usize,
     gizmo: GizmoMode,
     ray: &Ray,
+    size: f32,
 ) -> Option<Drag> {
-    let axis = AXES[axis_index];
+    if gizmo == GizmoMode::Scale {
+        return begin_scale(scene, id, handle, ray, size);
+    }
+    let axis = AXES[handle];
     let world = scene.get_world_transform(&id)?;
     let parent = scene.get_parent_world_transform(&id)?;
     let center = Point3::from_vec(world.w.truncate());
@@ -546,7 +647,57 @@ fn begin_drag(
                 parent_rotation: rotation_of(&parent),
             })
         }
+        GizmoMode::Scale => None,
     }
+}
+
+fn begin_scale(
+    scene: &Scene,
+    id: EntityHandle,
+    handle: usize,
+    ray: &Ray,
+    size: f32,
+) -> Option<Drag> {
+    let center = world_position(scene, &id)?;
+    let start_scale = scene.get_entity(&id)?.get_scale();
+    let length = size * ARROW_SCALE;
+    if handle == UNIFORM_HANDLE {
+        // Measured on the plane facing the camera, along its up-right
+        // diagonal: dragging up or right grows, down or left shrinks.
+        let normal = -ray.dir;
+        let start_hit = ray_plane(ray, center, normal)?;
+        let right = Vector3::unit_y().cross(normal);
+        let right = if right.magnitude2() > 1e-6 {
+            right.normalize()
+        } else {
+            Vector3::unit_x()
+        };
+        let up = normal.cross(right).normalize();
+        return Some(Drag::Scale {
+            id,
+            handle,
+            axis: (right + up).normalize(),
+            center,
+            start_param: 0.0,
+            start_hit,
+            plane_normal: normal,
+            start_scale,
+            length,
+        });
+    }
+    let axis = gizmo_axes(scene, &id, GizmoMode::Scale)?[handle];
+    let (_, s) = closest_params(ray, center, axis)?;
+    Some(Drag::Scale {
+        id,
+        handle,
+        axis,
+        center,
+        start_param: s,
+        start_hit: center,
+        plane_normal: axis,
+        start_scale,
+        length,
+    })
 }
 
 fn apply_drag(scene: &mut Scene, drag: &Drag, ray: &Ray) {
@@ -582,6 +733,38 @@ fn apply_drag(scene: &mut Scene, drag: &Drag, ray: &Ray) {
             let world_delta = Quaternion::from_axis_angle(*axis, Rad(delta));
             let local = parent_rotation.invert() * world_delta * parent_rotation * start_local;
             scene.set_entity_rotation(id, local.normalize());
+        }
+        Drag::Scale {
+            id,
+            handle,
+            axis,
+            center,
+            start_param,
+            start_hit,
+            plane_normal,
+            start_scale,
+            length,
+        } => {
+            let moved = if *handle == UNIFORM_HANDLE {
+                let Some(hit) = ray_plane(ray, *center, *plane_normal) else {
+                    return;
+                };
+                (hit - start_hit).dot(*axis)
+            } else {
+                let Some((_, s)) = closest_params(ray, *center, *axis) else {
+                    return;
+                };
+                s - start_param
+            };
+            let factor = ((length + moved) / length).max(MIN_SCALE);
+            let mut scale = *start_scale;
+            if *handle == UNIFORM_HANDLE {
+                scale *= factor;
+            } else {
+                scale[*handle] *= factor;
+            }
+            scale = scale.map(|c| c.max(MIN_SCALE));
+            scene.set_entity_scale(id, scale);
         }
     }
 }

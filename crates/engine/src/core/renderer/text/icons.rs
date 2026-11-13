@@ -38,6 +38,7 @@ pub const PLAY: &str = "\u{e13c}";
 pub const PLUS: &str = "\u{e13d}";
 pub const POINTER: &str = "\u{e1c3}";
 pub const ROTATE_3D: &str = "\u{e2ea}";
+pub const SCALE_3D: &str = "\u{e2eb}";
 pub const ROTATE_CW: &str = "\u{e149}";
 pub const SAVE: &str = "\u{e14d}";
 pub const SETTINGS: &str = "\u{e245}";

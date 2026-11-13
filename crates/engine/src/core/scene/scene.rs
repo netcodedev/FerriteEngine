@@ -409,6 +409,50 @@ impl Scene {
             .map(|id| (id, distance))
     }
 
+    /// Nearest entity whose components' geometry the ray (`dir` normalized)
+    /// hits, with the distance (see `Component::raycast`). Finds what has no
+    /// physics shape, such as plain models. A hit on a transient entity
+    /// counts for its nearest persistent ancestor.
+    pub fn raycast_components(
+        &self,
+        origin: Point3<f32>,
+        dir: Vector3<f32>,
+    ) -> Option<(EntityHandle, f32)> {
+        fn visit(
+            entity: &Entity,
+            parent: Matrix4<f32>,
+            owner: Option<EntityHandle>,
+            origin: Point3<f32>,
+            dir: Vector3<f32>,
+            nearest: &mut Option<(EntityHandle, f32)>,
+        ) {
+            let owner = if entity.is_transient() {
+                owner
+            } else {
+                Some(entity.id)
+            };
+            let world = parent * entity.local_transform();
+            if let Some(owner) = owner {
+                for component in entity.components() {
+                    let Some(t) = component.raycast(&world, origin, dir) else {
+                        continue;
+                    };
+                    if nearest.map_or(true, |(_, n)| t < n) {
+                        *nearest = Some((owner, t));
+                    }
+                }
+            }
+            for child in entity.get_children() {
+                visit(child, world, owner, origin, dir, nearest);
+            }
+        }
+        let mut nearest = None;
+        for entity in &self.entities {
+            visit(entity, Matrix4::identity(), None, origin, dir, &mut nearest);
+        }
+        nearest
+    }
+
     /// Wireframes of every collider whose component has its "show
     /// collider" toggle on: `(primitive shapes, triangle meshes)`. Meshes are
     /// limited to `mesh_distance` around `camera`.
@@ -463,6 +507,12 @@ impl Scene {
     pub fn set_entity_rotation(&mut self, id: &EntityHandle, rotation: Quaternion<f32>) {
         if let Some(entity) = self.get_entity_mut(id) {
             entity.set_local_rotation(rotation);
+        }
+    }
+
+    pub fn set_entity_scale(&mut self, id: &EntityHandle, scale: Vector3<f32>) {
+        if let Some(entity) = self.get_entity_mut(id) {
+            entity.set_local_scale(scale);
         }
     }
 

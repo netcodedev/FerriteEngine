@@ -98,9 +98,72 @@ pub struct MaterialSettings {
     /// Texture asset used as normal map. `None`: as for `base_color`.
     #[serde(default)]
     pub normal: Option<AssetId>,
+    /// Texture asset used as roughness map. `None`: as for `base_color`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roughness: Option<AssetId>,
+    /// Texture asset used as metallic map. `None`: as for `base_color`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metallic: Option<AssetId>,
+    /// Texture asset used as ambient occlusion map. `None`: as for
+    /// `base_color`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occlusion: Option<AssetId>,
     /// Leaves and the like: drawn, but left out of collision shapes.
     #[serde(default)]
     pub foliage: bool,
+}
+
+/// A texture slot of a material.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MaterialMap {
+    BaseColor,
+    Normal,
+    Roughness,
+    Metallic,
+    Occlusion,
+}
+
+impl MaterialMap {
+    pub const ALL: [MaterialMap; 5] = [
+        MaterialMap::BaseColor,
+        MaterialMap::Normal,
+        MaterialMap::Roughness,
+        MaterialMap::Metallic,
+        MaterialMap::Occlusion,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            MaterialMap::BaseColor => "base color",
+            MaterialMap::Normal => "normal",
+            MaterialMap::Roughness => "roughness",
+            MaterialMap::Metallic => "metallic",
+            MaterialMap::Occlusion => "occlusion",
+        }
+    }
+}
+
+impl MaterialSettings {
+    pub fn map(&self, map: MaterialMap) -> Option<AssetId> {
+        match map {
+            MaterialMap::BaseColor => self.base_color,
+            MaterialMap::Normal => self.normal,
+            MaterialMap::Roughness => self.roughness,
+            MaterialMap::Metallic => self.metallic,
+            MaterialMap::Occlusion => self.occlusion,
+        }
+    }
+
+    pub fn set_map(&mut self, map: MaterialMap, texture: Option<AssetId>) {
+        let slot = match map {
+            MaterialMap::BaseColor => &mut self.base_color,
+            MaterialMap::Normal => &mut self.normal,
+            MaterialMap::Roughness => &mut self.roughness,
+            MaterialMap::Metallic => &mut self.metallic,
+            MaterialMap::Occlusion => &mut self.occlusion,
+        };
+        *slot = texture;
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]

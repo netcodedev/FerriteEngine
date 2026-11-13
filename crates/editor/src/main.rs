@@ -220,6 +220,7 @@ impl EditorLayer {
             name: name.into(),
             position: [0.0; 3],
             rotation: [1.0, 0.0, 0.0, 0.0],
+            scale: [1.0; 3],
             components,
             children: Vec::new(),
         };
@@ -282,6 +283,7 @@ impl EditorLayer {
             name: name.into(),
             position: [position.x, position.y, position.z],
             rotation: [1.0, 0.0, 0.0, 0.0],
+            scale: [1.0; 3],
             components,
             children: Vec::new(),
         }
@@ -307,7 +309,14 @@ impl EditorLayer {
                 match database.import(file) {
                     Ok(id) => {
                         if let Some(entry) = database.get(id) {
-                            imported.push(entry.meta.name.clone());
+                            let name = match entry.meta.as_model() {
+                                Some(model) if model.scale != 1.0 => format!(
+                                    "{} (scale {} from the file's unit)",
+                                    entry.meta.name, model.scale
+                                ),
+                                _ => entry.meta.name.clone(),
+                            };
+                            imported.push(name);
                         }
                     }
                     Err(e) => failed.push(e.to_string()),
@@ -563,6 +572,7 @@ impl EditorLayer {
                     name,
                     position: [spawn.x, spawn.y, spawn.z],
                     rotation: [1.0, 0.0, 0.0, 0.0],
+                    scale: [1.0; 3],
                     components: vec![ComponentData::Model { asset }],
                     children: Vec::new(),
                 };
@@ -871,6 +881,10 @@ impl EditorLayer {
             }
             (Key::E, false, _) => {
                 self.state.borrow_mut().gizmo = GizmoMode::Rotate;
+                return true;
+            }
+            (Key::R, false, _) => {
+                self.state.borrow_mut().gizmo = GizmoMode::Scale;
                 return true;
             }
             (Key::Escape, false, _) => {

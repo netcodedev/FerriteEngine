@@ -1,4 +1,4 @@
-use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion};
+use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Vector3};
 
 use crate::core::{
     physics::{physics_engine::PhysicsEngine, rigidbody::RigidBody},
@@ -17,6 +17,7 @@ impl Entity {
             components: Vec::new(),
             position: Point3::new(0.0, 0.0, 0.0),
             rotation: Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            scale: Vector3::new(1.0, 1.0, 1.0),
             transient: false,
         }
     }
@@ -93,9 +94,16 @@ impl Entity {
         self.rotation = rotation;
     }
 
-    /// Local transform (translation then rotation), as used when rendering.
+    pub fn set_local_scale(&mut self, scale: Vector3<f32>) {
+        self.scale = scale;
+    }
+
+    /// Local transform (scale, then rotation, then translation), as used
+    /// when rendering.
     pub fn local_transform(&self) -> Matrix4<f32> {
-        Matrix4::from_translation(self.position.to_vec()) * Matrix4::from(self.rotation)
+        Matrix4::from_translation(self.position.to_vec())
+            * Matrix4::from(self.rotation)
+            * Matrix4::from_nonuniform_scale(self.scale.x, self.scale.y, self.scale.z)
     }
 
     pub fn update(&mut self, scene: &mut Scene, delta_time: f64) {
@@ -116,9 +124,7 @@ impl Entity {
         view_projection: &Matrix4<f32>,
         parent_transform: Matrix4<f32>,
     ) {
-        let transform = parent_transform
-            * Matrix4::from_translation(self.position.to_vec())
-            * Matrix4::from(self.rotation);
+        let transform = parent_transform * self.local_transform();
         for component in self.components.iter() {
             component.render(scene, self, view_projection, &transform);
         }
@@ -134,9 +140,7 @@ impl Entity {
         view_projection: &Matrix4<f32>,
         parent_transform: Matrix4<f32>,
     ) {
-        let transform = parent_transform
-            * Matrix4::from_translation(self.position.to_vec())
-            * Matrix4::from(self.rotation);
+        let transform = parent_transform * self.local_transform();
         for component in self.components.iter() {
             component.render_transparent(scene, self, view_projection, &transform);
         }
@@ -248,6 +252,10 @@ impl Entity {
 
     pub fn get_rotation(&self) -> Quaternion<f32> {
         self.rotation
+    }
+
+    pub fn get_scale(&self) -> Vector3<f32> {
+        self.scale
     }
 
     pub fn set_position<P: Into<Point3<f32>>>(&mut self, scene: &mut Scene, position: P) {

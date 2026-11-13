@@ -13,10 +13,9 @@ layout (location = 6) in vec4 instanceCol3;
 
 uniform mat4 viewProjection;
 uniform mat4 parentTransform;
-uniform vec3 lightPosition;
 
 out vec3 Normal;
-out vec3 toLightVector;
+out vec3 WorldPos;
 out vec2 TexCoords;
 
 void main() {
@@ -24,9 +23,8 @@ void main() {
     mat4 modelTransform = parentTransform * instanceMat;
     vec4 worldPos = modelTransform * vec4(position, 1.0);
     gl_Position = viewProjection * worldPos;
-    // Transforms in this pipeline are rigid (rotation + translation only), so
-    // we can use the upper-left 3x3 directly for the normal.
-    Normal = mat3(modelTransform) * normal;
+    WorldPos = worldPos.xyz;
+    // Inverse transpose: the parent entity may be scaled non-uniformly.
+    Normal = transpose(inverse(mat3(modelTransform))) * normal;
     TexCoords = texCoords;
-    toLightVector = lightPosition;
 }

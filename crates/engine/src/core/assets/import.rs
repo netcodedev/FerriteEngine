@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::core::model::outline;
+use crate::core::model::{material_maps, outline};
 
 use super::{
     AnimationSettings, AssetDatabase, AssetError, AssetId, AssetKind, AssetMeta, ClipInfo,
@@ -137,9 +137,10 @@ impl AssetDatabase {
             }
         }
 
-        // Textures: the ones the materials refer to, plus the ones the
-        // loader would pick up by material name. They are copied next to
-        // the model (where the loader looks first) and registered.
+        // Textures: the ones the materials refer to, plus the ones named
+        // after a material or the model file, which the loader picks up by
+        // name. They are copied next to the model (where the loader looks
+        // first) and registered.
         let mut textures: Vec<PathBuf> = Vec::new();
         for material in &found.materials {
             for file_name in &material.texture_files {
@@ -147,7 +148,8 @@ impl AssetDatabase {
                     push_unique(&mut textures, path);
                 }
             }
-            for path in textures_named_after(&source_dir, &material.name) {
+            let prefixes = material_maps::name_prefixes(Some(&material.name), &name);
+            for path in material_maps::images_with_prefix(&source_dir, &prefixes) {
                 push_unique(&mut textures, path);
             }
         }
@@ -173,7 +175,7 @@ impl AssetDatabase {
             name,
             source: file_name_of(&source),
             kind: AssetKind::Model(ModelSettings {
-                scale: 1.0,
+                scale: found.import_scale(),
                 variants: found
                     .variants
                     .into_iter()
@@ -188,8 +190,7 @@ impl AssetDatabase {
                     .map(|m| MaterialSettings {
                         foliage: outline::looks_like_foliage(&m.name),
                         name: m.name,
-                        base_color: None,
-                        normal: None,
+                        ..Default::default()
                     })
                     .collect(),
                 clips,
@@ -328,35 +329,6 @@ fn find_texture(model_dir: &Path, file_name: &str) -> Option<PathBuf> {
         .iter()
         .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
         .find(|candidate| candidate.is_file())
-}
-
-/// Image files next to the model whose name starts with the material's
-/// name (minus a `_Mat` / `_Material` suffix) — the loader's fallback for
-/// materials that lost their texture connections on export.
-fn textures_named_after(model_dir: &Path, material_name: &str) -> Vec<PathBuf> {
-    let lower = material_name.to_lowercase();
-    let prefix = lower
-        .trim_end_matches("_material")
-        .trim_end_matches("_mat")
-        .trim_end_matches('_')
-        .trim();
-    if prefix.is_empty() {
-        return Vec::new();
-    }
-    let Ok(entries) = fs::read_dir(model_dir) else {
-        return Vec::new();
-    };
-    let mut found: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|path| {
-            path.is_file()
-                && file_kind(path) == Some(FileKind::Texture)
-                && file_name_of(path).to_lowercase().starts_with(prefix)
-        })
-        .collect();
-    found.sort();
-    found
 }
 
 /// Files a model file refers to by relative path and cannot be loaded
@@ -502,6 +474,28 @@ mod tests {
         assert_eq!(found.variants.len(), 1);
         assert_eq!(found.variants[0].name, "rock");
         assert_eq!(found.variants[0].lods.len(), 1);
+    }
+
+    #[test]
+    fn maps_named_after_the_model_file_are_imported_along() {
+        // Scanned assets connect no textures and name every map after the
+        // model file.
+        let outside = TempDir::new("import-scan");
+        let project = TempDir::new("import-scan-project");
+        let file = outside.0.join("Rock_Low.gltf");
+        test_models::write_gltf(&file, &[("Rock", &[])], None);
+        for map in ["BaseColor", "Normal", "Roughness", "AO"] {
+            test_models::write_png(&outside.0.join(format!("Rock_Low_1K_{map}.png")));
+        }
+
+        let mut database = AssetDatabase::new(&project.0);
+        database.import(&file).unwrap();
+
+        let folder = project.0.join("models").join("Rock_Low");
+        for map in ["BaseColor", "Normal", "Roughness", "AO"] {
+            assert!(folder.join(format!("Rock_Low_1K_{map}.png")).is_file(), "{map}");
+        }
+        assert_eq!(database.len(), 5);
     }
 
     #[test]

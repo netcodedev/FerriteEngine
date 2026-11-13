@@ -86,6 +86,8 @@ struct TransformBinding {
     position_last: [f32; 3],
     rotation: [DataSource<f32>; 3],
     rotation_last: [f32; 3],
+    scale: [DataSource<f32>; 3],
+    scale_last: [f32; 3],
     name: DataSource<String>,
     name_last: String,
 }
@@ -235,6 +237,7 @@ impl InspectorPanel {
         // Transform.
         let position: [DataSource<f32>; 3] = std::array::from_fn(|_| DataSource::new(0.0));
         let rotation: [DataSource<f32>; 3] = std::array::from_fn(|_| DataSource::new(0.0));
+        let scale: [DataSource<f32>; 3] = std::array::from_fn(|_| DataSource::new(1.0));
         let field_w = ((width - LABEL_COLUMN - 16.0 - 8.0) / 3.0).floor();
         let mut transform = self.section("Transform", icons::AXIS_3D, width);
         transform.add_child(Box::new(FieldRow::new(
@@ -245,12 +248,18 @@ impl InspectorPanel {
             "Rotation",
             rotation.iter().map(|s| number_input(s, field_w)).collect(),
         )));
+        transform.add_child(Box::new(FieldRow::new(
+            "Scale",
+            scale.iter().map(|s| number_input(s, field_w)).collect(),
+        )));
         self.body.add_child(Box::new(transform));
         self.transform = Some(TransformBinding {
             position,
             position_last: [f32::NAN; 3],
             rotation,
             rotation_last: [f32::NAN; 3],
+            scale,
+            scale_last: [f32::NAN; 3],
             name_last: name.read(),
             name,
         });
@@ -598,6 +607,25 @@ impl InspectorPanel {
                     if changed(actual[i], t.rotation_last[i]) || t.rotation_last[i].is_nan() {
                         t.rotation[i].write(actual[i]);
                         t.rotation_last[i] = actual[i];
+                    }
+                }
+            }
+
+            let Some(entity) = scene.get_entity(&id) else {
+                return edited;
+            };
+            let s = entity.get_scale();
+            let actual = [round3(s.x), round3(s.y), round3(s.z)];
+            let typed: [f32; 3] = std::array::from_fn(|i| t.scale[i].read());
+            if (0..3).any(|i| changed(typed[i], t.scale_last[i])) && !t.scale_last[0].is_nan() {
+                scene.set_entity_scale(&id, typed.into());
+                t.scale_last = typed;
+                edited = true;
+            } else {
+                for i in 0..3 {
+                    if changed(actual[i], t.scale_last[i]) || t.scale_last[i].is_nan() {
+                        t.scale[i].write(actual[i]);
+                        t.scale_last[i] = actual[i];
                     }
                 }
             }

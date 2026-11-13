@@ -1,11 +1,10 @@
-use cgmath::Matrix4;
-use russimp_ng::material::TextureType;
+use cgmath::{Matrix4, Point3, Vector3};
 
 use crate::core::{
-    assets::{self, AssetKind, AssetRef},
+    assets::{self, AssetKind, AssetRef, MaterialMap},
     entity::Entity,
     model::{Model, ModelBuilder},
-    renderer::light::skylight,
+    renderer::pbr::Lighting,
     scene::{scene_file::ComponentData, Scene},
 };
 
@@ -129,10 +128,15 @@ fn load_model(asset: &AssetRef, base_scale: f32) -> Result<(Model, u64), String>
             id.and_then(|id| database.get(id))
                 .map(|texture| texture.source_path())
         };
-        let overrides: Vec<_> = settings
+        let overrides: Vec<Vec<_>> = settings
             .materials
             .iter()
-            .map(|material| (path(material.base_color), path(material.normal)))
+            .map(|material| {
+                MaterialMap::ALL
+                    .into_iter()
+                    .filter_map(|map| path(material.map(map)).map(|file| (map, file)))
+                    .collect()
+            })
             .collect();
         (
             entry.source_path(),
@@ -147,17 +151,10 @@ fn load_model(asset: &AssetRef, base_scale: f32) -> Result<(Model, u64), String>
         .with_scale(base_scale * scale)
         .build();
     model.init();
-    for (material, (base_color, normal)) in overrides.into_iter().enumerate() {
-        for (file, slot) in [
-            (base_color, TextureType::Diffuse),
-            (normal, TextureType::Normals),
-        ] {
-            let Some(file) = file else {
-                continue;
-            };
-            match Model::load_texture_file(&file) {
-                Some(texture) => model.set_material_texture(material, slot, texture),
-                None => log::warn!("model: could not load texture {}", file.display()),
+    for (material, maps) in overrides.into_iter().enumerate() {
+        for (map, file) in maps {
+            if !model.set_material_map_file(material, map, &file) {
+                log::warn!("model: could not load texture {}", file.display());
             }
         }
     }
@@ -181,13 +178,21 @@ impl Component for ModelComponent {
         view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
     ) {
-        if let Some(skylight) = scene.get_component::<skylight::SkyLight>() {
-            self.model
-                .render(&skylight.get_position(), &parent_transform, view_projection);
+        if let Some(lighting) = Lighting::from_scene(scene) {
+            self.model.render(&lighting, parent_transform, view_projection);
         }
     }
 
     fn handle_event(&mut self, _: &mut glfw::Glfw, _: &mut glfw::Window, _: &glfw::WindowEvent) {}
+
+    fn raycast(
+        &self,
+        transform: &Matrix4<f32>,
+        origin: Point3<f32>,
+        dir: Vector3<f32>,
+    ) -> Option<f32> {
+        self.model.raycast(transform, origin, dir)
+    }
 
     fn display_name(&self) -> String {
         "Model".into()

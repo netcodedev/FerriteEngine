@@ -14,7 +14,7 @@ pub(crate) mod test_models;
 pub use database::{AssetDatabase, AssetEntry, AssetError};
 pub use id::{AssetId, AssetRef};
 pub use meta::{
-    AnimationSettings, AssetKind, AssetMeta, ClipInfo, MaterialSettings, ModelSettings,
+    AnimationSettings, AssetKind, AssetMeta, ClipInfo, MaterialMap, MaterialSettings, ModelSettings,
     TextureSettings, VariantInfo, ASSET_META_VERSION, META_SUFFIX,
 };
 

@@ -56,6 +56,9 @@ pub struct EntityData {
     pub position: [f32; 3],
     /// Quaternion as `[w, x, y, z]`.
     pub rotation: [f32; 4],
+    /// Per local axis; left out of the file when it is 1.
+    #[serde(default = "unit_scale", skip_serializing_if = "is_unit_scale")]
+    pub scale: [f32; 3],
     #[serde(default)]
     pub components: Vec<ComponentData>,
     #[serde(default)]
@@ -241,15 +244,25 @@ impl Entity {
         }
         let p = self.get_position();
         let r = self.get_rotation();
+        let s = self.get_scale();
         Some(EntityData {
             id: u64::from(self.id),
             name: self.get_name(),
             position: [p.x, p.y, p.z],
             rotation: [r.s, r.v.x, r.v.y, r.v.z],
+            scale: [s.x, s.y, s.z],
             components: self.components().iter().filter_map(|c| c.to_data()).collect(),
             children: self.get_children().iter().filter_map(|c| c.to_data()).collect(),
         })
     }
+}
+
+fn unit_scale() -> [f32; 3] {
+    [1.0; 3]
+}
+
+fn is_unit_scale(scale: &[f32; 3]) -> bool {
+    *scale == unit_scale()
 }
 
 impl EntityData {
@@ -398,6 +411,7 @@ impl Scene {
         };
         entity.set_name(data.name.clone());
         entity.set_local_rotation(data.rotation());
+        entity.set_local_scale(data.scale.into());
         if !fresh_ids {
             entity.id = EntityHandle::from(data.id);
         }
@@ -421,6 +435,7 @@ pub fn default_scene_file() -> SceneFile {
             name: name.into(),
             position,
             rotation: [1.0, 0.0, 0.0, 0.0],
+            scale: unit_scale(),
             components,
             children: Vec::new(),
         }
@@ -485,6 +500,33 @@ mod tests {
         // It is still a player as far as loading is concerned.
         assert!(data.is_player());
         assert_eq!(data.model_asset(), Some(&AssetRef::whole(AssetId::from(7))));
+    }
+
+    #[test]
+    fn entity_scale_is_saved_only_when_it_is_not_one() {
+        let text = r#"(
+            version: 1,
+            entities: [(
+                id: 1,
+                name: "rock",
+                position: (0.0, 0.0, 0.0),
+                rotation: (1.0, 0.0, 0.0, 0.0),
+                scale: (2.0, 1.0, 0.5),
+            ), (
+                id: 2,
+                name: "old",
+                position: (0.0, 0.0, 0.0),
+                rotation: (1.0, 0.0, 0.0, 0.0),
+            )],
+        )"#;
+        let file = SceneFile::from_ron(text).unwrap();
+        assert_eq!(file.entities[0].scale, [2.0, 1.0, 0.5]);
+        assert_eq!(file.entities[1].scale, [1.0; 3]);
+
+        let saved = file.to_ron().unwrap();
+        assert_eq!(saved.matches("scale").count(), 1);
+        let again = SceneFile::from_ron(&saved).unwrap();
+        assert_eq!(again.entities[0].scale, [2.0, 1.0, 0.5]);
     }
 
     #[test]

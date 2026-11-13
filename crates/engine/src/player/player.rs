@@ -29,8 +29,6 @@ const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 /// The model the player has unless it is given another one, as a file in
 /// `assets/models/`.
 pub const PLAYER_MODEL_FILE: &str = "Mannequin.fbx";
-/// The player's models are authored in centimetres.
-const PLAYER_MODEL_SCALE: f32 = 0.01;
 
 /// The asset of the default player model, if that file is registered.
 pub fn default_player_model() -> Option<AssetRef> {
@@ -45,7 +43,8 @@ pub fn load_player_model(
     asset: Option<&AssetRef>,
 ) -> Result<ModelComponent, Box<dyn std::error::Error>> {
     if let Some(asset) = asset.cloned().or_else(default_player_model) {
-        return Ok(ModelComponent::from_asset_scaled(&asset, PLAYER_MODEL_SCALE)?);
+        // The asset's scale turns the file's units into metres.
+        return Ok(ModelComponent::from_asset(&asset)?);
     }
     let mut model = ModelBuilder::new(PLAYER_MODEL_FILE)?.build();
     model.init();

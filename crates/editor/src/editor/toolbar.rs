@@ -33,6 +33,7 @@ pub struct Toolbar {
     window_menu: MenuButton,
     move_button: Button,
     rotate_button: Button,
+    scale_button: Button,
     play_button: Button,
     status_icon: Text,
     status: Text,
@@ -107,6 +108,12 @@ impl Toolbar {
             icons::ROTATE_3D,
             Box::new(move |_| rotate_state.borrow_mut().gizmo = GizmoMode::Rotate),
         );
+        let scale_state = state.clone();
+        let scale_button = tool_button(
+            "Scale",
+            icons::SCALE_3D,
+            Box::new(move |_| scale_state.borrow_mut().gizmo = GizmoMode::Scale),
+        );
 
         let play_state = state.clone();
         let mut play_button = Button::new(
@@ -142,6 +149,7 @@ impl Toolbar {
             window_menu,
             move_button,
             rotate_button,
+            scale_button,
             play_button,
             status_icon: theme::icon(icons::INFO, 14.0, theme::TEXT_DIM),
             status: theme::text("", theme::FONT_SIZE_SMALL + 0.5, theme::TEXT_MUTED),
@@ -158,6 +166,7 @@ impl Toolbar {
         if scene {
             widgets.push(&mut self.move_button);
             widgets.push(&mut self.rotate_button);
+            widgets.push(&mut self.scale_button);
         }
         widgets
     }
@@ -172,6 +181,7 @@ impl Toolbar {
         if scene {
             widgets.push(&self.move_button);
             widgets.push(&self.rotate_button);
+            widgets.push(&self.scale_button);
         }
         widgets
     }
@@ -223,7 +233,11 @@ impl UIElement for Toolbar {
             .set_size(Size::new(1.0, rect.h - 16.0));
         x += 9.0;
         if workspace == Workspace::Scene {
-            for widget in [&mut self.move_button, &mut self.rotate_button] {
+            for widget in [
+                &mut self.move_button,
+                &mut self.rotate_button,
+                &mut self.scale_button,
+            ] {
                 widget.set_offset(Offset { x, y });
                 x += widget.get_size().width + 4.0;
             }
@@ -233,6 +247,8 @@ impl UIElement for Toolbar {
             .set_active(gizmo == GizmoMode::Translate && editing);
         self.rotate_button
             .set_active(gizmo == GizmoMode::Rotate && editing);
+        self.scale_button
+            .set_active(gizmo == GizmoMode::Scale && editing);
 
         // Play/stop sits over the centre of the viewport.
         self.play_button.set_icon(if editing { icons::PLAY } else { icons::SQUARE });

@@ -1,6 +1,6 @@
 use as_any::AsAny;
 
-use cgmath::Matrix4;
+use cgmath::{Matrix4, Point3, Vector3};
 use glfw::{Glfw, Window};
 
 use crate::core::{
@@ -65,6 +65,18 @@ pub trait Component: AsAny {
     /// collider" toggle). Drawn by tools as wireframes.
     fn visible_collider_bodies(&self, _entity: &Entity) -> Vec<rapier3d::prelude::RigidBodyHandle> {
         Vec::new()
+    }
+
+    /// Distance along the ray (`dir` normalized) to the nearest point where
+    /// it hits what the component draws, for picking in tools. `transform`
+    /// is the one `render` is given.
+    fn raycast(
+        &self,
+        _transform: &Matrix4<f32>,
+        _origin: Point3<f32>,
+        _dir: Vector3<f32>,
+    ) -> Option<f32> {
+        None
     }
 
     /// Release resources owned outside the component (physics bodies,

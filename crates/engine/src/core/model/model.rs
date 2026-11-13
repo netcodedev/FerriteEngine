@@ -7,13 +7,20 @@ use russimp_ng::{
     scene::{PostProcess, Scene},
 };
 
-use crate::core::renderer::{
-    line::{Line, LineRenderer},
-    shader::Shader,
-    texture::Texture,
+use crate::core::{
+    assets::MaterialMap,
+    renderer::{
+        line::{Line, LineRenderer},
+        pbr::{self, Lighting},
+        shader::Shader,
+        texture::Texture,
+    },
 };
 
-use super::{Bone, Model, ModelBuilder, ModelMesh, Pose};
+use super::{
+    material_maps::{self, MapKind},
+    Bone, Model, ModelBuilder, ModelMesh, Pose,
+};
 use crate::core::utils::ToMatrix4;
 
 impl Model {
@@ -39,8 +46,10 @@ impl Model {
                 PostProcess::FlipUVs,
             ],
         )?;
-        let shader: Shader =
-            Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
+        let shader = Shader::new(
+            include_str!("vertex.glsl"),
+            &pbr::fragment_source(include_str!("fragment.glsl")),
+        );
         let model_dir = std::path::Path::new(full_path)
             .parent()
             .and_then(|p| p.to_str())
@@ -69,11 +78,17 @@ impl Model {
             //    for these. Each entry's `data` holds the encoded image bytes.
             for (tex_type, texture) in &material.textures {
                 let tex = texture.borrow();
+                let slot = canonical_slot(tex_type);
+                if per_material.contains_key(&slot) {
+                    continue;
+                }
                 if let DataContent::Bytes(texture_data) = &tex.data {
-                    let data = image::load_from_memory(texture_data.as_slice()).unwrap();
-                    let texture = Texture::new();
-                    texture.load_from_data(data.width(), data.height(), data.to_rgba8().into_raw());
-                    per_material.insert(tex_type.clone(), texture);
+                    match image::load_from_memory(texture_data.as_slice()) {
+                        Ok(image) => {
+                            per_material.insert(slot.clone(), upload_map(image.to_rgba8(), &slot));
+                        }
+                        Err(e) => log::warn!("model: embedded texture unreadable: {e}"),
+                    }
                 }
             }
 
@@ -87,39 +102,32 @@ impl Model {
                 if property.key != "$tex.file" {
                     continue;
                 }
-                if per_material.contains_key(&property.semantic) {
+                let slot = canonical_slot(&property.semantic);
+                if per_material.contains_key(&slot) {
                     continue; // already supplied as embedded data
                 }
                 let PropertyTypeInfo::String(raw_path) = &property.data else {
                     continue;
                 };
-                if let Some(texture) = Self::load_external_texture(raw_path, &self.model_dir) {
-                    per_material.insert(property.semantic, texture);
+                if let Some(texture) = Self::load_external_texture(raw_path, &self.model_dir, &slot)
+                {
+                    per_material.insert(slot, texture);
                 }
             }
 
-            // 3) Heuristic fallback by material name — some FBX exports drop
-            //    the texture connections entirely (or reference filenames that
-            //    aren't in the on-disk asset). Match the material's name (e.g.
-            //    `Bark_Mat`) against files in the model's directory so we can
-            //    still recover the diffuse/normal pair.
-            let needs_diffuse = !per_material.contains_key(&TextureType::Diffuse)
-                && !per_material.contains_key(&TextureType::BaseColor);
-            let needs_normal = !per_material.contains_key(&TextureType::Normals);
-            if needs_diffuse || needs_normal {
-                if let Some(mat_name) = Self::material_name(material) {
-                    let (diffuse, normal) =
-                        Self::heuristic_textures_by_name(&mat_name, &self.model_dir);
-                    if needs_diffuse {
-                        if let Some(t) = diffuse {
-                            per_material.insert(TextureType::Diffuse, t);
-                        }
-                    }
-                    if needs_normal {
-                        if let Some(t) = normal {
-                            per_material.insert(TextureType::Normals, t);
-                        }
-                    }
+            // 3) By file name — many exports (and scanned assets) do not
+            //    connect their maps at all. Maps next to the model named
+            //    after the material or the file fill the slots still empty.
+            let missing: Vec<MaterialMap> = MaterialMap::ALL
+                .into_iter()
+                .filter(|map| !per_material.contains_key(&map_texture_type(*map)))
+                .collect();
+            if !missing.is_empty() {
+                let material_name = Self::material_name(material);
+                let maps =
+                    maps_by_name(material_name.as_deref(), &self.name, &self.model_dir, &missing);
+                for (map, texture) in maps {
+                    per_material.insert(map_texture_type(map), texture);
                 }
             }
 
@@ -188,141 +196,17 @@ impl Model {
         super::outline::material_name(material)
     }
 
-    /// Best-effort recovery for materials whose texture connections were
-    /// lost during export. Strips a trailing `_Mat`/`_Material` suffix from
-    /// the material name to get a prefix, then looks in `model_dir` for
-    /// files starting with that prefix and a keyword in the filename:
-    /// * `color`, `albedo`, `basecolor`, `diffuse` → diffuse
-    /// * `normal` → normal map
-    /// Skips obvious non-color maps (roughness, metalness, AO).
-    fn heuristic_textures_by_name(
-        material_name: &str,
-        model_dir: &str,
-    ) -> (Option<Texture>, Option<Texture>) {
-        let lc = material_name.to_lowercase();
-        let prefix = lc
-            .trim_end_matches("_material")
-            .trim_end_matches("_mat")
-            .trim_end_matches('_')
-            .trim();
-        if prefix.is_empty() {
-            return (None, None);
-        }
-
-        let Ok(read) = std::fs::read_dir(model_dir) else {
-            return (None, None);
-        };
-        let mut entries: Vec<(String, std::path::PathBuf)> = read
-            .flatten()
-            .filter_map(|e| {
-                e.file_name()
-                    .to_str()
-                    .map(|s| (s.to_lowercase(), e.path()))
-            })
-            .collect();
-        // Sort for stable, deterministic selection — `read_dir` order is OS-
-        // dependent and HashMap-style randomness here would mean different
-        // textures on different runs.
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-        // If the asset ships a separate opacity texture for this prefix
-        // (e.g. `Cluster_Opacity.png` next to `Cluster_albedo.png`), we'll
-        // bake it into the diffuse texture's alpha channel so the existing
-        // alpha-cutout shader code does the right thing without needing a
-        // second sampler.
-        let opacity_path = entries
-            .iter()
-            .find(|(lc, _)| lc.starts_with(prefix) && lc.contains("opacity"))
-            .map(|(_, p)| p.clone());
-
-        let mut diffuse: Option<Texture> = None;
-        let mut normal: Option<Texture> = None;
-        for (lc_name, path) in &entries {
-            if !lc_name.starts_with(prefix) {
-                continue;
-            }
-            let is_normal = lc_name.contains("normal");
-            let is_aux = lc_name.contains("roughness")
-                || lc_name.contains("metallic")
-                || lc_name.contains("metalness")
-                || lc_name.contains("ambientocclusion")
-                || lc_name.contains("_ao")
-                || lc_name.contains("opacity");
-
-            if is_normal {
-                if normal.is_none() {
-                    normal = Self::load_texture_from_disk(path);
-                }
-            } else if !is_aux {
-                let looks_like_diffuse = lc_name.contains("color")
-                    || lc_name.contains("albedo")
-                    || lc_name.contains("basecolor")
-                    || lc_name.contains("diffuse");
-                if diffuse.is_none() && looks_like_diffuse {
-                    diffuse = Self::load_diffuse_with_opacity(path, opacity_path.as_deref());
-                }
-            }
-        }
-        (diffuse, normal)
-    }
-
-    /// Load a diffuse texture, optionally replacing its alpha channel with
-    /// the luminance of an external opacity map. Falls back to the plain
-    /// diffuse load if the opacity image can't be read or has mismatched
-    /// dimensions.
-    fn load_diffuse_with_opacity(
-        diffuse_path: &std::path::Path,
-        opacity_path: Option<&std::path::Path>,
-    ) -> Option<Texture> {
-        let bytes = std::fs::read(diffuse_path).ok()?;
-        let mut diffuse_rgba = image::load_from_memory(&bytes).ok()?.to_rgba8();
-        if let Some(op_path) = opacity_path {
-            if let Ok(op_bytes) = std::fs::read(op_path) {
-                if let Ok(op_img) = image::load_from_memory(&op_bytes) {
-                    let op_gray = op_img.to_luma8();
-                    if op_gray.dimensions() == diffuse_rgba.dimensions() {
-                        for (px_d, px_o) in
-                            diffuse_rgba.pixels_mut().zip(op_gray.pixels())
-                        {
-                            px_d.0[3] = px_o.0[0];
-                        }
-                    } else {
-                        eprintln!(
-                            "Model::init: opacity map '{}' size {:?} != diffuse '{}' size {:?} \
-                             — skipping merge",
-                            op_path.display(),
-                            op_gray.dimensions(),
-                            diffuse_path.display(),
-                            diffuse_rgba.dimensions(),
-                        );
-                    }
-                }
-            }
-        }
-        let texture = Texture::new();
-        texture.load_from_data(
-            diffuse_rgba.width(),
-            diffuse_rgba.height(),
-            diffuse_rgba.into_raw(),
-        );
-        Some(texture)
-    }
-
-    fn load_texture_from_disk(path: &std::path::Path) -> Option<Texture> {
-        let bytes = std::fs::read(path).ok()?;
-        let image = image::load_from_memory(&bytes).ok()?;
-        let texture = Texture::new();
-        texture.load_from_data(image.width(), image.height(), image.to_rgba8().into_raw());
-        Some(texture)
-    }
-
     /// Resolve a texture path referenced by a material and upload it.
     ///
     /// Exporters sometimes write absolute paths from the artist's machine
     /// (`C:\Users\...\bark.png`) or paths relative to the original asset
     /// folder. We only have the file name to work with at runtime, so try a
     /// few reasonable locations next to where models live in this project.
-    fn load_external_texture(raw_path: &str, model_dir: &str) -> Option<Texture> {
+    fn load_external_texture(
+        raw_path: &str,
+        model_dir: &str,
+        slot: &TextureType,
+    ) -> Option<Texture> {
         let trimmed = raw_path.trim_end_matches('\0').trim();
         let file_name = super::outline::texture_file_name(raw_path)?;
         // Some FBX exporters write spaces in texture names while the on-disk
@@ -359,26 +243,22 @@ impl Model {
         }
         candidates.push(trimmed.to_string());
 
-        for candidate in &candidates {
-            let Ok(bytes) = std::fs::read(candidate) else {
-                continue;
-            };
-            let Ok(image) = image::load_from_memory(&bytes) else {
-                continue;
-            };
-            let texture = Texture::new();
-            texture.load_from_data(image.width(), image.height(), image.to_rgba8().into_raw());
-            return Some(texture);
-        }
-        None
+        candidates
+            .iter()
+            .find_map(|candidate| read_image(std::path::Path::new(candidate)))
+            .map(|image| upload_map(image, slot))
     }
 
     pub fn render(
         &self,
-        light_position: &Point3<f32>,
+        lighting: &Lighting,
         parent_transform: &Matrix4<f32>,
         camera_projection: &Matrix4<f32>,
     ) {
+        self.shader.bind();
+        lighting.apply(&self.shader);
+        self.shader
+            .set_uniform_mat4("viewProjection", &camera_projection);
         for (name, mesh) in self.meshes.iter() {
             if self.visible.as_ref().is_some_and(|visible| !visible.contains(name)) {
                 continue;
@@ -386,15 +266,6 @@ impl Model {
             if !mesh.is_buffered() {
                 panic!("Mesh is not buffered");
             }
-            self.shader.bind();
-            self.shader.set_uniform_3f(
-                "lightPosition",
-                light_position.x,
-                light_position.y,
-                light_position.z,
-            );
-            self.shader
-                .set_uniform_mat4("viewProjection", &camera_projection);
             if let Some(root_bone) = &mesh.root_bone {
                 let bone_transforms =
                     Model::get_bone_transformations(root_bone, Matrix4::identity());
@@ -415,32 +286,7 @@ impl Model {
                 self.shader
                     .set_uniform_mat4_array("boneTransforms", &vec![Matrix4::identity()]);
             }
-            // Bind this mesh's material textures. Models that contain multiple
-            // materials (e.g. trunk + foliage on a tree) used to all sample the
-            // last-loaded texture because every material's maps got merged
-            // into a single shared HashMap; now each mesh picks the entry
-            // matching its `material_index`.
-            if let Some(material_textures) = self.textures.get(mesh.material_index) {
-                for (i, (texture_type, texture)) in material_textures.iter().enumerate() {
-                    unsafe { gl::ActiveTexture(gl::TEXTURE0 + i as u32) };
-                    texture.bind();
-                    match texture_type {
-                        TextureType::Diffuse => {
-                            self.shader.set_uniform_1i("texture_diffuse", i as i32)
-                        }
-                        TextureType::Shininess => {
-                            self.shader.set_uniform_1i("texture_shininess", i as i32)
-                        }
-                        TextureType::Normals => {
-                            self.shader.set_uniform_1i("texture_normal", i as i32)
-                        }
-                        TextureType::Specular => {
-                            self.shader.set_uniform_1i("texture_specular", i as i32)
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            pbr::bind_material(&self.shader, self.textures.get(mesh.material_index));
             unsafe { gl::Disable(gl::CULL_FACE) };
             mesh.render(
                 &self.shader,
@@ -449,6 +295,51 @@ impl Model {
             );
             unsafe { gl::Enable(gl::CULL_FACE) };
         }
+    }
+
+    /// Distance along the ray (`dir` normalized) to the nearest triangle of
+    /// the meshes that are drawn, with the model drawn at `parent_transform`.
+    /// Bones are not applied: a skinned mesh is tested in its rest pose.
+    pub fn raycast(
+        &self,
+        parent_transform: &Matrix4<f32>,
+        origin: Point3<f32>,
+        dir: Vector3<f32>,
+    ) -> Option<f32> {
+        use cgmath::Transform;
+        let model = parent_transform
+            * Matrix4::from_translation(self.position.to_vec())
+            * Matrix4::from_scale(self.scale);
+        let inverse = model.inverse_transform()?;
+        // The transform is affine, so the ray parameter in model space is
+        // the distance along the world ray.
+        let local_origin = inverse.transform_point(origin);
+        let local_dir = inverse.transform_vector(dir);
+        let mut nearest: Option<f32> = None;
+        for mesh in &self.model.meshes {
+            if self.visible.as_ref().is_some_and(|visible| !visible.contains(&mesh.name)) {
+                continue;
+            }
+            let vertex = |i: u32| {
+                mesh.vertices
+                    .get(i as usize)
+                    .map(|v| Point3::new(v.x, v.y, v.z))
+            };
+            for face in &mesh.faces {
+                let [a, b, c] = face.0[..] else {
+                    continue;
+                };
+                let (Some(a), Some(b), Some(c)) = (vertex(a), vertex(b), vertex(c)) else {
+                    continue;
+                };
+                if let Some(t) = ray_triangle(local_origin, local_dir, a, b, c) {
+                    if nearest.map_or(true, |n| t < n) {
+                        nearest = Some(t);
+                    }
+                }
+            }
+        }
+        nearest
     }
 
     pub fn render_bones(&self, view_projection: &Matrix4<f32>, parent_transform: &Matrix4<f32>) {
@@ -665,9 +556,21 @@ impl Model {
         }
     }
 
-    /// Upload an image file as a texture.
-    pub fn load_texture_file(path: &std::path::Path) -> Option<Texture> {
-        Self::load_texture_from_disk(path)
+    /// Use the image file at `path` as one map of a material, e.g. one the
+    /// user assigned to the asset. Returns false if it cannot be read.
+    pub fn set_material_map_file(
+        &mut self,
+        material_index: usize,
+        map: MaterialMap,
+        path: &std::path::Path,
+    ) -> bool {
+        let Some(image) = read_image(path) else {
+            return false;
+        };
+        let slot = map_texture_type(map);
+        let texture = upload_map(image, &slot);
+        self.set_material_texture(material_index, slot, texture);
+        true
     }
 
     /// Number of materials in the file.
@@ -873,5 +776,158 @@ impl ModelBuilder {
 
     pub fn build(self) -> Model {
         self.model
+    }
+}
+
+/// The slot a texture of this assimp type is kept in. Spellings of the same
+/// map share one slot.
+fn canonical_slot(texture_type: &TextureType) -> TextureType {
+    match texture_type {
+        TextureType::BaseColor => TextureType::Diffuse,
+        TextureType::NormalCamera => TextureType::Normals,
+        other => other.clone(),
+    }
+}
+
+/// The slot a material map is kept in.
+fn map_texture_type(map: MaterialMap) -> TextureType {
+    match map {
+        MaterialMap::BaseColor => TextureType::Diffuse,
+        MaterialMap::Normal => TextureType::Normals,
+        MaterialMap::Roughness => TextureType::Roughness,
+        MaterialMap::Metallic => TextureType::Metalness,
+        MaterialMap::Occlusion => TextureType::AmbientOcclusion,
+    }
+}
+
+fn read_image(path: &std::path::Path) -> Option<image::RgbaImage> {
+    let bytes = std::fs::read(path).ok()?;
+    match image::load_from_memory(&bytes) {
+        Ok(image) => Some(image.to_rgba8()),
+        Err(e) => {
+            log::warn!("model: could not read texture {}: {e}", path.display());
+            None
+        }
+    }
+}
+
+/// Upload an image as the map in `slot`; only the colour map is sRGB.
+fn upload_map(image: image::RgbaImage, slot: &TextureType) -> Texture {
+    let texture = Texture::new();
+    let (width, height) = image.dimensions();
+    texture.load_material_map(width, height, image.into_raw(), *slot == TextureType::Diffuse);
+    texture
+}
+
+/// The maps in `wanted` found next to the model by file name (see
+/// `material_maps`). A separate opacity map goes into the colour map's
+/// alpha; a gloss map is inverted into roughness.
+fn maps_by_name(
+    material_name: Option<&str>,
+    model_stem: &str,
+    model_dir: &str,
+    wanted: &[MaterialMap],
+) -> Vec<(MaterialMap, Texture)> {
+    let prefixes = material_maps::name_prefixes(material_name, model_stem);
+    let files = material_maps::images_with_prefix(std::path::Path::new(model_dir), &prefixes);
+    let found = material_maps::find_maps(&files, &prefixes);
+    let opacity = found
+        .iter()
+        .find(|(kind, _)| *kind == MapKind::Opacity)
+        .and_then(|(_, path)| read_image(path));
+
+    let mut maps = Vec::new();
+    for (kind, path) in &found {
+        let Some(map) = kind.slot().filter(|map| wanted.contains(map)) else {
+            continue;
+        };
+        let Some(mut image) = read_image(path) else {
+            continue;
+        };
+        if *kind == MapKind::Gloss {
+            for pixel in image.pixels_mut() {
+                for channel in &mut pixel.0[..3] {
+                    *channel = 255 - *channel;
+                }
+            }
+        }
+        if map == MaterialMap::BaseColor {
+            if let Some(opacity) = &opacity {
+                if opacity.dimensions() == image.dimensions() {
+                    for (pixel, alpha) in image.pixels_mut().zip(opacity.pixels()) {
+                        pixel.0[3] = alpha.0[0];
+                    }
+                } else {
+                    log::warn!(
+                        "model: opacity map size {:?} differs from {} {:?}, not used",
+                        opacity.dimensions(),
+                        path.display(),
+                        image.dimensions()
+                    );
+                }
+            }
+        }
+        maps.push((map, upload_map(image, &map_texture_type(map))));
+    }
+    maps
+}
+
+/// Möller–Trumbore, two-sided: the ray parameter of the hit, if the ray
+/// meets the triangle in front of its origin.
+fn ray_triangle(
+    origin: Point3<f32>,
+    dir: Vector3<f32>,
+    a: Point3<f32>,
+    b: Point3<f32>,
+    c: Point3<f32>,
+) -> Option<f32> {
+    let e1 = b - a;
+    let e2 = c - a;
+    let p = dir.cross(e2);
+    let det = e1.dot(p);
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    let inv = 1.0 / det;
+    let s = origin - a;
+    let u = s.dot(p) * inv;
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let q = s.cross(e1);
+    let v = dir.dot(q) * inv;
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+    let t = e2.dot(q) * inv;
+    (t >= 0.0).then_some(t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_ray_hits_a_triangle_from_either_side() {
+        let (a, b, c) = (
+            Point3::new(-1.0, -1.0, 0.0),
+            Point3::new(1.0, -1.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+        );
+        let down = Vector3::new(0.0, 0.0, -1.0);
+        assert_eq!(ray_triangle(Point3::new(0.0, 0.0, 5.0), down, a, b, c), Some(5.0));
+        assert_eq!(ray_triangle(Point3::new(0.0, 0.0, -5.0), -down, a, b, c), Some(5.0));
+    }
+
+    #[test]
+    fn a_ray_misses_beside_or_behind_a_triangle() {
+        let (a, b, c) = (
+            Point3::new(-1.0, -1.0, 0.0),
+            Point3::new(1.0, -1.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+        );
+        let down = Vector3::new(0.0, 0.0, -1.0);
+        assert_eq!(ray_triangle(Point3::new(3.0, 0.0, 5.0), down, a, b, c), None);
+        assert_eq!(ray_triangle(Point3::new(0.0, 0.0, -5.0), down, a, b, c), None);
     }
 }

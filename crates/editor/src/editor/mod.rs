@@ -50,6 +50,7 @@ pub enum Workspace {
 pub enum GizmoMode {
     Translate,
     Rotate,
+    Scale,
 }
 
 /// What "Add entity" creates.

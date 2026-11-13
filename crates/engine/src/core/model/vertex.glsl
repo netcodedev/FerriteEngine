@@ -10,10 +10,9 @@ layout (location = 3) in ivec4 boneIDs;
 layout (location = 4) in vec4 weights;
 
 out vec3 Normal;
-out vec3 toLightVector;
+out vec3 WorldPos;
 out vec2 TexCoords;
 
-uniform vec3 lightPosition;
 uniform mat4 model;
 uniform mat4 viewProjection;
 uniform mat4 boneTransforms[MAX_BONES];
@@ -31,7 +30,8 @@ void main()
 
     vec4 worldPosition = model * (BoneTransform * vec4(position, 1.0));
     gl_Position = viewProjection * worldPosition;
-    Normal = (BoneTransform * vec4(normals, 0.0)).xyz;
+    WorldPos = worldPosition.xyz;
+    // Inverse transpose: keeps normals perpendicular under non-uniform scale.
+    Normal = transpose(inverse(mat3(model))) * mat3(BoneTransform) * normals;
     TexCoords = texCoords;
-    toLightVector = lightPosition;
 }

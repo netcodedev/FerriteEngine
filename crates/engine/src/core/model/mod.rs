@@ -12,6 +12,7 @@ mod animation;
 pub mod animation_graph;
 mod bone;
 mod channel;
+pub mod material_maps;
 mod model;
 mod model_mesh;
 pub mod outline;

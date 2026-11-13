@@ -13,6 +13,7 @@ use ferrite::{
         primitives::{Offset, Position, Size},
         renderer::{
             line::{Line, LineRenderer},
+            pbr::Lighting,
             text::{icons, Text},
         },
         scene::Scene,
@@ -231,17 +232,23 @@ impl PreviewPanel {
         self.controls.set_z_index(2.0);
     }
 
-    fn view_projection(&self, view: &Rect) -> Matrix4<f32> {
+    fn target() -> Point3<f32> {
+        Point3::new(0.0, FLOOR_Y + 0.95, 0.0)
+    }
+
+    fn eye(&self) -> Point3<f32> {
         let o = &self.orbit;
-        let target = Point3::new(0.0, FLOOR_Y + 0.95, 0.0);
-        let eye = target
+        Self::target()
             + Vector3::new(
                 o.distance * o.pitch.cos() * o.yaw.sin(),
                 o.distance * o.pitch.sin(),
                 o.distance * o.pitch.cos() * o.yaw.cos(),
-            );
+            )
+    }
+
+    fn view_projection(&self, view: &Rect) -> Matrix4<f32> {
         let projection = perspective(Deg(38.0), view.w / view.h.max(1.0), 0.05, 100.0);
-        projection * Matrix4::look_at_rh(eye, target, Vector3::unit_y())
+        projection * Matrix4::look_at_rh(self.eye(), Self::target(), Vector3::unit_y())
     }
 }
 
@@ -386,8 +393,8 @@ impl UIElement for PreviewPanel {
             unsafe {
                 gl::Enable(gl::DEPTH_TEST);
             }
-            let light = Point3::new(6.0, 10.0, 8.0);
-            model.render(&light, &Matrix4::identity(), &vp);
+            let lighting = Lighting::preview(Vector3::new(6.0, 10.0, 8.0), self.eye());
+            model.render(&lighting, &Matrix4::identity(), &vp);
         }
         unsafe {
             // Leave no 3D depth behind for the UI drawn over this region.

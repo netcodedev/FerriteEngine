@@ -7,9 +7,16 @@ use std::{path::Path, rc::Rc};
 
 use russimp_ng::{
     material::{Material, PropertyTypeInfo},
+    metadata::MetadataType,
     node::Node,
     scene::Scene,
 };
+
+/// A model that would come out smaller than this (in metres, largest
+/// dimension of its biggest variant) at its file's unit is taken to be
+/// modelled in metres after all: exporters often label metre files as
+/// centimetres.
+const MIN_PLAUSIBLE_SIZE: f32 = 0.5;
 
 /// One variant: a named group of scene-graph nodes, one per LOD.
 pub struct NodeGroup {
@@ -177,6 +184,76 @@ pub struct ModelOutline {
     pub materials: Vec<MaterialOutline>,
     /// The animation clips in the file.
     pub clips: Vec<ClipOutline>,
+    /// Metres per unit of the file, as the file states it (FBX). 1 when it
+    /// does not say.
+    pub unit: f32,
+    /// Largest dimension of the biggest variant at its most detailed LOD,
+    /// in file units. 0 without meshes.
+    pub size: f32,
+}
+
+impl ModelOutline {
+    /// Scale to import the model at so it comes out in metres: the file's
+    /// unit, unless that makes the model implausibly small.
+    pub fn import_scale(&self) -> f32 {
+        if self.unit != 1.0 && self.size * self.unit >= MIN_PLAUSIBLE_SIZE {
+            self.unit
+        } else {
+            1.0
+        }
+    }
+}
+
+/// Metres per file unit. FBX gives its unit as `UnitScaleFactor` in
+/// centimetres (1 = cm, 100 = m); other formats are taken as metres.
+fn file_unit(scene: &Scene) -> f32 {
+    let Some(metadata) = &scene.metadata else {
+        return 1.0;
+    };
+    let factor = metadata
+        .keys
+        .iter()
+        .zip(&metadata.values)
+        .find(|(key, _)| key.as_str() == "UnitScaleFactor")
+        .and_then(|(_, value)| match &value.0 {
+            Ok(MetadataType::Float(f)) => Some(*f as f64),
+            Ok(MetadataType::Double(f)) => Some(*f),
+            Ok(MetadataType::Int(i)) => Some(*i as f64),
+            _ => None,
+        });
+    match factor {
+        Some(factor) if factor > 0.0 => (factor / 100.0) as f32,
+        _ => 1.0,
+    }
+}
+
+/// Largest dimension of the meshes below `node` (node transforms are not
+/// applied, as the loader does not apply them either).
+fn node_size(scene: &Scene, node: &Node) -> f32 {
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    extend_bounds(scene, node, &mut min, &mut max);
+    (0..3)
+        .map(|axis| max[axis] - min[axis])
+        .filter(|d| d.is_finite() && *d >= 0.0)
+        .fold(0.0, f32::max)
+}
+
+fn extend_bounds(scene: &Scene, node: &Node, min: &mut [f32; 3], max: &mut [f32; 3]) {
+    for &index in &node.meshes {
+        let Some(mesh) = scene.meshes.get(index as usize) else {
+            continue;
+        };
+        for v in &mesh.vertices {
+            for (axis, c) in [v.x, v.y, v.z].into_iter().enumerate() {
+                min[axis] = min[axis].min(c);
+                max[axis] = max[axis].max(c);
+            }
+        }
+    }
+    for child in node.children.borrow().iter() {
+        extend_bounds(scene, child, min, max);
+    }
 }
 
 /// Names of a file's animation clips, in file order and made unique:
@@ -233,16 +310,22 @@ pub fn default_variant_name(path: &Path) -> String {
 /// Read a model file's outline. Needs no GL context.
 pub fn inspect(path: &Path) -> Result<ModelOutline, String> {
     let scene = Scene::from_file(&path.to_string_lossy(), vec![]).map_err(|e| e.to_string())?;
-    let variants = match &scene.root {
-        Some(root) => group_nodes(root, &default_variant_name(path))
-            .into_iter()
-            .map(|group| VariantOutline {
-                name: group.name,
-                lods: group.lods.into_iter().map(|(name, _)| name).collect(),
-            })
-            .collect(),
+    let groups = match &scene.root {
+        Some(root) => group_nodes(root, &default_variant_name(path)),
         None => Vec::new(),
     };
+    let size = groups
+        .iter()
+        .filter_map(|group| group.lods.iter().min_by_key(|(name, _)| lod_priority(name)))
+        .map(|(_, node)| node_size(&scene, node))
+        .fold(0.0, f32::max);
+    let variants: Vec<VariantOutline> = groups
+        .into_iter()
+        .map(|group| VariantOutline {
+            name: group.name,
+            lods: group.lods.into_iter().map(|(name, _)| name).collect(),
+        })
+        .collect();
     let clips: Vec<ClipOutline> = clip_names(&scene)
         .into_iter()
         .zip(&scene.animations)
@@ -294,5 +377,39 @@ pub fn inspect(path: &Path) -> Result<ModelOutline, String> {
         variants,
         materials,
         clips,
+        unit: file_unit(&scene),
+        size,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outline(unit: f32, size: f32) -> ModelOutline {
+        ModelOutline {
+            variants: Vec::new(),
+            materials: Vec::new(),
+            clips: Vec::new(),
+            unit,
+            size,
+        }
+    }
+
+    #[test]
+    fn a_centimetre_file_is_scaled_to_metres() {
+        // A 113 cm boulder.
+        assert_eq!(outline(0.01, 113.0).import_scale(), 0.01);
+    }
+
+    #[test]
+    fn a_metre_model_labelled_as_centimetres_keeps_its_size() {
+        // A 23.5 m tree that would shrink to 0.24 m.
+        assert_eq!(outline(0.01, 23.5).import_scale(), 1.0);
+    }
+
+    #[test]
+    fn a_file_without_a_unit_is_taken_as_metres() {
+        assert_eq!(outline(1.0, 53.0).import_scale(), 1.0);
+    }
 }

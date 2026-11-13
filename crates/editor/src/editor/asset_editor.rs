@@ -8,10 +8,11 @@ use std::{path::PathBuf, time::Instant};
 use cgmath::{perspective, Deg, Matrix4, Point3, SquareMatrix, Vector3};
 use ferrite::{
     core::{
-        assets::{self, AssetId, AssetKind, AssetMeta, MaterialSettings},
+        assets::{self, AssetId, AssetKind, AssetMeta},
         primitives::{Offset, Position, Size},
         renderer::{
             line::{Line, LineRenderer},
+            pbr::Lighting,
             text::{icons, Text},
         },
         scene::Scene,
@@ -42,36 +43,7 @@ use super::{
 };
 
 /// A texture a material can be given.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextureSlot {
-    BaseColor,
-    Normal,
-}
-
-impl TextureSlot {
-    pub const ALL: [TextureSlot; 2] = [TextureSlot::BaseColor, TextureSlot::Normal];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            TextureSlot::BaseColor => "base color",
-            TextureSlot::Normal => "normal",
-        }
-    }
-
-    pub fn get(self, material: &MaterialSettings) -> Option<AssetId> {
-        match self {
-            TextureSlot::BaseColor => material.base_color,
-            TextureSlot::Normal => material.normal,
-        }
-    }
-
-    pub fn set(self, material: &mut MaterialSettings, texture: Option<AssetId>) {
-        match self {
-            TextureSlot::BaseColor => material.base_color = texture,
-            TextureSlot::Normal => material.normal = texture,
-        }
-    }
-}
+pub use ferrite::core::assets::MaterialMap as TextureSlot;
 
 /// The asset open in the asset workspace.
 pub struct AssetEdit {
@@ -132,8 +104,8 @@ impl AssetEdit {
         else {
             return;
         };
-        if slot.get(material) != texture {
-            slot.set(material, texture);
+        if material.map(slot) != texture {
+            material.set_map(slot, texture);
             self.dirty = true;
             self.structure += 1;
             self.preview += 1;
@@ -400,7 +372,7 @@ impl AssetInspector {
                         vec![
                             Box::new(pick),
                             Box::new(clear),
-                            muted(texture_name(slot.get(material))),
+                            muted(texture_name(material.map(slot))),
                         ],
                     ));
                     self.slot_rows.push((*row.get_handle(), index, slot));
@@ -789,15 +761,19 @@ impl AssetPreview {
         };
     }
 
-    fn view_projection(&self, view: &Rect, center: Point3<f32>, radius: f32) -> Matrix4<f32> {
+    fn eye(&self, center: Point3<f32>, radius: f32) -> Point3<f32> {
         let o = &self.orbit;
         let distance = radius * o.zoom;
-        let eye = center
+        center
             + Vector3::new(
                 distance * o.pitch.cos() * o.yaw.sin(),
                 distance * o.pitch.sin(),
                 distance * o.pitch.cos() * o.yaw.cos(),
-            );
+            )
+    }
+
+    fn view_projection(&self, view: &Rect, center: Point3<f32>, radius: f32) -> Matrix4<f32> {
+        let eye = self.eye(center, radius);
         let projection = perspective(
             Deg(38.0),
             view.w / view.h.max(1.0),
@@ -936,13 +912,16 @@ impl UIElement for AssetPreview {
                 }
                 LineRenderer::render_lines(&vp, &grid, Vector3::new(0.16, 0.17, 0.2), false);
 
-                let light = *center + Vector3::new(radius * 3.0, radius * 5.0, radius * 4.0);
+                let lighting = Lighting::preview(
+                    Vector3::new(3.0, 5.0, 4.0),
+                    self.eye(*center, *radius),
+                );
                 let lod = match lod {
                     Some(tier) => LodChoice::Fixed(tier),
                     // Close up, as the camera never gets far in model terms.
                     None => LodChoice::Distance(0.0),
                 };
-                instances.draw(&vp, &Matrix4::identity(), light, lod);
+                instances.draw(&vp, &Matrix4::identity(), &lighting, lod);
                 unsafe {
                     // Leave no 3D depth behind for the UI drawn over this
                     // region.
@@ -1039,7 +1018,7 @@ impl UIElement for AssetPreview {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ferrite::core::assets::{ModelSettings, ASSET_META_VERSION};
+    use ferrite::core::assets::{MaterialSettings, ModelSettings, ASSET_META_VERSION};
 
     fn edit() -> AssetEdit {
         AssetEdit {

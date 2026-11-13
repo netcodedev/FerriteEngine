@@ -1,6 +1,7 @@
 pub mod framebuffer;
 pub mod light;
 pub mod line;
+pub mod pbr;
 pub mod plane;
 pub mod shader;
 pub mod sky;
