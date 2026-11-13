@@ -14,6 +14,8 @@ use crate::core::{
     renderer::{
         framebuffer::{CascadedShadowMap, FrameBuffer, ShadowFrameBuffer},
         line::Line,
+        plane::PlaneRenderer,
+        text::TextRenderer,
         light::skylight::{SkyLight, SHADOW_CASCADES},
         hdr::{self, Hdr, HdrSettings},
         sky::SkyRenderer,
@@ -233,6 +235,21 @@ impl Scene {
     }
 
     pub fn render(&self, window: &Window) {
+        // 2D overlays drawn by components (menus, HUD) lay out in the
+        // viewport's pixels, as the cursor they get does (see
+        // `handle_event`), not stretched from the whole window into it.
+        let overlay_size = (PlaneRenderer::get_size(), TextRenderer::get_size());
+        if let Some([_, _, w, h]) = self.viewport {
+            PlaneRenderer::resize(w.max(1) as u32, h.max(1) as u32);
+            TextRenderer::resize(w.max(1) as u32, h.max(1) as u32);
+        }
+        self.render_passes(window);
+        let ((plane_w, plane_h), (text_w, text_h)) = overlay_size;
+        PlaneRenderer::resize(plane_w as u32, plane_h as u32);
+        TextRenderer::resize(text_w, text_h);
+    }
+
+    fn render_passes(&self, window: &Window) {
         let parent_transform = Matrix4::identity();
 
         // Shadow Pass
@@ -643,6 +660,20 @@ impl Scene {
         if let WindowEvent::Key(Key::F10, _, Action::Press, _) = event {
             self.show_shadow_debug = !self.show_shadow_debug;
         }
+        // Rendered into a part of the window (the editor's viewport), the
+        // cursor is given relative to that part. Only a visible cursor: a
+        // captured one (mouse look) moves from wherever it was reset to.
+        let local;
+        let event = match (self.viewport, event) {
+            (Some([x, y, _, h]), WindowEvent::CursorPos(cx, cy))
+                if window.get_cursor_mode() == glfw::CursorMode::Normal =>
+            {
+                let top = window.get_framebuffer_size().1 - (y + h);
+                local = WindowEvent::CursorPos(cx - x as f64, cy - top as f64);
+                &local
+            }
+            _ => event,
+        };
         for entity in self.entities.iter_mut() {
             entity.handle_event(glfw, window, event);
         }

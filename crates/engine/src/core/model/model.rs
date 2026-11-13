@@ -68,6 +68,7 @@ impl Model {
             scale: 0.01,
             visible: None,
             hidden_bones: Vec::new(),
+            tint: None,
         })
     }
 
@@ -266,6 +267,16 @@ impl Model {
         let draws_to_screen = hdr::draws_to_view() || ssao::in_depth_pass();
         self.shader
             .set_uniform_mat4("viewProjection", &camera_projection);
+        let [r, g, b, a] = self.tint.unwrap_or([1.0; 4]);
+        self.shader.set_uniform_1i("useTint", self.tint.is_some() as i32);
+        self.shader.set_uniform_4f("tint", r, g, b, a);
+        if self.tint.is_some() {
+            unsafe {
+                gl::Enable(gl::BLEND);
+                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+                gl::DepthMask(gl::FALSE);
+            }
+        }
         for (name, mesh) in self.meshes.iter() {
             if self.visible.as_ref().is_some_and(|visible| !visible.contains(name)) {
                 continue;
@@ -302,6 +313,12 @@ impl Model {
                 Some(self.scale),
             );
             unsafe { gl::Enable(gl::CULL_FACE) };
+        }
+        if self.tint.is_some() {
+            unsafe {
+                gl::DepthMask(gl::TRUE);
+                gl::Disable(gl::BLEND);
+            }
         }
     }
 
@@ -778,6 +795,14 @@ impl Model {
     /// Bones to draw collapsed when drawing to the screen; see the field.
     pub fn set_hidden_bones(&mut self, names: Vec<String>) {
         self.hidden_bones = names;
+    }
+
+    /// Draw the model as a see-through, lit silhouette of `rgba` (alpha
+    /// is how opaque), e.g. as the preview of something to be placed;
+    /// `None` draws it as it is. A tinted model writes no depth and
+    /// belongs to the transparent pass.
+    pub fn set_tint(&mut self, tint: Option<[f32; 4]>) {
+        self.tint = tint;
     }
 }
 

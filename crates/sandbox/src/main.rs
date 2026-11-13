@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use ferrite::core::{
     application::{Application, Layer},
+    assets,
     project::Project,
     scene::Scene,
     script::{self, load_library},
@@ -69,6 +70,12 @@ fn open_project() -> Result<Project, String> {
     };
     let project = Project::load(&path)?;
     project.enter()?;
+    // Files put into the asset folder by hand become assets, as in the
+    // editor.
+    let (_, problems) = assets::database().register_new_files();
+    for problem in problems {
+        ferrite::log::warn!("{problem}");
+    }
     Ok(project)
 }
 

@@ -28,7 +28,7 @@ use crate::core::{
         pbr::Lighting,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
     },
-    physics::physics_engine::PhysicsEngine,
+    physics::physics_engine::{collider_tag, PhysicsEngine},
     scene::{scene_file::ComponentData, Scene},
     view_frustum::ViewFrustum,
 };
@@ -384,6 +384,7 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 )
                 .expect("Failed to create collider")
                     .translation(Vector::new(position.x, position.y, position.z))
+                    .user_data(collider_tag::TERRAIN)
                     .build();
                 // The chunk entity sits at the origin, so its fixed body does
                 // too; colliders keep their world placement while becoming

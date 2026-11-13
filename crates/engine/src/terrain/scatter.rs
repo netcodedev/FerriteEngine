@@ -31,7 +31,7 @@ use crate::core::{
         Entity,
     },
     model::{outline, Model, ModelBuilder},
-    physics::physics_engine::PhysicsEngine,
+    physics::physics_engine::{collider_tag, PhysicsEngine},
     renderer::{
         pbr::{self, Lighting},
         shader::Shader,
@@ -719,6 +719,7 @@ impl ScatterInstances {
             let pose = Pose::from_parts(translation, rotation);
             let collider = ColliderBuilder::new(self.spec.model.variants[variant_idx].collider_shape.clone())
                 .position(pose)
+                .user_data(collider_tag::SCATTER)
                 .build();
             self.colliders
                 .push(scene.physics_engine.add_collider(collider, parent));

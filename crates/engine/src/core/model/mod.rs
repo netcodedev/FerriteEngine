@@ -43,6 +43,9 @@ pub struct Model {
     /// when the model is drawn to the screen (shadows keep them), e.g. the
     /// head of a first-person player so the camera does not see into it.
     hidden_bones: Vec<String>,
+    /// Drawn as a see-through silhouette of this colour; see
+    /// `Model::set_tint`.
+    tint: Option<[f32; 4]>,
 }
 
 /// Raw per-submesh geometry extracted from a `Model` for callers that need
