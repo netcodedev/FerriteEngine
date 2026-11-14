@@ -5,6 +5,10 @@
 
 const float PI = 3.14159265;
 
+// Rain or snow hiding the distance (in `weather/weather.glsl`, which comes
+// after this).
+vec3 weatherFog(vec3 color, vec3 worldPos);
+
 // Sun irradiance at noon and the sky's ambient light, in linear units. Tuned
 // so lit models sit at about the brightness of the terrain around them.
 const float SUN_INTENSITY = 3.5;
@@ -181,7 +185,7 @@ vec3 shadeSurface(vec3 worldPos, vec3 N, vec3 Ng, vec3 albedo, float roughness,
 
     vec3 ambient = skyLight(N) * albedo * (1.0 - metallic)
         + skyLight(reflect(-V, N)) * envBrdf(F0, roughness, NdotV);
-    return direct + ambient * ao * screenOcclusion();
+    return weatherFog(direct + ambient * ao * screenOcclusion(), worldPos);
 }
 
 // 1 while drawing into the HDR target (`renderer/hdr`), which wants

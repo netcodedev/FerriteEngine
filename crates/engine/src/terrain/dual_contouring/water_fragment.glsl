@@ -219,6 +219,12 @@ void main()
         * smoothstep(-0.5, 0.5, Depth);
     float footprint = length(fwidth(RestXZ));
     vec2 slope = rippleSlope(RestXZ, uTime, footprint) * rippleStrength;
+    // Rings where raindrops hit, too fine to see from afar.
+    float rainNear = 1.0 - smoothstep(15.0, 50.0, viewDistance);
+    if (rainAmount > 0.0 && rainNear > 0.0) {
+        float open = skyExposure(WorldPos, vec3(0.0, 1.0, 0.0));
+        slope += rainRipples(RestXZ, weatherTime, rainAmount, footprint) * 0.7 * rainNear * open;
+    }
     vec3 N = normalize(waves.normal + vec3(-slope.x, 0.0, -slope.y));
     bool below = cameraPosition.y < WorldPos.y;
     if (below) {
@@ -333,5 +339,5 @@ void main()
     color = mix(color, foamLight, foam);
     alpha = max(alpha, foam * smoothstep(0.0, SHORE_FADE_DEPTH * 0.5, waterDepth));
 
-    FragColor = vec4(toDisplay(color), alpha);
+    FragColor = vec4(toDisplay(weatherFog(color, WorldPos)), alpha);
 }

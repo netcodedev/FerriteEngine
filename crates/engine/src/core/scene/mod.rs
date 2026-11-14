@@ -8,6 +8,7 @@ use super::{
         hdr::Hdr,
         ssao::Ssao,
         texture::TextureRenderer,
+        weather::{WeatherMaps, WeatherTargets},
     },
 };
 
@@ -43,6 +44,11 @@ pub struct Scene {
     /// Window position of the ambient occlusion while the camera's view is
     /// shaded with it, `None` otherwise (see `pbr::Lighting`).
     ambient_occlusion_origin: Cell<Option<[i32; 2]>>,
+    /// Rain and snow: the sky exposure map, the snow trails and the falling
+    /// drops, made on the first frame with weather.
+    weather: RefCell<Option<WeatherTargets>>,
+    /// Where the weather's maps lie while the scene is shaded with them.
+    weather_maps: Cell<Option<WeatherMaps>>,
     /// Work queued with `Scene::defer`, run once every entity is updated.
     deferred: Vec<Box<dyn FnOnce(&mut Scene)>>,
 }

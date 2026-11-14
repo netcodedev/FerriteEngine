@@ -4,7 +4,7 @@ use crate::core::{
     assets::{self, AssetKind, AssetRef, MaterialMap},
     entity::Entity,
     model::{Model, ModelBuilder},
-    renderer::pbr::Lighting,
+    renderer::{pbr::Lighting, weather::exposure},
     scene::{scene_file::ComponentData, Scene},
 };
 
@@ -178,6 +178,10 @@ impl Component for ModelComponent {
         view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
     ) {
+        // Characters keep no dry patch under them from rain or snow.
+        if exposure::in_exposure_pass() && self.model.skeleton().is_some() {
+            return;
+        }
         if let Some(lighting) = Lighting::from_scene(scene) {
             self.model.render(&lighting, parent_transform, view_projection);
         }

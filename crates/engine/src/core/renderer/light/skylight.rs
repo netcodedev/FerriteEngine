@@ -11,6 +11,7 @@ use crate::core::{
         hdr::{HdrSettings, Tonemapper},
         sky::{CloudSettings, CloudType},
         ssao::AmbientOcclusionSettings,
+        weather::{Weather, WeatherMode},
     },
     scene::{scene_file::ComponentData, Scene},
 };
@@ -52,6 +53,8 @@ pub struct SkyLight {
     ambient_occlusion: AmbientOcclusionSettings,
     /// Exposure, tone mapping and bloom of the camera's view.
     hdr: HdrSettings,
+    /// Rain and snow, and what they left on the ground.
+    weather: Weather,
 }
 
 impl SkyLight {
@@ -88,6 +91,7 @@ impl SkyLight {
             clouds: CloudSettings::default(),
             ambient_occlusion: AmbientOcclusionSettings::default(),
             hdr: HdrSettings::default(),
+            weather: Weather::default(),
         };
         sl.position = Point3::from_vec(sl.compute_sun_direction() * SUN_DISTANCE);
         sl
@@ -135,6 +139,37 @@ impl SkyLight {
 
     pub fn clouds(&self) -> &CloudSettings {
         &self.clouds
+    }
+
+    /// Coverage of the low clouds as the sky shows it: the set coverage,
+    /// closed toward overcast while it rains or snows.
+    pub fn effective_cloud_coverage(&self) -> f32 {
+        self.weather.cloud_coverage(self.cloud_coverage)
+    }
+
+    /// Shape of the low clouds as the sky shows it (the `cloudType`
+    /// uniform): the set type, turned toward the weather's clouds.
+    pub fn effective_cloud_type(&self) -> f32 {
+        self.weather.cloud_type(self.clouds.cloud_type.shader_value())
+    }
+
+    pub fn weather(&self) -> &Weather {
+        &self.weather
+    }
+
+    pub fn weather_mut(&mut self) -> &mut Weather {
+        &mut self.weather
+    }
+
+    pub fn set_weather(&mut self, weather: Weather) {
+        self.weather = weather.sanitized();
+    }
+
+    /// How strongly the sun shines on the ground, 0..1 (dries and melts).
+    fn sunshine(&self) -> f32 {
+        let height = self.compute_sun_direction().y;
+        let up = ((height + 0.05) / 0.35).clamp(0.0, 1.0);
+        up * (1.0 - 0.85 * self.cloud_coverage)
     }
 
     pub fn set_clouds(&mut self, settings: CloudSettings) {
@@ -279,12 +314,19 @@ impl Component for SkyLight {
             let dt_day = (delta_time as f32) / self.day_length_seconds;
             self.advance_time(dt_day);
         }
+        let sunshine = self.sunshine();
+        self.weather.update(delta_time as f32, sunshine);
         self.refit_to_active_camera(scene);
     }
 
     fn update_in_editor(&mut self, scene: &mut Scene, _: &mut Entity, _: f64) {
         // Time stays frozen while editing; only the shadow box follows the
         // editor camera so shadows stay visible where you are looking.
+        // The sky shows the chosen weather at once; what lies on the ground
+        // is set by hand (wetness, snow cover, ...).
+        if self.weather.mode != WeatherMode::Changing {
+            self.weather.settle();
+        }
         self.refit_to_active_camera(scene);
     }
 
@@ -303,6 +345,7 @@ impl Component for SkyLight {
             clouds: self.clouds,
             ambient_occlusion: self.ambient_occlusion,
             hdr: self.hdr,
+            weather: self.weather,
         })
     }
 
@@ -363,6 +406,32 @@ impl Component for SkyLight {
                 HdrSettings::BLOOM_THRESHOLD_RANGE.0,
                 HdrSettings::BLOOM_THRESHOLD_RANGE.1,
             ),
+            Property::choice(
+                "weather",
+                self.weather.mode.name().to_string(),
+                WeatherMode::ALL.iter().map(|m| m.name().to_string()).collect(),
+            ),
+            Property::ranged(
+                "precipitation",
+                self.weather.intensity,
+                Weather::INTENSITY_RANGE.0,
+                Weather::INTENSITY_RANGE.1,
+            ),
+            Property::ranged(
+                "weather spell (s)",
+                self.weather.spell_seconds,
+                Weather::SPELL_RANGE.0,
+                Weather::SPELL_RANGE.1,
+            ),
+            Property::ranged("wetness", self.weather.wetness, 0.0, 1.0),
+            Property::ranged("puddles", self.weather.puddles, 0.0, 1.0),
+            Property::ranged("snow cover", self.weather.snow_cover, 0.0, 1.0),
+            Property::ranged(
+                "snow depth (m)",
+                self.weather.snow_depth,
+                0.0,
+                crate::core::renderer::weather::MAX_SNOW_DEPTH,
+            ),
         ]
     }
 
@@ -393,6 +462,17 @@ impl Component for SkyLight {
             ("bloom", PropertyValue::Bool(v)) => self.hdr.bloom = v,
             ("bloom intensity", PropertyValue::Float(v)) => self.hdr.set_bloom_intensity(v),
             ("bloom threshold", PropertyValue::Float(v)) => self.hdr.set_bloom_threshold(v),
+            ("weather", PropertyValue::Text(v)) => {
+                if let Some(mode) = WeatherMode::from_name(&v) {
+                    self.weather.mode = mode;
+                }
+            }
+            ("precipitation", PropertyValue::Float(v)) => self.weather.set_intensity(v),
+            ("weather spell (s)", PropertyValue::Float(v)) => self.weather.set_spell_seconds(v),
+            ("wetness", PropertyValue::Float(v)) => self.weather.set_wetness(v),
+            ("puddles", PropertyValue::Float(v)) => self.weather.set_puddles(v),
+            ("snow cover", PropertyValue::Float(v)) => self.weather.set_snow_cover(v),
+            ("snow depth (m)", PropertyValue::Float(v)) => self.weather.set_snow_depth(v),
             _ => {}
         }
     }

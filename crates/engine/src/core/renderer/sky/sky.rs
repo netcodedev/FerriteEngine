@@ -163,7 +163,9 @@ impl SkyRenderer {
         sun_direction: Vector3<f32>,
         time_of_day: f32,
         cloud_coverage: f32,
+        cloud_type: f32,
         cloud_settings: &CloudSettings,
+        precipitation: f32,
     ) {
         let mut r = RENDERER.lock().unwrap();
         let set_uniforms = |shader: &Shader| {
@@ -176,9 +178,10 @@ impl SkyRenderer {
             shader.set_uniform_3f("sunDirection", sun_direction.x, sun_direction.y, sun_direction.z);
             shader.set_uniform_1f("timeOfDay", time_of_day);
             shader.set_uniform_1f("cloudCoverage", cloud_coverage);
-            shader.set_uniform_1f("cloudType", cloud_settings.cloud_type.shader_value());
+            shader.set_uniform_1f("cloudType", cloud_type);
             shader.set_uniform_1f("altocumulus", cloud_settings.altocumulus);
             shader.set_uniform_1f("cirrus", cloud_settings.cirrus);
+            shader.set_uniform_1f("precipitation", precipitation);
             shader.set_uniform_3f("camPos", camera_pos.x, camera_pos.y, camera_pos.z);
             shader.set_uniform_1f("uTime", START.elapsed().as_secs_f32());
         };
