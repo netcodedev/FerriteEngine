@@ -9,7 +9,10 @@
 in vec2 ndcPos;
 out vec4 FragColor;
 
-const int   MARCH_STEPS  = 56;
+// Raymarch steps through the low layer: more for a tall storm layer, so
+// its steps stay short enough not to turn edges into grain.
+const int   MARCH_STEPS_MIN = 56;
+const int   MARCH_STEPS_MAX = 96;
 const int   SUN_STEPS    = 4;
 const float SUN_STEP_LEN = 35.0;
 
@@ -87,7 +90,11 @@ vec4 lowClouds(vec3 dir, float dayFactor) {
 
     // Cap total march distance so grazing rays don't blow out step count.
     float marchLen = min(tExit - tEnter, 9000.0);
-    float stepLen  = marchLen / float(MARCH_STEPS);
+    int steps = int(mix(float(MARCH_STEPS_MIN), float(MARCH_STEPS_MAX),
+                        smoothstep(0.6, 1.0, cloudType)));
+    float stepLen  = marchLen / float(steps);
+    // Long steps can't resolve fine detail either: treat them as distance.
+    float stepLod = clamp((stepLen - 40.0) / 160.0, 0.0, 0.6);
 
     // Per-pixel ray offset hides banding; stable over time (a changing
     // one would crawl without TAA), and weaker for grazing rays where it
@@ -108,8 +115,8 @@ vec4 lowClouds(vec3 dir, float dayFactor) {
     vec3  scatter = vec3(0.0);
     const float invFar = 1.0 / 4500.0;
 
-    for (int i = 0; i < MARCH_STEPS; i++) {
-        float lod = clamp(float(i) * stepLen * invFar, 0.0, 1.0);
+    for (int i = 0; i < steps; i++) {
+        float lod = max(clamp(float(i) * stepLen * invFar, 0.0, 1.0), stepLod);
         float d = cloudDensity(pos, false, lod);
         if (d > 0.001) {
             // Sun visibility: a short march toward the sun.
@@ -127,7 +134,10 @@ vec4 lowClouds(vec3 dir, float dayFactor) {
             // of tall clouds but not small ones (and, in a flat sheet,
             // its thicker parts).
             float dAbove = cloudDensity(pos + vec3(0.0, probeHeight, 0.0), true, lod);
-            float occ    = clamp(dAbove * 0.30, 0.0, 0.55);
+            float occ    = 0.55 * smoothstep(0.0, 2.0, dAbove);
+            // ...but not by a storm's anvil: it is a thin sheet, and the
+            // tower tops just under it would turn into dark streaks.
+            occ *= 1.0 - smoothstep(0.70, 0.80, (pos.y + probeHeight - CLOUD_BOTTOM) / (CLOUD_TOP - CLOUD_BOTTOM));
 
             // Mild powder term — dims only the thinnest wisps.
             float powder = mix(0.65, 1.0, 1.0 - exp(-d * 4.0));
@@ -152,43 +162,49 @@ vec4 lowClouds(vec3 dir, float dayFactor) {
 
 // ── Mid layer: altocumulus ────────────────────────────────────────────
 
-// Rounded puffs, one per jittered grid cell (1 in the middle of a puff,
-// 0 between them).
-float puffs(vec2 x) {
+// Distance to the nearest of a jittered grid of points (cellular noise).
+float cellDistance(vec2 x) {
     vec2 i = floor(x);
     vec2 f = fract(x);
     float best = 1e9;
     for (int y = -1; y <= 1; y++) {
         for (int xo = -1; xo <= 1; xo++) {
             vec2 o = vec2(float(xo), float(y));
-            vec2 h = hash22(i + o);
-            vec2 r = o + 0.15 + 0.7 * h - f;
-            // Puffs of different sizes.
-            best = min(best, dot(r, r) / mix(0.45, 1.0, h.x));
+            vec2 r = o + hash22(i + o) - f;
+            best = min(best, dot(r, r));
         }
     }
-    return 1.0 - smoothstep(0.03, 0.42, best);
+    return sqrt(best);
 }
 
+// Altocumulus: clumps of rounded billows that merge in the middle of a
+// patch and break up into small separate puffs at its edges, in loose
+// rows across the wind.
 float altoDensity(vec2 p, float lod) {
     // Higher layers ride faster winds.
     vec2 q = p - cloudWind().xz * 1.8;
-    float patches = cloudFbm(vec3(q.x * 0.00028, 5.0, q.y * 0.00028), 3);
     float a = clamp(altocumulus, 0.0, 1.0);
-    float edge = mix(0.78, 0.30, a);
-    float cover = smoothstep(edge, edge + 0.16, patches);
+    float patches = cloudFbm(vec3(q.x * 0.00025, 5.0, q.y * 0.00025), 3);
+    float lo = mix(0.78, 0.30, a);
+    float cover = smoothstep(lo, lo + 0.18, patches);
     if (cover <= 0.0) return 0.0;
 
-    // Warped cells, roughly 160 m across, so the puffs line up in loose
-    // waves instead of a grid.
-    vec2 c = q / 160.0;
-    c += (vec2(cloudFbm(vec3(c.x * 0.15, 1.0, c.y * 0.15), 2),
-               cloudFbm(vec3(c.x * 0.15, 7.0, c.y * 0.15), 2)) - 0.5) * 3.0;
-    // Ragged puffs: noise eats into their edges.
-    float cells = puffs(c) * mix(0.45, 1.0, cloudFbm(vec3(c.x * 1.7, 3.0, c.y * 1.7), 3));
-    // Far away the puffs are smaller than a pixel: use their average.
-    cells = mix(cells, 0.32, smoothstep(0.15, 0.8, lod));
-    return cells * cover;
+    // Billows ~350 m across, squashed across the wind into rows, with a
+    // warp so the rows wander.
+    vec2 w = normalize(vec2(0.9, 0.3));
+    vec2 c = vec2(dot(q, w), dot(q, vec2(-w.y, w.x))) / vec2(450.0, 320.0);
+    c += (vec2(cloudFbm(vec3(c.x * 0.2, 1.0, c.y * 0.2), 2),
+               cloudFbm(vec3(c.x * 0.2, 7.0, c.y * 0.2), 2)) - 0.5) * 2.0;
+    float billows = 1.0 - smoothstep(0.0, 0.85, cellDistance(c));
+    float small   = 1.0 - smoothstep(0.0, 0.80, cellDistance(c * 2.3 + 5.1));
+    float soft    = cloudFbm(vec3(c.x * 0.9, 3.0, c.y * 0.9), 3);
+    float field = billows * 0.50 + small * 0.25 + soft * 0.40;
+    // Far away the billows are smaller than a pixel: use their average.
+    field = mix(field, 0.55, smoothstep(0.2, 0.8, lod));
+
+    // The thicker the patch, the lower the threshold: billows merge.
+    float cut = mix(0.80, 0.38, cover);
+    return smoothstep(cut, cut + 0.22, field);
 }
 
 vec4 altoClouds(vec3 dir, float dayFactor) {
@@ -199,16 +215,16 @@ vec4 altoClouds(vec3 dir, float dayFactor) {
     float d = altoDensity(p, lod);
     if (d <= 0.001) return vec4(0.0);
 
-    // Self-shadow: the sheet is thin, so the light a puff gets depends on
-    // how much cloud lies toward the sun just next to it.
+    // Self-shadow: the sheet is thin, so a billow is lit on the side that
+    // faces the sun and grey on the far side and in its thick middle.
     vec2 toSun = normalize(sunDirection.xz + vec2(1e-4));
-    float dSun = altoDensity(p + toSun * 60.0, lod);
-    float shade = 1.0 - 0.55 * clamp(dSun - d * 0.3, 0.0, 1.0);
+    float dSun = altoDensity(p + toSun * 90.0, lod);
+    float shade = 1.0 - 0.45 * clamp(dSun - d * 0.5, 0.0, 1.0) - 0.25 * d;
 
     vec3 sun = sunlightAt(ALTO_HEIGHT);
-    vec3 lit = sun * shade * (0.55 + 0.6 * cloudPhase(dot(dir, sunDirection)))
-             + cloudAmbient(dir, dayFactor) * 0.85;
-    float alpha = clamp(d * 0.85, 0.0, 0.8) * smoothstep(0.01, 0.10, dir.y);
+    vec3 lit = sun * shade * (0.45 + 0.6 * cloudPhase(dot(dir, sunDirection)))
+             + cloudAmbient(dir, dayFactor) * 0.75;
+    float alpha = clamp(d * 0.9, 0.0, 0.85) * smoothstep(0.01, 0.10, dir.y);
     return vec4(lit * alpha, alpha);
 }
 

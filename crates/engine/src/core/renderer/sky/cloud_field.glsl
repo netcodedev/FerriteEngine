@@ -95,29 +95,47 @@ float cloudDensity(vec3 p, bool cheap, float lod) {
     float typeNoise  = cloudFbm(qFlat * 0.21 + 47.0, 2);
     float type = clamp(cloudType + (typeNoise - 0.5) * 2.0 * CLOUD_TYPE_SPREAD, 0.0, 1.0);
 
-    float top = cloudTopFor(type);
+    // ── Storm cells ─────────────────────────────────────────────────────
+    // A cumulonimbus sky is mostly cumulus with a few big storm cells, kilometres
+    // apart. Inside a cell the clouds reach higher the closer they are to its
+    // core, which gives one tall dome instead of a field of equal towers.
+    float storm  = smoothstep(0.75, 1.0, type);
+    float cellN  = cloudFbm(qFlat * 0.11 + 91.0, 3);
+    float cell   = clamp((cellN - 0.50) / 0.28, 0.0, 1.0) * storm;
+    float heaped = min(type, 0.70);
+
+    float top = mix(cloudTopFor(heaped), 1.0, cell * (2.0 - cell));
     float hn = h / top; // 0 at the base, 1 at this cloud's top
-    if (hn > 1.0) return 0.0;
+
+    // The anvil: a flat, smooth sheet at the top of the layer, wider than
+    // the tower under it, stretched downwind.
+    float anvilD = 0.0;
+    if (storm > 0.0) {
+        vec3 qa = qFlat + vec3(-0.9, 0.0, -0.3) * smoothstep(0.80, 1.0, h) * 1.2;
+        float wide = clamp((cloudFbm(qa * 0.11 + 91.0, 3) - 0.47) / 0.22, 0.0, 1.0) * storm;
+        float sheet = smoothstep(0.80, 0.88, h) * (1.0 - smoothstep(0.95, 0.99, h));
+        float edge = cloudFbm(q * 1.3 + 61.0, cheap ? 2 : 3);
+        anvilD = max(wide * (0.55 + 0.45 * edge) - 0.35, 0.0) * sheet * 1.6;
+    }
+    if (hn > 1.0) return anvilD * weatherMod * 5.0;
 
     // Flat clouds spread wide: stretch the noise horizontally for stratus.
-    // Tall ones stretch it vertically instead, so a puff carries on
-    // upward as a tower instead of breaking into stacked blobs.
+    // Storm towers stretch it vertically, so a puff carries on upward
+    // instead of breaking into stacked blobs.
     float spread = mix(0.45, 1.0, smoothstep(0.0, 0.5, type));
-    float stretch = mix(1.0, 0.35, smoothstep(0.4, 1.0, type));
+    float stretch = mix(1.0, 0.55, cell);
     vec3 qs = vec3(q.x * spread, q.y * stretch, q.z * spread);
 
     // ── Vertical profile ────────────────────────────────────────────────
     // Cumulus have flat bases and round tops; stratus soft edges on both
     // sides. The noisy base gives dangling tufts instead of a flat plane.
     float bottomNoise = cloudFbm(q * 1.6 + 31.0, 2);
-    float baseSoft    = mix(0.40, 0.10, smoothstep(0.0, 0.5, type));
+    float baseSoft    = mix(0.40, 0.10, smoothstep(0.0, 0.5, type)) * mix(1.0, 0.4, cell);
     float bottomEdge  = smoothstep(0.0, baseSoft * mix(0.5, 1.4, bottomNoise), hn);
     // Rounded tops: the threshold rises towards the top so a cloud narrows
-    // into a dome. Cumulonimbus spread again into an anvil at the very top.
-    float narrowing = smoothstep(mix(0.55, 0.25, type), 1.0, hn);
-    float anvil = smoothstep(0.75, 1.0, type) * smoothstep(0.78, 0.93, hn)
-                * (1.0 - smoothstep(0.96, 1.0, hn));
-    float topEdge = smoothstep(1.0, 0.92, hn);
+    // into a dome.
+    float narrowing = smoothstep(mix(0.55, 0.30, heaped), 1.0, hn);
+    float topEdge = smoothstep(1.0, 0.90, hn);
 
     int baseOct   = cheap ? 3 : 5;
     int detailOct = cheap ? 2 : 3;
@@ -127,12 +145,12 @@ float cloudDensity(vec3 p, bool cheap, float lod) {
     float base = cloudFbm(qs, baseOct);
 
     // Coverage threshold: 0 pushes the cutoff above the noise (clear), 1
-    // below it (overcast).
+    // below it (overcast). A storm cell's core is solid whatever the
+    // coverage.
     float cov = clamp(cloudCoverage, 0.0, 1.0);
     float cutoff = mix(1.05, -0.10, cov);
-    // Storm clouds keep their width up to the anvil and fill more sky.
-    float storm = smoothstep(0.75, 1.0, type);
-    cutoff += narrowing * (mix(0.25, 0.55, type) - 0.35 * storm) - anvil * 0.45 - 0.08 * storm;
+    cutoff += narrowing * mix(0.25, 0.55, heaped) * (1.0 - 0.5 * cell);
+    cutoff -= 0.45 * cell;
     float d = max(base - cutoff, 0.0);
 
     // ── Detail erosion ──────────────────────────────────────────────────
@@ -142,5 +160,5 @@ float cloudDensity(vec3 p, bool cheap, float lod) {
     float erodeAmt = mix(mix(0.60, 0.25, smoothstep(0.1, 0.6, type)), 0.90, lod);
     d *= mix(erodeAmt, 1.0, erode);
 
-    return d * bottomEdge * topEdge * weatherMod * 5.0;
+    return max(d * bottomEdge * topEdge, anvilD) * weatherMod * 5.0;
 }
