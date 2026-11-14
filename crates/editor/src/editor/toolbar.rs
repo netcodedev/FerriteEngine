@@ -1,4 +1,5 @@
 use ferrite::core::{
+    export::Platform,
     primitives::{Offset, Position, Size},
     renderer::{
         plane::{Plane, PlaneBuilder},
@@ -70,7 +71,8 @@ impl Toolbar {
                 MenuItem::new("Save as...").icon(icons::SAVE).shortcut("Ctrl+Shift+S"),
                 MenuItem::new("New script...").icon(icons::FILE_CODE),
                 MenuItem::new("Reload scripts").icon(icons::ROTATE_CW).shortcut("Ctrl+R"),
-                MenuItem::new("Export game...").icon(icons::PACKAGE),
+                MenuItem::new("Export for Linux...").icon(icons::PACKAGE),
+                MenuItem::new("Export for Windows...").icon(icons::PACKAGE),
             ],
             Box::new(move |index, _scene| {
                 let command = match index {
@@ -80,7 +82,8 @@ impl Toolbar {
                     3 => Command::SaveAsDialog,
                     4 => Command::NewScriptDialog,
                     5 => Command::ReloadScripts,
-                    _ => Command::ExportGame,
+                    6 => Command::ExportGame(Platform::Linux),
+                    _ => Command::ExportGame(Platform::Windows),
                 };
                 send(&file_state, command);
             }),

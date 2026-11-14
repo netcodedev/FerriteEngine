@@ -674,11 +674,11 @@ impl EditorLayer {
                     self.on_script_event(event);
                 }
             }
-            Command::ExportGame => {
+            Command::ExportGame(platform) => {
                 if self.exporter.is_running() {
                     self.state.borrow_mut().set_status("An export is already running");
                 } else if let Some(out) = Exporter::pick_folder() {
-                    self.exporter.start(self.project.clone(), out);
+                    self.exporter.start(self.project.clone(), out, platform);
                 }
             }
             Command::RefreshAssets => {

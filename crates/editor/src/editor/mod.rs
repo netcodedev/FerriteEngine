@@ -100,8 +100,9 @@ pub enum Command {
     RefreshAssets,
     /// Build the game's scripts and load them again.
     ReloadScripts,
-    /// Let the user choose a folder and export the game into it.
-    ExportGame,
+    /// Let the user choose a folder and export the game for a platform
+    /// into it.
+    ExportGame(ferrite::core::export::Platform),
     /// Let the user choose a model asset for a scatter layer of this
     /// entity's terrain. Without a layer index a new layer is added.
     PickScatterAsset {

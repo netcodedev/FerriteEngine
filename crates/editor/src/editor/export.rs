@@ -6,7 +6,10 @@ use std::{
     sync::mpsc::{self, Receiver},
 };
 
-use ferrite::core::{export, project::Project};
+use ferrite::core::{
+    export::{self, Platform},
+    project::Project,
+};
 
 enum Event {
     Progress(String),
@@ -33,15 +36,15 @@ impl Exporter {
         self.running.is_some()
     }
 
-    /// Export `project` into `out` in the background.
-    pub fn start(&mut self, project: Project, out: PathBuf) {
+    /// Export `project` for `platform` into `out` in the background.
+    pub fn start(&mut self, project: Project, out: PathBuf, platform: Platform) {
         let (send, receive) = mpsc::channel();
         std::thread::spawn(move || {
             let progress_send = send.clone();
             let progress = move |step: &str| {
                 let _ = progress_send.send(Event::Progress(step.to_string()));
             };
-            let result = export::export(&project, &out, &progress);
+            let result = export::export(&project, &out, platform, &progress);
             let _ = send.send(Event::Done(result));
         });
         self.running = Some(receive);

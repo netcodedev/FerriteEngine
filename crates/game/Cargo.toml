@@ -1,0 +1,26 @@
+[package]
+name = "ferrite-game"
+version = "0.1.0"
+edition = "2021"
+# The scripts of the project, as for `ferrite_scripts` (FERRITE_SCRIPTS).
+build = "../scripts/build.rs"
+
+# An exported game: the player and the dedicated server, each one
+# executable with the engine and the project's scripts compiled in (no
+# shared libraries to ship, and none of their limits on Windows). Built by
+# `ferrite::core::export`, with FERRITE_SCRIPTS set to the project's
+# scripts folder.
+[lib]
+name = "game_scripts"
+path = "src/lib.rs"
+
+[[bin]]
+name = "game"
+path = "src/main.rs"
+
+[[bin]]
+name = "server"
+path = "src/server.rs"
+
+[dependencies]
+ferrite = { path = "../engine", features = ["standalone"] }
