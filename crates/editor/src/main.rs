@@ -1113,6 +1113,14 @@ impl Layer for EditorLayer {
         if let Some(status) = self.exporter.poll() {
             self.state.borrow_mut().set_status(status);
         }
+        // The game asked to end: in the editor that ends play mode, never
+        // the editor.
+        if ferrite::core::application::take_quit_request()
+            && self.state.borrow().mode == Mode::Play
+        {
+            self.state.borrow_mut().push(Command::Stop);
+            self.run_commands();
+        }
         self.save_settings_if_changed();
         let (show_stats, show_widgets, show_assets, workspace) = {
             let s = self.state.borrow();
