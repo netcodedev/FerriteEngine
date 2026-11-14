@@ -46,30 +46,15 @@ impl Channel {
     }
 
     fn get_position_index(&self, time: f32) -> usize {
-        for i in 0..self.position_keys.len() {
-            if self.position_keys[i].0 > time {
-                return i - 1;
-            }
-        }
-        0
+        key_index(&self.position_keys, time)
     }
 
     fn get_rotation_index(&self, time: f32) -> usize {
-        for i in 0..self.rotation_keys.len() {
-            if self.rotation_keys[i].0 > time {
-                return i - 1;
-            }
-        }
-        0
+        key_index(&self.rotation_keys, time)
     }
 
     fn get_scaling_index(&self, time: f32) -> usize {
-        for i in 0..self.scaling_keys.len() {
-            if self.scaling_keys[i].0 > time {
-                return i - 1;
-            }
-        }
-        0
+        key_index(&self.scaling_keys, time)
     }
 
     fn interpolate_position(&self, time: f32) -> Vector3<f32> {
@@ -80,7 +65,7 @@ impl Channel {
         }
         let delta_time =
             self.position_keys[next_position_index].0 - self.position_keys[position_index].0;
-        let factor = (time - self.position_keys[position_index].0) / delta_time;
+        let factor = ((time - self.position_keys[position_index].0) / delta_time).clamp(0.0, 1.0);
         let start = self.position_keys[position_index].1;
         let end = self.position_keys[next_position_index].1;
         start + (end - start) * factor
@@ -94,7 +79,7 @@ impl Channel {
         }
         let delta_time =
             self.rotation_keys[next_rotation_index].0 - self.rotation_keys[rotation_index].0;
-        let factor = (time - self.rotation_keys[rotation_index].0) / delta_time;
+        let factor = ((time - self.rotation_keys[rotation_index].0) / delta_time).clamp(0.0, 1.0);
         let start = self.rotation_keys[rotation_index].1;
         let end = self.rotation_keys[next_rotation_index].1;
         Quaternion::slerp(start, end, factor)
@@ -108,9 +93,17 @@ impl Channel {
         }
         let delta_time =
             self.scaling_keys[next_scaling_index].0 - self.scaling_keys[scaling_index].0;
-        let factor = (time - self.scaling_keys[scaling_index].0) / delta_time;
+        let factor = ((time - self.scaling_keys[scaling_index].0) / delta_time).clamp(0.0, 1.0);
         let start = self.scaling_keys[scaling_index].1;
         let end = self.scaling_keys[next_scaling_index].1;
         start + (end - start) * factor
     }
+}
+
+/// The key at or before `time` (the first key before it starts, the last
+/// one after the end).
+fn key_index<T>(keys: &[(f32, T)], time: f32) -> usize {
+    keys.iter()
+        .position(|(t, _)| *t > time)
+        .map_or(keys.len().saturating_sub(1), |next| next.saturating_sub(1))
 }

@@ -11,8 +11,9 @@ use cgmath::{
 };
 use ferrite::{
     core::{
-        assets::{self, AssetId, AssetKind, AssetMeta, MaterialMap, ModelSettings},
+        assets::{self, AssetId, AssetKind, AssetMeta, ClipInfo, MaterialMap, ModelSettings},
         model::{
+            clip_file::{is_clip_file, BonePose, Transform as BoneTransform},
             ik::{IkChain, Skeleton},
             Model, ModelBuilder,
         },
@@ -43,6 +44,10 @@ use ferrite_ui::ui::{
 use glfw::{Action, Glfw, MouseButton, WindowEvent};
 
 use super::{
+    clip_editor::{
+        ring_points, ClipEdit, ClipRequest, Timeline, TimelineAction, TimelineView, AXES,
+        RING_COLORS, TIMELINE_HEIGHT,
+    },
     drag::{DropAction, DropTarget},
     field_row::{FieldRow, LABEL_COLUMN},
     layout::Rect,
@@ -68,6 +73,8 @@ pub struct AssetEdit {
     pub structure: u64,
     /// Goes up when the preview has to load the model again.
     pub preview: u64,
+    /// The clip, when the asset is a clip made in the editor.
+    pub clip: Option<ClipEdit>,
 }
 
 impl AssetEdit {
@@ -87,6 +94,12 @@ impl AssetEdit {
                     .position(|v| v.name == name)
             })
             .unwrap_or(0);
+        let source = entry.source_path();
+        let clip = if is_clip_file(&source) {
+            Some(ClipEdit::load(&source)?)
+        } else {
+            None
+        };
         Ok(Self {
             meta: entry.meta.clone(),
             dir: entry.dir.clone(),
@@ -95,6 +108,7 @@ impl AssetEdit {
             lod: None,
             structure: 0,
             preview: 0,
+            clip,
         })
     }
 
@@ -121,6 +135,24 @@ impl AssetEdit {
 
     /// Write the working copy to the asset.
     pub fn save(&mut self) -> Result<(), String> {
+        if let Some(clip) = &self.clip {
+            clip.to_save()
+                .save(&self.source_path())
+                .map_err(|e| e.to_string())?;
+            // The clip's length is listed with the asset; saving its
+            // settings also makes graphs using it load it again.
+            if let AssetKind::Animation(settings) = &mut self.meta.kind {
+                let name = settings
+                    .clips
+                    .first()
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| self.meta.name.clone());
+                settings.clips = vec![ClipInfo {
+                    name,
+                    duration: clip.duration(),
+                }];
+            }
+        }
         assets::database()
             .update(self.meta.clone())
             .map_err(|e| e.to_string())?;
@@ -135,6 +167,17 @@ impl AssetEdit {
             .map(|entry| entry.meta.clone())
             .ok_or_else(|| format!("asset {} does not exist any more", self.meta.id))?;
         self.meta = saved;
+        if self.clip.is_some() {
+            let mut clip = ClipEdit::load(&self.source_path())?;
+            if let Some(old) = &self.clip {
+                clip.selected = old.selected.clone();
+                clip.rest = old.rest.clone();
+                clip.bones = old.bones.clone();
+                clip.keys = old.keys + 1;
+                clip.set_time(old.time);
+            }
+            self.clip = Some(clip);
+        }
         self.dirty = false;
         self.structure += 1;
         self.preview += 1;
@@ -175,6 +218,8 @@ struct Bindings {
     /// 0 is "automatic", then the LODs.
     lod: DataSource<u32>,
     foliage: Vec<DataSource<bool>>,
+    /// Length of a clip in seconds.
+    length: Option<DataSource<f32>>,
 }
 
 /// Left column of the asset workspace: the asset's settings.
@@ -189,8 +234,9 @@ pub struct AssetInspector {
     bindings: Option<Bindings>,
     /// Rows a texture asset can be dropped on.
     slot_rows: Vec<(UIElementHandle, usize, TextureSlot)>,
-    /// `(asset, structure counter, width)` the panel was built for.
-    built_for: Option<(AssetId, u64, i32)>,
+    /// `(asset, structure counter, width, clip selection)` the panel was
+    /// built for.
+    built_for: Option<(AssetId, u64, i32, u64)>,
 }
 
 const ACTIONS_HEIGHT: f32 = 34.0;
@@ -289,7 +335,79 @@ impl AssetInspector {
             variant: DataSource::new(edit.variant as u32),
             lod: DataSource::new(edit.lod.map_or(0, |lod| lod as u32 + 1)),
             foliage: Vec::new(),
+            length: None,
         };
+
+        if let Some(clip) = &edit.clip {
+            let length = DataSource::new(clip.duration());
+            let mut section = Section::new("Clip", Some(icons::ACTIVITY), width);
+            section.add_child(Box::new(FieldRow::new(
+                "Length (s)",
+                vec![UI::input_sized(length.clone(), Size::new(value_w.min(140.0), 24.0))],
+            )));
+            let model = clip
+                .file
+                .model
+                .and_then(|id| assets::database().get(id).map(|e| e.meta.name.clone()))
+                .unwrap_or_else(|| "player model".into());
+            section.add_child(Box::new(FieldRow::new("Model", vec![muted(model)])));
+            let selected = clip
+                .selected
+                .as_deref()
+                .map(|bone| ferrite::core::model::ik::base_name(bone).to_string())
+                .unwrap_or_else(|| "none (click a joint)".into());
+            section.add_child(Box::new(FieldRow::new("Bone", vec![muted(selected)])));
+            section.add_child(muted(
+                "Space: play, K: key, Delete: remove key"
+                    .to_string(),
+            ));
+            self.body.add_child(Box::new(section));
+            bindings.length = Some(length);
+
+            let mut bones = Section::new("Bones", Some(icons::LIST_TREE), width);
+            for bone in &clip.bones {
+                let keyed = clip.file.track(bone).is_some();
+                let state = self.state.clone();
+                let name = bone.clone();
+                let mut button = Button::new(
+                    Position::default(),
+                    Size::new(width - 16.0, 22.0),
+                    Box::new(move |_| {
+                        if let Some(clip) = state
+                            .borrow_mut()
+                            .asset_edit
+                            .as_mut()
+                            .and_then(|edit| edit.clip.as_mut())
+                        {
+                            clip.select(Some(name.clone()));
+                        }
+                    }),
+                );
+                button.set_style(ButtonStyle::Ghost);
+                let label = ferrite::core::model::ik::base_name(bone);
+                button.set_label(&if keyed { format!("{label}  \u{25c6}") } else { label.to_string() });
+                button.set_active(clip.selected.as_deref() == Some(bone.as_str()));
+                bones.add_child(Box::new(button));
+            }
+            self.body.add_child(Box::new(bones));
+        }
+
+        if let AssetKind::Model(model) = &edit.meta.kind {
+            if !model.clips.is_empty() {
+                let id = edit.meta.id;
+                let state = self.state.clone();
+                let mut section = Section::new("Animation", Some(icons::ACTIVITY), width);
+                let mut button = header_button(
+                    "New clip",
+                    icons::PLUS,
+                    ButtonStyle::Primary,
+                    Box::new(move |_| send(&state, Command::NewClipDialog(id))),
+                );
+                button.set_tooltip("Make a new animation clip posed on this model");
+                section.add_child(Box::new(button));
+                self.body.add_child(Box::new(section));
+            }
+        }
 
         if let AssetKind::Model(model) = &edit.meta.kind {
             bindings.scale.write(model.scale);
@@ -399,7 +517,7 @@ impl AssetInspector {
         }
         // The clips of an animation file, or those a model brings along.
         let clips = edit.meta.clips();
-        if !clips.is_empty() {
+        if !clips.is_empty() && edit.clip.is_none() {
             let mut section = Section::new("Clips", Some(icons::ACTIVITY), width);
             for clip in clips {
                 section.add_child(Box::new(FieldRow::new(
@@ -455,6 +573,14 @@ impl AssetInspector {
                 }
             }
         }
+        if let (Some(length), Some(clip)) = (&bindings.length, edit.clip.as_mut()) {
+            let length = length.read();
+            // A half-typed number must not cut the clip short.
+            if length >= 0.05 && (length - clip.duration()).abs() > 1e-4 {
+                clip.set_duration(length);
+                dirty = true;
+            }
+        }
         if dirty {
             edit.dirty = true;
         }
@@ -506,7 +632,12 @@ impl UIElement for AssetInspector {
             let state = self.state.borrow();
             match &state.asset_edit {
                 Some(edit) => (
-                    Some((edit.meta.id, edit.structure, rect.w as i32)),
+                    Some((
+                        edit.meta.id,
+                        edit.structure,
+                        rect.w as i32,
+                        edit.clip.as_ref().map_or(0, |clip| clip.selection),
+                    )),
                     edit.dirty,
                 ),
                 None => (None, false),
@@ -664,7 +795,11 @@ struct Rigged {
 impl Rigged {
     /// Load the model of the working copy skinned; `None` if it has no
     /// bones.
-    fn load(edit: &AssetEdit, settings: &ModelSettings) -> Result<Option<Rigged>, String> {
+    fn load(
+        source: &std::path::Path,
+        settings: &ModelSettings,
+        variant: usize,
+    ) -> Result<Option<Rigged>, String> {
         // Texture files of the working copy's materials, found before the
         // (slow) load.
         let overrides: Vec<Vec<(MaterialMap, PathBuf)>> = {
@@ -683,7 +818,7 @@ impl Rigged {
                 })
                 .collect()
         };
-        let path = edit.source_path().to_string_lossy().replace('\\', "/");
+        let path = source.to_string_lossy().replace('\\', "/");
         let mut model = ModelBuilder::from_file(&path)
             .map_err(|e| e.to_string())?
             .with_scale(settings.scale)
@@ -697,7 +832,7 @@ impl Rigged {
                 model.set_material_map_file(material, map, &file);
             }
         }
-        let variant = settings.variants.get(edit.variant).map(|v| v.name.as_str());
+        let variant = settings.variants.get(variant).map(|v| v.name.as_str());
         model.show_variant(variant)?;
 
         let vertices = model.get_vertices_scaled();
@@ -737,6 +872,43 @@ impl Rigged {
         self.model.root_transform(&Matrix4::identity())
     }
 
+    /// Whether a joint can be selected and keyed (importer helper nodes
+    /// cannot).
+    fn is_bone(&self, joint: usize) -> bool {
+        !self.skeleton.joints[joint].name.contains("$AssimpFbx$")
+    }
+
+    /// Pose the skeleton as a clip has it at `time`.
+    fn pose_from(&mut self, clip: &ferrite::core::model::clip_file::ClipFile, time: f32) {
+        self.skeleton.reset();
+        let pose = clip.sample(time);
+        for joint in &mut self.skeleton.joints {
+            if let Some(transform) = pose.get(&joint.name) {
+                joint.local = transform.to_matrix();
+            }
+        }
+        self.model.apply_skeleton(&self.skeleton);
+    }
+
+    /// The bones whose local transform differs from `start`, with it.
+    fn changed_since(&self, start: &[Matrix4<f32>]) -> Vec<usize> {
+        let close = |a: &Matrix4<f32>, b: &Matrix4<f32>| {
+            (0..4).all(|c| (0..4).all(|r| (a[c][r] - b[c][r]).abs() < 1e-6))
+        };
+        self.skeleton
+            .joints
+            .iter()
+            .enumerate()
+            .filter(|(i, joint)| self.is_bone(*i) && start.get(*i).is_none_or(|s| !close(s, &joint.local)))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn transform_of(&self, joint: usize) -> (String, BoneTransform) {
+        let joint = &self.skeleton.joints[joint];
+        (joint.name.clone(), BoneTransform::from_matrix(&joint.local))
+    }
+
     /// World position of each chain's handle.
     fn handles(&self) -> Vec<Point3<f32>> {
         let positions = self.skeleton.world_positions(&self.root());
@@ -754,7 +926,27 @@ struct IkDrag {
     plane_normal: Vector3<f32>,
     /// From where the cursor hit the plane to the handle.
     grab: Vector3<f32>,
+    /// Whether the handle was moved (a click without moving selects it).
+    moved: bool,
 }
+
+/// A ring of the selected bone being dragged: the bone turns about the
+/// ring's axis as the cursor goes round the bone.
+struct RingDrag {
+    joint: usize,
+    axis: usize,
+    start: Vec<Matrix4<f32>>,
+    /// Screen angle of the cursor around the bone last frame.
+    angle: f32,
+    /// +1 when the axis points towards the camera.
+    sign: f32,
+}
+
+/// Pixels from a joint within which a click selects it.
+const JOINT_PICK_RADIUS: f32 = 8.0;
+/// Pixels from a ring within which a press takes it.
+const RING_PICK_RADIUS: f32 = 6.0;
+const SELECTED_COLOR: (f32, f32, f32) = (0.55, 0.95, 0.55);
 
 /// Pixels from a handle within which a click takes it.
 const HANDLE_PICK_RADIUS: f32 = 12.0;
@@ -786,6 +978,21 @@ pub struct AssetPreview {
     /// Chain whose handle is under the cursor.
     hovered: Option<usize>,
     ik_drag: Option<IkDrag>,
+    /// Joint selected for the rings (outside a clip; a clip keeps its own
+    /// selection by name).
+    selected: Option<usize>,
+    hovered_joint: Option<usize>,
+    hovered_ring: Option<usize>,
+    ring_drag: Option<RingDrag>,
+    /// A clip is open: the model is posed from it and the timeline shows.
+    clip_mode: bool,
+    timeline: Timeline,
+    /// Bones posed since the last key (without auto key).
+    touched: Vec<usize>,
+    /// `(time, keys counter)` the model was last posed from the clip for.
+    posed_for: Option<(f32, u64)>,
+    last_tick: Instant,
+    z: f32,
 }
 
 impl AssetPreview {
@@ -812,6 +1019,7 @@ impl AssetPreview {
             Box::new(move |_| reset_flag.write(true)),
         );
         reset_button.set_tooltip("Put every bone back where the file has it");
+        let timeline = Timeline::new(state.clone());
         Self {
             handle: UIElementHandle::new(),
             state,
@@ -822,6 +1030,16 @@ impl AssetPreview {
             reset_button,
             hovered: None,
             ik_drag: None,
+            selected: None,
+            hovered_joint: None,
+            hovered_ring: None,
+            ring_drag: None,
+            clip_mode: false,
+            timeline,
+            touched: Vec::new(),
+            posed_for: None,
+            last_tick: Instant::now(),
+            z: 0.0,
             shown: Shown::Nothing,
             shown_for: None,
             framed_for: None,
@@ -845,19 +1063,38 @@ impl AssetPreview {
         self.state.borrow().layout.viewport
     }
 
-    /// The area below the panel header.
+    /// The area below the panel header (above the timeline of a clip).
     fn view_rect(&self) -> Rect {
         let r = self.rect();
         let header = self.panel.header_height();
+        let timeline = if self.clip_mode { TIMELINE_HEIGHT } else { 0.0 };
         Rect {
             x: r.x + 1.0,
             y: r.y + header,
             w: (r.w - 2.0).max(1.0),
-            h: (r.h - header - 1.0).max(1.0),
+            h: (r.h - header - 1.0 - timeline).max(1.0),
+        }
+    }
+
+    fn timeline_rect(&self) -> Rect {
+        let r = self.rect();
+        let view = self.view_rect();
+        Rect {
+            x: view.x,
+            y: view.y + view.h,
+            w: view.w,
+            h: (r.y + r.h - 1.0 - (view.y + view.h)).max(1.0),
         }
     }
 
     fn load(&mut self) {
+        self.selected = None;
+        self.touched.clear();
+        self.posed_for = None;
+        self.ring_drag = None;
+        if self.load_clip() {
+            return;
+        }
         let state = self.state.borrow();
         let Some(edit) = &state.asset_edit else {
             self.shown = Shown::Nothing;
@@ -882,7 +1119,7 @@ impl AssetPreview {
             )),
             // Files that bring animation clips are drawn skinned when they
             // turn out to have bones.
-            AssetKind::Model(model) if !model.clips.is_empty() => match Rigged::load(edit, model) {
+            AssetKind::Model(model) if !model.clips.is_empty() => match Rigged::load(&edit.source_path(), model, edit.variant) {
                 Ok(Some(rigged)) => Shown::Rigged(Box::new(rigged)),
                 Ok(None) => Self::load_static(edit, model),
                 Err(e) => Shown::Failed(e),
@@ -897,6 +1134,330 @@ impl AssetPreview {
             }
             _ => "Drag to orbit, scroll to zoom",
         });
+    }
+
+    /// Show the model a clip is posed on; false if the asset is no clip.
+    fn load_clip(&mut self) -> bool {
+        let model = {
+            let state = self.state.borrow();
+            let Some(clip) = state.asset_edit.as_ref().and_then(|edit| edit.clip.as_ref()) else {
+                return false;
+            };
+            let database = assets::database();
+            let id = clip.file.model.or_else(|| {
+                let source = database
+                    .root()
+                    .join("models")
+                    .join(ferrite::player::PLAYER_MODEL_FILE);
+                database.find_by_source(&source)
+            });
+            id.and_then(|id| database.get(id)).and_then(|entry| {
+                Some((entry.source_path(), entry.meta.as_model()?.clone()))
+            })
+        };
+        self.ik_drag = None;
+        self.hovered = None;
+        self.shown = match model {
+            None => Shown::Failed("the model this clip is posed on does not exist".into()),
+            Some((source, settings)) => match Rigged::load(&source, &settings, 0) {
+                Ok(Some(rigged)) => Shown::Rigged(Box::new(rigged)),
+                Ok(None) => Shown::Failed("the clip's model has no bones".into()),
+                Err(e) => Shown::Failed(e),
+            },
+        };
+        if let Shown::Rigged(rigged) = &self.shown {
+            // Every node but the root (whose translation drives root motion
+            // in game): clips from model files turn the importer's helper
+            // nodes, so a clip that leaves them out would keep whatever the
+            // clip before it left there.
+            let rest: Vec<BonePose> = rigged
+                .skeleton
+                .joints
+                .iter()
+                .filter(|joint| joint.parent.is_some())
+                .map(|joint| BonePose {
+                    bone: joint.name.clone(),
+                    pose: BoneTransform::from_matrix(&joint.local),
+                })
+                .collect();
+            let bones = rigged
+                .skeleton
+                .joints
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| rigged.is_bone(*i))
+                .map(|(_, joint)| joint.name.clone())
+                .collect();
+            let mut state = self.state.borrow_mut();
+            if let Some(clip) = state.asset_edit.as_mut().and_then(|edit| edit.clip.as_mut()) {
+                clip.rest = rest;
+                clip.bones = bones;
+                // The inspector lists the bones now.
+                clip.selection += 1;
+            }
+        }
+        self.hint.set_content(
+            "Drag a handle or ring to pose, click a joint to select it, elsewhere to orbit",
+        );
+        true
+    }
+
+    /// The selected joint: the clip's selection by name, or the preview's.
+    fn selected_joint(&self) -> Option<usize> {
+        let Shown::Rigged(rigged) = &self.shown else { return None };
+        if self.clip_mode {
+            let state = self.state.borrow();
+            let name = state.asset_edit.as_ref()?.clip.as_ref()?.selected.clone()?;
+            rigged.skeleton.find(&name)
+        } else {
+            self.selected
+        }
+    }
+
+    fn select_joint(&mut self, joint: Option<usize>) {
+        let Shown::Rigged(rigged) = &self.shown else { return };
+        if self.clip_mode {
+            let name = joint.map(|j| rigged.skeleton.joints[j].name.clone());
+            self.with_clip(|clip| clip.select(name));
+        } else {
+            self.selected = joint;
+        }
+    }
+
+    /// Run `f` on the open clip.
+    fn with_clip<R>(&self, f: impl FnOnce(&mut ClipEdit) -> R) -> Option<R> {
+        let mut state = self.state.borrow_mut();
+        let edit = state.asset_edit.as_mut()?;
+        let clip = edit.clip.as_mut()?;
+        Some(f(clip))
+    }
+
+    /// The joint nearest to a window position, within the pick radius.
+    fn joint_at(&self, rigged: &Rigged, view: &Rect, x: f32, y: f32) -> Option<usize> {
+        let vp = self.view_projection(view, rigged.center, rigged.radius);
+        rigged
+            .skeleton
+            .world_positions(&rigged.root())
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| rigged.is_bone(*i))
+            .filter_map(|(i, p)| {
+                let (sx, sy) = project(&vp, view, p)?;
+                let d = ((sx - x).powi(2) + (sy - y).powi(2)).sqrt();
+                (d <= JOINT_PICK_RADIUS).then_some((i, d))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+    }
+
+    fn ring_radius(rigged: &Rigged) -> f32 {
+        rigged.radius * 0.13
+    }
+
+    /// The ring of the selected joint under a window position.
+    fn ring_at(&self, rigged: &Rigged, view: &Rect, x: f32, y: f32) -> Option<usize> {
+        let joint = self.selected_joint()?;
+        let vp = self.view_projection(view, rigged.center, rigged.radius);
+        let center = rigged.skeleton.world_positions(&rigged.root())[joint];
+        let radius = Self::ring_radius(rigged);
+        AXES.iter()
+            .enumerate()
+            .filter_map(|(axis, dir)| {
+                let points: Vec<(f32, f32)> = ring_points(center, *dir, radius)
+                    .into_iter()
+                    .filter_map(|p| project(&vp, view, p))
+                    .collect();
+                let d = points
+                    .windows(2)
+                    .map(|w| distance_to_segment((x, y), w[0], w[1]))
+                    .fold(f32::MAX, f32::min);
+                (d <= RING_PICK_RADIUS).then_some((axis, d))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(axis, _)| axis)
+    }
+
+    /// Screen position of a joint.
+    fn joint_on_screen(&self, rigged: &Rigged, view: &Rect, joint: usize) -> Option<(f32, f32)> {
+        let vp = self.view_projection(view, rigged.center, rigged.radius);
+        project(&vp, view, rigged.skeleton.world_positions(&rigged.root())[joint])
+    }
+
+    fn begin_ring_drag(&mut self, x: f32, y: f32) -> bool {
+        let view = self.view_rect();
+        let Shown::Rigged(rigged) = &self.shown else { return false };
+        if !self.show_skeleton.read() {
+            return false;
+        }
+        let Some(axis) = self.ring_at(rigged, &view, x, y) else { return false };
+        let Some(joint) = self.selected_joint() else { return false };
+        let Some((cx, cy)) = self.joint_on_screen(rigged, &view, joint) else { return false };
+        let center = rigged.skeleton.world_positions(&rigged.root())[joint];
+        let eye = self.eye(rigged.center, rigged.radius);
+        let sign = if AXES[axis].dot(eye - center) >= 0.0 { 1.0 } else { -1.0 };
+        self.ring_drag = Some(RingDrag {
+            joint,
+            axis,
+            start: rigged.skeleton.locals(),
+            angle: (-(y - cy)).atan2(x - cx),
+            sign,
+        });
+        true
+    }
+
+    fn continue_ring_drag(&mut self, x: f32, y: f32) {
+        let view = self.view_rect();
+        let Some(drag) = &self.ring_drag else { return };
+        let Shown::Rigged(rigged) = &self.shown else { return };
+        let Some((cx, cy)) = self.joint_on_screen(rigged, &view, drag.joint) else { return };
+        let angle = (-(y - cy)).atan2(x - cx);
+        let mut delta = angle - drag.angle;
+        while delta > std::f32::consts::PI {
+            delta -= std::f32::consts::TAU;
+        }
+        while delta < -std::f32::consts::PI {
+            delta += std::f32::consts::TAU;
+        }
+        let (joint, axis, sign) = (drag.joint, drag.axis, drag.sign);
+        if let Some(drag) = &mut self.ring_drag {
+            drag.angle = angle;
+        }
+        let Shown::Rigged(rigged) = &mut self.shown else { return };
+        let turn = <cgmath::Quaternion<f32> as cgmath::Rotation3>::from_axis_angle(AXES[axis], cgmath::Rad(delta * sign));
+        rigged.skeleton.turn(joint, turn);
+        rigged.model.apply_skeleton(&rigged.skeleton);
+    }
+
+    /// A pose change ended: key the moved bones (auto key) or remember
+    /// them for the next key.
+    fn finish_pose(&mut self, start: &[Matrix4<f32>]) {
+        let Shown::Rigged(rigged) = &self.shown else { return };
+        let changed = rigged.changed_since(start);
+        if changed.is_empty() || !self.clip_mode {
+            return;
+        }
+        let poses: Vec<_> = changed.iter().map(|&j| rigged.transform_of(j)).collect();
+        let auto_key = self.with_clip(|clip| clip.auto_key).unwrap_or(false);
+        if auto_key {
+            self.key_poses(&poses);
+        } else {
+            for joint in changed {
+                if !self.touched.contains(&joint) {
+                    self.touched.push(joint);
+                }
+            }
+        }
+    }
+
+    fn key_poses(&mut self, poses: &[(String, BoneTransform)]) {
+        if poses.is_empty() {
+            return;
+        }
+        let mut state = self.state.borrow_mut();
+        if let Some(edit) = state.asset_edit.as_mut() {
+            if let Some(clip) = edit.clip.as_mut() {
+                clip.key(poses);
+                edit.dirty = true;
+            }
+        }
+    }
+
+    /// Carry out the requests of the timeline's buttons and shortcuts, move
+    /// the playhead and pose the model for it.
+    fn update_clip(&mut self) {
+        let dt = self.last_tick.elapsed().as_secs_f32().min(0.1);
+        self.last_tick = Instant::now();
+        let requests = self
+            .with_clip(|clip| std::mem::take(&mut clip.requests))
+            .unwrap_or_default();
+        for request in requests {
+            match request {
+                ClipRequest::TogglePlay => {
+                    self.with_clip(|clip| clip.toggle_play());
+                }
+                ClipRequest::ToggleLoop => {
+                    self.with_clip(|clip| clip.looping = !clip.looping);
+                }
+                ClipRequest::ToggleAutoKey => {
+                    self.with_clip(|clip| clip.auto_key = !clip.auto_key);
+                }
+                ClipRequest::ToStart => {
+                    self.with_clip(|clip| {
+                        clip.playing = false;
+                        clip.set_time(0.0);
+                    });
+                }
+                ClipRequest::Key => {
+                    let Shown::Rigged(rigged) = &self.shown else { continue };
+                    let mut joints = self.touched.clone();
+                    if let Some(selected) = self.selected_joint() {
+                        if !joints.contains(&selected) {
+                            joints.push(selected);
+                        }
+                    }
+                    let poses: Vec<_> = joints.iter().map(|&j| rigged.transform_of(j)).collect();
+                    self.touched.clear();
+                    if poses.is_empty() {
+                        self.state
+                            .borrow_mut()
+                            .set_status("Select a bone or pose one to key it");
+                    }
+                    self.key_poses(&poses);
+                }
+                ClipRequest::DeleteKey => {
+                    let mut state = self.state.borrow_mut();
+                    if let Some(edit) = state.asset_edit.as_mut() {
+                        if edit.clip.as_mut().is_some_and(|clip| clip.delete_key()) {
+                            edit.dirty = true;
+                        }
+                    }
+                }
+            }
+        }
+        let wanted = self.with_clip(|clip| {
+            clip.advance(dt);
+            (clip.time, clip.keys)
+        });
+        let dragging = self.ik_drag.is_some() || self.ring_drag.is_some();
+        if let Some(wanted) = wanted {
+            if !dragging && Some(wanted) != self.posed_for {
+                let state = self.state.borrow();
+                let clip = state.asset_edit.as_ref().and_then(|e| e.clip.as_ref());
+                if let (Some(clip), Shown::Rigged(rigged)) = (clip, &mut self.shown) {
+                    rigged.pose_from(&clip.file, clip.time);
+                    self.posed_for = Some(wanted);
+                    self.touched.clear();
+                }
+            }
+        }
+    }
+
+    /// Act on what the user did in the timeline.
+    fn timeline_action(&mut self, action: TimelineAction) {
+        let mut state = self.state.borrow_mut();
+        let Some(edit) = state.asset_edit.as_mut() else { return };
+        let Some(clip) = edit.clip.as_mut() else { return };
+        match action {
+            TimelineAction::Scrub(time) => {
+                clip.playing = false;
+                clip.set_time(time);
+            }
+            TimelineAction::Select(bone) => clip.select(bone),
+            TimelineAction::TakeKey { bone, time } => {
+                clip.playing = false;
+                clip.set_time(time);
+                if bone.is_some() {
+                    clip.select(bone);
+                }
+            }
+            TimelineAction::MoveKey { bone, from, to } => {
+                if (from - to).abs() > 1e-4 {
+                    clip.move_key(bone.as_deref(), from, to);
+                    clip.set_time(to);
+                    edit.dirty = true;
+                }
+            }
+        }
     }
 
     /// A model drawn the way the scatter system draws it.
@@ -999,6 +1560,7 @@ impl AssetPreview {
             plane_point: handle,
             plane_normal: normal,
             grab: handle - hit,
+            moved: false,
         });
         true
     }
@@ -1017,6 +1579,9 @@ impl AssetPreview {
         let Some(to_skeleton) = rigged.root().inverse_transform() else { return };
         let target = to_skeleton.transform_point(hit + drag.grab);
         let (chain, start) = (drag.chain, drag.start.clone());
+        if let Some(drag) = &mut self.ik_drag {
+            drag.moved = true;
+        }
         let Shown::Rigged(rigged) = &mut self.shown else { return };
         rigged.skeleton.set_locals(&start);
         let ik_chain = rigged.chains[chain].clone();
@@ -1084,6 +1649,27 @@ impl UIElement for AssetPreview {
             self.orbit.zoom = DEFAULT_ZOOM;
         }
 
+        self.clip_mode = matches!(self.shown, Shown::Rigged(_))
+            && self
+                .state
+                .borrow()
+                .asset_edit
+                .as_ref()
+                .is_some_and(|edit| edit.clip.is_some());
+        if self.clip_mode {
+            self.update_clip();
+            let view = {
+                let state = self.state.borrow();
+                state
+                    .asset_edit
+                    .as_ref()
+                    .and_then(|edit| edit.clip.as_ref())
+                    .map(|clip| TimelineView::of(clip, &clip.bones))
+                    .unwrap_or_default()
+            };
+            let rect = self.timeline_rect();
+            self.timeline.update(scene, rect, view, self.z + 2.0);
+        }
         let view = self.view_rect();
         let message = match &self.shown {
             Shown::Nothing => "No asset is open.".to_string(),
@@ -1102,9 +1688,13 @@ impl UIElement for AssetPreview {
         if self.reset_pose.read() {
             self.reset_pose.write(false);
             self.ik_drag = None;
+            self.ring_drag = None;
             if let Shown::Rigged(rigged) = &mut self.shown {
+                let start = rigged.skeleton.locals();
                 rigged.skeleton.reset();
                 rigged.model.apply_skeleton(&rigged.skeleton);
+                // In a clip, going back to the rest pose is posing too.
+                self.finish_pose(&start);
             }
         }
         if matches!(self.shown, Shown::Rigged(_)) {
@@ -1270,11 +1860,36 @@ impl UIElement for AssetPreview {
                 if self.show_skeleton.read() {
                     let hot = self.ik_drag.as_ref().map(|d| d.chain).or(self.hovered);
                     render_skeleton(rigged, &vp, &view, hot);
+                    let positions = rigged.skeleton.world_positions(&rigged.root());
+                    let size = rigged.radius * 0.012;
+                    if let Some(joint) = self.hovered_joint {
+                        render_thick_lines(&vp, &diamond(positions[joint], size * 1.6), HANDLE_HOT_COLOR, &view, 2);
+                    }
+                    if let Some(joint) = self.selected_joint() {
+                        render_thick_lines(&vp, &diamond(positions[joint], size * 2.0), SELECTED_COLOR, &view, 2);
+                        let radius = Self::ring_radius(rigged);
+                        let hot = self.ring_drag.as_ref().map(|d| d.axis).or(self.hovered_ring);
+                        for (axis, dir) in AXES.iter().enumerate() {
+                            let points = ring_points(positions[joint], *dir, radius);
+                            let lines: Vec<Line> =
+                                points.windows(2).filter_map(|w| segment(w[0], w[1])).collect();
+                            let (r, g, b) = RING_COLORS[axis];
+                            let color = if Some(axis) == hot {
+                                (1.0, 0.9, 0.4)
+                            } else {
+                                (r, g, b)
+                            };
+                            render_thick_lines(&vp, &lines, color, &view, 2);
+                        }
+                    }
                 }
                 unsafe {
                     gl::Clear(gl::DEPTH_BUFFER_BIT);
                     gl::Disable(gl::SCISSOR_TEST);
                     gl::Viewport(0, 0, window_w as i32, window_h as i32);
+                }
+                if self.clip_mode {
+                    self.timeline.render((window_w, window_h));
                 }
                 self.hint.render();
                 self.message.render();
@@ -1299,6 +1914,15 @@ impl UIElement for AssetPreview {
         event: &WindowEvent,
     ) -> bool {
         let view = self.view_rect();
+        if self.clip_mode {
+            let (used, action) = self.timeline.handle_events(scene, window, glfw, event);
+            if let Some(action) = action {
+                self.timeline_action(action);
+            }
+            if used {
+                return true;
+            }
+        }
         if matches!(self.shown, Shown::Rigged(_)) {
             for button in [&mut self.skeleton_button, &mut self.reset_button] {
                 if button.handle_events(scene, window, glfw, event)
@@ -1312,14 +1936,39 @@ impl UIElement for AssetPreview {
             WindowEvent::MouseButton(MouseButton::Button1, Action::Press, _) => {
                 let (x, y) = window.get_cursor_pos();
                 if view.contains(x as f32, y as f32) {
-                    if !self.begin_ik_drag(x as f32, y as f32) {
-                        self.orbit.dragging = Some((x, y));
+                    let (fx, fy) = (x as f32, y as f32);
+                    if self.begin_ring_drag(fx, fy) || self.begin_ik_drag(fx, fy) {
+                        return true;
+                    }
+                    let joint = match &self.shown {
+                        Shown::Rigged(rigged) if self.show_skeleton.read() => {
+                            self.joint_at(rigged, &view, fx, fy)
+                        }
+                        _ => None,
+                    };
+                    match joint {
+                        Some(joint) => self.select_joint(Some(joint)),
+                        None => self.orbit.dragging = Some((x, y)),
                     }
                     return true;
                 }
             }
             WindowEvent::MouseButton(MouseButton::Button1, Action::Release, _) => {
-                if self.ik_drag.take().is_some() | self.orbit.dragging.take().is_some() {
+                if let Some(drag) = self.ik_drag.take() {
+                    if drag.moved {
+                        self.finish_pose(&drag.start);
+                    } else if let Shown::Rigged(rigged) = &self.shown {
+                        // A click on a handle selects its bone.
+                        let end = rigged.chains[drag.chain].end;
+                        self.select_joint(Some(end));
+                    }
+                    return true;
+                }
+                if let Some(drag) = self.ring_drag.take() {
+                    self.finish_pose(&drag.start);
+                    return true;
+                }
+                if self.orbit.dragging.take().is_some() {
                     return true;
                 }
             }
@@ -1328,6 +1977,23 @@ impl UIElement for AssetPreview {
                     self.continue_ik_drag(*x as f32, *y as f32);
                     return true;
                 }
+                if self.ring_drag.is_some() {
+                    self.continue_ring_drag(*x as f32, *y as f32);
+                    return true;
+                }
+                let free = self.orbit.dragging.is_none() && view.contains(*x as f32, *y as f32);
+                (self.hovered_ring, self.hovered_joint) = match &self.shown {
+                    Shown::Rigged(rigged) if self.show_skeleton.read() && free => {
+                        let ring = self.ring_at(rigged, &view, *x as f32, *y as f32);
+                        let joint = if ring.is_none() {
+                            self.joint_at(rigged, &view, *x as f32, *y as f32)
+                        } else {
+                            None
+                        };
+                        (ring, joint)
+                    }
+                    _ => (None, None),
+                };
                 self.hovered = match &self.shown {
                     Shown::Rigged(rigged)
                         if self.show_skeleton.read()
@@ -1383,7 +2049,14 @@ impl UIElement for AssetPreview {
     fn get_size(&self) -> &Size {
         self.panel.get_size()
     }
+    fn render_overlay(&self) {
+        if self.clip_mode {
+            self.timeline.render_overlay();
+        }
+    }
+
     fn set_z_index(&mut self, z: f32) {
+        self.z = z;
         self.panel.set_z_index(z);
         self.message.set_z_index(z + 3.0);
         self.hint.set_z_index(z + 3.0);
@@ -1506,6 +2179,7 @@ mod tests {
             lod: None,
             structure: 0,
             preview: 0,
+            clip: None,
         }
     }
 
@@ -1530,4 +2204,17 @@ mod tests {
         edit.set_texture(7, TextureSlot::BaseColor, Some(texture));
         assert!(!edit.dirty);
     }
+}
+
+/// Pixels from `p` to the segment `a`–`b`.
+fn distance_to_segment(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let length2 = dx * dx + dy * dy;
+    let t = if length2 > 1e-9 {
+        (((p.0 - a.0) * dx + (p.1 - a.1) * dy) / length2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let (cx, cy) = (a.0 + dx * t, a.1 + dy * t);
+    ((p.0 - cx).powi(2) + (p.1 - cy).powi(2)).sqrt()
 }

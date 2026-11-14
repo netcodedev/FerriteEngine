@@ -19,6 +19,7 @@ use editor::{
     },
     asset_browser::AssetBrowser,
     asset_editor::{AssetEdit, AssetInspector, AssetPreview},
+    clip_editor::{self, ClipRequest},
     dialogs::{self, ModalHost},
     drag::{DragLayer, DropAction, DropTarget},
     export::Exporter,
@@ -889,6 +890,30 @@ impl EditorLayer {
                 }
             }
             Command::CloseAssetEditor => self.run(Command::SetWorkspace(Workspace::Scene)),
+            Command::NewClipDialog(model) => dialogs::new_clip(&self.state, model),
+            Command::NewClip { model, name } => match clip_editor::create_clip(&name, model) {
+                Ok(id) => {
+                    self.state
+                        .borrow_mut()
+                        .set_status(format!("Made the clip '{name}'"));
+                    self.run(Command::EditAsset { id, variant: None });
+                }
+                Err(e) => self
+                    .state
+                    .borrow_mut()
+                    .set_status(format!("Could not make the clip: {e}")),
+            },
+            Command::Clip(request) => {
+                if let Some(clip) = self
+                    .state
+                    .borrow_mut()
+                    .asset_edit
+                    .as_mut()
+                    .and_then(|edit| edit.clip.as_mut())
+                {
+                    clip.requests.push(request);
+                }
+            }
             Command::PickAssetTexture { material, slot } => {
                 dialogs::pick_asset_texture(&self.state, material, slot)
             }
@@ -1005,9 +1030,19 @@ impl EditorLayer {
         let workspace = self.state.borrow().workspace;
         if workspace == Workspace::Asset {
             // Scene shortcuts (delete, gizmos, ...) do not apply here.
+            let clip_open = self
+                .state
+                .borrow()
+                .asset_edit
+                .as_ref()
+                .is_some_and(|edit| edit.clip.is_some());
             let command = match (key, ctrl) {
                 (Key::S, true) => Some(Command::SaveAsset),
                 (Key::Escape, false) => Some(Command::CloseAssetEditor),
+                (Key::Space, false) if clip_open => Some(Command::Clip(ClipRequest::TogglePlay)),
+                (Key::K, false) if clip_open => Some(Command::Clip(ClipRequest::Key)),
+                (Key::Delete, false) if clip_open => Some(Command::Clip(ClipRequest::DeleteKey)),
+                (Key::Home, false) if clip_open => Some(Command::Clip(ClipRequest::ToStart)),
                 _ => None,
             };
             return match command {

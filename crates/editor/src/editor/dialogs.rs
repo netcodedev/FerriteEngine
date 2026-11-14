@@ -141,6 +141,35 @@ pub fn new_script(state: &Shared) {
     show(state, "New script", open_flag, children);
 }
 
+/// Ask for the name of a new animation clip posed on `model`.
+pub fn new_clip(state: &Shared, model: AssetId) {
+    let name = DataSource::new(String::new());
+    let open_flag = DataSource::new(true);
+    let create_state = state.clone();
+    let create_name = name.clone();
+    let create_open = open_flag.clone();
+    let cancel_open = open_flag.clone();
+    let children: Vec<Box<dyn UIElement>> = vec![
+        UI::label("Name of the clip (e.g. Axe Swing):", 14.0),
+        UI::input_sized(name, Size::new(380.0, 22.0)),
+        button_row(vec![
+            UI::button(
+                "Create",
+                Box::new(move |_| {
+                    let name = create_name.read().trim().to_owned();
+                    if name.is_empty() {
+                        return;
+                    }
+                    send(&create_state, Command::NewClip { model, name });
+                    create_open.write(false);
+                }),
+            ),
+            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+        ]),
+    ];
+    show(state, "New animation clip", open_flag, children);
+}
+
 /// Ask which model asset `entity` should show.
 pub fn pick_entity_model(state: &Shared, entity: EntityHandle) {
     pick_model_asset(state, move |asset| Command::SetEntityModel { entity, asset });
