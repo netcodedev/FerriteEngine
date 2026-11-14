@@ -18,7 +18,10 @@ use crate::{
             },
             Entity, EntityHandle,
         },
-        renderer::{hdr::HdrSettings, light::skylight::SkyLight, ssao::AmbientOcclusionSettings},
+        renderer::{
+            hdr::HdrSettings, light::skylight::SkyLight, sky::CloudSettings,
+            ssao::AmbientOcclusionSettings,
+        },
         script,
     },
     player::{build_animation_graph, default_animation_graph, load_graph_file, Player},
@@ -85,6 +88,9 @@ pub enum ComponentData {
         day_length_seconds: f32,
         paused: bool,
         cloud_coverage: f32,
+        /// Missing in scenes saved before it existed: the defaults.
+        #[serde(default)]
+        clouds: CloudSettings,
         /// Missing in scenes saved before it existed: on, with defaults.
         #[serde(default)]
         ambient_occlusion: AmbientOcclusionSettings,
@@ -188,6 +194,7 @@ impl ComponentData {
             day_length_seconds: sky.get_day_length_seconds(),
             paused: sky.is_paused(),
             cloud_coverage: sky.get_cloud_coverage(),
+            clouds: *sky.clouds(),
             ambient_occlusion: *sky.ambient_occlusion(),
             hdr: *sky.hdr(),
         }
@@ -217,6 +224,7 @@ impl ComponentData {
                 day_length_seconds,
                 paused,
                 cloud_coverage,
+                clouds,
                 ambient_occlusion,
                 hdr,
             } => {
@@ -225,6 +233,7 @@ impl ComponentData {
                 sky.set_day_length_seconds(*day_length_seconds);
                 sky.set_paused(*paused);
                 sky.set_cloud_coverage(*cloud_coverage);
+                sky.set_clouds(*clouds);
                 sky.set_ambient_occlusion(*ambient_occlusion);
                 sky.set_hdr(*hdr);
                 entity.add_component(sky);

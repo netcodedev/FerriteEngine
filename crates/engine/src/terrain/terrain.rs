@@ -580,6 +580,10 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             );
             self.shader
                 .set_uniform_1f("cloudCoverage", skylight.get_cloud_coverage());
+            self.shader.set_uniform_1f(
+                "cloudType",
+                skylight.clouds().cloud_type.shader_value(),
+            );
             let sun = skylight.get_sun_direction();
             self.shader.set_uniform_3f("sunDirection", sun.x, sun.y, sun.z);
             self.shader.set_uniform_1f(

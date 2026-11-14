@@ -9,6 +9,7 @@ use crate::core::{
     },
     renderer::{
         hdr::{HdrSettings, Tonemapper},
+        sky::{CloudSettings, CloudType},
         ssao::AmbientOcclusionSettings,
     },
     scene::{scene_file::ComponentData, Scene},
@@ -45,6 +46,8 @@ pub struct SkyLight {
     paused: bool,
     /// Cloud coverage in [0, 1]. 0 ≈ clear sky, 1 ≈ overcast.
     cloud_coverage: f32,
+    /// The low layer's cloud type and the layers above it.
+    clouds: CloudSettings,
     /// How the sky light is shaded off in corners and crevices.
     ambient_occlusion: AmbientOcclusionSettings,
     /// Exposure, tone mapping and bloom of the camera's view.
@@ -82,6 +85,7 @@ impl SkyLight {
             day_length_seconds: DEFAULT_DAY_LENGTH_SECONDS,
             paused: false,
             cloud_coverage: 0.2,
+            clouds: CloudSettings::default(),
             ambient_occlusion: AmbientOcclusionSettings::default(),
             hdr: HdrSettings::default(),
         };
@@ -127,6 +131,14 @@ impl SkyLight {
 
     pub fn adjust_cloud_coverage(&mut self, delta: f32) {
         self.set_cloud_coverage(self.cloud_coverage + delta);
+    }
+
+    pub fn clouds(&self) -> &CloudSettings {
+        &self.clouds
+    }
+
+    pub fn set_clouds(&mut self, settings: CloudSettings) {
+        self.clouds = settings.sanitized();
     }
 
     pub fn ambient_occlusion(&self) -> &AmbientOcclusionSettings {
@@ -288,6 +300,7 @@ impl Component for SkyLight {
             day_length_seconds: self.day_length_seconds,
             paused: self.paused,
             cloud_coverage: self.cloud_coverage,
+            clouds: self.clouds,
             ambient_occlusion: self.ambient_occlusion,
             hdr: self.hdr,
         })
@@ -299,6 +312,13 @@ impl Component for SkyLight {
             Property::float("day length (s)", self.day_length_seconds),
             Property::bool("paused", self.paused),
             Property::ranged("cloud coverage", self.cloud_coverage, 0.0, 1.0),
+            Property::choice(
+                "cloud type",
+                self.clouds.cloud_type.name().to_string(),
+                CloudType::ALL.iter().map(|t| t.name().to_string()).collect(),
+            ),
+            Property::ranged("altocumulus", self.clouds.altocumulus, 0.0, 1.0),
+            Property::ranged("cirrus", self.clouds.cirrus, 0.0, 1.0),
             Property::bool("ambient occlusion", self.ambient_occlusion.enabled),
             Property::ranged(
                 "AO radius",
@@ -352,6 +372,13 @@ impl Component for SkyLight {
             ("day length (s)", PropertyValue::Float(v)) => self.set_day_length_seconds(v),
             ("paused", PropertyValue::Bool(v)) => self.paused = v,
             ("cloud coverage", PropertyValue::Float(v)) => self.set_cloud_coverage(v),
+            ("cloud type", PropertyValue::Text(v)) => {
+                if let Some(cloud_type) = CloudType::from_name(&v) {
+                    self.clouds.cloud_type = cloud_type;
+                }
+            }
+            ("altocumulus", PropertyValue::Float(v)) => self.clouds.set_altocumulus(v),
+            ("cirrus", PropertyValue::Float(v)) => self.clouds.set_cirrus(v),
             ("ambient occlusion", PropertyValue::Bool(v)) => self.ambient_occlusion.enabled = v,
             ("AO radius", PropertyValue::Float(v)) => self.ambient_occlusion.set_radius(v),
             ("AO intensity", PropertyValue::Float(v)) => self.ambient_occlusion.set_intensity(v),
