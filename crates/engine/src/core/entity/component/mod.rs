@@ -92,6 +92,7 @@ fn short_type_name(full: &str) -> String {
 pub mod animation_component;
 pub mod camera_component;
 pub mod debug_component;
+pub mod foot_ik_component;
 pub mod missing_component;
 pub mod model_component;
 mod property;

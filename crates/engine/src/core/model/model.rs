@@ -686,6 +686,21 @@ impl Model {
         position.to_vec()
     }
 
+    /// Scale from the file's units to the scene's.
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    /// Lowest point of the meshes in the file's pose, in the model's units
+    /// times its scale (as `get_vertices_scaled`).
+    pub fn lowest_vertex(&self) -> Option<f32> {
+        self.model
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.vertices.iter().map(|v| v.y * self.scale))
+            .min_by(f32::total_cmp)
+    }
+
     /// Model space of the bones: `parent_transform` with the model's own
     /// position and scale; see `ik::Skeleton`.
     pub fn root_transform(&self, parent_transform: &Matrix4<f32>) -> Matrix4<f32> {

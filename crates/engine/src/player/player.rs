@@ -4,7 +4,10 @@ use rapier3d::prelude::{CoefficientCombineRule, ColliderBuilder, RigidBodyBuilde
 use crate::core::{
     assets::{self, AssetRef},
     entity::{
-        component::{animation_component::AnimationComponent, model_component::ModelComponent},
+        component::{
+            animation_component::AnimationComponent, foot_ik_component::FootIk,
+            model_component::ModelComponent,
+        },
         Entity,
     },
     model::{animation_graph::AnimationGraph, ModelBuilder},
@@ -96,9 +99,17 @@ impl Player {
             rigid_body_handle,
             show_collider: false,
         };
+        // Feet go on the ground after the animation has posed the body and
+        // before the bone colliders follow it. The animations stand on the
+        // bottom of the capsule.
+        let foot_ik = FootIk::new(
+            model_component.get_model(),
+            -(CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS),
+        );
         entity.add_component(animation_component);
         entity.add_component(rigidbody_component);
         entity.add_component(model_component);
+        entity.add_component(foot_ik);
 
         let bone_colliders = BoneColliders::build(scene, &entity);
         entity.add_component(bone_colliders);

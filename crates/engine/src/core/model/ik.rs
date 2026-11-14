@@ -147,6 +147,29 @@ impl Skeleton {
     }
 
     /// Rotate `joint` about its own position by `rotation`, given in
+    /// skeleton space; everything below it follows.
+    pub fn turn(&mut self, joint: usize, rotation: Quaternion<f32>) {
+        let mut globals = self.globals();
+        self.rotate(joint, rotation, &mut globals);
+    }
+
+    /// The toe joint below a foot (`LeftToeBase`), if it has one.
+    pub fn toe_of(&self, foot: usize) -> Option<usize> {
+        (0..self.joints.len()).find(|&joint| {
+            let name = normalized(&self.joints[joint].name);
+            self.bone_parent(joint) == Some(foot) && name.contains("toe") && !name.contains("end")
+        })
+    }
+
+    /// The chains of `default_chains` that end in a foot.
+    pub fn foot_chains(&self) -> Vec<IkChain> {
+        self.default_chains()
+            .into_iter()
+            .filter(|chain| ends_with_part(&normalized(&chain.label), "foot"))
+            .collect()
+    }
+
+    /// Rotate `joint` about its own position by `rotation`, given in
     /// skeleton space; everything below it follows. `globals` must be
     /// current and is kept so.
     fn rotate(&mut self, joint: usize, rotation: Quaternion<f32>, globals: &mut Vec<Matrix4<f32>>) {
@@ -434,6 +457,13 @@ mod tests {
         assert!(((p[3] - p[2]).magnitude() - 1.0).abs() < 1e-4);
         // The foot keeps pointing forward.
         assert!(((p[4] - p[3]) - Vector3::new(0.0, 0.0, 0.3)).magnitude() < 1e-3);
+    }
+
+    #[test]
+    fn a_foot_has_its_toe() {
+        let skeleton = leg();
+        assert_eq!(skeleton.toe_of(3), Some(4));
+        assert_eq!(skeleton.toe_of(2), None);
     }
 
     #[test]
