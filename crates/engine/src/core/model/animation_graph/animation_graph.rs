@@ -17,7 +17,17 @@ impl AnimationGraph {
             delta_progress: 0.0,
             just_finished_transition: false,
             cumulative_translation_error: HashMap::new(),
+            root_yaw_delta: 0.0,
         }
+    }
+
+    /// How far (radians about the up axis, counter-clockwise seen from
+    /// above) the clips of states with root rotation turned the root in the
+    /// last update, weighted by how much of the pose they are. Their poses
+    /// do not show it: whoever plays the graph turns the body by it, as with
+    /// root motion.
+    pub fn root_yaw_delta(&self) -> f32 {
+        self.root_yaw_delta
     }
 
     pub fn update(&mut self, delta_time: f32) {
@@ -70,6 +80,17 @@ impl AnimationGraph {
                 state.reset();
             }
         }
+        let current = self
+            .states
+            .get(&self.current_state)
+            .map_or(0.0, |s| s.root_yaw_delta);
+        self.root_yaw_delta = match self.previous_state.as_ref().and_then(|p| self.states.get(p)) {
+            Some(previous) => {
+                current * self.transition_progress
+                    + previous.root_yaw_delta * (1.0 - self.transition_progress)
+            }
+            None => current,
+        };
     }
 
     pub fn add_state(&mut self, state: State) {
@@ -186,14 +207,18 @@ impl State {
             animation_times: HashMap::new(),
             animation_cycled: HashMap::new(),
             sync_animations: false,
+            root_rotation: false,
+            root_yaw_delta: 0.0,
             transitions: Vec::new(),
         }
     }
 
     pub fn update(&mut self, delta_time: f32) {
+        let mut turned = 0.0;
         for (name, animation) in &self.animations {
             let time = self.animation_times.entry(name.clone()).or_insert(0.0);
             let cycled = self.animation_cycled.entry(name.clone()).or_insert(false);
+            let before = *time;
             *time += delta_time * animation.ticks_per_second;
             if *time > animation.duration {
                 *cycled = true;
@@ -201,7 +226,12 @@ impl State {
             } else {
                 *cycled = false;
             }
+            if self.root_rotation {
+                turned += animation.root_yaw_change(before, *time, *cycled);
+            }
         }
+        // The clips of a state are blended evenly.
+        self.root_yaw_delta = turned / self.animations.len().max(1) as f32;
     }
 
     pub fn get_pose(&self) -> Option<Pose> {
@@ -219,7 +249,11 @@ impl State {
                 } else {
                     *time
                 };
-                let mut new_pose = animation.sample(sample_time);
+                let mut new_pose = if self.root_rotation {
+                    animation.sample_without_root_yaw(sample_time)
+                } else {
+                    animation.sample(sample_time)
+                };
                 new_pose.cycle_completed = cycled;
                 if let Some(pose) = final_pose {
                     new_pose = pose.interpolate(&new_pose, 0.5);
@@ -234,6 +268,7 @@ impl State {
     }
 
     pub fn reset(&mut self) {
+        self.root_yaw_delta = 0.0;
         for time in self.animation_times.values_mut() {
             *time = 0.0;
         }
@@ -261,5 +296,9 @@ impl State {
 
     pub fn sync_animations(&mut self, sync: bool) {
         self.sync_animations = sync;
+    }
+
+    pub fn root_rotation(&mut self, root_rotation: bool) {
+        self.root_rotation = root_rotation;
     }
 }

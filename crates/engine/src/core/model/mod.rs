@@ -123,6 +123,8 @@ pub struct Animation {
     pub duration: f32,
     pub ticks_per_second: f32,
     channels: HashMap<String, Channel>,
+    /// The channel of the topmost animated node (the hips), if known.
+    root_channel: Option<String>,
 }
 
 #[derive(Clone)]

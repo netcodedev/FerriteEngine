@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, time::Instant};
 
-use cgmath::{perspective, Deg, Matrix4, Point3, SquareMatrix, Vector3};
+use cgmath::{perspective, Deg, Matrix4, Point3, Vector3};
 use ferrite::{
     core::{
         model::{
@@ -69,6 +69,9 @@ pub struct PreviewPanel {
     reset_requested: DataSource<bool>,
     last_frame: Instant,
     orbit: Orbit,
+    /// How far states with root rotation (turning on the spot) turned the
+    /// model, radians about the up axis.
+    body_yaw: f32,
 }
 
 fn button(label: &str, icon: &str, on_click: Box<dyn Fn(&mut Scene)>) -> Button {
@@ -122,6 +125,7 @@ impl PreviewPanel {
                 distance: 4.2,
                 dragging: None,
             },
+            body_yaw: 0.0,
         }
     }
 
@@ -273,6 +277,7 @@ impl UIElement for PreviewPanel {
             self.reset_requested.write(false);
             if let Some(graph) = &mut self.graph {
                 graph.reset();
+                self.body_yaw = 0.0;
             }
         }
         let paused = self.paused.read();
@@ -290,6 +295,7 @@ impl UIElement for PreviewPanel {
                 // Keep the preview in place; the game turns this root motion
                 // into velocity.
                 model.reset_position();
+                self.body_yaw = (self.body_yaw + graph.root_yaw_delta()) % std::f32::consts::TAU;
             }
             let status = &mut self.state.borrow_mut().anim.preview;
             status.current = graph.current_state().to_owned();
@@ -394,7 +400,7 @@ impl UIElement for PreviewPanel {
                 gl::Enable(gl::DEPTH_TEST);
             }
             let lighting = Lighting::preview(Vector3::new(6.0, 10.0, 8.0), self.eye());
-            model.render(&lighting, &Matrix4::identity(), &vp);
+            model.render(&lighting, &Matrix4::from_angle_y(cgmath::Rad(self.body_yaw)), &vp);
         }
         unsafe {
             // Leave no 3D depth behind for the UI drawn over this region.
