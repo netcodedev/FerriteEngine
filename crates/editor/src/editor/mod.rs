@@ -17,6 +17,7 @@ use ferrite_ui::ui::elements::tree::NO_SELECTION;
 pub mod anim;
 pub mod asset_browser;
 pub mod asset_editor;
+pub mod clip_editor;
 pub mod dialogs;
 pub mod drag;
 pub mod export;
@@ -127,6 +128,12 @@ pub enum Command {
     RevertAsset,
     /// Leave the asset workspace (unsaved edits stay in memory).
     CloseAssetEditor,
+    /// Ask for the name of a new animation clip posed on this model asset.
+    NewClipDialog(AssetId),
+    /// Create an animation clip posed on `model` and open it.
+    NewClip { model: AssetId, name: String },
+    /// Ask the open clip for something (shortcuts).
+    Clip(clip_editor::ClipRequest),
     /// Let the user choose a texture asset for a material of the edited
     /// asset.
     PickAssetTexture {

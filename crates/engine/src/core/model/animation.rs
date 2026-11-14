@@ -57,6 +57,9 @@ impl Animation {
         source: &Path,
         clip: Option<&str>,
     ) -> Result<Animation, Box<dyn std::error::Error>> {
+        if super::clip_file::is_clip_file(source) {
+            return Ok(super::clip_file::ClipFile::load(source)?.to_animation(name));
+        }
         let scene = Scene::from_file(&source.to_string_lossy(), vec![])?;
         if scene.animations.is_empty() {
             return Err("No animations found".into());

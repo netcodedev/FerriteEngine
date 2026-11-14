@@ -13,6 +13,8 @@ pub mod animation_graph;
 pub mod ik;
 mod bone;
 mod channel;
+pub mod clip_file;
+pub mod grip;
 pub mod material_maps;
 mod model;
 mod model_mesh;

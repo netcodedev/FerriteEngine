@@ -93,6 +93,7 @@ pub mod animation_component;
 pub mod camera_component;
 pub mod debug_component;
 pub mod foot_ik_component;
+pub mod held_item_component;
 pub mod missing_component;
 pub mod model_component;
 pub mod shared_model_component;

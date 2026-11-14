@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::core::model::{material_maps, outline};
+use crate::core::model::{clip_file, material_maps, outline};
 
 use super::{
     AnimationSettings, AssetDatabase, AssetError, AssetId, AssetKind, AssetMeta, ClipInfo,
@@ -26,9 +26,14 @@ const ANIMATION_FOLDER: &str = "animations";
 enum FileKind {
     Model,
     Texture,
+    /// An animation clip made in the editor (`*.clip.ron`).
+    Clip,
 }
 
 fn file_kind(path: &Path) -> Option<FileKind> {
+    if clip_file::is_clip_file(path) {
+        return Some(FileKind::Clip);
+    }
     let extension = path.extension()?.to_str()?.to_lowercase();
     if MODEL_EXTENSIONS.contains(&extension.as_str()) {
         Some(FileKind::Model)
@@ -81,7 +86,32 @@ impl AssetDatabase {
                 self.register_texture(&source)
             }
             FileKind::Model => self.import_model(file),
+            FileKind::Clip => self.import_clip(file),
         }
+    }
+
+    /// Register a clip file as an animation asset with one clip.
+    fn import_clip(&mut self, file: &Path) -> Result<AssetId, AssetError> {
+        let clip = clip_file::ClipFile::load(file)
+            .map_err(|e| AssetError::Import(file.to_path_buf(), e.to_string()))?;
+        let source = match self.path_in_root(file) {
+            Some(inside) => inside,
+            None => copy_into(file, &self.root().join(ANIMATION_FOLDER), true)?,
+        };
+        let name = clip_file::clip_name(&source);
+        let meta = AssetMeta {
+            version: ASSET_META_VERSION,
+            id: AssetId::new(),
+            name: name.clone(),
+            source: file_name_of(&source),
+            kind: AssetKind::Animation(AnimationSettings {
+                clips: vec![ClipInfo {
+                    name,
+                    duration: clip.duration,
+                }],
+            }),
+        };
+        self.register(meta, source.parent().unwrap_or(Path::new(".")))
     }
 
     fn import_model(&mut self, file: &Path) -> Result<AssetId, AssetError> {
@@ -194,6 +224,7 @@ impl AssetDatabase {
                     })
                     .collect(),
                 clips,
+                grip: None,
             }),
         };
         self.register(meta, &target_dir)
@@ -603,6 +634,34 @@ mod tests {
         assert!(matches!(entry.meta.kind, AssetKind::Animation(_)));
         assert_eq!(entry.meta.clips().len(), 1);
         assert_eq!(entry.meta.clips()[0].name, "walk cycle");
+    }
+
+    #[test]
+    fn a_clip_made_in_the_editor_is_an_animation_asset_that_loads() {
+        let project = TempDir::new("import-clip");
+        let file = project.0.join("animations").join("Axe Swing.clip.ron");
+        let mut clip = clip_file::ClipFile::new(None, 1.5);
+        let pose = clip_file::Transform {
+            translation: [0.0; 3],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0; 3],
+        };
+        clip.set_key("RightArm", 0.0, pose);
+        clip.save(&file).unwrap();
+
+        let mut database = AssetDatabase::new(&project.0);
+        let (added, problems) = database.register_new_files();
+        assert_eq!((added, problems.len()), (1, 0), "{problems:?}");
+        let entry = database.iter().next().unwrap();
+        assert_eq!(entry.meta.name, "Axe Swing");
+        assert!(matches!(entry.meta.kind, AssetKind::Animation(_)));
+        assert_eq!(entry.meta.clips()[0].duration, 1.5);
+
+        let animation =
+            crate::core::model::Animation::load("swing", &entry.source_path(), None).unwrap();
+        assert_eq!(animation.duration, 1.5);
+        // Registered once: the sidecar is no clip file.
+        assert_eq!(database.register_new_files().0, 0);
     }
 
     #[test]

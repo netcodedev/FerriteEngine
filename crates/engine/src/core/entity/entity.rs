@@ -53,6 +53,15 @@ impl Entity {
         (index < self.components.len()).then(|| self.components.remove(index))
     }
 
+    /// Take off this entity's own component of type `T`, if it has one.
+    pub fn remove_component<T: Component>(&mut self) -> Option<Box<dyn Component>> {
+        let index = self
+            .components
+            .iter()
+            .position(|c| c.as_any().downcast_ref::<T>().is_some())?;
+        Some(self.components.remove(index))
+    }
+
     /// Like `get_component`, but never looks into children.
     pub fn get_own_component<T: Component>(&self) -> Option<&T> {
         self.components
