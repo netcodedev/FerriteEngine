@@ -8,7 +8,7 @@ const float PI = 3.14159265;
 // Sun irradiance at noon and the sky's ambient light, in linear units. Tuned
 // so lit models sit at about the brightness of the terrain around them.
 const float SUN_INTENSITY = 3.5;
-const vec3 SKY_DAY = vec3(0.27, 0.29, 0.32);
+const vec3 SKY_DAY = vec3(0.50, 0.55, 0.65);
 const vec3 SKY_NIGHT = vec3(0.004, 0.005, 0.009);
 const vec3 GROUND_TINT = vec3(0.45, 0.42, 0.38);
 // Sky light that comes from around the sun (relative to the sun's own

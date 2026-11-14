@@ -41,12 +41,14 @@ const BLOOM_FORMAT: GLenum = gl::R11F_G11F_B10F;
 const BLOOM_LEVELS: usize = 6;
 /// Size of the log luminance target the average brightness is taken from.
 const LUMINANCE_SIZE: i32 = 256;
-/// Average scene luminance (log2) the eye adaptation stays within, so a
-/// night stays dark and a sunlit field does not go grey.
-const ADAPTATION_RANGE: (f32, f32) = (-5.0, 3.0);
-/// Where the auto exposure puts the average luminance. Chosen so a daylit
-/// scene comes out about as bright as with a fixed exposure of 0 EV.
-const EXPOSURE_KEY: f32 = 0.4;
+/// Average scene luminance (log2) the eye adaptation stays within. The
+/// bottom keeps an unlit room from being boosted into daylight (looking
+/// into it from outside stays dark), the top lets a sunlit field expose
+/// down far enough that the sky does not clip.
+const ADAPTATION_RANGE: (f32, f32) = (-2.0, 6.0);
+/// Where the auto exposure puts the average luminance, i.e. "middle grey"
+/// in the linear scene.
+const EXPOSURE_KEY: f32 = 0.25;
 /// Bloom threshold softness, as a share of the threshold.
 const BLOOM_KNEE: f32 = 0.5;
 
@@ -145,7 +147,7 @@ impl Default for HdrSettings {
         Self {
             tonemapper: Tonemapper::Aces,
             exposure: 0.0,
-            auto_exposure: false,
+            auto_exposure: true,
             adaptation_speed: 1.5,
             bloom: true,
             bloom_intensity: 0.25,
