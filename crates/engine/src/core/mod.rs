@@ -6,6 +6,7 @@ pub mod export;
 pub mod headless;
 pub mod model;
 pub mod mouse_picker;
+pub mod net;
 pub mod physics;
 pub mod primitives;
 pub mod project;

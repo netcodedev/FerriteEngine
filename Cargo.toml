@@ -6,6 +6,7 @@ members = [
     "crates/editor",
     "crates/sandbox",
     "crates/scripts",
+    "crates/server",
 ]
 # Only ever built as a dependency: cargo builds a dylib dependency with
 # `-C prefer-dynamic`, a workspace root without. Both would be written to the

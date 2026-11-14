@@ -154,6 +154,11 @@ impl AnimationGraph {
         }
     }
 
+    /// Every input and its value.
+    pub fn inputs(&self) -> &std::collections::HashMap<String, f32> {
+        &self.inputs
+    }
+
     pub fn get_input(&self, name: &str) -> Option<f32> {
         self.inputs.get(name).copied()
     }

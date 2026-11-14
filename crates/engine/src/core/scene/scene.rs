@@ -231,6 +231,9 @@ impl Scene {
     }
 
     pub fn update(&mut self, delta_time: f64) {
+        // Messages in and out, and the other players where they are, before
+        // anything moves.
+        crate::core::net::update(self, delta_time);
         if self.physics_enabled {
             self.physics_engine.update((delta_time as f32).min(1.0 / 20.0));
         }

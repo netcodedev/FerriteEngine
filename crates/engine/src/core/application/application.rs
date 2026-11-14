@@ -58,6 +58,8 @@ impl Application {
                 shown = true;
             }
         }
+        // A server hears at once that this player left.
+        crate::core::net::disconnect();
     }
 
     /// Colour the window is cleared to every frame.

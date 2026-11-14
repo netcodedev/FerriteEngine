@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 as-any = "0.3.2"
+bincode = "1"
 cgmath = "0.18.0"
 env_logger = "0.11.11"
 fast-surface-nets = "0.2.1"
@@ -19,6 +20,8 @@ log = "0.4.35"
 ndarray = "0.17.2"
 rand = "0.10.3"
 rapier3d = { version = "0.36.1", features = ["parallel"] }
+renet = "1"
+renet_netcode = "1"
 ron = "0.12.3"
 russimp-ng = { version = "3.2.7" }
 rusttype = { version = "0.9.3", features = ["gpu_cache"] }
