@@ -29,10 +29,10 @@ uniform mat4 inverseViewProjection;
 
 // Absorption per unit of water, red, green and blue: red light is gone
 // after a few units, blue carries furthest.
-const vec3 ABSORPTION = vec3(0.38, 0.085, 0.06);
+const vec3 ABSORPTION = vec3(0.45, 0.12, 0.085);
 // Colour of the light the water scatters back (silt and plankton: a little
 // green in the blue).
-const vec3 SCATTER_COLOR = vec3(0.008, 0.055, 0.085);
+const vec3 SCATTER_COLOR = vec3(0.003, 0.025, 0.045);
 // Light shining through the thin top of a wave.
 const vec3 CREST_COLOR = vec3(0.06, 0.40, 0.34);
 // Reflectance of water head on (IOR 1.33).
