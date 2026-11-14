@@ -21,6 +21,8 @@ use crate::core::{
         sky::SkyRenderer,
         ssao::Ssao,
         texture::TextureRenderer,
+        weather::{self, WeatherMaps, WeatherTargets},
+        pbr::Lighting,
     },
     scene::scene_file::ComponentData,
     script,
@@ -47,6 +49,8 @@ impl Scene {
             ssao: RefCell::new(None),
             hdr: RefCell::new(None),
             ambient_occlusion_origin: Cell::new(None),
+            weather: RefCell::new(None),
+            weather_maps: Cell::new(None),
             deferred: Vec::new(),
         }
     }
@@ -183,6 +187,12 @@ impl Scene {
         self.ambient_occlusion_origin.get()
     }
 
+    /// Where the weather's maps lie while the scene is shaded with them
+    /// (bound to `weather::EXPOSURE_UNIT` and `weather::SNOW_TRAIL_UNIT`).
+    pub fn weather_maps(&self) -> Option<WeatherMaps> {
+        self.weather_maps.get()
+    }
+
     /// GL name of the last frame's ambient occlusion (one red channel, as big
     /// as the viewport), for debug views.
     pub fn ambient_occlusion_texture(&self) -> Option<u32> {
@@ -292,6 +302,8 @@ impl Scene {
             }
         }
 
+        self.render_weather_maps(window);
+
         // Render Pass
         self.apply_viewport(window);
         self.ambient_occlusion_origin.set(None);
@@ -355,8 +367,10 @@ impl Scene {
                     tan_half_y,
                     skylight.get_sun_direction(),
                     skylight.get_time_of_day(),
-                    skylight.get_cloud_coverage(),
+                    skylight.effective_cloud_coverage(),
+                    skylight.effective_cloud_type(),
                     skylight.clouds(),
+                    skylight.weather().precipitation().1,
                 );
             }
 
@@ -377,8 +391,10 @@ impl Scene {
             for entity in self.entities.iter() {
                 entity.render_transparent(self, &view_projection, parent_transform);
             }
+            self.render_precipitation(&view_projection);
             self.ambient_occlusion_origin.set(None);
             hdr.finish(&hdr_settings);
+            self.weather_maps.set(None);
         }
 
         // ── Debug overlay (F10) ───────────────────────────────────────────
@@ -432,6 +448,67 @@ impl Scene {
                     self.texture_renderer.render_depth(tex, 0.5, 0.0, 0.25, 0.5);
                 }
             }
+        }
+    }
+
+    /// The maps rain and snow are shaded with: the scene from above (what
+    /// is under open sky) and the trails in the snow.
+    fn render_weather_maps(&self, window: &Window) {
+        self.weather_maps.set(None);
+        let footprints = weather::take_footprints();
+        let (Some(camera), Some(skylight)) =
+            (self.get_active_camera(), self.get_component::<SkyLight>())
+        else {
+            return;
+        };
+        let weather = skylight.weather();
+        if !weather.is_active() {
+            return;
+        }
+        let eye = camera.get_camera().get_eye_position();
+        let mut targets = self.weather.borrow_mut();
+        let targets = targets.get_or_insert_with(WeatherTargets::new);
+        if let Some(view_projection) = targets.exposure.begin(eye) {
+            for entity in self.entities.iter() {
+                entity.render(self, &view_projection, Matrix4::identity());
+            }
+            targets.exposure.end();
+        }
+        targets.exposure.bind();
+        let trails = if weather.snow_cover > 0.0 {
+            targets.trails.update(eye, weather.shading().snow, &footprints);
+            targets.trails.bind();
+            targets.trails.area()
+        } else {
+            None
+        };
+        self.weather_maps.set(Some(WeatherMaps {
+            exposure: targets.exposure.projection(),
+            trails,
+        }));
+        self.apply_viewport(window);
+    }
+
+    /// Rain or snow falling around the camera, over the finished scene.
+    fn render_precipitation(&self, view_projection: &Matrix4<f32>) {
+        let Some(skylight) = self.get_component::<SkyLight>() else {
+            return;
+        };
+        let (kind, amount) = skylight.weather().precipitation();
+        let targets = self.weather.borrow();
+        let (Some(targets), Some(lighting)) = (targets.as_ref(), Lighting::from_scene(self))
+        else {
+            return;
+        };
+        if amount > 0.0 {
+            targets.precipitation.render(
+                view_projection,
+                lighting.camera_position,
+                kind,
+                amount,
+                &lighting,
+                self.weather_maps().as_ref(),
+            );
         }
     }
 

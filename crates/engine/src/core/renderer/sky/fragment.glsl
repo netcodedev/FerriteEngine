@@ -5,6 +5,10 @@ in vec2 ndcPos;
 out vec4 FragColor;
 
 uniform sampler2D cloudTexture;
+// How hard it rains or snows, 0..1: the distance fades into grey murk.
+uniform float precipitation;
+// Must match `MURK` in `weather/weather.glsl`.
+const vec3 MURK = vec3(0.50, 0.53, 0.57);
 
 // Linear brightness of the sun disk, relative to a white sky.
 const float SUN_DISK_RADIANCE = 40.0;
@@ -58,6 +62,15 @@ void main() {
     // the sky behind them they hide.
     vec4 clouds = texture(cloudTexture, ndcPos * 0.5 + 0.5);
     sky = sky * (1.0 - clouds.a) + clouds.rgb;
+
+    // ── Rain and snow ──────────────────────────────────────────────────
+    // What falls hides the distance: the horizon goes the grey of the
+    // murk the ground fades into, and some of it reaches up the sky.
+    if (precipitation > 0.0) {
+        vec3 murk = MURK * mix(0.04, 1.0 - 0.3 * precipitation, dayFactor);
+        float low = 1.0 - smoothstep(-0.05, 0.5, dir.y);
+        sky = mix(sky, murk, precipitation * mix(0.3, 0.95, low));
+    }
 
     // ── Stars (no seams; 3D-hash over unit sphere) ─────────────────────
     // Use a separate, tighter envelope than dayFactor so stars only appear

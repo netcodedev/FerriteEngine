@@ -20,7 +20,7 @@ use crate::{
         },
         renderer::{
             hdr::HdrSettings, light::skylight::SkyLight, sky::CloudSettings,
-            ssao::AmbientOcclusionSettings,
+            ssao::AmbientOcclusionSettings, weather::Weather,
         },
         script,
     },
@@ -97,6 +97,9 @@ pub enum ComponentData {
         /// Missing in scenes saved before it existed: the defaults.
         #[serde(default)]
         hdr: HdrSettings,
+        /// Missing in scenes saved before it existed: clear and dry.
+        #[serde(default)]
+        weather: Weather,
     },
     Terrain {
         seed: u64,
@@ -197,6 +200,7 @@ impl ComponentData {
             clouds: *sky.clouds(),
             ambient_occlusion: *sky.ambient_occlusion(),
             hdr: *sky.hdr(),
+            weather: *sky.weather(),
         }
     }
 
@@ -227,6 +231,7 @@ impl ComponentData {
                 clouds,
                 ambient_occlusion,
                 hdr,
+                weather,
             } => {
                 let mut sky = SkyLight::new((30.0, 20.0, 10.0));
                 sky.set_time_of_day(*time_of_day);
@@ -236,6 +241,7 @@ impl ComponentData {
                 sky.set_clouds(*clouds);
                 sky.set_ambient_occlusion(*ambient_occlusion);
                 sky.set_hdr(*hdr);
+                sky.set_weather(*weather);
                 entity.add_component(sky);
             }
             ComponentData::Terrain { seed, scatter } => {

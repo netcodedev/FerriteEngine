@@ -186,6 +186,60 @@ vec3 paletteColor(float h, float slope) {
     return mix(color, mix(rock, darkRock, smoothstep(55.0, 90.0, h)), rockBlend);
 }
 
+// Height of the water's surface (`dual_contouring::WATER_LEVEL`).
+const float WATER_LINE = 44.0;
+// Footprints show their depth this close; further away the flat cover.
+const float TRAIL_DISTANCE = 30.0;
+
+// Snow on the ground: a layer `snowDepth` deep with the trails pressed into
+// it. The ground is not raised; the view ray is followed down through the
+// layer instead (parallax), so prints look as deep as the snow.
+void terrainSnow(float exposure, inout vec3 albedo, inout vec3 N, vec3 Ng,
+                 inout float roughness, inout float ao) {
+    float share = snowShare(WorldPos, N, Ng, exposure);
+    if (share <= 0.0) {
+        return;
+    }
+    vec2 at = WorldPos.xz;
+    vec3 toEye = cameraPosition - WorldPos;
+    float near = 1.0 - smoothstep(TRAIL_DISTANCE * 0.6, TRAIL_DISTANCE, length(toEye));
+    vec2 trail = vec2(0.0);
+    vec3 snowN = Ng;
+    if (useSnowTrails == 1 && near > 0.0 && snowDepth > 0.005) {
+        // From where the ray enters the layer down to where it meets the
+        // snow's surface.
+        vec3 V = normalize(toEye);
+        vec2 drift = V.xz / max(V.y, 0.25);
+        const int STEPS = 12;
+        float top = snowDepth * 1.35;
+        float height = top;
+        for (int i = 0; i <= STEPS; ++i) {
+            height = top * (1.0 - float(i) / float(STEPS));
+            if (height <= snowHeight(WorldPos.xz + drift * height)) {
+                break;
+            }
+        }
+        at = WorldPos.xz + drift * height * near;
+        trail = snowTrail(at) * near;
+        // Slope of the snow's surface where the ray meets it.
+        const float e = 0.04;
+        float dx = snowHeight(at + vec2(e, 0.0)) - snowHeight(at - vec2(e, 0.0));
+        float dz = snowHeight(at + vec2(0.0, e)) - snowHeight(at - vec2(0.0, e));
+        snowN = normalize(Ng + vec3(-dx, 0.0, -dz) / (2.0 * e) * near);
+    }
+    // Shallow snow pressed through shows the ground under it.
+    float left = snowDepth * (1.0 - 0.9 * trail.r);
+    share *= mix(1.0, smoothstep(0.004, 0.03, left), trail.r);
+    float metallic = 0.0;
+    applySnow(vec3(at.x, WorldPos.y, at.y), snowN, share, albedo, N, roughness, metallic);
+    // Pressed snow is packed: smoother and a little grey; the walls of a
+    // print are shaded off.
+    albedo *= 1.0 - 0.25 * trail.r * share;
+    roughness = mix(roughness, 0.4, trail.r * share);
+    float depth = smoothstep(0.0, 0.25, snowDepth);
+    ao *= 1.0 - 0.6 * trail.r * depth * share;
+}
+
 void main() {
     if (isShadowPass == 1) {
         FragColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -257,6 +311,14 @@ void main() {
     roughness = mix(roughness, 0.6, snow);
     N = normalize(mix(N, Ng, snow));
 
-    vec3 color = shadeSurface(WorldPos, N, Ng, albedo, roughness, 0.0, ao, cloudShadow());
+    // Rain and snow, where the sky reaches and above the water.
+    float metallic = 0.0;
+    if (wetness + snowCover > 0.0) {
+        float exposure = skyExposure(WorldPos, Ng) * smoothstep(WATER_LINE, WATER_LINE + 0.4, h);
+        applyRain(WorldPos, Ng, exposure, albedo, N, roughness, metallic);
+        terrainSnow(exposure, albedo, N, Ng, roughness, ao);
+    }
+
+    vec3 color = shadeSurface(WorldPos, N, Ng, albedo, roughness, metallic, ao, cloudShadow());
     FragColor = vec4(toDisplay(color), 1.0);
 }

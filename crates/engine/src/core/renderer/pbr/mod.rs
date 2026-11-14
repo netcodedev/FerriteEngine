@@ -13,15 +13,18 @@ use crate::core::{
         shader::Shader,
         ssao::SSAO_UNIT,
         texture::Texture,
+        weather::{WeatherMaps, WeatherShading},
     },
     scene::Scene,
 };
 
-/// Sun, sky, shadows and the BRDF (`shadeSurface`, `toDisplay`). Goes
+/// Sun, sky, shadows, the BRDF (`shadeSurface`, `toDisplay`) and the
+/// weather on surfaces (`applyWeather`). Goes
 /// right after a fragment shader's `#version` line.
 pub const LIGHTING_GLSL: &str = concat!(
     include_str!("../hdr/tonemap.glsl"),
-    include_str!("lighting.glsl")
+    include_str!("lighting.glsl"),
+    include_str!("../weather/weather.glsl")
 );
 const MATERIAL_GLSL: &str = include_str!("material.glsl");
 
@@ -45,6 +48,11 @@ pub struct Lighting {
     /// Window position of the scene's ambient occlusion (bound to
     /// `SSAO_UNIT`) while it shades the camera's view.
     pub ambient_occlusion_origin: Option<[i32; 2]>,
+    /// Rain and snow on surfaces.
+    pub weather: WeatherShading,
+    /// Where the weather's maps lie (bound to `weather::EXPOSURE_UNIT` and
+    /// `weather::SNOW_TRAIL_UNIT`) while the scene is shaded.
+    pub weather_maps: Option<WeatherMaps>,
 }
 
 impl Lighting {
@@ -58,11 +66,13 @@ impl Lighting {
         Some(Self {
             sun_direction: skylight.get_sun_direction().normalize(),
             camera_position,
-            cloud_coverage: skylight.get_cloud_coverage(),
+            cloud_coverage: skylight.effective_cloud_coverage(),
             shadow_cascades: scene
                 .get_shadow_map_size()
                 .map(|_| *skylight.shadow_cascades()),
             ambient_occlusion_origin: scene.ambient_occlusion_origin(),
+            weather: skylight.weather().shading(),
+            weather_maps: scene.weather_maps(),
         })
     }
 
@@ -74,6 +84,8 @@ impl Lighting {
             cloud_coverage: 0.0,
             shadow_cascades: None,
             ambient_occlusion_origin: None,
+            weather: WeatherShading::default(),
+            weather_maps: None,
         }
     }
 
@@ -112,6 +124,7 @@ impl Lighting {
             }
             None => shader.set_uniform_1i("useSsao", 0),
         }
+        self.weather.apply(shader, self.weather_maps.as_ref());
     }
 }
 

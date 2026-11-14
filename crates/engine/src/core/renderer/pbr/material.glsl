@@ -58,6 +58,8 @@ vec4 shadePbr(vec3 worldPos, vec3 vertexNormal, vec2 uv) {
     float roughness = hasRoughnessMap == 1 ? texture(roughnessMap, uv).r : DEFAULT_ROUGHNESS;
     float metallic = hasMetallicMap == 1 ? texture(metallicMap, uv).r : 0.0;
     float ao = hasOcclusionMap == 1 ? texture(occlusionMap, uv).r : 1.0;
-    vec3 color = shadeSurface(worldPos, N, Ng, base.rgb, roughness, metallic, ao, 1.0);
+    vec3 albedo = base.rgb;
+    applyWeather(worldPos, Ng, albedo, N, roughness, metallic);
+    vec3 color = shadeSurface(worldPos, N, Ng, albedo, roughness, metallic, ao, 1.0);
     return vec4(toDisplay(color), 1.0);
 }

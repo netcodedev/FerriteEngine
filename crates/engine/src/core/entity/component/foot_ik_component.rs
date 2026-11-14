@@ -21,6 +21,7 @@ use crate::core::{
     renderer::{
         hdr,
         line::{Line, LineRenderer},
+        weather::{self, Footprint},
     },
     scene::Scene,
 };
@@ -55,6 +56,12 @@ const MAX_LOOKAHEAD: f32 = 0.15;
 /// under the ankle (a bump); higher is the next step up, which the toes
 /// only point at.
 const TOE_STEP: f32 = 0.06;
+/// A foot at most this far above its planted height leaves a print in snow.
+const PRINT_LIFT: f32 = 0.04;
+/// Length of a footprint relative to the ankle-to-toe distance, and the
+/// shortest and longest print (metres).
+const PRINT_SCALE: f32 = 1.7;
+const PRINT_LENGTH: (f32, f32) = (0.18, 0.36);
 /// Offsets rise this much faster than they sink, so a foot does not catch
 /// on the edge of a step it goes up.
 const RISE_SPEEDUP: f32 = 2.5;
@@ -308,6 +315,24 @@ impl FootIk {
             if let Some(ahead) = ahead {
                 if ground.is_none_or(|base| ahead.0.y > base.0.y) {
                     ground = Some(ahead);
+                }
+            }
+            // A planted foot presses into the snow, heel to toe.
+            if let (Some((point, _)), true) = (ground, grounded && lift < PRINT_LIFT) {
+                let toe = foot.toe.map(|toe| animated[toe]);
+                let forward = toe.map_or(Vector3::new(velocity.x, 0.0, velocity.z), |toe| {
+                    Vector3::new(toe.x - at.x, 0.0, toe.z - at.z)
+                });
+                let reach = forward.magnitude();
+                if reach > 1e-3 {
+                    let length = (reach * PRINT_SCALE).clamp(PRINT_LENGTH.0, PRINT_LENGTH.1);
+                    let direction = forward / reach;
+                    let centre = Vector3::new(at.x, point.y, at.z) + direction * (length * 0.3);
+                    weather::press_snow(Footprint {
+                        position: centre,
+                        forward: cgmath::Vector2::new(direction.x, direction.z),
+                        length,
+                    });
                 }
             }
             let (wanted_offset, wanted_normal) = match ground {
