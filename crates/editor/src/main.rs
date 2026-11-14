@@ -21,6 +21,7 @@ use editor::{
     asset_editor::{AssetEdit, AssetInspector, AssetPreview},
     dialogs::{self, ModalHost},
     drag::{DragLayer, DropAction, DropTarget},
+    export::Exporter,
     hierarchy::HierarchyPanel,
     inspector::InspectorPanel,
     layout::{Layout, RightColumn},
@@ -152,6 +153,7 @@ struct EditorLayer {
     pending_quit: bool,
     cursor_initialised: bool,
     scripts: Scripts,
+    exporter: Exporter,
     project: Project,
     /// The arrangement last saved to the project file.
     saved_settings: EditorSettings,
@@ -271,6 +273,7 @@ impl EditorLayer {
             pending_quit: false,
             cursor_initialised: false,
             scripts,
+            exporter: Exporter::default(),
             project,
             saved_settings: settings,
             settings_checked: Instant::now(),
@@ -613,6 +616,8 @@ impl EditorLayer {
                 if mode == Mode::Edit {
                     return;
                 }
+                // A game played on a server leaves it with play mode.
+                ferrite::core::net::disconnect();
                 if let Some(snapshot) = self.play_snapshot.take() {
                     match Scene::from_file(&snapshot) {
                         Ok(scene) => self.replace_scene(scene),
@@ -667,6 +672,13 @@ impl EditorLayer {
             Command::ReloadScripts => {
                 if let Some(event) = self.scripts.rebuild() {
                     self.on_script_event(event);
+                }
+            }
+            Command::ExportGame(platform) => {
+                if self.exporter.is_running() {
+                    self.state.borrow_mut().set_status("An export is already running");
+                } else if let Some(out) = Exporter::pick_folder() {
+                    self.exporter.start(self.project.clone(), out, platform);
                 }
             }
             Command::RefreshAssets => {
@@ -1099,6 +1111,26 @@ impl Layer for EditorLayer {
     fn on_update(&mut self, window: &Window, delta_time: f64) {
         if let Some(event) = self.scripts.poll() {
             self.on_script_event(event);
+        }
+        if let Some(status) = self.exporter.poll() {
+            self.state.borrow_mut().set_status(status);
+        }
+        // The game asked to end: in the editor that ends play mode, never
+        // the editor.
+        if ferrite::core::application::take_quit_request()
+            && self.state.borrow().mode == Mode::Play
+        {
+            self.state.borrow_mut().push(Command::Stop);
+            self.run_commands();
+        }
+        // The game asked to start over: play again from the scene as it
+        // was when play mode started.
+        if ferrite::core::application::take_restart_request()
+            && self.state.borrow().mode == Mode::Play
+        {
+            self.state.borrow_mut().push(Command::Stop);
+            self.state.borrow_mut().push(Command::Play);
+            self.run_commands();
         }
         self.save_settings_if_changed();
         let (show_stats, show_widgets, show_assets, workspace) = {

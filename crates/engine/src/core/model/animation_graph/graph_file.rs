@@ -43,6 +43,11 @@ pub struct StateDef {
     /// as walk + strafe).
     #[serde(default)]
     pub sync: bool,
+    /// The clips turn the body instead of the model: their root's turn
+    /// about the up axis is taken out of the pose and reported by
+    /// `AnimationGraph::root_yaw_delta` (e.g. turning on the spot).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub root_rotation: bool,
     /// Node position in the editor canvas.
     #[serde(default)]
     pub position: (f32, f32),
@@ -365,6 +370,7 @@ impl AnimationGraph {
                 state.add_animation(animation);
             }
             state.sync_animations(def.sync);
+            state.root_rotation(def.root_rotation);
             for t in file.transitions.iter().filter(|t| t.from == def.name) {
                 state.add_transition(&t.to, t.conditions.clone(), t.blend.max(0.001));
             }
@@ -392,6 +398,7 @@ mod tests {
                 name: "idle".into(),
                 clips,
                 sync: false,
+                root_rotation: false,
                 position: (0.0, 0.0),
             }],
             transitions: Vec::new(),

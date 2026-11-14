@@ -280,9 +280,15 @@ impl Entity {
         }
     }
 
+    /// Also turns an attached body: otherwise its own rotation would be
+    /// copied back onto the entity by `RigidBody::update` next frame, and
+    /// what runs before the turn (foot IK, bone colliders) would see the
+    /// body's rotation instead.
     pub fn set_rotation(&mut self, scene: &mut Scene, rotation: Quaternion<f32>) {
-        let _ = scene;
         self.rotation = rotation;
+        if let Some(rigid_body) = self.get_component_mut::<RigidBody>() {
+            rigid_body.set_rotation(scene, rotation);
+        }
     }
 
     pub fn child_count(&self) -> usize {

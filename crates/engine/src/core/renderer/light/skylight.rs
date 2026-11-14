@@ -81,7 +81,7 @@ impl SkyLight {
             time_of_day: initial_time,
             day_length_seconds: DEFAULT_DAY_LENGTH_SECONDS,
             paused: false,
-            cloud_coverage: 0.45,
+            cloud_coverage: 0.2,
             ambient_occlusion: AmbientOcclusionSettings::default(),
             hdr: HdrSettings::default(),
         };

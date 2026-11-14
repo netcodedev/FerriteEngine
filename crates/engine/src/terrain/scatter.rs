@@ -31,7 +31,7 @@ use crate::core::{
         Entity,
     },
     model::{outline, Model, ModelBuilder},
-    physics::physics_engine::PhysicsEngine,
+    physics::physics_engine::{collider_tag, PhysicsEngine},
     renderer::{
         pbr::{self, Lighting},
         shader::Shader,
@@ -309,6 +309,9 @@ struct SubmeshGpu {
 
 impl Drop for SubmeshGpu {
     fn drop(&mut self) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             gl::DeleteBuffers(1, &self.vbo);
             gl::DeleteBuffers(1, &self.ibo);
@@ -374,7 +377,9 @@ fn load_variants(
                         p[0], p[1], p[2], n[0], n[1], n[2], uv[0], uv[1],
                     ]);
                 }
-                let (vbo, ibo) = unsafe {
+                let (vbo, ibo) = if crate::core::headless::is_headless() {
+                    (0, 0)
+                } else { unsafe {
                     let mut vbo = 0;
                     let mut ibo = 0;
                     gl::GenBuffers(1, &mut vbo);
@@ -396,7 +401,7 @@ fn load_variants(
                     gl::BindBuffer(gl::ARRAY_BUFFER, 0);
                     gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, 0);
                     (vbo, ibo)
-                };
+                } };
                 submesh_gpu.push(SubmeshGpu {
                     vbo,
                     ibo,
@@ -560,6 +565,9 @@ struct VariantGpu {
 
 impl Drop for ScatterGpu {
     fn drop(&mut self) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             for kind in &self.variants {
                 let Some(kind) = kind else { continue };
@@ -690,6 +698,28 @@ impl ScatterInstances {
         })
     }
 
+    /// The collider of the instance of the layer with `salt` standing at
+    /// `position` (within a few centimetres), if it is one of these.
+    pub fn collider_at(&self, salt: u64, position: Point3<f32>) -> Option<ColliderHandle> {
+        if self.spec.salt != salt {
+            return None;
+        }
+        let index = self.placements.iter().position(|&(x, y, z, _)| {
+            (x - position.x).abs() < 0.05
+                && (y - position.y).abs() < 0.05
+                && (z - position.z).abs() < 0.05
+        })?;
+        self.colliders.get(index).copied()
+    }
+
+    /// The layer and base position of the instance whose collider is
+    /// `collider`, if it is one of these.
+    pub fn instance_of(&self, collider: ColliderHandle) -> Option<(u64, Point3<f32>)> {
+        let index = self.colliders.iter().position(|c| *c == collider)?;
+        let (x, y, z, _) = self.placements[index];
+        Some((self.spec.salt, Point3::new(x, y, z)))
+    }
+
     /// Height of the tallest part of `variant`, from its base.
     pub fn variant_height(spec: &ScatterSpec, variant: usize) -> f32 {
         spec.model
@@ -719,6 +749,7 @@ impl ScatterInstances {
             let pose = Pose::from_parts(translation, rotation);
             let collider = ColliderBuilder::new(self.spec.model.variants[variant_idx].collider_shape.clone())
                 .position(pose)
+                .user_data(collider_tag::SCATTER)
                 .build();
             self.colliders
                 .push(scene.physics_engine.add_collider(collider, parent));
@@ -734,7 +765,7 @@ impl ScatterInstances {
     }
 
     fn ensure_gpu(&self) {
-        if self.gpu.borrow().is_some() {
+        if self.gpu.borrow().is_some() || crate::core::headless::is_headless() {
             return;
         }
         let gpu = build_instances_gpu(&self.instances_by_variant, &self.spec.model);

@@ -48,12 +48,18 @@ impl Application {
             }
 
             self.window.swap_buffers();
+            // No layer took the game's request to end: it ends.
+            if super::take_quit_request() {
+                break;
+            }
             if !shown {
                 // The first frame is drawn: now the window can be seen.
                 self.window.show();
                 shown = true;
             }
         }
+        // A server hears at once that this player left.
+        crate::core::net::disconnect();
     }
 
     /// Colour the window is cleared to every frame.

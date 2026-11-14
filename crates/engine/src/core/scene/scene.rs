@@ -14,6 +14,8 @@ use crate::core::{
     renderer::{
         framebuffer::{CascadedShadowMap, FrameBuffer, ShadowFrameBuffer},
         line::Line,
+        plane::PlaneRenderer,
+        text::TextRenderer,
         light::skylight::{SkyLight, SHADOW_CASCADES},
         hdr::{self, Hdr, HdrSettings},
         sky::SkyRenderer,
@@ -112,7 +114,20 @@ impl Scene {
         (&mut self.entities, &mut self.physics_engine)
     }
 
+    /// Become `other` (a scene a server sent, say), keeping how this one is
+    /// shown and run: its viewport, editor camera and whether physics runs.
+    pub fn replace_with(&mut self, mut other: Scene) {
+        other.viewport = self.viewport;
+        other.editor_camera = self.editor_camera.take();
+        other.physics_enabled = self.physics_enabled;
+        *self = other;
+    }
+
     pub fn add_shadow_map(&mut self, width: u32, height: u32) {
+        self.shadow_map_size = Some((width, height));
+        if crate::core::headless::is_headless() {
+            return;
+        }
         // One square layer per cascade; the scene file's size is a layer's.
         self.shadow_fbo = Some(CascadedShadowMap::new(width.max(height), SHADOW_CASCADES as u32));
         self.shadow_map_size = Some((width, height));
@@ -121,6 +136,10 @@ impl Scene {
     /// Create the camera-perspective debug FBOs used by F10.
     /// `width`/`height` should match the window dimensions.
     pub fn add_debug_maps(&mut self, width: u32, height: u32) {
+        self.debug_map_size = Some((width, height));
+        if crate::core::headless::is_headless() {
+            return;
+        }
         self.terrain_debug_fbo = Some(ShadowFrameBuffer::new(width, height));
         self.water_debug_fbo   = Some(ShadowFrameBuffer::new(width, height));
         self.debug_map_size = Some((width, height));
@@ -221,6 +240,9 @@ impl Scene {
     }
 
     pub fn update(&mut self, delta_time: f64) {
+        // Messages in and out, and the other players where they are, before
+        // anything moves.
+        crate::core::net::update(self, delta_time);
         if self.physics_enabled {
             self.physics_engine.update((delta_time as f32).min(1.0 / 20.0));
         }
@@ -233,6 +255,21 @@ impl Scene {
     }
 
     pub fn render(&self, window: &Window) {
+        // 2D overlays drawn by components (menus, HUD) lay out in the
+        // viewport's pixels, as the cursor they get does (see
+        // `handle_event`), not stretched from the whole window into it.
+        let overlay_size = (PlaneRenderer::get_size(), TextRenderer::get_size());
+        if let Some([_, _, w, h]) = self.viewport {
+            PlaneRenderer::resize(w.max(1) as u32, h.max(1) as u32);
+            TextRenderer::resize(w.max(1) as u32, h.max(1) as u32);
+        }
+        self.render_passes(window);
+        let ((plane_w, plane_h), (text_w, text_h)) = overlay_size;
+        PlaneRenderer::resize(plane_w as u32, plane_h as u32);
+        TextRenderer::resize(text_w, text_h);
+    }
+
+    fn render_passes(&self, window: &Window) {
         let parent_transform = Matrix4::identity();
 
         // Shadow Pass
@@ -643,6 +680,20 @@ impl Scene {
         if let WindowEvent::Key(Key::F10, _, Action::Press, _) = event {
             self.show_shadow_debug = !self.show_shadow_debug;
         }
+        // Rendered into a part of the window (the editor's viewport), the
+        // cursor is given relative to that part. Only a visible cursor: a
+        // captured one (mouse look) moves from wherever it was reset to.
+        let local;
+        let event = match (self.viewport, event) {
+            (Some([x, y, _, h]), WindowEvent::CursorPos(cx, cy))
+                if window.get_cursor_mode() == glfw::CursorMode::Normal =>
+            {
+                let top = window.get_framebuffer_size().1 - (y + h);
+                local = WindowEvent::CursorPos(cx - x as f64, cy - top as f64);
+                &local
+            }
+            _ => event,
+        };
         for entity in self.entities.iter_mut() {
             entity.handle_event(glfw, window, event);
         }

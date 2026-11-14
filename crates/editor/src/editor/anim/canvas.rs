@@ -112,6 +112,7 @@ impl NodeCanvas {
                     name: name.clone(),
                     clips: Vec::new(),
                     sync: false,
+                    root_rotation: false,
                     position: (pending.0 - NODE_W * 0.5, pending.1 - NODE_H * 0.5),
                 });
                 if anim.file.default_state.is_empty() {
@@ -807,6 +808,7 @@ impl UIElement for NodeCanvas {
                         name: name.clone(),
                         clips: Vec::new(),
                         sync: false,
+                        root_rotation: false,
                         position: (g.0 - NODE_W * 0.5, g.1 - NODE_H * 0.5),
                     });
                     if s.anim.file.default_state.is_empty() {

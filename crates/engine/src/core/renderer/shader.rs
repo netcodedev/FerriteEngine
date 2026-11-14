@@ -26,12 +26,18 @@ impl Shader {
     }
 
     pub fn bind(&self) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             gl::UseProgram(self.id);
         }
     }
 
     pub fn set_uniform_mat4(&self, name: &str, matrix: &cgmath::Matrix4<f32>) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             let name = CString::new(name).unwrap();
             let location = gl::GetUniformLocation(self.id, name.as_ptr());
@@ -40,6 +46,9 @@ impl Shader {
     }
 
     pub fn set_uniform_mat4_array(&self, name: &str, matrices: &Vec<cgmath::Matrix4<f32>>) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             let name = CString::new(name).unwrap();
             let location = gl::GetUniformLocation(self.id, name.as_ptr());
@@ -53,6 +62,9 @@ impl Shader {
     }
 
     pub fn set_uniform_1i(&self, name: &str, value: i32) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             let name = CString::new(name).unwrap();
             let location = gl::GetUniformLocation(self.id, name.as_ptr());
@@ -61,6 +73,9 @@ impl Shader {
     }
 
     pub fn set_uniform_1f(&self, name: &str, value: f32) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             let name = CString::new(name).unwrap();
             let location = gl::GetUniformLocation(self.id, name.as_ptr());
@@ -69,6 +84,9 @@ impl Shader {
     }
 
     pub fn set_uniform_2i(&self, name: &str, int1: i32, int2: i32) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             let name = CString::new(name).unwrap();
             let location = gl::GetUniformLocation(self.id, name.as_ptr());
@@ -77,6 +95,9 @@ impl Shader {
     }
 
     pub fn set_uniform_2f(&self, name: &str, float1: f32, float2: f32) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             let name = CString::new(name).unwrap();
             let location = gl::GetUniformLocation(self.id, name.as_ptr());
@@ -85,6 +106,9 @@ impl Shader {
     }
 
     pub fn set_uniform_3f(&self, name: &str, float1: f32, float2: f32, float3: f32) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             let name = CString::new(name).unwrap();
             let location = gl::GetUniformLocation(self.id, name.as_ptr());
@@ -93,6 +117,9 @@ impl Shader {
     }
 
     pub fn set_uniform_4f(&self, name: &str, float1: f32, float2: f32, float3: f32, float4: f32) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             let name = CString::new(name).unwrap();
             let location = gl::GetUniformLocation(self.id, name.as_ptr());
@@ -101,6 +128,9 @@ impl Shader {
     }
 
     pub fn set_uniform_3fv(&self, name: &str, value: &cgmath::Vector3<f32>) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             let name = CString::new(name).unwrap();
             let location = gl::GetUniformLocation(self.id, name.as_ptr());
@@ -109,6 +139,9 @@ impl Shader {
     }
 
     pub fn create_shader(vertex_shader_source: &str, fragment_shader_source: &str) -> GLuint {
+        if crate::core::headless::is_headless() {
+            return 0;
+        }
         unsafe {
             // 1. Compile vertex shader
             let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
@@ -190,10 +223,12 @@ impl<T: VertexAttributes + Clone> DynamicVertexArray<T> {
         let mut vao = 0;
         let mut vbo = 0;
         let mut ebo = 0;
-        unsafe {
+        if !crate::core::headless::is_headless() {
+            unsafe {
             gl::GenVertexArrays(1, &mut vao);
             gl::GenBuffers(1, &mut vbo);
             gl::GenBuffers(1, &mut ebo);
+            }
         }
         DynamicVertexArray {
             id: vao,
@@ -205,6 +240,11 @@ impl<T: VertexAttributes + Clone> DynamicVertexArray<T> {
     }
 
     pub fn buffer_data(&mut self, data: &Vec<T>, indices: &Option<Vec<u32>>) {
+        if crate::core::headless::is_headless() {
+            self.current_vertex_data = Some(data.to_vec());
+            self.indices = indices.clone();
+            return;
+        }
         self.bind();
         unsafe {
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);

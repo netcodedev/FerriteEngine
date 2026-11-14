@@ -1,5 +1,27 @@
 use rapier3d::prelude::*;
 
+/// What a collider is, kept in its `user_data`. The engine tags what it
+/// makes; games use values from `GAME_TAGS` up for their own.
+pub mod collider_tag {
+    /// Not tagged.
+    pub const NONE: u128 = 0;
+    /// Terrain chunks.
+    pub const TERRAIN: u128 = 1;
+    /// Things scattered over the terrain (trees, rocks).
+    pub const SCATTER: u128 = 2;
+    /// The first value games tag their own colliders with.
+    pub const GAME_TAGS: u128 = 1000;
+}
+
+/// Where a ray hit: the collider, how far along the ray, and the surface
+/// normal there.
+#[derive(Clone, Copy, Debug)]
+pub struct RayHit {
+    pub collider: ColliderHandle,
+    pub distance: f32,
+    pub normal: [f32; 3],
+}
+
 pub struct PhysicsEngine {
     pub rigid_bodies: RigidBodySet,
     pub colliders: ColliderSet,
@@ -135,26 +157,102 @@ impl PhysicsEngine {
         max_distance: f32,
         ignore: &[RigidBodyHandle],
     ) -> Option<(ColliderHandle, f32)> {
+        self.cast_ray(origin, dir, max_distance, ignore)
+            .map(|hit| (hit.collider, hit.distance))
+    }
+
+    /// Like `cast_ray_colliders`, with the surface normal where it hits.
+    pub fn cast_ray(
+        &mut self,
+        origin: [f32; 3],
+        dir: [f32; 3],
+        max_distance: f32,
+        ignore: &[RigidBodyHandle],
+    ) -> Option<RayHit> {
+        self.cast_ray_where(origin, dir, max_distance, |_, collider| {
+            !collider.parent().is_some_and(|p| ignore.contains(&p))
+        })
+    }
+
+    /// The nearest non-sensor collider the ray hits within `max_distance`
+    /// among those `keep` accepts. `dir` must be normalized.
+    pub fn cast_ray_where(
+        &mut self,
+        origin: [f32; 3],
+        dir: [f32; 3],
+        max_distance: f32,
+        keep: impl Fn(ColliderHandle, &Collider) -> bool,
+    ) -> Option<RayHit> {
+        use rapier3d::parry::query::RayCast;
+
         self.rigid_bodies
             .propagate_modified_body_positions_to_colliders(&mut self.colliders);
         let ray = Ray::new(
             Vector::new(origin[0], origin[1], origin[2]),
             Vector::new(dir[0], dir[1], dir[2]),
         );
-        let mut best: Option<(ColliderHandle, f32)> = None;
+        let mut best: Option<RayHit> = None;
         for (handle, collider) in self.colliders.iter() {
-            if collider.is_sensor() || collider.parent().is_some_and(|p| ignore.contains(&p)) {
+            if collider.is_sensor() || !keep(handle, collider) {
                 continue;
             }
-            let limit = best.map_or(max_distance, |(_, t)| t);
-            if let Some(t) = collider
-                .shape()
-                .cast_ray(collider.position(), &ray, limit, true)
+            let limit = best.as_ref().map_or(max_distance, |hit| hit.distance);
+            if collider
+                .compute_aabb()
+                .cast_local_ray(&ray, limit, true)
+                .is_none()
             {
-                best = Some((handle, t));
+                continue;
+            }
+            if let Some(hit) =
+                collider
+                    .shape()
+                    .cast_ray_and_get_normal(collider.position(), &ray, limit, true)
+            {
+                best = Some(RayHit {
+                    collider: handle,
+                    distance: hit.time_of_impact,
+                    normal: [hit.normal.x, hit.normal.y, hit.normal.z],
+                });
             }
         }
         best
+    }
+
+    /// Every non-sensor collider `keep` accepts that `shape` at `pose`
+    /// overlaps.
+    pub fn intersecting(
+        &mut self,
+        shape: &dyn Shape,
+        pose: &Pose,
+        keep: impl Fn(ColliderHandle, &Collider) -> bool,
+    ) -> Vec<ColliderHandle> {
+        self.rigid_bodies
+            .propagate_modified_body_positions_to_colliders(&mut self.colliders);
+        let aabb = shape.compute_aabb(pose);
+        self.colliders
+            .iter()
+            .filter(|(handle, collider)| {
+                !collider.is_sensor()
+                    && collider.compute_aabb().intersects(&aabb)
+                    && keep(*handle, collider)
+                    && rapier3d::parry::query::intersection_test(
+                        pose,
+                        shape,
+                        collider.position(),
+                        collider.shape(),
+                    )
+                    .is_ok_and(|test| test.intersecting)
+            })
+            .map(|(handle, _)| handle)
+            .collect()
+    }
+
+    /// The tag of a collider (see `collider_tag`); `NONE` if it is gone.
+    pub fn collider_tag(&self, handle: ColliderHandle) -> u128 {
+        self.colliders
+            .get(handle)
+            .map_or(collider_tag::NONE, |collider| collider.user_data)
     }
 
     /// Remove a body together with every collider attached to it.

@@ -29,6 +29,7 @@ const NONE_LABEL: &str = "-";
 enum Binding {
     StateName { source: DataSource<String>, last: String },
     Sync { source: DataSource<bool>, last: bool },
+    RootRotation { source: DataSource<bool>, last: bool },
     ClipName { clip: usize, source: DataSource<String>, last: String },
     ClipFile { clip: usize, source: DataSource<u32>, last: u32, choices: Vec<ClipChoice> },
     Blend { source: DataSource<f32>, last: f32 },
@@ -150,6 +151,17 @@ impl GraphInspector {
         let sync = DataSource::new(def.sync);
         section.add_child(Box::new(FieldRow::new("Sync clips", vec![UI::checkbox(sync.clone())])));
         self.bindings.push(Binding::Sync { source: sync, last: def.sync });
+        let root_rotation = DataSource::new(def.root_rotation);
+        // The clips' turn of the hips turns the body instead of the model
+        // (turning on the spot); see `StateDef::root_rotation`.
+        section.add_child(Box::new(FieldRow::new(
+            "Turns body",
+            vec![UI::checkbox(root_rotation.clone())],
+        )));
+        self.bindings.push(Binding::RootRotation {
+            source: root_rotation,
+            last: def.root_rotation,
+        });
         if is_default {
             section.add_child(Box::new(FieldRow::new(
                 "Default",
@@ -466,6 +478,16 @@ impl GraphInspector {
                         *last = value;
                         if let Some(st) = s.anim.file.states.iter_mut().find(|st| st.name == *name) {
                             st.sync = value;
+                        }
+                        changed = true;
+                    }
+                }
+                (Binding::RootRotation { source, last }, AnimSelection::State(name)) => {
+                    let value = source.read();
+                    if value != *last {
+                        *last = value;
+                        if let Some(st) = s.anim.file.states.iter_mut().find(|st| st.name == *name) {
+                            st.root_rotation = value;
                         }
                         changed = true;
                     }

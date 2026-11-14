@@ -1,0 +1,8 @@
+[package]
+name = "ferrite-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ferrite = { path = "../engine" }
+ferrite_dylib = { path = "../engine-dylib" }

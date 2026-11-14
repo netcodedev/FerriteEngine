@@ -10,6 +10,7 @@ use crate::core::renderer::{
 
 mod animation;
 pub mod animation_graph;
+pub mod ik;
 mod bone;
 mod channel;
 pub mod material_maps;
@@ -43,6 +44,9 @@ pub struct Model {
     /// when the model is drawn to the screen (shadows keep them), e.g. the
     /// head of a first-person player so the camera does not see into it.
     hidden_bones: Vec<String>,
+    /// Drawn as a see-through silhouette of this colour; see
+    /// `Model::set_tint`.
+    tint: Option<[f32; 4]>,
 }
 
 /// Raw per-submesh geometry extracted from a `Model` for callers that need
@@ -119,6 +123,8 @@ pub struct Animation {
     pub duration: f32,
     pub ticks_per_second: f32,
     channels: HashMap<String, Channel>,
+    /// The channel of the topmost animated node (the hips), if known.
+    root_channel: Option<String>,
 }
 
 #[derive(Clone)]

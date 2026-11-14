@@ -6,6 +6,20 @@ members = [
     "crates/editor",
     "crates/sandbox",
     "crates/scripts",
+    "crates/server",
+    "crates/game",
+]
+# What a plain `cargo build` builds: not the exported game, whose engine
+# (Assimp and GLFW linked in) must not replace the one the editor and the
+# scripts share. `ferrite::core::export` builds it on its own.
+default-members = [
+    "crates/engine",
+    "crates/engine-macros",
+    "crates/engine-ui",
+    "crates/editor",
+    "crates/sandbox",
+    "crates/scripts",
+    "crates/server",
 ]
 # Only ever built as a dependency: cargo builds a dylib dependency with
 # `-C prefer-dynamic`, a workspace root without. Both would be written to the

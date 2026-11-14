@@ -1,0 +1,16 @@
+# Windows exports are cross compiled with MinGW-w64 (see
+# `ferrite::core::export`). Linked statically, so the game needs none of
+# MinGW's runtime DLLs (libstdc++, libgcc, winpthread) next to it.
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+# Assimp is C++: its standard library is linked after everything else.
+rustflags = [
+    "-C", "link-args=-static",
+    "-C", "link-arg=-Wl,--start-group",
+    "-C", "link-arg=-l:libstdc++.a",
+    "-C", "link-arg=-l:libwinpthread.a",
+    "-C", "link-arg=-lmingwex",
+    "-C", "link-arg=-lucrt",
+    "-C", "link-arg=-lkernel32",
+    "-C", "link-arg=-Wl,--end-group",
+]

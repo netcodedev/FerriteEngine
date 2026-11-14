@@ -54,6 +54,16 @@ impl RigidBody {
         rigid_body.set_translation(Vector::new(position.x, position.y, position.z), true);
     }
 
+    pub fn set_rotation(&mut self, scene: &mut Scene, rotation: cgmath::Quaternion<f32>) {
+        let rigid_body = &mut scene.physics_engine.rigid_bodies[self.rigid_body_handle];
+        let current = rigid_body.rotation();
+        let wanted = Rotation::from_xyzw(rotation.v.x, rotation.v.y, rotation.v.z, rotation.s);
+        // Waking a resting body only when it really turns.
+        if current.dot(wanted).abs() < 1.0 - 1e-7 {
+            rigid_body.set_rotation(wanted, true);
+        }
+    }
+
     pub fn set_linvel(&mut self, scene: &mut Scene, linvel: cgmath::Vector3<f32>) {
         let rigid_body = &mut scene.physics_engine.rigid_bodies[self.rigid_body_handle];
         rigid_body.set_linvel(Vector::new(linvel.x, linvel.y, linvel.z), true);
