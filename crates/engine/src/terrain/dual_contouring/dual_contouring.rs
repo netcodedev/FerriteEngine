@@ -1,6 +1,9 @@
 use core::panic;
 
-use cgmath::{Matrix4, Point3, Vector3};
+use std::time::Instant;
+
+use cgmath::{Matrix4, Point3, SquareMatrix, Vector3};
+use lazy_static::lazy_static;
 use gl::types::GLuint;
 use glfw::{Glfw, MouseButton, WindowEvent};
 use libnoise::prelude::*;
@@ -9,9 +12,9 @@ use crate::{
     core::{
         entity::{component::Component, Entity},
         renderer::{
-            light::skylight::SkyLight,
+            hdr,
             line::Line,
-            pbr,
+            pbr::{self, Lighting},
             shader::{Shader, VertexAttributes},
             texture::Texture,
         },
@@ -27,17 +30,38 @@ use crate::{
 
 thread_local! {
     static WATER_SHADER: Shader = Shader::new(
-        include_str!("water_vertex.glsl"),
-        include_str!("water_fragment.glsl"),
+        &format!(
+            "#version 460 core\n{}\n{}",
+            include_str!("water_waves.glsl"),
+            include_str!("water_vertex.glsl")
+        ),
+        &format!(
+            "#version 460 core\n{}\n{}\n{}",
+            pbr::LIGHTING_GLSL,
+            include_str!("water_waves.glsl"),
+            include_str!("water_fragment.glsl")
+        ),
     );
 }
+
+lazy_static! {
+    static ref START: Instant = Instant::now();
+}
+
+/// Texture units the opaque scene is bound to while the water draws (clear
+/// of the terrain's textures, the clouds, ambient occlusion and shadows).
+const SCENE_COLOR_UNIT: u32 = 11;
+const SCENE_DEPTH_UNIT: u32 = 12;
 
 use fast_surface_nets::{
     ndshape::{AbstractShape, RuntimeShape},
     {surface_nets, SurfaceNetsBuffer},
 };
 
-use super::{ChunkMesh, DualContouringChunk, Vertex, WATER_LEVEL};
+use super::{
+    water::{self, WaterVertex},
+    ChunkMesh, DualContouringChunk, Vertex,
+};
 
 impl DualContouringChunk {
     fn get_density_at(&self, (x, y, z): (usize, usize, usize)) -> f32 {
@@ -93,126 +117,27 @@ impl DualContouringChunk {
         ChunkMesh::new(vertices, Some(indices))
     }
 
-    /// Clip the terrain triangle mesh at WATER_LEVEL and project the underwater
-    /// portion onto the water plane.  This gives an exact shoreline — no grid
-    /// approximation, no overhang into land.
-    ///
-    /// For each terrain triangle we check how many vertices sit below the water
-    /// plane and handle three cases:
-    ///   • all 3 below  → emit the triangle projected to y = WATER_LEVEL
-    ///   • 2 below      → clip → quad  → 2 triangles
-    ///   • 1 below      → clip → 1 triangle
-    ///   • 0 below      → skip
-    fn generate_water_mesh(&self) -> Option<ChunkMesh<Vertex>> {
-        let terrain = self.mesh.as_ref()?;
-        let indices = terrain.indices.as_ref()?;
+    /// World height of the ground at world `(x, z)`: where the density
+    /// field crosses zero (see `get_density_at`).
+    pub(super) fn ground_height(&self, x: f32, z: f32) -> f32 {
+        let offset: f64 = 16777216.0;
+        let n = self.noise.sample([x as f64 + offset, z as f64 + offset]);
+        ((1.0 + n) / 2.0) as f32 * CHUNK_SIZE_FLOAT - 1.0
+    }
 
-        // Place the water surface a tiny fraction above WATER_LEVEL so it is
-        // never coplanar with the terrain vertices that were clipped to that
-        // exact height.  With a strict LESS depth test this guarantees the
-        // water fragment is always closer to the camera than the terrain below
-        // it, eliminating z-fighting without needing polygon-offset or LEQUAL.
-        const WATER_SURFACE_Y: f32 = WATER_LEVEL + 0.05;
-
-        // Project a terrain vertex onto the water plane (keep XZ, fix Y).
-        let proj = |v: &Vertex| -> Vertex {
-            Vertex {
-                position: [v.position[0], WATER_SURFACE_Y, v.position[2]],
-                normal: [0.0, 1.0, 0.0],
-                color: [0.0; 3],
-            }
-        };
-
-        // Linearly interpolate the XZ crossing point on an edge that crosses
-        // WATER_LEVEL (va is below, vb is above — or vice versa).
-        let interp = |va: &Vertex, vb: &Vertex| -> Vertex {
-            let dy = vb.position[1] - va.position[1];
-            let t = if dy.abs() < 1e-6 {
-                0.5
-            } else {
-                (WATER_LEVEL - va.position[1]) / dy
-            };
-            Vertex {
-                position: [
-                    va.position[0] + t * (vb.position[0] - va.position[0]),
-                    WATER_SURFACE_Y,
-                    va.position[2] + t * (vb.position[2] - va.position[2]),
-                ],
-                normal: [0.0, 1.0, 0.0],
-                color: [0.0; 3],
-            }
-        };
-
-        let mut wv: Vec<Vertex> = Vec::new();
-        let mut wi: Vec<u32> = Vec::new();
-
-        let push_tri = |wv: &mut Vec<Vertex>, wi: &mut Vec<u32>, a: Vertex, b: Vertex, c: Vertex| {
-            let base = wv.len() as u32;
-            wv.push(a);
-            wv.push(b);
-            wv.push(c);
-            wi.extend_from_slice(&[base, base + 1, base + 2]);
-        };
-
-        let push_quad = |wv: &mut Vec<Vertex>, wi: &mut Vec<u32>,
-                         a: Vertex, b: Vertex, c: Vertex, d: Vertex| {
-            let base = wv.len() as u32;
-            wv.push(a);
-            wv.push(b);
-            wv.push(c);
-            wv.push(d);
-            wi.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-        };
-
-        for tri in indices.chunks(3) {
-            let v0 = &terrain.vertices[tri[0] as usize];
-            let v1 = &terrain.vertices[tri[1] as usize];
-            let v2 = &terrain.vertices[tri[2] as usize];
-
-            let b0 = v0.position[1] < WATER_LEVEL;
-            let b1 = v1.position[1] < WATER_LEVEL;
-            let b2 = v2.position[1] < WATER_LEVEL;
-
-            match (b0, b1, b2) {
-                // ── All above water — skip ─────────────────────────────────
-                (false, false, false) => {}
-
-                // ── All below — project the whole triangle up ──────────────
-                (true, true, true) => {
-                    push_tri(&mut wv, &mut wi, proj(v0), proj(v1), proj(v2));
-                }
-
-                // ── One vertex below — clip to one triangle ────────────────
-                (true, false, false) => {
-                    push_tri(&mut wv, &mut wi, proj(v0), interp(v0, v1), interp(v0, v2));
-                }
-                (false, true, false) => {
-                    push_tri(&mut wv, &mut wi, interp(v1, v0), proj(v1), interp(v1, v2));
-                }
-                (false, false, true) => {
-                    push_tri(&mut wv, &mut wi, interp(v2, v0), interp(v2, v1), proj(v2));
-                }
-
-                // ── Two vertices below — clip to a quad ────────────────────
-                (true, true, false) => {
-                    // v0, v1 below; v2 above
-                    push_quad(&mut wv, &mut wi,
-                        proj(v0), proj(v1), interp(v1, v2), interp(v0, v2));
-                }
-                (true, false, true) => {
-                    // v0, v2 below; v1 above
-                    push_quad(&mut wv, &mut wi,
-                        proj(v0), interp(v0, v1), interp(v2, v1), proj(v2));
-                }
-                (false, true, true) => {
-                    // v1, v2 below; v0 above
-                    push_quad(&mut wv, &mut wi,
-                        interp(v1, v0), proj(v1), proj(v2), interp(v2, v0));
-                }
-            }
+    /// The water surface over this chunk (see `water`). Only the bottom
+    /// row of chunks holds the ground, and with it the water.
+    fn generate_water_mesh(&self) -> Option<ChunkMesh<WaterVertex>> {
+        if self.position.1 != 0.0 {
+            return None;
         }
-
-        if wv.is_empty() { None } else { Some(ChunkMesh::new(wv, Some(wi))) }
+        let (vertices, indices) = water::generate(
+            |x, z| self.ground_height(x, z),
+            self.position.0 * CHUNK_SIZE_FLOAT,
+            self.position.2 * CHUNK_SIZE_FLOAT,
+            CHUNK_SIZE_FLOAT,
+        )?;
+        Some(ChunkMesh::new(vertices, Some(indices)))
     }
 
     /// Scatter spots across this chunk's XZ footprint using the same noise
@@ -226,7 +151,6 @@ impl DualContouringChunk {
         }
         let x0 = self.position.0 * CHUNK_SIZE_FLOAT;
         let z0 = self.position.2 * CHUNK_SIZE_FLOAT;
-        let offset: f64 = 16777216.0;
 
         // Deterministic chunk-local RNG so the same chunk always scatters
         // the same spots for a given salt (across runs, across chunk
@@ -249,9 +173,7 @@ impl DualContouringChunk {
             let x = x0 + rx * CHUNK_SIZE_FLOAT;
             let z = z0 + rz * CHUNK_SIZE_FLOAT;
 
-            let n = self.noise.sample([x as f64 + offset, z as f64 + offset]);
-            let n01 = ((1.0 + n) / 2.0) as f32;
-            let y = n01 * CHUNK_SIZE_FLOAT - 1.0;
+            let y = self.ground_height(x, z);
 
             if y < SCATTER_MIN_Y || y > SCATTER_MAX_Y {
                 let _ = next(); // burn an RNG sample so accepted yaw is stable
@@ -408,21 +330,35 @@ impl Chunk for DualContouringChunk {
                     chunk_offset.2,
                 ));
             let depth_capture = scene.is_water_depth_capture();
+            let opaque = hdr::opaque_scene().filter(|_| !depth_capture);
 
             WATER_SHADER.with(|ws| {
                 ws.bind();
                 ws.set_uniform_mat4("viewProjection", view_projection);
-                ws.set_uniform_3f(
-                    "chunkWorldOffset",
-                    chunk_offset.0,
-                    chunk_offset.1,
-                    chunk_offset.2,
-                );
-                if let Some(skylight) = scene.get_component::<SkyLight>() {
-                    let lp = skylight.get_position();
-                    ws.set_uniform_3f("lightPosition", lp.x, lp.y, lp.z);
+                let inverse = view_projection.invert().unwrap_or(Matrix4::identity());
+                ws.set_uniform_mat4("inverseViewProjection", &inverse);
+                ws.set_uniform_1f("uTime", START.elapsed().as_secs_f32());
+                match Lighting::from_scene(scene) {
+                    Some(lighting) => lighting.apply(ws),
+                    None => {
+                        let eye = scene
+                            .get_active_camera()
+                            .map(|c| c.get_camera().get_eye_position())
+                            .unwrap_or(Point3::new(0.0, 0.0, 0.0));
+                        Lighting::preview(Vector3::new(0.3, 0.8, 0.2), eye).apply(ws);
+                    }
                 }
+                ws.set_uniform_1i("sceneColor", SCENE_COLOR_UNIT as i32);
+                ws.set_uniform_1i("sceneDepth", SCENE_DEPTH_UNIT as i32);
+                ws.set_uniform_1i("hasScene", opaque.is_some() as i32);
                 unsafe {
+                    if let Some(opaque) = opaque {
+                        gl::ActiveTexture(gl::TEXTURE0 + SCENE_COLOR_UNIT);
+                        gl::BindTexture(gl::TEXTURE_2D, opaque.color);
+                        gl::ActiveTexture(gl::TEXTURE0 + SCENE_DEPTH_UNIT);
+                        gl::BindTexture(gl::TEXTURE_2D, opaque.depth);
+                        gl::ActiveTexture(gl::TEXTURE0);
+                    }
                     gl::Disable(gl::CULL_FACE);
                     if depth_capture {
                         // Depth-capture mode: write the water surface's actual
@@ -433,8 +369,9 @@ impl Chunk for DualContouringChunk {
                         gl::DepthMask(gl::TRUE);
                         gl::DepthFunc(gl::ALWAYS);
                     } else {
-                        // Normal render: water is semi-transparent, sits on top
-                        // of the terrain depth buffer, does not overwrite depth.
+                        // Normal render: the shader composes the water with
+                        // the opaque scene under it itself; alpha only fades
+                        // it out where it thins to nothing at the shore.
                         gl::Enable(gl::BLEND);
                         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
                         gl::DepthMask(gl::TRUE);
@@ -447,6 +384,13 @@ impl Chunk for DualContouringChunk {
                     gl::DepthFunc(gl::LESS); // restore default
                     if !depth_capture {
                         gl::Disable(gl::BLEND);
+                    }
+                    if opaque.is_some() {
+                        for unit in [SCENE_COLOR_UNIT, SCENE_DEPTH_UNIT] {
+                            gl::ActiveTexture(gl::TEXTURE0 + unit);
+                            gl::BindTexture(gl::TEXTURE_2D, 0);
+                        }
+                        gl::ActiveTexture(gl::TEXTURE0);
                     }
                     // CULL_FACE is re-enabled by the terrain opaque pass each frame.
                 }
