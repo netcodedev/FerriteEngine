@@ -293,6 +293,9 @@ impl TextRenderer {
     ///
     /// Returns the width and height of the text
     pub fn render(text: &Text) -> (i32, i32) {
+        if crate::core::headless::is_headless() {
+            return (0, 0);
+        }
         let renderer = RENDERER.lock().unwrap();
         let mut polygon_mode = 0;
         unsafe {
@@ -373,6 +376,9 @@ impl TextRenderer {
         font_id: usize,
         glyph: PositionedGlyph<'static>,
     ) -> Option<(Rect<f32>, Rect<i32>)> {
+        if crate::core::headless::is_headless() {
+            return None;
+        }
         let mut renderer = RENDERER.lock().unwrap();
         renderer.cache.queue_glyph(font_id, glyph.clone());
         unsafe {
@@ -419,6 +425,9 @@ impl VertexAttributes for TextVertex {
 
 impl Texture {
     pub fn new(width: i32, height: i32) -> Texture {
+        if crate::core::headless::is_headless() {
+            return Texture { id: 0 };
+        }
         let mut texture_buffer = 0;
         let data = vec![0u8; width as usize * height as usize];
         unsafe {
@@ -455,6 +464,9 @@ impl Texture {
 
 impl Drop for Texture {
     fn drop(&mut self) {
+        if crate::core::headless::is_headless() {
+            return ;
+        }
         unsafe {
             gl::DeleteTextures(1, &self.id);
         }

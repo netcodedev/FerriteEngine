@@ -11,6 +11,9 @@ impl Texture {
     }
 
     fn gen_texture() -> Self {
+        if crate::core::headless::is_headless() {
+            return Texture { id: 0, target: gl::TEXTURE_2D };
+        }
         let mut id = 0;
         unsafe {
             gl::GenTextures(1, &mut id);
@@ -22,6 +25,9 @@ impl Texture {
     }
 
     pub fn set_as_depth_texture(&self, width: u32, height: u32) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         self.bind();
         unsafe {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
@@ -55,6 +61,9 @@ impl Texture {
     /// An array of `layers` depth maps (16 bit), one per shadow cascade.
     /// Outside the maps the depth reads as far away, i.e. lit.
     pub fn set_as_depth_array(&mut self, width: u32, height: u32, layers: u32) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         self.target = gl::TEXTURE_2D_ARRAY;
         self.bind();
         unsafe {
@@ -81,6 +90,9 @@ impl Texture {
     }
 
     pub fn set_as_color_texture(&self, width: u32, height: u32) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         self.bind();
         unsafe {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
@@ -111,6 +123,9 @@ impl Texture {
     }
 
     pub fn load_from_file(&self, path: &Path) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         self.bind();
         let img = image::open(path)
             .expect("Image not found")
@@ -137,6 +152,9 @@ impl Texture {
     }
 
     pub fn load_from_data(&self, width: u32, height: u32, data: Vec<u8>) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         self.bind();
         unsafe {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
@@ -162,6 +180,9 @@ impl Texture {
     /// shader samples it in linear space; data maps (normal, roughness, ...)
     /// are stored as they are.
     pub fn load_material_map(&self, width: u32, height: u32, data: Vec<u8>, srgb: bool) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         self.bind();
         let internal = if srgb { gl::SRGB8_ALPHA8 } else { gl::RGBA8 };
         unsafe {
@@ -193,6 +214,9 @@ impl Texture {
     /// with mipmaps and anisotropic filtering. `srgb` as for
     /// `load_material_map`.
     pub fn load_array(&mut self, width: u32, height: u32, layers: &[Vec<u8>], srgb: bool) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         self.target = gl::TEXTURE_2D_ARRAY;
         let internal = if srgb { gl::SRGB8_ALPHA8 } else { gl::RGBA8 };
         self.bind();
@@ -242,6 +266,9 @@ impl Texture {
     }
 
     pub fn bind(&self) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             gl::BindTexture(self.target, self.id);
         }
@@ -249,12 +276,18 @@ impl Texture {
 
     /// Unbind whatever is bound to this texture's target on the active unit.
     pub fn unbind_target(&self) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             gl::BindTexture(self.target, 0);
         }
     }
 
     pub fn unbind() {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
@@ -263,6 +296,9 @@ impl Texture {
 
 impl Drop for Texture {
     fn drop(&mut self) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             gl::DeleteTextures(1, &self.id);
         }

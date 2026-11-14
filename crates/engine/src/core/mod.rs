@@ -3,6 +3,7 @@ pub mod assets;
 pub mod camera;
 pub mod entity;
 pub mod export;
+pub mod headless;
 pub mod model;
 pub mod mouse_picker;
 pub mod physics;

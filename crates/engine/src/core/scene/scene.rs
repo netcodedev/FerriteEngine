@@ -115,6 +115,10 @@ impl Scene {
     }
 
     pub fn add_shadow_map(&mut self, width: u32, height: u32) {
+        self.shadow_map_size = Some((width, height));
+        if crate::core::headless::is_headless() {
+            return;
+        }
         // One square layer per cascade; the scene file's size is a layer's.
         self.shadow_fbo = Some(CascadedShadowMap::new(width.max(height), SHADOW_CASCADES as u32));
         self.shadow_map_size = Some((width, height));
@@ -123,6 +127,10 @@ impl Scene {
     /// Create the camera-perspective debug FBOs used by F10.
     /// `width`/`height` should match the window dimensions.
     pub fn add_debug_maps(&mut self, width: u32, height: u32) {
+        self.debug_map_size = Some((width, height));
+        if crate::core::headless::is_headless() {
+            return;
+        }
         self.terrain_debug_fbo = Some(ShadowFrameBuffer::new(width, height));
         self.water_debug_fbo   = Some(ShadowFrameBuffer::new(width, height));
         self.debug_map_size = Some((width, height));

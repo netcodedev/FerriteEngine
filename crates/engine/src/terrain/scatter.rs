@@ -309,6 +309,9 @@ struct SubmeshGpu {
 
 impl Drop for SubmeshGpu {
     fn drop(&mut self) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             gl::DeleteBuffers(1, &self.vbo);
             gl::DeleteBuffers(1, &self.ibo);
@@ -374,7 +377,9 @@ fn load_variants(
                         p[0], p[1], p[2], n[0], n[1], n[2], uv[0], uv[1],
                     ]);
                 }
-                let (vbo, ibo) = unsafe {
+                let (vbo, ibo) = if crate::core::headless::is_headless() {
+                    (0, 0)
+                } else { unsafe {
                     let mut vbo = 0;
                     let mut ibo = 0;
                     gl::GenBuffers(1, &mut vbo);
@@ -396,7 +401,7 @@ fn load_variants(
                     gl::BindBuffer(gl::ARRAY_BUFFER, 0);
                     gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, 0);
                     (vbo, ibo)
-                };
+                } };
                 submesh_gpu.push(SubmeshGpu {
                     vbo,
                     ibo,
@@ -560,6 +565,9 @@ struct VariantGpu {
 
 impl Drop for ScatterGpu {
     fn drop(&mut self) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
         unsafe {
             for kind in &self.variants {
                 let Some(kind) = kind else { continue };
@@ -735,7 +743,7 @@ impl ScatterInstances {
     }
 
     fn ensure_gpu(&self) {
-        if self.gpu.borrow().is_some() {
+        if self.gpu.borrow().is_some() || crate::core::headless::is_headless() {
             return;
         }
         let gpu = build_instances_gpu(&self.instances_by_variant, &self.spec.model);
