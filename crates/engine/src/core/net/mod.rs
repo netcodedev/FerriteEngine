@@ -17,6 +17,16 @@
 //!   peer applies the events of its channels (`take_events`), its own ones
 //!   too: one way to change the world, whatever the mode.
 //!
+//! - **Judging requests.** A game can `moderate` a channel: its requests
+//!   then wait for the authority (the server, or the game itself offline),
+//!   whose scripts check them against the world (`take_requests`) and
+//!   `publish` the ones they accept. The same code runs offline and on a
+//!   server, so a game has one way to change its world.
+//! - **Saving.** What a server keeps of a channel can be replaced by a
+//!   snapshot (`replace_history`), so the history stays short; that history
+//!   is what a player who joins gets and what `save_world` writes and
+//!   `load_world` carries on.
+//!
 //! `Scene::update` runs all of this; a game only requests and applies its
 //! own events, and offers a way to `host` or `connect`.
 
@@ -24,7 +34,8 @@ mod players;
 mod protocol;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
+    path::Path,
     net::{SocketAddr, ToSocketAddrs, UdpSocket},
     sync::{LazyLock, Mutex, MutexGuard},
     time::{Duration, Instant, SystemTime},
@@ -99,6 +110,11 @@ struct Net {
     role: Role,
     /// Events to apply, by channel.
     events: HashMap<String, VecDeque<Vec<u8>>>,
+    /// Requests on moderated channels, for the authority to judge: who
+    /// asked (`None`: this process) and what.
+    requests: HashMap<String, VecDeque<(Option<ClientId>, Vec<u8>)>>,
+    /// Channels whose requests the game judges (`moderate`).
+    moderated: HashSet<String>,
     /// Why the last connection ended, until something else happens.
     failure: Option<String>,
     last_update: Option<Instant>,
@@ -109,6 +125,8 @@ static NET: LazyLock<Mutex<Net>> = LazyLock::new(|| {
     Mutex::new(Net {
         role: Role::Offline,
         events: HashMap::new(),
+        requests: HashMap::new(),
+        moderated: HashSet::new(),
         failure: None,
         last_update: None,
         since_send: 0.0,
@@ -150,6 +168,7 @@ pub fn host(port: u16) -> Result<(), String> {
         left: Vec::new(),
     }));
     net.events.clear();
+    net.requests.clear();
     net.failure = None;
     Ok(())
 }
@@ -188,6 +207,7 @@ pub fn connect(address: &str) -> Result<(), String> {
         left: Vec::new(),
     }));
     net.events.clear();
+    net.requests.clear();
     net.failure = None;
     Ok(())
 }
@@ -207,6 +227,7 @@ pub fn disconnect() {
     }
     net.role = Role::Offline;
     net.events.clear();
+    net.requests.clear();
     net.failure = None;
 }
 
@@ -236,6 +257,138 @@ pub fn set_join_on_start(address: impl Into<String>) {
 /// The server the game was started to join, once.
 pub fn take_join_on_start() -> Option<String> {
     JOIN_ON_START.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// Requests on `channel` are judged by the game: they wait in
+/// `take_requests` on the authority (the server, or the game itself when
+/// offline), which makes events of the ones it accepts with `publish`.
+/// Declare it on every peer, before requests come in. Without it a
+/// request is an event as it is.
+pub fn moderate(channel: &str) {
+    let mut net = net();
+    if !net.moderated.contains(channel) {
+        net.moderated.insert(channel.to_string());
+    }
+}
+
+/// Whether this process decides what happens to the world: the server, or
+/// a game played offline. Clients only request.
+pub fn is_authority() -> bool {
+    !matches!(net().role, Role::Client(_))
+}
+
+/// The requests on moderated `channel` since the last call, with who made
+/// them (`None`: this process). Only the authority gets any.
+pub fn take_requests(channel: &str) -> Vec<(Option<ClientId>, Vec<u8>)> {
+    net()
+        .requests
+        .get_mut(channel)
+        .map(|queue| queue.drain(..).collect())
+        .unwrap_or_default()
+}
+
+/// `take_requests`, deserialized; requests that do not read as `T` are
+/// dropped (and logged).
+pub fn take_request_values<T: DeserializeOwned>(channel: &str) -> Vec<(Option<ClientId>, T)> {
+    take_requests(channel)
+        .into_iter()
+        .filter_map(|(from, data)| match bincode::deserialize(&data) {
+            Ok(value) => Some((from, value)),
+            Err(e) => {
+                log::warn!("net: a request on '{channel}' does not read: {e}");
+                None
+            }
+        })
+        .collect()
+}
+
+/// On the authority: make `data` an event on `channel`, for every peer and
+/// this one (and kept for later players). Elsewhere it does nothing.
+pub fn publish(channel: &str, data: Vec<u8>) {
+    let mut net = net();
+    let net = &mut *net;
+    match &mut net.role {
+        Role::Offline => push_event(&mut net.events, channel, data),
+        Role::Server(server) => server_event(server, &mut net.events, channel.to_string(), data),
+        Role::Client(_) => log::warn!("net: a client cannot publish on '{channel}'"),
+    }
+}
+
+/// `publish` with a value, serialized.
+pub fn publish_value<T: Serialize>(channel: &str, value: &T) {
+    publish(channel, encode(value));
+}
+
+/// On the server: what was kept of `channel` so far (for later players,
+/// and in the saved world) becomes this one event, which must bring a
+/// fresh world to the state the channel's events brought it to: a
+/// snapshot. Keeps the history short. Nothing is sent; elsewhere it does
+/// nothing.
+pub fn replace_history(channel: &str, data: Vec<u8>) {
+    if let Role::Server(server) = &mut net().role {
+        server.log.retain(|(c, _)| c != channel);
+        server.log.push((channel.to_string(), data));
+    }
+}
+
+/// `replace_history` with a value, serialized.
+pub fn replace_history_value<T: Serialize>(channel: &str, value: &T) {
+    replace_history(channel, encode(value));
+}
+
+/// What a saved world holds: every channel's kept events, in order.
+#[derive(Serialize, serde::Deserialize)]
+struct SavedWorld {
+    version: u32,
+    history: Vec<(String, Vec<u8>)>,
+}
+
+const SAVE_VERSION: u32 = 1;
+
+/// On the server: write the world (what is kept of every channel) to
+/// `path`, replacing it whole or not at all.
+pub fn save_world(path: &Path) -> Result<(), String> {
+    let history = match &net().role {
+        Role::Server(server) => server.log.clone(),
+        _ => return Err("only a server saves its world".into()),
+    };
+    let data = encode(&SavedWorld {
+        version: SAVE_VERSION,
+        history,
+    });
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let partial = path.with_extension("partial");
+    std::fs::write(&partial, data).map_err(|e| format!("{}: {e}", partial.display()))?;
+    std::fs::rename(&partial, path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// On the server: carry on the world saved at `path`. Its events are kept
+/// for players who join, and applied here like new ones. Returns how many
+/// there were.
+pub fn load_world(path: &Path) -> Result<usize, String> {
+    let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let saved: SavedWorld =
+        bincode::deserialize(&data).map_err(|e| format!("{}: {e}", path.display()))?;
+    if saved.version != SAVE_VERSION {
+        return Err(format!(
+            "{}: saved by another version ({})",
+            path.display(),
+            saved.version
+        ));
+    }
+    let mut net = net();
+    let net = &mut *net;
+    let Role::Server(server) = &mut net.role else {
+        return Err("only a server loads a world".into());
+    };
+    let count = saved.history.len();
+    for (channel, data) in saved.history {
+        push_event(&mut net.events, &channel, data.clone());
+        server.log.push((channel, data));
+    }
+    Ok(count)
 }
 
 /// The other players and where they are, as last heard (on the server:
@@ -276,7 +429,11 @@ pub fn local_id() -> Option<ClientId> {
 pub fn request(channel: &str, data: Vec<u8>) {
     let mut net = net();
     let net = &mut *net;
+    let moderated = net.moderated.contains(channel);
     match &mut net.role {
+        Role::Offline | Role::Server(_) if moderated => {
+            push_request(&mut net.requests, channel, None, data)
+        }
         Role::Offline => push_event(&mut net.events, channel, data),
         Role::Server(server) => {
             server_event(server, &mut net.events, channel.to_string(), data);
@@ -323,6 +480,19 @@ pub fn take_values<T: DeserializeOwned>(channel: &str) -> Vec<T> {
 /// Events kept per channel at most; a channel nobody takes (no script of
 /// this game listens to it here) does not grow without end.
 const MAX_QUEUED: usize = 10_000;
+
+fn push_request(
+    requests: &mut HashMap<String, VecDeque<(Option<ClientId>, Vec<u8>)>>,
+    channel: &str,
+    from: Option<ClientId>,
+    data: Vec<u8>,
+) {
+    let queue = requests.entry(channel.to_string()).or_default();
+    if queue.len() >= MAX_QUEUED {
+        queue.pop_front();
+    }
+    queue.push_back((from, data));
+}
 
 fn push_event(events: &mut HashMap<String, VecDeque<Vec<u8>>>, channel: &str, data: Vec<u8>) {
     let queue = events.entry(channel.to_string()).or_default();
@@ -372,7 +542,14 @@ pub(crate) fn update(scene: &mut Scene, delta_time: f64) {
         let failure = match &mut net.role {
             Role::Offline => None,
             Role::Server(server) => {
-                update_server(server, &mut net.events, elapsed, send);
+                update_server(
+                    server,
+                    &mut net.events,
+                    &mut net.requests,
+                    &net.moderated,
+                    elapsed,
+                    send,
+                );
                 None
             }
             Role::Client(client) => update_client(client, &mut net.events, elapsed, own),
@@ -406,6 +583,8 @@ pub(crate) fn update(scene: &mut Scene, delta_time: f64) {
 fn update_server(
     server: &mut Server,
     events: &mut HashMap<String, VecDeque<Vec<u8>>>,
+    requests: &mut HashMap<String, VecDeque<(Option<ClientId>, Vec<u8>)>>,
+    moderated: &HashSet<String>,
     elapsed: Duration,
     send: bool,
 ) {
@@ -443,6 +622,9 @@ fn update_server(
             let lane = u8::from(lane);
             while let Some(message) = server.server.receive_message(client_id, lane) {
                 match bincode::deserialize::<ToServer>(&message) {
+                    Ok(ToServer::Request { channel, data }) if moderated.contains(&channel) => {
+                        push_request(requests, &channel, Some(client_id), data)
+                    }
                     Ok(ToServer::Request { channel, data }) => {
                         server_event(server, events, channel, data)
                     }
@@ -528,7 +710,40 @@ pub fn make_dedicated(scene: &mut Scene) {
 mod tests {
     use super::*;
 
+    /// One test for all of it: the state is global.
     #[test]
+    fn requests_events_and_saved_worlds() {
+        offline_requests_are_events_at_once();
+
+        // Moderated: a request waits for the authority, which publishes.
+        moderate("judged");
+        request_value("judged", &7u8);
+        assert!(take_events("judged").is_empty());
+        let requests: Vec<(Option<ClientId>, u8)> = take_request_values("judged");
+        assert_eq!(requests, vec![(None, 7)]);
+        publish_value("judged", &8u8);
+        assert_eq!(take_values::<u8>("judged"), vec![8]);
+
+        // A server keeps what is published, a snapshot replaces it, and a
+        // saved world comes back as events.
+        host(0).unwrap();
+        publish_value("kept", &1u8);
+        publish_value("kept", &2u8);
+        publish_value("other", &3u8);
+        replace_history_value("kept", &12u8);
+        let _ = take_events("kept");
+        let _ = take_events("other");
+        let path = std::env::temp_dir().join(format!("ferrite-world-{}.sav", std::process::id()));
+        save_world(&path).unwrap();
+        disconnect();
+        host(0).unwrap();
+        assert_eq!(load_world(&path).unwrap(), 2);
+        assert_eq!(take_values::<u8>("kept"), vec![12]);
+        assert_eq!(take_values::<u8>("other"), vec![3]);
+        disconnect();
+        let _ = std::fs::remove_file(&path);
+    }
+
     fn offline_requests_are_events_at_once() {
         // Shares the global state; nothing else in the tests goes online.
         request_value("test-channel", &(1u32, "a".to_string()));
