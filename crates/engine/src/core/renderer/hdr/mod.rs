@@ -62,6 +62,30 @@ fn bound_draw_framebuffer() -> u32 {
     bound as u32
 }
 
+/// GL names of the resolved colour and depth textures holding the opaque
+/// scene, while a transparent pass draws over it (see `capture_opaque`),
+/// 0 otherwise.
+static OPAQUE_COLOR: AtomicU32 = AtomicU32::new(0);
+static OPAQUE_DEPTH: AtomicU32 = AtomicU32::new(0);
+
+/// A copy of the camera's view as it was before the transparent pass:
+/// linear colour and depth, as big as the HDR target (window position
+/// `gl_FragCoord.xy` is the texel). Water reads it for what lies under its
+/// surface and around it.
+#[derive(Clone, Copy, Debug)]
+pub struct OpaqueScene {
+    pub color: GLuint,
+    pub depth: GLuint,
+}
+
+/// The opaque scene behind what is drawn now, when the camera's view is
+/// being drawn into the HDR target and it was captured.
+pub fn opaque_scene() -> Option<OpaqueScene> {
+    let color = OPAQUE_COLOR.load(Ordering::Relaxed);
+    let depth = OPAQUE_DEPTH.load(Ordering::Relaxed);
+    (color != 0 && writes_linear()).then_some(OpaqueScene { color, depth })
+}
+
 /// Whether what is drawn now ends up in the camera's view: the HDR target
 /// while the scene is drawn into it, or the default framebuffer (previews
 /// that draw straight to the window). Shadow maps, depth captures and the
@@ -532,6 +556,39 @@ impl Hdr {
             gl::ClearColor(clear[0], clear[1], clear[2], clear[3]);
         }
         VIEW_FRAMEBUFFER.store(view.framebuffer, Ordering::Relaxed);
+        OPAQUE_COLOR.store(0, Ordering::Relaxed);
+        OPAQUE_DEPTH.store(0, Ordering::Relaxed);
+    }
+
+    /// Copy what was drawn since `begin` (the opaque scene) where
+    /// transparent surfaces can read it (`opaque_scene`), and keep drawing
+    /// into the HDR target.
+    pub fn capture_opaque(&self) {
+        let Some(view) = self.view.as_ref() else {
+            return;
+        };
+        if self.destination.is_none() {
+            return;
+        }
+        unsafe {
+            gl::BindFramebuffer(gl::READ_FRAMEBUFFER, view.framebuffer);
+            gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, view.resolve_framebuffer);
+            gl::BlitFramebuffer(
+                0,
+                0,
+                view.width,
+                view.height,
+                0,
+                0,
+                view.width,
+                view.height,
+                gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
+                gl::NEAREST,
+            );
+            gl::BindFramebuffer(gl::FRAMEBUFFER, view.framebuffer);
+        }
+        OPAQUE_COLOR.store(view.color, Ordering::Relaxed);
+        OPAQUE_DEPTH.store(view.depth, Ordering::Relaxed);
     }
 
     /// Resolve what was drawn since `begin`, add bloom, expose and tone map
@@ -539,6 +596,8 @@ impl Hdr {
     /// (left bound), along with the scene's depth.
     pub fn finish(&mut self, settings: &HdrSettings) {
         VIEW_FRAMEBUFFER.store(0, Ordering::Relaxed);
+        OPAQUE_COLOR.store(0, Ordering::Relaxed);
+        OPAQUE_DEPTH.store(0, Ordering::Relaxed);
         let (Some(destination), Some(view)) = (self.destination.take(), self.view.take()) else {
             return;
         };

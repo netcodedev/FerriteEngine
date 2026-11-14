@@ -1,24 +1,337 @@
-#version 460 core
+// Shading of the water surface. `pbr/lighting.glsl` (sun, sky, shadows,
+// `toDisplay`) and `water_waves.glsl` come before this.
+//
+// The surface is composed with the opaque scene under it (`sceneColor`,
+// `sceneDepth`: a copy taken before the transparent pass): light from the
+// ground is bent by the waves and absorbed on its way through the water,
+// colour by colour (red first, so deep water turns blue-green), while the
+// water itself scatters some daylight back. On top comes the reflection of
+// the scene (marched in screen space) or the sky, weighted by the Fresnel
+// term, the sun's highlight, light shining through the wave crests, and
+// foam on the crests and along the shore.
 
-in vec3 toLightVector;
-in vec2 worldXZ;
+in vec3 WorldPos;
+in vec2 RestXZ;
+in float Depth;
+in float BodySize;
+in float Crest;
+in float WaveHeight;
 
 out vec4 FragColor;
 
+uniform sampler2D sceneColor;
+uniform sampler2D sceneDepth;
+// 0 when the opaque scene is not at hand (depth captures, previews): the
+// water is then drawn see-through without refraction or shore blending.
+uniform int hasScene;
+uniform mat4 viewProjection;
+uniform mat4 inverseViewProjection;
+
+// Absorption per unit of water, red, green and blue: red light is gone
+// after a few units, blue carries furthest.
+const vec3 ABSORPTION = vec3(0.45, 0.12, 0.085);
+// Colour of the light the water scatters back (silt and plankton: a little
+// green in the blue).
+const vec3 SCATTER_COLOR = vec3(0.003, 0.025, 0.045);
+// Light shining through the thin top of a wave.
+const vec3 CREST_COLOR = vec3(0.06, 0.40, 0.34);
+// Reflectance of water head on (IOR 1.33).
+const float WATER_F0 = 0.02;
+const float REFRACTION = 0.035;
+// Shore foam reaches this deep.
+const float SHORE_FOAM_DEPTH = 1.0;
+// Water fades into the ground over this depth, hiding the waterline's
+// pixel steps.
+const float SHORE_FADE_DEPTH = 0.12;
+
+// ── Noise ────────────────────────────────────────────────────────────────
+
+// Value noise with its derivatives: (value, d/dx, d/dy).
+vec3 noised(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+    float a = waveHash(i);
+    float b = waveHash(i + vec2(1.0, 0.0));
+    float c = waveHash(i + vec2(0.0, 1.0));
+    float d = waveHash(i + vec2(1.0, 1.0));
+    float k1 = b - a;
+    float k2 = c - a;
+    float k4 = a - b - c + d;
+    return vec3(a + k1 * u.x + k2 * u.y + k4 * u.x * u.y,
+                du * (vec2(k1, k2) + k4 * u.yx));
+}
+
+// Small ripples the grid is too coarse for, as the slope of a height
+// field (d/dx, d/dz): wind-driven noise drifting different ways. Octaves
+// finer than a pixel fade out (`footprint`: world units per pixel), so
+// distant water does not sparkle.
+vec2 rippleSlope(vec2 p, float t, float footprint) {
+    const mat2 turn = mat2(0.8, 0.6, -0.6, 0.8);
+    vec2 slope = vec2(0.0);
+    float amplitude = 0.22;
+    float frequency = 0.22;
+    vec2 drift = WIND * 0.9;
+    for (int i = 0; i < 4; i++) {
+        float resolved = 1.0 - smoothstep(0.15, 0.4, footprint * frequency);
+        if (resolved <= 0.0) {
+            break;
+        }
+        vec3 n = noised(p * frequency + drift * t * frequency);
+        slope += n.yz * amplitude * frequency * resolved;
+        p = turn * p;
+        drift = turn * drift * 1.15;
+        amplitude *= 0.6;
+        frequency *= 2.0;
+    }
+    return slope;
+}
+
+float foamPattern(vec2 p, float t) {
+    float a = noised(p * 0.55 + vec2(t * 0.11, t * 0.07)).x;
+    float b = noised(p * 1.7 - vec2(t * 0.05, t * 0.13)).x;
+    float c = noised(p * 4.3 + vec2(t * 0.17, -t * 0.09)).x;
+    return a * 0.5 + b * 0.32 + c * 0.18;
+}
+
+// ── Sky ──────────────────────────────────────────────────────────────────
+
+// The sky in direction `dir`, without the sun disk (linear). Follows the
+// sky pass (`renderer/sky/fragment.glsl`), with the clouds as an overcast
+// veil since the cloud texture only covers the screen.
+vec3 skyColor(vec3 dir) {
+    float sunAlt = clamp(sunDirection.y, -1.0, 1.0);
+    float dayFactor = smoothstep(-0.10, 0.20, sunAlt);
+    float up = clamp(dir.y, 0.0, 1.0);
+    float vBlend = sqrt(up);
+    vec3 dayCol = mix(vec3(0.72, 0.85, 1.00), vec3(0.18, 0.42, 0.85), vBlend);
+    vec3 nightCol = mix(vec3(0.020, 0.030, 0.080), vec3(0.005, 0.010, 0.030), vBlend);
+    vec3 sky = mix(nightCol, dayCol, dayFactor);
+
+    float sunHorizonProx = 1.0 - smoothstep(0.0, 0.30, abs(sunAlt));
+    float horizLen = length(sunDirection.xz);
+    float dirLen = length(dir.xz);
+    if (sunHorizonProx > 0.001 && horizLen > 1e-4 && dirLen > 1e-4) {
+        float hemi = max(dot(dir.xz / dirLen, sunDirection.xz / horizLen), 0.0);
+        float glow = pow(hemi, 4.0) * exp(-dir.y * dir.y * 18.0) * sunHorizonProx;
+        sky = mix(sky, vec3(1.00, 0.45, 0.18), clamp(glow * 0.85, 0.0, 0.85));
+    }
+    float sunDot = max(dot(dir, normalize(sunDirection)), 0.0);
+    sky += vec3(1.00, 0.80, 0.55) * pow(sunDot, 180.0) * 0.55 * smoothstep(-0.04, 0.05, sunAlt);
+
+    sky = pow(max(sky, vec3(0.0)), vec3(2.2));
+    float cover = clamp(cloudCoverage, 0.0, 1.0);
+    float grey = dot(sky, vec3(0.3, 0.5, 0.2));
+    return mix(sky, vec3(grey * 1.1), cover * 0.6);
+}
+
+// ── Screen space ─────────────────────────────────────────────────────────
+
+vec3 worldAt(vec2 uv, float depth) {
+    vec4 p = inverseViewProjection * vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
+    return p.xyz / p.w;
+}
+
+vec3 project(vec3 world) {
+    vec4 clip = viewProjection * vec4(world, 1.0);
+    return vec3(clip.xy / clip.w * 0.5 + 0.5, clip.w);
+}
+
+// 0 at the screen's edge, 1 a bit inside.
+float edgeFade(vec2 uv) {
+    vec2 d = min(uv, 1.0 - uv);
+    return clamp(min(d.x, d.y) / 0.08, 0.0, 1.0);
+}
+
+// The scene reflected along `R` from `origin`: marched through the depth
+// copy. rgb is the reflection, a how sure the march is (0: use the sky).
+vec4 screenReflection(vec3 origin, vec3 R) {
+    vec3 eye = cameraPosition;
+    float stepLength = 1.5;
+    vec3 p = origin;
+    for (int i = 0; i < 28; i++) {
+        p += R * stepLength;
+        vec3 s = project(p);
+        if (s.z <= 0.0 || s.x < 0.0 || s.x > 1.0 || s.y < 0.0 || s.y > 1.0) {
+            break;
+        }
+        float d = texture(sceneDepth, s.xy).r;
+        if (d < 1.0) {
+            float sceneDistance = distance(eye, worldAt(s.xy, d));
+            float rayDistance = distance(eye, p);
+            float behind = rayDistance - sceneDistance;
+            if (behind > 0.0 && behind < stepLength * 2.5 + 1.0) {
+                // Refine between the last two points.
+                vec3 lo = p - R * stepLength;
+                vec3 hi = p;
+                for (int j = 0; j < 5; j++) {
+                    vec3 mid = (lo + hi) * 0.5;
+                    vec3 ms = project(mid);
+                    float md = texture(sceneDepth, ms.xy).r;
+                    if (distance(eye, mid) > distance(eye, worldAt(ms.xy, md))) {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
+                }
+                vec3 hs = project(hi);
+                float fade = edgeFade(hs.xy) * (1.0 - float(i) / 28.0);
+                return vec4(texture(sceneColor, hs.xy).rgb, fade);
+            }
+        }
+        stepLength *= 1.22;
+    }
+    return vec4(0.0);
+}
+
+// The sky where the reflected direction is on screen, with its clouds;
+// a = 0 where it is not.
+vec4 screenSky(vec3 R) {
+    vec4 clip = viewProjection * vec4(R, 0.0);
+    if (clip.w <= 0.0) {
+        return vec4(0.0);
+    }
+    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || texture(sceneDepth, uv).r < 1.0) {
+        return vec4(0.0);
+    }
+    // Leave the sun to the highlight below.
+    return vec4(min(texture(sceneColor, uv).rgb, vec3(4.0)), edgeFade(uv));
+}
+
 void main()
 {
+    if (isShadowPass == 1) {
+        FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
 
-    vec3 waterColor = vec3(0.07, 0.24, 0.60);
+    vec3 toEye = cameraPosition - WorldPos;
+    float viewDistance = length(toEye);
+    vec3 V = toEye / viewDistance;
+    vec3 L = normalize(sunDirection);
 
-    // Flat water normal always points straight up
-    vec3 normal = vec3(0.0, 1.0, 0.0);
-    vec3 unitLight = normalize(toLightVector);
-    float sunAlt = unitLight.y;
-    float dayFactor = smoothstep(-0.10, 0.20, sunAlt);
-    float ambient = mix(0.08, 0.4, dayFactor);
-    float diffuse = max(dot(normal, unitLight), 0.0) * dayFactor;
-    float lit = ambient + diffuse * 0.6;
+    // ── Normal: the waves plus ripples, calmer with distance ──────────
+    WaveSample waves = sampleWaves(RestXZ, BodySize, Depth);
+    float far = smoothstep(60.0, 400.0, viewDistance);
+    float rippleStrength = mix(0.55, 1.0, smoothstep(10.0, 200.0, BodySize))
+        * smoothstep(-0.5, 0.5, Depth);
+    float footprint = length(fwidth(RestXZ));
+    vec2 slope = rippleSlope(RestXZ, uTime, footprint) * rippleStrength;
+    vec3 N = normalize(waves.normal + vec3(-slope.x, 0.0, -slope.y));
+    bool below = cameraPosition.y < WorldPos.y;
+    if (below) {
+        N = -N;
+    }
+    float NdotV = max(dot(N, V), 1e-3);
 
-    // Lit in display colour; the HDR target holds linear light.
-    FragColor = vec4(pow(waterColor * lit, vec3(2.2)), 0.78);
+    // ── What lies under the surface ───────────────────────────────────
+    vec3 sunLight = sunRadiance();
+    float shadow = sunShadow(WorldPos, vec3(0.0, 1.0, 0.0), L);
+    // Daylight inside the water, which it scatters back.
+    vec3 ambient = skyLight(vec3(0.0, 1.0, 0.0)) + sunLight * max(L.y, 0.0) * (0.35 + 0.65 * shadow);
+    vec3 scattered = SCATTER_COLOR * ambient;
+
+    vec3 underwater;
+    float waterDepth;  // how deep the water is in front of the ground here
+    float alpha = 1.0;
+    if (hasScene == 1) {
+        vec2 size = vec2(textureSize(sceneDepth, 0));
+        vec2 uv = gl_FragCoord.xy / size;
+        float groundDepth = texture(sceneDepth, uv).r;
+        vec3 ground = worldAt(uv, groundDepth);
+        waterDepth = groundDepth >= 1.0 ? 1e4 : WorldPos.y - ground.y;
+        float through = groundDepth >= 1.0 ? 1e4 : distance(WorldPos, ground);
+
+        // Bend the view by the waves, less where the water is shallow or
+        // far away; but never onto something in front of the water.
+        vec2 bend = N.xz * REFRACTION * clamp(through / 3.0, 0.0, 1.0) / (1.0 + viewDistance * 0.03);
+        vec2 refractedUv = clamp(uv + bend, vec2(0.0), vec2(1.0));
+        float refractedDepth = texture(sceneDepth, refractedUv).r;
+        vec3 refractedGround = worldAt(refractedUv, refractedDepth);
+        if (refractedDepth < 1.0 && distance(cameraPosition, refractedGround) < viewDistance) {
+            refractedUv = uv;
+            refractedDepth = groundDepth;
+            refractedGround = ground;
+        }
+        float path = refractedDepth >= 1.0 ? 1e4 : distance(WorldPos, refractedGround);
+        // The light also came down through the water to reach the ground.
+        float column = refractedDepth >= 1.0 ? 1e4 : max(WorldPos.y - refractedGround.y, 0.0);
+        vec3 transmittance = exp(-ABSORPTION * (path + column * 0.6));
+        vec3 behind = texture(sceneColor, refractedUv).rgb;
+        underwater = behind * transmittance + scattered * (1.0 - exp(-ABSORPTION.g * 2.5 * path));
+        alpha = smoothstep(0.0, SHORE_FADE_DEPTH, waterDepth);
+    } else {
+        waterDepth = max(Depth, 0.0);
+        underwater = scattered;
+        alpha = 0.85;
+    }
+
+    // ── Reflection ────────────────────────────────────────────────────
+    vec3 R = reflect(-V, N);
+    R.y = abs(R.y);  // ripples tilting the reflection into the water
+    R = normalize(R);
+    vec3 reflection = skyColor(R);
+    if (hasScene == 1 && !below) {
+        vec4 skyOnScreen = screenSky(R);
+        reflection = mix(reflection, skyOnScreen.rgb, skyOnScreen.a);
+        // Marched along a calmer normal: the ripples would scatter the
+        // reflection of the shore into specks.
+        vec3 Rs = reflect(-V, normalize(mix(waves.normal, N, 0.3)));
+        Rs.y = abs(Rs.y);
+        vec4 scene = screenReflection(WorldPos, normalize(Rs));
+        reflection = mix(reflection, scene.rgb, scene.a);
+    }
+    float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - NdotV, 5.0);
+    // Distant water seen at a grazing angle is a mirror, but not a perfect
+    // one: the waves hide part of it.
+    fresnel = min(fresnel, 0.9);
+
+    vec3 color = mix(underwater, reflection, fresnel);
+    if (below) {
+        // From under the water the sky shows through a bright window
+        // overhead; beyond about 49 degrees the surface mirrors the dark
+        // water instead (total internal reflection).
+        float window = smoothstep(0.62, 0.7, NdotV);
+        vec3 deep = SCATTER_COLOR * ambient;
+        color = mix(deep, skyColor(vec3(0.0, 1.0, 0.0)) * exp(-ABSORPTION * 2.0), window);
+        alpha = 1.0;
+    }
+
+    // ── Sun ───────────────────────────────────────────────────────────
+    float NdotL = max(dot(N, L), 0.0);
+    if (NdotL > 0.0 && !below) {
+        float roughness = mix(0.07, 0.16, far);
+        vec3 H = normalize(V + L);
+        float NdotH = max(dot(N, H), 0.0);
+        float F = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - max(dot(H, V), 0.0), 5.0);
+        float specular = distributionGGX(NdotH, roughness * roughness)
+            * geometrySmith(NdotV, NdotL, roughness) * F / max(4.0 * NdotV * NdotL, 1e-4);
+        color += sunLight * specular * NdotL * shadow;
+    }
+
+    // Light through the crests, toward a camera looking at the sun.
+    float facing = pow(clamp(dot(-V, L) * 0.5 + 0.5, 0.0, 1.0), 3.0);
+    float crestLight = max(WaveHeight, 0.0) * facing * (1.0 - far);
+    color += CREST_COLOR * sunLight * shadow * crestLight * 0.12;
+
+    // ── Foam ──────────────────────────────────────────────────────────
+    float pattern = foamPattern(RestXZ, uTime);
+    float shore = 1.0 - smoothstep(0.0, SHORE_FOAM_DEPTH, waterDepth);
+    // Bands washing up the beach.
+    float surge = 0.5 + 0.5 * sin(waterDepth * 5.0 - uTime * 1.8 + pattern * 6.0);
+    // Surf needs waves: a pond only gets the wet line below.
+    float surf = smoothstep(15.0, 150.0, BodySize);
+    float shoreFoam = smoothstep(0.62, 0.92, pattern * 1.1 + shore * (0.15 + 0.35 * surge)) * shore * surf;
+    // A thin wet line where the water touches the ground.
+    shoreFoam = max(shoreFoam, (1.0 - smoothstep(0.0, 0.12, waterDepth)) * 0.7);
+    float crestFoam = smoothstep(0.5, 0.85, pattern + Crest * 0.6) * Crest;
+    float foam = clamp(shoreFoam + crestFoam, 0.0, 1.0) * (1.0 - far * 0.7);
+    vec3 foamLight = (sunLight * max(dot(normalize(N + vec3(0.0, 1.0, 0.0)), L), 0.0) * shadow
+        + skyLight(vec3(0.0, 1.0, 0.0))) * 0.8;
+    color = mix(color, foamLight, foam);
+    alpha = max(alpha, foam * smoothstep(0.0, SHORE_FADE_DEPTH * 0.5, waterDepth));
+
+    FragColor = vec4(toDisplay(color), alpha);
 }

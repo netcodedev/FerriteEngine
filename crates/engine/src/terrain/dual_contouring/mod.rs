@@ -1,4 +1,5 @@
 pub mod dual_contouring;
+mod water;
 
 use libnoise::{Fbm, Perlin, Scale};
 
@@ -14,9 +15,9 @@ pub struct DualContouringChunk {
     noise: Fbm<2, Scale<2, Perlin<2>>>,
     chunk_size: usize,
     mesh: Option<ChunkMesh<Vertex>>,
-    /// Flat water-surface quad, present only when some terrain in this chunk
-    /// falls below WATER_LEVEL.
-    water_mesh: Option<ChunkMesh<Vertex>>,
+    /// Water surface grid, present only when some terrain in this chunk
+    /// comes near WATER_LEVEL. It reaches under the shore (see `water`).
+    water_mesh: Option<ChunkMesh<water::WaterVertex>>,
 }
 
 #[derive(Clone, Copy)]

@@ -370,7 +370,9 @@ impl Scene {
             }
             // Transparent pass — runs after every entity's opaque geometry is
             // in the depth buffer, so water with depth-write enabled correctly
-            // depth-tests against the player and other dynamic geometry.
+            // depth-tests against the player and other dynamic geometry. It
+            // reads a copy of the opaque scene (what lies under the water).
+            hdr.capture_opaque();
             for entity in self.entities.iter() {
                 entity.render_transparent(self, &view_projection, parent_transform);
             }
