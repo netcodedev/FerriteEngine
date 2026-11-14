@@ -19,5 +19,6 @@ void main()
     float diffuse = max(dot(normal, unitLight), 0.0) * dayFactor;
     float lit = ambient + diffuse * 0.6;
 
-    FragColor = vec4(waterColor * lit, 0.78);
+    // Lit in display colour; the HDR target holds linear light.
+    FragColor = vec4(pow(waterColor * lit, vec3(2.2)), 0.78);
 }

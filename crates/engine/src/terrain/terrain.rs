@@ -22,6 +22,7 @@ use crate::core::{
     mouse_picker::MousePicker,
     physics::rigidbody::RigidBody,
     renderer::{
+        hdr,
         light::skylight::SkyLight,
         line::Line,
         pbr::Lighting,
@@ -489,12 +490,8 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 START.elapsed().as_secs_f32(),
             );
 
-            let mut bound_fbo = 0;
-            unsafe {
-                gl::GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut bound_fbo);
-            }
             self.shader
-                .set_uniform_1i("isShadowPass", if bound_fbo != 0 { 1 } else { 0 });
+                .set_uniform_1i("isShadowPass", !hdr::draws_to_view() as i32);
             if let Some(lighting) = Lighting::from_scene(scene) {
                 lighting.apply(&self.shader);
             }

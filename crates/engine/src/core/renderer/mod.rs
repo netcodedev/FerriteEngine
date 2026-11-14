@@ -1,4 +1,5 @@
 pub mod framebuffer;
+pub mod hdr;
 pub mod light;
 pub mod line;
 pub mod pbr;

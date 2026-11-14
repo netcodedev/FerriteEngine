@@ -9,6 +9,7 @@ use russimp_ng::material::TextureType;
 use crate::core::{
     renderer::{
         light::skylight::{ShadowCascade, SkyLight, SHADOW_CASCADES},
+        hdr,
         shader::Shader,
         ssao::SSAO_UNIT,
         texture::Texture,
@@ -18,7 +19,10 @@ use crate::core::{
 
 /// Sun, sky, shadows and the BRDF (`shadeSurface`, `toDisplay`). Goes
 /// right after a fragment shader's `#version` line.
-pub const LIGHTING_GLSL: &str = include_str!("lighting.glsl");
+pub const LIGHTING_GLSL: &str = concat!(
+    include_str!("../hdr/tonemap.glsl"),
+    include_str!("lighting.glsl")
+);
 const MATERIAL_GLSL: &str = include_str!("material.glsl");
 
 /// Texture unit the scene binds the sun's shadow map to.
@@ -75,11 +79,11 @@ impl Lighting {
 
     /// Set the lighting uniforms of the bound `shader`.
     pub fn apply(&self, shader: &Shader) {
-        // The scene draws the shadow pass into the shadow map's framebuffer
-        // and everything else into the default one.
-        let mut framebuffer = 0;
-        unsafe { gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut framebuffer) };
-        shader.set_uniform_1i("isShadowPass", (framebuffer != 0) as i32);
+        // Shadow maps, depth captures and the selection mask are drawn into
+        // framebuffers of their own; the camera's view into the HDR target
+        // (linear light) or, for previews, straight into the window.
+        shader.set_uniform_1i("isShadowPass", !hdr::draws_to_view() as i32);
+        shader.set_uniform_1i("hdrOutput", hdr::writes_linear() as i32);
         shader.set_uniform_3fv("sunDirection", &self.sun_direction);
         let eye = self.camera_position;
         shader.set_uniform_3f("cameraPosition", eye.x, eye.y, eye.z);

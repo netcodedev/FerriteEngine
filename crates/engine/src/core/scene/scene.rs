@@ -15,6 +15,7 @@ use crate::core::{
         framebuffer::{CascadedShadowMap, FrameBuffer, ShadowFrameBuffer},
         line::Line,
         light::skylight::{SkyLight, SHADOW_CASCADES},
+        hdr::{self, Hdr, HdrSettings},
         sky::SkyRenderer,
         ssao::Ssao,
         texture::TextureRenderer,
@@ -42,6 +43,7 @@ impl Scene {
             physics_enabled: true,
             viewport: None,
             ssao: RefCell::new(None),
+            hdr: RefCell::new(None),
             ambient_occlusion_origin: Cell::new(None),
             deferred: Vec::new(),
         }
@@ -194,7 +196,7 @@ impl Scene {
         let mut bound: gl::types::GLint = 0;
         unsafe { gl::GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut bound); }
         let bound = bound as u32;
-        if bound == 0 {
+        if hdr::draws_to_view() {
             return true;
         }
         if let Some(wfbo) = &self.water_debug_fbo {
@@ -278,7 +280,18 @@ impl Scene {
                 ssao.resolve(&camera.get_projection().get_matrix(), &settings);
                 ssao.bind_result();
                 self.apply_viewport(window);
-                self.ambient_occlusion_origin.set(Some([viewport[0], viewport[1]]));
+            }
+
+            // Everything the camera sees goes into the HDR target, as big as
+            // the viewport, and is tone mapped into the viewport at the end.
+            let hdr_settings = self
+                .get_component::<SkyLight>()
+                .map_or_else(HdrSettings::default, |skylight| *skylight.hdr());
+            let mut hdr = self.hdr.borrow_mut();
+            let hdr = hdr.get_or_insert_with(Hdr::new);
+            hdr.begin();
+            if ambient_occlusion.is_some() {
+                self.ambient_occlusion_origin.set(Some([0, 0]));
             }
 
             // Sky pass — runs before opaque geometry so terrain/water overdraw
@@ -325,6 +338,7 @@ impl Scene {
                 entity.render_transparent(self, &view_projection, parent_transform);
             }
             self.ambient_occlusion_origin.set(None);
+            hdr.finish(&hdr_settings);
         }
 
         // ── Debug overlay (F10) ───────────────────────────────────────────
