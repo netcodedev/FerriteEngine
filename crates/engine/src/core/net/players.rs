@@ -175,6 +175,52 @@ pub(super) fn local_state(scene: &Scene) -> Option<PlayerState> {
     })
 }
 
+/// Players who join stand this far from the scene's spawn point, each in
+/// its own direction, so they do not all stand on one spot.
+const SPAWN_SPREAD: f32 = 1.5;
+
+/// Put this peer's own player where it was when it last left the server
+/// (`returning`), or apart from the others who joined (`index`: how many
+/// joined before).
+pub(super) fn place_local(scene: &mut Scene, returning: Option<&PlayerState>, index: u32) {
+    let Some(player) = find(scene.get_entities(), &is_local_player) else {
+        return;
+    };
+    let id = player.id;
+    let (position, rotation) = match returning {
+        Some(state) => {
+            let [w, x, y, z] = state.rotation;
+            (Point3::from(state.position), Quaternion::new(w, x, y, z))
+        }
+        None if index == 0 => return,
+        None => {
+            // Around the spawn point, by the golden angle.
+            let angle = index as f32 * 2.399_963;
+            let at = player.get_position()
+                + cgmath::Vector3::new(angle.cos(), 0.0, angle.sin()) * SPAWN_SPREAD;
+            (at, player.get_rotation())
+        }
+    };
+    let handle = player.get_component::<RigidBody>().map(|b| b.rigid_body_handle);
+    // The body is where the player is; the entity follows it each update.
+    if let Some(handle) = handle {
+        let body = &mut scene.physics_engine.rigid_bodies[handle];
+        body.set_translation(
+            rapier3d::prelude::Vector::new(position.x, position.y, position.z),
+            true,
+        );
+        body.set_rotation(
+            rapier3d::prelude::Rotation::from_xyzw(rotation.v.x, rotation.v.y, rotation.v.z, rotation.s),
+            true,
+        );
+        body.set_linvel(rapier3d::prelude::Vector::new(0.0, 0.0, 0.0), true);
+    }
+    if let Some(entity) = scene.get_entity_mut(&id) {
+        entity.set_local_position(position);
+        entity.set_local_rotation(rotation);
+    }
+}
+
 /// Take the scene's own players out (a dedicated server has none),
 /// remembering what one looks like.
 pub(super) fn remove_local_players(scene: &mut Scene) {

@@ -143,6 +143,7 @@ fn run() -> Result<(), String> {
     for problem in scene.problems() {
         log::warn!("not loaded: {problem}");
     }
+    let scene_file = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
     net::make_dedicated(&mut scene);
     log::info!(
         "{} loaded in {:.1}s",
@@ -151,6 +152,8 @@ fn run() -> Result<(), String> {
     );
 
     net::host(options.port)?;
+    // Players play in this scene, not in their own copy of it.
+    net::share_scene(scene_file);
     // Relative to the project, which is the working directory now.
     let save = options.save;
     if save.exists() {

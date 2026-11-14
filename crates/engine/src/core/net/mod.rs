@@ -48,7 +48,7 @@ use renet_netcode::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
-use super::scene::Scene;
+use super::scene::{scene_file::SceneFile, Scene};
 use protocol::{ToClient, ToServer};
 
 pub use players::{PlayerState, RemotePlayer};
@@ -88,6 +88,15 @@ struct Server {
     /// Latest state of each player.
     players: HashMap<ClientId, PlayerState>,
     left: Vec<ClientId>,
+    /// The scene the server plays (`share_scene`), sent to who joins.
+    scene: Option<String>,
+    /// Who each connected player is (`player_key`).
+    keys: HashMap<ClientId, u64>,
+    /// Where every player that was here was last, by who they are: kept
+    /// when they leave and saved with the world.
+    last_seen: HashMap<u64, PlayerState>,
+    /// Players that joined so far.
+    joined: u32,
 }
 
 struct Client {
@@ -98,6 +107,16 @@ struct Client {
     /// Latest state of the other players.
     players: HashMap<ClientId, PlayerState>,
     left: Vec<ClientId>,
+    /// Arrived, not carried out yet.
+    welcome: Option<Welcome>,
+}
+
+/// What the server said when this client joined, to be carried out on the
+/// scene.
+struct Welcome {
+    scene: Option<String>,
+    returning: Option<PlayerState>,
+    index: u32,
 }
 
 enum Role {
@@ -166,11 +185,43 @@ pub fn host(port: u16) -> Result<(), String> {
         log: Vec::new(),
         players: HashMap::new(),
         left: Vec::new(),
+        scene: None,
+        keys: HashMap::new(),
+        last_seen: HashMap::new(),
+        joined: 0,
     }));
     net.events.clear();
     net.requests.clear();
     net.failure = None;
     Ok(())
+}
+
+/// On the server: the scene it plays, as a scene file's text. Every player
+/// who joins plays in it instead of in its own (the map, its seed, what is
+/// placed in it), so server and players always share one world.
+pub fn share_scene(scene_file: String) {
+    if let Role::Server(server) = &mut net().role {
+        server.scene = Some(scene_file);
+    }
+}
+
+/// Who this player is, the same on every connection: a number made once
+/// and kept in `saves/player.id` (in the project). The server remembers
+/// players by it, e.g. where they were when they left.
+fn player_key() -> u64 {
+    let path = Path::new("saves").join("player.id");
+    if let Some(key) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| u64::from_str_radix(text.trim(), 16).ok())
+    {
+        return key;
+    }
+    let key = now().as_nanos() as u64 ^ (std::process::id() as u64).rotate_left(40);
+    let _ = std::fs::create_dir_all("saves");
+    if let Err(e) = std::fs::write(&path, format!("{key:016x}\n")) {
+        log::warn!("net: cannot keep {}: {e}", path.display());
+    }
+    key
 }
 
 /// Connect to the server at `address` ("host" or "host:port"). Returns at
@@ -189,11 +240,14 @@ pub fn connect(address: &str) -> Result<(), String> {
         .ok_or_else(|| format!("{address}: no IPv4 address"))?;
     let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
     let id = now().as_nanos() as u64 ^ (std::process::id() as u64) << 32;
+    // Who this player is travels with the connection request.
+    let mut user_data = [0u8; renet_netcode::NETCODE_USER_DATA_BYTES];
+    user_data[..8].copy_from_slice(&player_key().to_le_bytes());
     let authentication = ClientAuthentication::Unsecure {
         protocol_id: PROTOCOL_ID,
         client_id: id,
         server_addr,
-        user_data: None,
+        user_data: Some(user_data),
     };
     let transport =
         NetcodeClientTransport::new(now(), authentication, socket).map_err(|e| e.to_string())?;
@@ -205,6 +259,7 @@ pub fn connect(address: &str) -> Result<(), String> {
         started: Instant::now(),
         players: HashMap::new(),
         left: Vec::new(),
+        welcome: None,
     }));
     net.events.clear();
     net.requests.clear();
@@ -336,25 +391,39 @@ pub fn replace_history_value<T: Serialize>(channel: &str, value: &T) {
     replace_history(channel, encode(value));
 }
 
-/// What a saved world holds: every channel's kept events, in order.
+/// What a saved world holds: every channel's kept events, in order, and
+/// where each player who was there was last.
 #[derive(Serialize, serde::Deserialize)]
 struct SavedWorld {
     version: u32,
     history: Vec<(String, Vec<u8>)>,
+    players: Vec<(u64, PlayerState)>,
 }
 
-const SAVE_VERSION: u32 = 1;
+/// Before players were saved.
+#[derive(serde::Deserialize)]
+struct SavedWorldV1 {
+    #[allow(dead_code)]
+    version: u32,
+    history: Vec<(String, Vec<u8>)>,
+}
+
+const SAVE_VERSION: u32 = 2;
 
 /// On the server: write the world (what is kept of every channel) to
 /// `path`, replacing it whole or not at all.
 pub fn save_world(path: &Path) -> Result<(), String> {
-    let history = match &net().role {
-        Role::Server(server) => server.log.clone(),
+    let (history, players) = match &net().role {
+        Role::Server(server) => (
+            server.log.clone(),
+            server.last_seen.iter().map(|(k, s)| (*k, s.clone())).collect(),
+        ),
         _ => return Err("only a server saves its world".into()),
     };
     let data = encode(&SavedWorld {
         version: SAVE_VERSION,
         history,
+        players,
     });
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -369,21 +438,32 @@ pub fn save_world(path: &Path) -> Result<(), String> {
 /// there were.
 pub fn load_world(path: &Path) -> Result<usize, String> {
     let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let saved: SavedWorld =
-        bincode::deserialize(&data).map_err(|e| format!("{}: {e}", path.display()))?;
-    if saved.version != SAVE_VERSION {
-        return Err(format!(
-            "{}: saved by another version ({})",
-            path.display(),
-            saved.version
-        ));
-    }
+    let unreadable = |e: bincode::Error| format!("{}: {e}", path.display());
+    let version: u32 = bincode::deserialize(&data).map_err(unreadable)?;
+    let saved = match version {
+        1 => {
+            let old: SavedWorldV1 = bincode::deserialize(&data).map_err(unreadable)?;
+            SavedWorld {
+                version,
+                history: old.history,
+                players: Vec::new(),
+            }
+        }
+        SAVE_VERSION => bincode::deserialize(&data).map_err(unreadable)?,
+        _ => {
+            return Err(format!(
+                "{}: saved by another version ({version})",
+                path.display()
+            ))
+        }
+    };
     let mut net = net();
     let net = &mut *net;
     let Role::Server(server) = &mut net.role else {
         return Err("only a server loads a world".into());
     };
     let count = saved.history.len();
+    server.last_seen.extend(saved.players);
     for (channel, data) in saved.history {
         push_event(&mut net.events, &channel, data.clone());
         server.log.push((channel, data));
@@ -522,7 +602,7 @@ fn server_event(
 /// Send and receive, and keep the remote players in `scene` up to date.
 /// Called by `Scene::update` every frame.
 pub(crate) fn update(scene: &mut Scene, delta_time: f64) {
-    let (offline, others, left) = {
+    let (offline, others, left, welcome) = {
         let mut net = net();
         let net = &mut *net;
         let elapsed = net
@@ -560,19 +640,35 @@ pub(crate) fn update(scene: &mut Scene, delta_time: f64) {
             net.failure = Some(reason);
         }
         match &mut net.role {
-            Role::Offline => (true, HashMap::new(), Vec::new()),
+            Role::Offline => (true, HashMap::new(), Vec::new(), None),
             Role::Server(server) => (
                 false,
                 server.players.clone(),
                 std::mem::take(&mut server.left),
+                None,
             ),
             Role::Client(client) => (
                 false,
                 client.players.clone(),
                 std::mem::take(&mut client.left),
+                client.welcome.take(),
             ),
         }
     };
+    if let Some(welcome) = welcome {
+        // The server's world instead of this one, then this player where
+        // it belongs in it.
+        if let Some(text) = welcome.scene {
+            let loaded = ron::from_str::<SceneFile>(&text)
+                .map_err(|e| e.to_string())
+                .and_then(|file| Scene::from_file(&file).map_err(|e| e.to_string()));
+            match loaded {
+                Ok(server_scene) => scene.replace_with(server_scene),
+                Err(e) => log::warn!("net: cannot play the server's scene: {e}"),
+            }
+        }
+        players::place_local(scene, welcome.returning.as_ref(), welcome.index);
+    }
     if offline {
         players::remove_all(scene);
     } else {
@@ -595,7 +691,25 @@ fn update_server(
     while let Some(event) = server.server.get_event() {
         match event {
             ServerEvent::ClientConnected { client_id } => {
-                log::info!("net: player {client_id} joined");
+                let key = server
+                    .transport
+                    .user_data(client_id)
+                    .map_or(client_id, |data| u64::from_le_bytes(data[..8].try_into().unwrap()));
+                let returning = server.last_seen.get(&key).cloned();
+                log::info!(
+                    "net: player {client_id} joined{}",
+                    if returning.is_some() { " (back again)" } else { "" }
+                );
+                server.keys.insert(client_id, key);
+                let welcome = encode(&ToClient::Welcome {
+                    scene: server.scene.clone(),
+                    returning,
+                    index: server.joined,
+                });
+                server.joined += 1;
+                server
+                    .server
+                    .send_message(client_id, DefaultChannel::ReliableOrdered, welcome);
                 // The world as it is: every event so far.
                 for (channel, data) in &server.log {
                     let message = encode(&ToClient::Event {
@@ -610,6 +724,7 @@ fn update_server(
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 log::info!("net: player {client_id} left ({reason})");
                 server.players.remove(&client_id);
+                server.keys.remove(&client_id);
                 server.left.push(client_id);
                 server
                     .server
@@ -629,6 +744,9 @@ fn update_server(
                         server_event(server, events, channel, data)
                     }
                     Ok(ToServer::State(state)) => {
+                        if let Some(key) = server.keys.get(&client_id) {
+                            server.last_seen.insert(*key, state.clone());
+                        }
                         server.players.insert(client_id, state);
                     }
                     Err(e) => log::warn!("net: bad message from {client_id}: {e}"),
@@ -676,6 +794,17 @@ fn update_client(
         let lane = u8::from(lane);
         while let Some(message) = client.client.receive_message(lane) {
             match bincode::deserialize::<ToClient>(&message) {
+                Ok(ToClient::Welcome {
+                    scene,
+                    returning,
+                    index,
+                }) => {
+                    client.welcome = Some(Welcome {
+                        scene,
+                        returning,
+                        index,
+                    });
+                }
                 Ok(ToClient::Event { channel, data }) => push_event(events, &channel, data),
                 Ok(ToClient::Players(all)) => {
                     client.players = all.into_iter().filter(|(id, _)| *id != client.id).collect();

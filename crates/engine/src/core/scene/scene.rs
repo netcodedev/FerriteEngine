@@ -114,6 +114,15 @@ impl Scene {
         (&mut self.entities, &mut self.physics_engine)
     }
 
+    /// Become `other` (a scene a server sent, say), keeping how this one is
+    /// shown and run: its viewport, editor camera and whether physics runs.
+    pub fn replace_with(&mut self, mut other: Scene) {
+        other.viewport = self.viewport;
+        other.editor_camera = self.editor_camera.take();
+        other.physics_enabled = self.physics_enabled;
+        *self = other;
+    }
+
     pub fn add_shadow_map(&mut self, width: u32, height: u32) {
         self.shadow_map_size = Some((width, height));
         if crate::core::headless::is_headless() {
