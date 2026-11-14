@@ -20,6 +20,11 @@ lazy_static! {
     static ref START: Instant = Instant::now();
 }
 
+/// Seconds on the sky's clock (`uTime`), which moves the clouds.
+pub fn seconds() -> f32 {
+    START.elapsed().as_secs_f32()
+}
+
 pub struct SkyRenderer {
     shader: Shader,
     cloud_shader: Shader,

@@ -383,6 +383,7 @@ impl Scene {
             for entity in self.entities.iter() {
                 entity.render(self, &view_projection, parent_transform);
             }
+            self.render_snow_layer(&view_projection);
             // Transparent pass — runs after every entity's opaque geometry is
             // in the depth buffer, so water with depth-write enabled correctly
             // depth-tests against the player and other dynamic geometry. It
@@ -492,6 +493,28 @@ impl Scene {
             trails,
         }));
         self.apply_viewport(window);
+    }
+
+    /// The layer of snow on the ground near the camera, with the opaque
+    /// scene.
+    fn render_snow_layer(&self, view_projection: &Matrix4<f32>) {
+        let (Some(skylight), Some(lighting), Some(maps)) = (
+            self.get_component::<SkyLight>(),
+            Lighting::from_scene(self),
+            self.weather_maps(),
+        ) else {
+            return;
+        };
+        let targets = self.weather.borrow();
+        if let Some(targets) = targets.as_ref() {
+            targets.layer.render(
+                view_projection,
+                lighting.camera_position,
+                &lighting,
+                &maps,
+                skylight.effective_cloud_type(),
+            );
+        }
     }
 
     /// Rain or snow falling around the camera, over the finished scene.

@@ -264,9 +264,10 @@ impl Chunk for DualContouringChunk {
         (
             include_str!("vertex.glsl").to_string(),
             format!(
-                "#version 460 core\n{}\n{CLOUD_UNIFORMS}\n{}\n{}",
+                "#version 460 core\n{}\n{CLOUD_UNIFORMS}\n{}\n{}\n{}",
                 pbr::LIGHTING_GLSL,
                 sky::CLOUD_FIELD_GLSL,
+                sky::CLOUD_SHADOW_GLSL,
                 include_str!("fragment.glsl")
             ),
         )

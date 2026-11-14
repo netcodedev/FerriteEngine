@@ -12,6 +12,8 @@
 //!   on the ground.
 //! - `snow`: trails pressed into the snow (`SnowTrails`), from footprints
 //!   any component hands to `press_snow`.
+//! - `snow_layer`: a real layer of snow on the ground near the camera, with
+//!   the trails pressed into it.
 //! - `precipitation`: the falling drops and flakes around the camera.
 //! - `weather.glsl`: wet surfaces, puddles with rain ripples and snow cover,
 //!   used by every lit shader.
@@ -19,6 +21,7 @@
 pub mod exposure;
 pub mod precipitation;
 pub mod snow;
+pub mod snow_layer;
 
 use std::sync::Mutex;
 use std::time::Instant;
@@ -31,6 +34,12 @@ use super::shader::Shader;
 use exposure::SkyExposure;
 use precipitation::PrecipitationRenderer;
 use snow::SnowTrails;
+use snow_layer::SnowLayer;
+
+/// The weather's maps and what is read from them (`skyExposure`,
+/// `groundHeight`, `snowTrail`, ...), shared by every lit shader and the
+/// snow layer's vertex shader. Declare `isShadowPass` before it.
+pub const WEATHER_MAPS_GLSL: &str = include_str!("weather_maps.glsl");
 
 /// Texture unit the sky exposure map is bound to while the scene is shaded.
 pub const EXPOSURE_UNIT: u32 = 9;
@@ -174,6 +183,7 @@ pub struct WeatherTargets {
     pub exposure: SkyExposure,
     pub trails: SnowTrails,
     pub precipitation: PrecipitationRenderer,
+    pub layer: SnowLayer,
 }
 
 impl WeatherTargets {
@@ -182,6 +192,7 @@ impl WeatherTargets {
             exposure: SkyExposure::new(),
             trails: SnowTrails::new(),
             precipitation: PrecipitationRenderer::new(),
+            layer: SnowLayer::new(),
         }
     }
 }

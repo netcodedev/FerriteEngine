@@ -1,90 +1,14 @@
 // Rain and snow on surfaces (`renderer/weather`): wet, darker and glossier
 // surfaces, puddles with rain ripples, and snow cover, all only where the
-// sky reaches. Comes after `lighting.glsl`.
+// sky reaches. Comes after `lighting.glsl` and `weather_maps.glsl`.
 
 uniform float rainAmount;    // how hard it rains now, 0..1
 uniform float snowAmount;    // how hard it snows now, 0..1
 uniform float wetness;       // how wet surfaces under open sky are, 0..1
 uniform float puddleAmount;  // how full puddles are, 0..1
-uniform float snowCover;     // how much of the open ground snow covers, 0..1
-uniform float snowDepth;     // metres
 uniform float weatherTime;   // seconds
 
-// Depth of the scene seen from straight above: what is under a roof, a
-// tree or an overhang stays dry.
-uniform int useExposure;
-uniform sampler2D exposureMap;
-uniform mat4 exposureMatrix;
-uniform float exposureRange; // metres the depth 0..1 spans
-// The same view of the terrain alone: how high things are above the ground.
-uniform sampler2D groundMap;
-
-// Trails pressed into the snow: r how far pressed down (0..1), g the snow
-// pushed up around a print. `trailArea` is (x, z) of its corner and size.
-uniform int useSnowTrails;
-uniform sampler2D snowTrailMap;
-uniform vec3 trailArea;
-
 const vec3 SNOW_ALBEDO = vec3(0.80, 0.83, 0.88);
-
-float weatherHash(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-}
-
-float weatherNoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(weatherHash(i), weatherHash(i + vec2(1.0, 0.0)), u.x),
-               mix(weatherHash(i + vec2(0.0, 1.0)), weatherHash(i + vec2(1.0, 1.0)), u.x), u.y);
-}
-
-// Bilinear blend of four texels from `textureGather` (its order: (0,1),
-// (1,1), (1,0), (0,0)), `f` the spot's place between them.
-float texelBlend(vec4 texels, vec2 f) {
-    return mix(mix(texels.w, texels.z, f.x), mix(texels.x, texels.y, f.x), f.y);
-}
-
-// Share of the sky above `worldPos` that is open, 0..1. The point is moved
-// off the surface along its normal first, so walls and cliffs (which see
-// their own top from above) count as open. Only what is well above the
-// point shelters it: grass and bumps of the ground do not. The map is
-// filtered (each texel's shelter blended bilinearly, over a few texels),
-// so the edge of what is sheltered is soft instead of blocky.
-float skyExposure(vec3 worldPos, vec3 Ng) {
-    if (useExposure == 0 || isShadowPass == 1) {
-        return 1.0;
-    }
-    vec3 p = worldPos + Ng * 0.3 + vec3(0.0, 0.05, 0.0);
-    vec4 clip = exposureMatrix * vec4(p, 1.0);
-    vec3 q = clip.xyz / clip.w * 0.5 + 0.5;
-    vec2 edge = abs(q.xy * 2.0 - 1.0);
-    float outside = smoothstep(0.85, 0.98, max(edge.x, edge.y));
-    if (outside >= 1.0 || q.z <= 0.0) {
-        return 1.0;
-    }
-    vec2 size = vec2(textureSize(exposureMap, 0));
-    // Ground on a slope is higher a texel or two uphill: allow for it.
-    float slope = sqrt(max(1.0 - Ng.y * Ng.y, 0.0)) / max(abs(Ng.y), 0.2);
-    float texelMetres = 1.0 / (size.x * exposureMatrix[0][0] * 0.5);
-    // Metres something must be above the point to start and to fully
-    // shelter it.
-    float low = 0.5 + texelMetres * 3.0 * slope;
-    float high = low + 1.0;
-    float sheltered = 0.0;
-    for (int j = -1; j <= 1; ++j) {
-        for (int i = -1; i <= 1; ++i) {
-            vec2 uv = q.xy + vec2(i, j) * 1.5 / size;
-            vec2 f = fract(uv * size - 0.5);
-            vec4 s = smoothstep(vec4(low), vec4(high),
-                                (q.z - textureGather(exposureMap, uv, 0)) * exposureRange);
-            sheltered += texelBlend(s, f);
-        }
-    }
-    return mix(1.0 - sheltered / 9.0, 1.0, outside);
-}
 
 // Height (dh/dx, dh/dz) of rings spreading where drops hit standing water,
 // for rain of `amount` 0..1 at `p` (metres); `footprint` is the metres one
@@ -194,27 +118,6 @@ void applySnow(vec3 worldPos, vec3 Ng, float share,
     metallic = mix(metallic, 0.0, share);
 }
 
-// The trail map at `p`: (pressed 0..1, rim 0..1). Zero outside it.
-vec2 snowTrail(vec2 p) {
-    if (useSnowTrails == 0) {
-        return vec2(0.0);
-    }
-    vec2 uv = (p - trailArea.xy) / trailArea.z;
-    vec2 edge = abs(uv * 2.0 - 1.0);
-    float fade = 1.0 - smoothstep(0.9, 1.0, max(edge.x, edge.y));
-    if (fade <= 0.0) {
-        return vec2(0.0);
-    }
-    return texture(snowTrailMap, uv).rg * fade;
-}
-
-// How far the snow's surface at `p` lies below its untouched top, in
-// metres: what feet pressed down, less what they pushed up around.
-float snowDent(vec2 p) {
-    vec2 trail = snowTrail(p);
-    return snowDepth * (0.9 * trail.r - 0.35 * trail.g);
-}
-
 // How much of a model's surface at `worldPos` the snow on the ground
 // buries, 0..1: what lies lower than the snow's surface around it (less
 // what feet pressed down there) is under the snow. `exposure` is the open
@@ -224,28 +127,17 @@ float snowBuried(vec3 worldPos, float exposure) {
     if (useExposure == 0 || isShadowPass == 1 || cover <= 0.001 || snowDepth <= 0.005) {
         return 0.0;
     }
-    vec4 clip = exposureMatrix * vec4(worldPos, 1.0);
-    vec3 q = clip.xyz / clip.w * 0.5 + 0.5;
-    vec2 edge = abs(q.xy * 2.0 - 1.0);
-    float inside = 1.0 - smoothstep(0.85, 0.98, max(edge.x, edge.y));
-    if (inside <= 0.0 || q.z <= 0.0) {
+    float ground;
+    if (!groundHeight(worldPos.xz, ground)) {
         return 0.0;
     }
-    // The ground's depth there, between the four texels around it.
-    vec2 size = vec2(textureSize(groundMap, 0));
-    vec4 depth = textureGather(groundMap, q.xy, 0);
-    // No terrain under it (cleared to the far end): nothing to lie on.
-    if (max(max(depth.x, depth.y), max(depth.z, depth.w)) >= 1.0) {
-        return 0.0;
-    }
-    float ground = texelBlend(depth, fract(q.xy * size - 0.5));
-    float above = (ground - q.z) * exposureRange;
+    float above = worldPos.y - ground;
     vec2 trail = snowTrail(worldPos.xz);
     float top = snowDepth * (1.0 - 0.9 * trail.r + 0.35 * trail.g);
     // A soft line where the surface meets the snow, a little uneven.
     float soft = 0.01 + snowDepth * 0.08;
     top += (weatherNoise(worldPos.xz * 9.0) - 0.5) * soft;
-    return (1.0 - smoothstep(top - soft, top, above)) * smoothstep(0.0, 0.2, cover) * inside;
+    return (1.0 - smoothstep(top - soft, top, above)) * smoothstep(0.0, 0.2, cover);
 }
 
 // Murk of falling rain or snow that hides the distance (display colour;

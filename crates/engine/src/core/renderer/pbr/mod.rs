@@ -24,6 +24,7 @@ use crate::core::{
 pub const LIGHTING_GLSL: &str = concat!(
     include_str!("../hdr/tonemap.glsl"),
     include_str!("lighting.glsl"),
+    include_str!("../weather/weather_maps.glsl"),
     include_str!("../weather/weather.glsl")
 );
 const MATERIAL_GLSL: &str = include_str!("material.glsl");
