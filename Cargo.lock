@@ -794,6 +794,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrite-game"
+version = "0.1.0"
+dependencies = [
+ "ferrite",
+]
+
+[[package]]
 name = "ferrite-server"
 version = "0.1.0"
 dependencies = [
