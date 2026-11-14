@@ -356,6 +356,7 @@ impl Scene {
                     skylight.get_sun_direction(),
                     skylight.get_time_of_day(),
                     skylight.get_cloud_coverage(),
+                    skylight.clouds(),
                 );
             }
 

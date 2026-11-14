@@ -54,8 +54,10 @@ void main() {
 
     // ── Clouds ─────────────────────────────────────────────────────────
     // Raymarched at reduced resolution by the cloud pass.
+    // Premultiplied: rgb is the light the clouds scatter, a how much of
+    // the sky behind them they hide.
     vec4 clouds = texture(cloudTexture, ndcPos * 0.5 + 0.5);
-    sky = mix(sky, clouds.rgb, clouds.a);
+    sky = sky * (1.0 - clouds.a) + clouds.rgb;
 
     // ── Stars (no seams; 3D-hash over unit sphere) ─────────────────────
     // Use a separate, tighter envelope than dayFactor so stars only appear

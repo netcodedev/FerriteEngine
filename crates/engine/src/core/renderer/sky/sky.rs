@@ -4,9 +4,11 @@ use lazy_static::lazy_static;
 use std::sync::Mutex;
 use std::time::Instant;
 
+use super::CloudSettings;
 use crate::core::renderer::shader::Shader;
 
 const COMMON_GLSL: &str = include_str!("common.glsl");
+const CLOUD_FIELD_GLSL: &str = super::CLOUD_FIELD_GLSL;
 /// Texture unit the cloud texture is bound to while the sky is drawn.
 const CLOUD_UNIT: u32 = 13;
 /// The clouds are raymarched at 1 / CLOUD_DOWNSCALE of the width and
@@ -99,7 +101,10 @@ impl SkyRenderer {
         );
         let cloud_shader = Shader::new(
             include_str!("vertex.glsl"),
-            &format!("#version 460 core\n{COMMON_GLSL}\n{}", include_str!("clouds.glsl")),
+            &format!(
+                "#version 460 core\n{COMMON_GLSL}\n{CLOUD_FIELD_GLSL}\n{}",
+                include_str!("clouds.glsl")
+            ),
         );
 
         // Fullscreen triangle strip (two triangles covering NDC -1..1).
@@ -158,6 +163,7 @@ impl SkyRenderer {
         sun_direction: Vector3<f32>,
         time_of_day: f32,
         cloud_coverage: f32,
+        cloud_settings: &CloudSettings,
     ) {
         let mut r = RENDERER.lock().unwrap();
         let set_uniforms = |shader: &Shader| {
@@ -169,7 +175,10 @@ impl SkyRenderer {
             shader.set_uniform_1f("tanHalfFovY", tan_half_fov_y);
             shader.set_uniform_3f("sunDirection", sun_direction.x, sun_direction.y, sun_direction.z);
             shader.set_uniform_1f("timeOfDay", time_of_day);
-            shader.set_uniform_1f("uCoverage", cloud_coverage);
+            shader.set_uniform_1f("cloudCoverage", cloud_coverage);
+            shader.set_uniform_1f("cloudType", cloud_settings.cloud_type.shader_value());
+            shader.set_uniform_1f("altocumulus", cloud_settings.altocumulus);
+            shader.set_uniform_1f("cirrus", cloud_settings.cirrus);
             shader.set_uniform_3f("camPos", camera_pos.x, camera_pos.y, camera_pos.z);
             shader.set_uniform_1f("uTime", START.elapsed().as_secs_f32());
         };

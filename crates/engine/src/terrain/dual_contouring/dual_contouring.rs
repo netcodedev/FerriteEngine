@@ -16,6 +16,7 @@ use crate::{
             line::Line,
             pbr::{self, Lighting},
             shader::{Shader, VertexAttributes},
+            sky,
             texture::Texture,
         },
         scene::Scene,
@@ -47,6 +48,10 @@ thread_local! {
 lazy_static! {
     static ref START: Instant = Instant::now();
 }
+
+/// Uniforms `sky::CLOUD_FIELD_GLSL` needs that `pbr::LIGHTING_GLSL` does
+/// not declare.
+const CLOUD_UNIFORMS: &str = "uniform float uTime;\nuniform float cloudType;";
 
 /// Texture units the opaque scene is bound to while the water draws (clear
 /// of the terrain's textures, the clouds, ambient occlusion and shadows).
@@ -259,8 +264,9 @@ impl Chunk for DualContouringChunk {
         (
             include_str!("vertex.glsl").to_string(),
             format!(
-                "#version 460 core\n{}\n{}",
+                "#version 460 core\n{}\n{CLOUD_UNIFORMS}\n{}\n{}",
                 pbr::LIGHTING_GLSL,
+                sky::CLOUD_FIELD_GLSL,
                 include_str!("fragment.glsl")
             ),
         )
