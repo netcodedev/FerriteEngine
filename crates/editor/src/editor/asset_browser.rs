@@ -539,6 +539,7 @@ mod tests {
                 .collect(),
             materials: Vec::new(),
             clips: Vec::new(),
+            grip: None,
         })
     }
 

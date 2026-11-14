@@ -224,6 +224,7 @@ impl AssetDatabase {
                     })
                     .collect(),
                 clips,
+                grip: None,
             }),
         };
         self.register(meta, &target_dir)

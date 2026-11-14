@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::AssetId;
+use crate::core::model::grip::Grip;
 
 pub const ASSET_META_VERSION: u32 = 1;
 
@@ -55,6 +56,9 @@ pub struct ModelSettings {
     /// Animation clips the file brings along with its meshes.
     #[serde(default)]
     pub clips: Vec<ClipInfo>,
+    /// How the model is held in a hand, if it can be (an axe, a torch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grip: Option<Grip>,
 }
 
 fn one() -> f32 {
@@ -68,6 +72,7 @@ impl Default for ModelSettings {
             variants: Vec::new(),
             materials: Vec::new(),
             clips: Vec::new(),
+            grip: None,
         }
     }
 }
