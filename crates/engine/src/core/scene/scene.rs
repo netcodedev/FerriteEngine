@@ -473,6 +473,11 @@ impl Scene {
                 entity.render(self, &view_projection, Matrix4::identity());
             }
             targets.exposure.end();
+            let view_projection = targets.exposure.begin_ground();
+            for entity in self.entities.iter() {
+                entity.render(self, &view_projection, Matrix4::identity());
+            }
+            targets.exposure.end();
         }
         targets.exposure.bind();
         let trails = if weather.snow_cover > 0.0 {

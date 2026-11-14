@@ -34,7 +34,7 @@ const SHADOW_MAP_UNIT: i32 = 15;
 /// A model fragment shader: the shared lighting and material code
 /// (`shadePbr`) put in front of `body`.
 pub fn fragment_source(body: &str) -> String {
-    format!("#version 330 core\n{LIGHTING_GLSL}\n{MATERIAL_GLSL}\n{body}")
+    format!("#version 460 core\n{LIGHTING_GLSL}\n{MATERIAL_GLSL}\n{body}")
 }
 
 /// The light a PBR shader is drawn with.

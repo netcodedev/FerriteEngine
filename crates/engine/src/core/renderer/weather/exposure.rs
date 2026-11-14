@@ -1,13 +1,15 @@
 //! The scene's depth seen from straight above, around the camera: whatever
 //! is the first thing rain or snow falling straight down hits. A surface
 //! below that depth is under a roof, a tree or an overhang and stays dry.
+//! Drawn a second time with the terrain alone (`ground`), it tells how high
+//! anything is above the ground, so snow can bury what lies on it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use cgmath::{ortho, Matrix4, Point3, Vector3};
 use gl::types::*;
 
-use super::EXPOSURE_UNIT;
+use super::{EXPOSURE_UNIT, GROUND_UNIT};
 
 /// Texels per side.
 const SIZE: i32 = 1024;
@@ -27,15 +29,66 @@ const REDRAW_FRAMES: u32 = 30;
 /// own then, as in the shadow pass, and characters (whose feet would keep
 /// the ground under them dry) stay out of it.
 static EXPOSURE_PASS: AtomicBool = AtomicBool::new(false);
+/// Set while the ground map is drawn (during an exposure pass): only the
+/// terrain draws itself then.
+static GROUND_PASS: AtomicBool = AtomicBool::new(false);
 
 /// Whether the exposure map is being drawn right now.
 pub fn in_exposure_pass() -> bool {
     EXPOSURE_PASS.load(Ordering::Relaxed)
 }
 
+/// Whether the ground map is being drawn right now: everything but the
+/// terrain stays out of it.
+pub fn in_ground_pass() -> bool {
+    GROUND_PASS.load(Ordering::Relaxed)
+}
+
+/// A depth map of its own: framebuffer and texture.
+fn depth_target() -> (GLuint, GLuint) {
+    let (mut framebuffer, mut depth) = (0, 0);
+    unsafe {
+        gl::GenTextures(1, &mut depth);
+        gl::BindTexture(gl::TEXTURE_2D, depth);
+        gl::TexImage2D(
+            gl::TEXTURE_2D,
+            0,
+            gl::DEPTH_COMPONENT32F as GLint,
+            SIZE,
+            SIZE,
+            0,
+            gl::DEPTH_COMPONENT,
+            gl::FLOAT,
+            std::ptr::null(),
+        );
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as GLint);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as GLint);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as GLint);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as GLint);
+        gl::BindTexture(gl::TEXTURE_2D, 0);
+
+        gl::GenFramebuffers(1, &mut framebuffer);
+        gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+        gl::FramebufferTexture2D(
+            gl::FRAMEBUFFER,
+            gl::DEPTH_ATTACHMENT,
+            gl::TEXTURE_2D,
+            depth,
+            0,
+        );
+        gl::DrawBuffer(gl::NONE);
+        gl::ReadBuffer(gl::NONE);
+        gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+    }
+    (framebuffer, depth)
+}
+
 pub struct SkyExposure {
     framebuffer: GLuint,
     depth: GLuint,
+    /// The terrain alone, from the same view.
+    ground_framebuffer: GLuint,
+    ground: GLuint,
     /// Corner (x, z) and top the map was drawn for, and frames since.
     drawn: Option<[f32; 3]>,
     age: u32,
@@ -44,43 +97,13 @@ pub struct SkyExposure {
 
 impl SkyExposure {
     pub fn new() -> Self {
-        let (mut framebuffer, mut depth) = (0, 0);
-        unsafe {
-            gl::GenTextures(1, &mut depth);
-            gl::BindTexture(gl::TEXTURE_2D, depth);
-            gl::TexImage2D(
-                gl::TEXTURE_2D,
-                0,
-                gl::DEPTH_COMPONENT32F as GLint,
-                SIZE,
-                SIZE,
-                0,
-                gl::DEPTH_COMPONENT,
-                gl::FLOAT,
-                std::ptr::null(),
-            );
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as GLint);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as GLint);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as GLint);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as GLint);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-
-            gl::GenFramebuffers(1, &mut framebuffer);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
-            gl::FramebufferTexture2D(
-                gl::FRAMEBUFFER,
-                gl::DEPTH_ATTACHMENT,
-                gl::TEXTURE_2D,
-                depth,
-                0,
-            );
-            gl::DrawBuffer(gl::NONE);
-            gl::ReadBuffer(gl::NONE);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-        }
+        let (framebuffer, depth) = depth_target();
+        let (ground_framebuffer, ground) = depth_target();
         Self {
             framebuffer,
             depth,
+            ground_framebuffer,
+            ground,
             drawn: None,
             age: 0,
             view_projection: Matrix4::from_scale(1.0),
@@ -125,9 +148,28 @@ impl SkyExposure {
         Some(self.view_projection)
     }
 
+    /// After `end`, when `begin` drew the map: start drawing the ground
+    /// map from the same view. Draw the opaque scene again (only the
+    /// terrain draws itself, see `in_ground_pass`) and call `end`.
+    pub fn begin_ground(&self) -> Matrix4<f32> {
+        unsafe {
+            gl::ActiveTexture(gl::TEXTURE0 + GROUND_UNIT);
+            gl::BindTexture(gl::TEXTURE_2D, 0);
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, self.ground_framebuffer);
+            gl::Viewport(0, 0, SIZE, SIZE);
+            gl::DepthMask(gl::TRUE);
+            gl::Clear(gl::DEPTH_BUFFER_BIT);
+        }
+        EXPOSURE_PASS.store(true, Ordering::Relaxed);
+        GROUND_PASS.store(true, Ordering::Relaxed);
+        self.view_projection
+    }
+
     /// Done drawing the map; the default framebuffer is bound again.
     pub fn end(&self) {
         EXPOSURE_PASS.store(false, Ordering::Relaxed);
+        GROUND_PASS.store(false, Ordering::Relaxed);
         unsafe { gl::BindFramebuffer(gl::FRAMEBUFFER, 0) };
     }
 
@@ -140,6 +182,8 @@ impl SkyExposure {
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0 + EXPOSURE_UNIT);
             gl::BindTexture(gl::TEXTURE_2D, self.depth);
+            gl::ActiveTexture(gl::TEXTURE0 + GROUND_UNIT);
+            gl::BindTexture(gl::TEXTURE_2D, self.ground);
             gl::ActiveTexture(gl::TEXTURE0);
         }
     }
@@ -150,6 +194,8 @@ impl Drop for SkyExposure {
         unsafe {
             gl::DeleteFramebuffers(1, &self.framebuffer);
             gl::DeleteTextures(1, &self.depth);
+            gl::DeleteFramebuffers(1, &self.ground_framebuffer);
+            gl::DeleteTextures(1, &self.ground);
         }
     }
 }

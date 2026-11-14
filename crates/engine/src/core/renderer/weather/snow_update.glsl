@@ -40,8 +40,9 @@ void main() {
         // A sole: narrow at the heel, wider at the ball of the foot.
         float width = stampLength[i] * 0.19 * mix(0.8, 1.1, clamp(along * 0.5 + 0.5, 0.0, 1.0));
         float e = length(vec2(along, dot(d, side) / width));
-        float press = 1.0 - smoothstep(0.8, 1.0, e);
-        float rim = smoothstep(0.85, 1.05, e) * (1.0 - smoothstep(1.05, 1.7, e));
+        // Soft walls: the print slopes in over the outer part of the sole.
+        float press = 1.0 - smoothstep(0.55, 1.0, e);
+        float rim = smoothstep(0.75, 1.05, e) * (1.0 - smoothstep(1.05, 1.7, e));
         trail.r = max(trail.r, press);
         trail.g = max(trail.g, rim * 0.8 * (1.0 - trail.r));
     }

@@ -8,7 +8,8 @@
 //! What the shaders see:
 //! - `exposure`: a depth map from straight above (`SkyExposure`), so only
 //!   surfaces under open sky get wet or snowed on and no rain falls under a
-//!   roof or a tree.
+//!   roof or a tree; and one of the terrain alone, so snow buries what lies
+//!   on the ground.
 //! - `snow`: trails pressed into the snow (`SnowTrails`), from footprints
 //!   any component hands to `press_snow`.
 //! - `precipitation`: the falling drops and flakes around the camera.
@@ -35,6 +36,9 @@ use snow::SnowTrails;
 pub const EXPOSURE_UNIT: u32 = 9;
 /// Texture unit the snow trail map is bound to while the scene is shaded.
 pub const SNOW_TRAIL_UNIT: u32 = 10;
+/// Texture unit the ground map (the exposure map's view of the terrain
+/// alone) is bound to while the scene is shaded.
+pub const GROUND_UNIT: u32 = 8;
 
 lazy_static! {
     static ref START: Instant = Instant::now();
@@ -478,6 +482,7 @@ impl WeatherShading {
         shader.set_uniform_1f("weatherTime", seconds());
         shader.set_uniform_1i("exposureMap", EXPOSURE_UNIT as i32);
         shader.set_uniform_1i("snowTrailMap", SNOW_TRAIL_UNIT as i32);
+        shader.set_uniform_1i("groundMap", GROUND_UNIT as i32);
         match maps.and_then(|maps| maps.exposure) {
             Some((matrix, range)) => {
                 shader.set_uniform_1i("useExposure", 1);

@@ -73,6 +73,10 @@ impl Component for SharedModel {
         view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
     ) {
+        // The ground map holds the terrain alone.
+        if crate::core::renderer::weather::exposure::in_ground_pass() {
+            return;
+        }
         if let Some(lighting) = Lighting::from_scene(scene) {
             self.model.render(&lighting, parent_transform, view_projection);
         }

@@ -182,6 +182,10 @@ impl Component for ModelComponent {
         if exposure::in_exposure_pass() && self.model.skeleton().is_some() {
             return;
         }
+        // The ground map holds the terrain alone.
+        if exposure::in_ground_pass() {
+            return;
+        }
         if let Some(lighting) = Lighting::from_scene(scene) {
             self.model.render(&lighting, parent_transform, view_projection);
         }
