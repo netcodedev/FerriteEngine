@@ -686,6 +686,71 @@ impl Model {
         position.to_vec()
     }
 
+    /// Model space of the bones: `parent_transform` with the model's own
+    /// position and scale; see `ik::Skeleton`.
+    pub fn root_transform(&self, parent_transform: &Matrix4<f32>) -> Matrix4<f32> {
+        parent_transform
+            * Matrix4::from_translation(self.position.to_vec())
+            * Matrix4::from_scale(self.scale)
+    }
+
+    /// A copy of the bone hierarchy in its current pose, from the mesh with
+    /// the most bones; `None` for a model without bones.
+    pub fn skeleton(&self) -> Option<super::ik::Skeleton> {
+        fn count(bone: &Bone) -> usize {
+            1 + bone
+                .children
+                .as_ref()
+                .map_or(0, |children| children.iter().map(count).sum())
+        }
+        fn collect(bone: &Bone, parent: Option<usize>, out: &mut Vec<super::ik::Joint>) {
+            out.push(super::ik::Joint {
+                name: bone.name.clone(),
+                parent,
+                local: bone.current_transform,
+                skinned: bone.id != usize::MAX,
+            });
+            let index = out.len() - 1;
+            if let Some(children) = &bone.children {
+                for child in children {
+                    collect(child, Some(index), out);
+                }
+            }
+        }
+        let root = self
+            .meshes
+            .values()
+            .filter_map(|mesh| mesh.root_bone.as_ref())
+            .max_by_key(|bone| count(bone))?;
+        let mut joints = Vec::new();
+        collect(root, None, &mut joints);
+        Some(super::ik::Skeleton::new(joints))
+    }
+
+    /// Pose the bones of every mesh as `skeleton` says, by name.
+    pub fn apply_skeleton(&mut self, skeleton: &super::ik::Skeleton) {
+        fn set(bone: &mut Bone, locals: &HashMap<&str, Matrix4<f32>>) {
+            if let Some(local) = locals.get(bone.name.as_str()) {
+                bone.current_transform = *local;
+            }
+            if let Some(children) = &mut bone.children {
+                for child in children {
+                    set(child, locals);
+                }
+            }
+        }
+        let locals: HashMap<&str, Matrix4<f32>> = skeleton
+            .joints
+            .iter()
+            .map(|joint| (joint.name.as_str(), joint.local))
+            .collect();
+        for mesh in self.meshes.values_mut() {
+            if let Some(root) = &mut mesh.root_bone {
+                set(root, &locals);
+            }
+        }
+    }
+
     pub fn apply_pose(&mut self, pose: &Pose) {
         let mut root_translation = Vector3::zero();
         for mesh in self.meshes.values_mut() {

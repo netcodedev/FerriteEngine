@@ -5,10 +5,17 @@
 
 use std::{path::PathBuf, time::Instant};
 
-use cgmath::{perspective, Deg, Matrix4, Point3, SquareMatrix, Vector3};
+use cgmath::{
+    perspective, Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Transform,
+    Vector3, Vector4,
+};
 use ferrite::{
     core::{
-        assets::{self, AssetId, AssetKind, AssetMeta},
+        assets::{self, AssetId, AssetKind, AssetMeta, MaterialMap, ModelSettings},
+        model::{
+            ik::{IkChain, Skeleton},
+            Model, ModelBuilder,
+        },
         primitives::{Offset, Position, Size},
         renderer::{
             line::{Line, LineRenderer},
@@ -636,11 +643,124 @@ enum Shown {
         radius: f32,
         floor: f32,
     },
+    /// A model with bones, drawn skinned so its skeleton can be posed.
+    Rigged(Box<Rigged>),
     Texture(Image),
     /// Nothing to draw for this kind of asset; says so.
     Note(String),
     Failed(String),
 }
+
+/// A skinned model with the skeleton it is posed by.
+struct Rigged {
+    model: Model,
+    skeleton: Skeleton,
+    chains: Vec<IkChain>,
+    center: Point3<f32>,
+    radius: f32,
+    floor: f32,
+}
+
+impl Rigged {
+    /// Load the model of the working copy skinned; `None` if it has no
+    /// bones.
+    fn load(edit: &AssetEdit, settings: &ModelSettings) -> Result<Option<Rigged>, String> {
+        // Texture files of the working copy's materials, found before the
+        // (slow) load.
+        let overrides: Vec<Vec<(MaterialMap, PathBuf)>> = {
+            let database = assets::database();
+            settings
+                .materials
+                .iter()
+                .map(|material| {
+                    MaterialMap::ALL
+                        .into_iter()
+                        .filter_map(|map| {
+                            let entry = database.get(material.map(map)?)?;
+                            Some((map, entry.source_path()))
+                        })
+                        .collect()
+                })
+                .collect()
+        };
+        let path = edit.source_path().to_string_lossy().replace('\\', "/");
+        let mut model = ModelBuilder::from_file(&path)
+            .map_err(|e| e.to_string())?
+            .with_scale(settings.scale)
+            .build();
+        model.init();
+        let Some(skeleton) = model.skeleton() else {
+            return Ok(None);
+        };
+        for (material, maps) in overrides.into_iter().enumerate() {
+            for (map, file) in maps {
+                model.set_material_map_file(material, map, &file);
+            }
+        }
+        let variant = settings.variants.get(edit.variant).map(|v| v.name.as_str());
+        model.show_variant(variant)?;
+
+        let vertices = model.get_vertices_scaled();
+        let mut min = [f32::MAX; 3];
+        let mut max = [f32::MIN; 3];
+        for v in &vertices {
+            for axis in 0..3 {
+                min[axis] = min[axis].min(v[axis]);
+                max[axis] = max[axis].max(v[axis]);
+            }
+        }
+        if vertices.is_empty() {
+            (min, max) = ([0.0; 3], [1.0; 3]);
+        }
+        let center = Point3::new(
+            (min[0] + max[0]) * 0.5,
+            (min[1] + max[1]) * 0.5,
+            (min[2] + max[2]) * 0.5,
+        );
+        let radius = (0..3)
+            .map(|axis| (max[axis] - min[axis]) * 0.5)
+            .fold(0.0f32, |sum, half| sum + half * half)
+            .sqrt()
+            .max(0.01);
+        let chains = skeleton.default_chains();
+        Ok(Some(Rigged {
+            model,
+            skeleton,
+            chains,
+            center,
+            radius,
+            floor: min[1],
+        }))
+    }
+
+    fn root(&self) -> Matrix4<f32> {
+        self.model.root_transform(&Matrix4::identity())
+    }
+
+    /// World position of each chain's handle.
+    fn handles(&self) -> Vec<Point3<f32>> {
+        let positions = self.skeleton.world_positions(&self.root());
+        self.chains.iter().map(|chain| positions[chain.end]).collect()
+    }
+}
+
+/// A handle being dragged: its end effector follows the cursor on a plane
+/// facing the camera.
+struct IkDrag {
+    chain: usize,
+    /// Pose when the drag began; every solve starts from it.
+    start: Vec<Matrix4<f32>>,
+    plane_point: Point3<f32>,
+    plane_normal: Vector3<f32>,
+    /// From where the cursor hit the plane to the handle.
+    grab: Vector3<f32>,
+}
+
+/// Pixels from a handle within which a click takes it.
+const HANDLE_PICK_RADIUS: f32 = 12.0;
+const BONE_COLOR: (f32, f32, f32) = (0.45, 0.75, 1.0);
+const HANDLE_COLOR: (f32, f32, f32) = (1.0, 0.8, 0.2);
+const HANDLE_HOT_COLOR: (f32, f32, f32) = (1.0, 0.4, 0.1);
 
 /// The asset workspace's main area: a 3D view of the model with an orbit
 /// camera, or the image of a texture.
@@ -658,6 +778,14 @@ pub struct AssetPreview {
     message: Text,
     hint: Text,
     orbit: Orbit,
+    /// Whether the bones and IK handles of a rigged model are drawn.
+    show_skeleton: DataSource<bool>,
+    reset_pose: DataSource<bool>,
+    skeleton_button: Button,
+    reset_button: Button,
+    /// Chain whose handle is under the cursor.
+    hovered: Option<usize>,
+    ik_drag: Option<IkDrag>,
 }
 
 impl AssetPreview {
@@ -666,10 +794,34 @@ impl AssetPreview {
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
+        let show_skeleton = DataSource::new(true);
+        let reset_pose = DataSource::new(false);
+        let skeleton_flag = show_skeleton.clone();
+        let mut skeleton_button = header_button(
+            "Skeleton",
+            icons::EYE,
+            ButtonStyle::Secondary,
+            Box::new(move |_| skeleton_flag.write(!skeleton_flag.read())),
+        );
+        skeleton_button.set_tooltip("Show the bones and the handles to pose them with");
+        let reset_flag = reset_pose.clone();
+        let mut reset_button = header_button(
+            "Reset pose",
+            icons::ROTATE_CW,
+            ButtonStyle::Secondary,
+            Box::new(move |_| reset_flag.write(true)),
+        );
+        reset_button.set_tooltip("Put every bone back where the file has it");
         Self {
             handle: UIElementHandle::new(),
             state,
             panel,
+            show_skeleton,
+            reset_pose,
+            skeleton_button,
+            reset_button,
+            hovered: None,
+            ik_drag: None,
             shown: Shown::Nothing,
             shown_for: None,
             framed_for: None,
@@ -728,7 +880,29 @@ impl AssetPreview {
                 animation.clips.len(),
                 if animation.clips.len() == 1 { "" } else { "s" }
             )),
-            AssetKind::Model(model) => {
+            // Files that bring animation clips are drawn skinned when they
+            // turn out to have bones.
+            AssetKind::Model(model) if !model.clips.is_empty() => match Rigged::load(edit, model) {
+                Ok(Some(rigged)) => Shown::Rigged(Box::new(rigged)),
+                Ok(None) => Self::load_static(edit, model),
+                Err(e) => Shown::Failed(e),
+            },
+            AssetKind::Model(model) => Self::load_static(edit, model),
+        };
+        self.ik_drag = None;
+        self.hovered = None;
+        self.hint.set_content(match self.shown {
+            Shown::Rigged(_) => {
+                "Drag a handle to pose, elsewhere to orbit, scroll to zoom"
+            }
+            _ => "Drag to orbit, scroll to zoom",
+        });
+    }
+
+    /// A model drawn the way the scatter system draws it.
+    fn load_static(edit: &AssetEdit, model: &ModelSettings) -> Shown {
+        {
+            {
                 let variant = model.variants.get(edit.variant).map(|v| v.name.as_str());
                 match ScatterModel::load_preview(&edit.source_path(), model, variant) {
                     Ok(loaded) => {
@@ -758,7 +932,96 @@ impl AssetPreview {
                     Err(e) => Shown::Failed(e),
                 }
             }
+        }
+    }
+
+    /// Ray from the eye through a window position inside `view`.
+    fn cursor_ray(
+        &self,
+        view: &Rect,
+        center: Point3<f32>,
+        radius: f32,
+        x: f32,
+        y: f32,
+    ) -> Option<(Point3<f32>, Vector3<f32>)> {
+        let inverse = self.view_projection(view, center, radius).invert()?;
+        let ndc_x = (x - view.x) / view.w * 2.0 - 1.0;
+        let ndc_y = 1.0 - (y - view.y) / view.h * 2.0;
+        let unproject = |z: f32| {
+            let p = inverse * Vector4::new(ndc_x, ndc_y, z, 1.0);
+            Point3::from_vec(p.truncate() / p.w)
         };
+        let near = unproject(-1.0);
+        let far = unproject(1.0);
+        Some((near, (far - near).normalize()))
+    }
+
+    /// The chain whose handle is nearest to a window position, within the
+    /// pick radius.
+    fn handle_at(&self, rigged: &Rigged, view: &Rect, x: f32, y: f32) -> Option<usize> {
+        let vp = self.view_projection(view, rigged.center, rigged.radius);
+        rigged
+            .handles()
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, p)| {
+                let (sx, sy) = project(&vp, view, p)?;
+                let d = ((sx - x).powi(2) + (sy - y).powi(2)).sqrt();
+                (d <= HANDLE_PICK_RADIUS).then_some((i, d))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+    }
+
+    /// Start dragging a handle if one is at the cursor.
+    fn begin_ik_drag(&mut self, x: f32, y: f32) -> bool {
+        let view = self.view_rect();
+        let Shown::Rigged(rigged) = &self.shown else {
+            return false;
+        };
+        if !self.show_skeleton.read() {
+            return false;
+        }
+        let Some(chain) = self.handle_at(rigged, &view, x, y) else {
+            return false;
+        };
+        let Some((origin, dir)) = self.cursor_ray(&view, rigged.center, rigged.radius, x, y) else {
+            return false;
+        };
+        let handle = rigged.handles()[chain];
+        let normal = (rigged.center - self.eye(rigged.center, rigged.radius)).normalize();
+        let Some(hit) = ray_plane(origin, dir, handle, normal) else {
+            return false;
+        };
+        self.ik_drag = Some(IkDrag {
+            chain,
+            start: rigged.skeleton.locals(),
+            plane_point: handle,
+            plane_normal: normal,
+            grab: handle - hit,
+        });
+        true
+    }
+
+    /// Move the dragged handle to the cursor and pose the model for it.
+    fn continue_ik_drag(&mut self, x: f32, y: f32) {
+        let view = self.view_rect();
+        let Some(drag) = &self.ik_drag else { return };
+        let Shown::Rigged(rigged) = &self.shown else { return };
+        let Some((origin, dir)) = self.cursor_ray(&view, rigged.center, rigged.radius, x, y) else {
+            return;
+        };
+        let Some(hit) = ray_plane(origin, dir, drag.plane_point, drag.plane_normal) else {
+            return;
+        };
+        let Some(to_skeleton) = rigged.root().inverse_transform() else { return };
+        let target = to_skeleton.transform_point(hit + drag.grab);
+        let (chain, start) = (drag.chain, drag.start.clone());
+        let Shown::Rigged(rigged) = &mut self.shown else { return };
+        rigged.skeleton.set_locals(&start);
+        let ik_chain = rigged.chains[chain].clone();
+        rigged.skeleton.solve(&ik_chain, target);
+        rigged.model.apply_skeleton(&rigged.skeleton);
     }
 
     fn eye(&self, center: Point3<f32>, radius: f32) -> Point3<f32> {
@@ -831,7 +1094,31 @@ impl UIElement for AssetPreview {
                 .map(|(w, h)| format!("{w} x {h} px"))
                 .unwrap_or_default(),
             Shown::Model { .. } => String::new(),
+            Shown::Rigged(rigged) if rigged.chains.is_empty() => {
+                "No feet, hands or head found among the bones to pose.".to_string()
+            }
+            Shown::Rigged(_) => String::new(),
         };
+        if self.reset_pose.read() {
+            self.reset_pose.write(false);
+            self.ik_drag = None;
+            if let Shown::Rigged(rigged) = &mut self.shown {
+                rigged.skeleton.reset();
+                rigged.model.apply_skeleton(&rigged.skeleton);
+            }
+        }
+        if matches!(self.shown, Shown::Rigged(_)) {
+            let shown = self.show_skeleton.read();
+            self.skeleton_button.set_active(shown);
+            self.skeleton_button
+                .set_icon(if shown { icons::EYE } else { icons::EYE_OFF });
+            let mut x = view.x + 8.0;
+            for button in [&mut self.skeleton_button, &mut self.reset_button] {
+                button.set_offset(Offset { x, y: view.y + 8.0 });
+                x += button.get_size().width + 4.0;
+                button.update(scene);
+            }
+        }
         self.message.set_content(&message);
         self.message
             .prepare_render_at(Position::new(view.x + 16.0, view.y + 16.0, 3.0));
@@ -931,6 +1218,69 @@ impl UIElement for AssetPreview {
                 }
                 self.hint.render();
             }
+            Shown::Rigged(rigged) => {
+                let (window_w, window_h) = {
+                    let state = self.state.borrow();
+                    (state.layout.window_w, state.layout.window_h)
+                };
+                let (center, radius) = (rigged.center, rigged.radius);
+                unsafe {
+                    gl::Enable(gl::SCISSOR_TEST);
+                    gl::Scissor(
+                        view.x as i32,
+                        (window_h - view.y - view.h) as i32,
+                        view.w as i32,
+                        view.h as i32,
+                    );
+                    gl::Viewport(
+                        view.x as i32,
+                        (window_h - view.y - view.h) as i32,
+                        view.w as i32,
+                        view.h as i32,
+                    );
+                    let bg = theme::BG_FIELD;
+                    gl::ClearColor(bg.0, bg.1, bg.2, 1.0);
+                    gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+                    gl::Enable(gl::DEPTH_TEST);
+                    gl::DepthMask(gl::TRUE);
+                    gl::DepthFunc(gl::LESS);
+                }
+                let vp = self.view_projection(&view, center, radius);
+                let extent = radius * 1.6;
+                let steps = 12;
+                let mut grid = Vec::new();
+                for i in 0..=steps {
+                    let t = -extent + 2.0 * extent * i as f32 / steps as f32;
+                    grid.push(Line::new(
+                        Point3::new(center.x + t, rigged.floor, center.z - extent),
+                        Vector3::unit_z(),
+                        extent * 2.0,
+                    ));
+                    grid.push(Line::new(
+                        Point3::new(center.x - extent, rigged.floor, center.z + t),
+                        Vector3::unit_x(),
+                        extent * 2.0,
+                    ));
+                }
+                LineRenderer::render_lines(&vp, &grid, Vector3::new(0.16, 0.17, 0.2), false);
+                unsafe { gl::Enable(gl::DEPTH_TEST) };
+                let lighting =
+                    Lighting::preview(Vector3::new(3.0, 5.0, 4.0), self.eye(center, radius));
+                rigged.model.render(&lighting, &Matrix4::identity(), &vp);
+                if self.show_skeleton.read() {
+                    let hot = self.ik_drag.as_ref().map(|d| d.chain).or(self.hovered);
+                    render_skeleton(rigged, &vp, &view, hot);
+                }
+                unsafe {
+                    gl::Clear(gl::DEPTH_BUFFER_BIT);
+                    gl::Disable(gl::SCISSOR_TEST);
+                    gl::Viewport(0, 0, window_w as i32, window_h as i32);
+                }
+                self.hint.render();
+                self.message.render();
+                self.skeleton_button.render();
+                self.reset_button.render();
+            }
             Shown::Texture(image) => {
                 image.render();
                 self.message.render();
@@ -943,26 +1293,51 @@ impl UIElement for AssetPreview {
 
     fn handle_events(
         &mut self,
-        _scene: &mut Scene,
+        scene: &mut Scene,
         window: &mut glfw::Window,
-        _glfw: &mut Glfw,
+        glfw: &mut Glfw,
         event: &WindowEvent,
     ) -> bool {
         let view = self.view_rect();
+        if matches!(self.shown, Shown::Rigged(_)) {
+            for button in [&mut self.skeleton_button, &mut self.reset_button] {
+                if button.handle_events(scene, window, glfw, event)
+                    && !matches!(event, WindowEvent::CursorPos(..))
+                {
+                    return true;
+                }
+            }
+        }
         match event {
             WindowEvent::MouseButton(MouseButton::Button1, Action::Press, _) => {
                 let (x, y) = window.get_cursor_pos();
                 if view.contains(x as f32, y as f32) {
-                    self.orbit.dragging = Some((x, y));
+                    if !self.begin_ik_drag(x as f32, y as f32) {
+                        self.orbit.dragging = Some((x, y));
+                    }
                     return true;
                 }
             }
             WindowEvent::MouseButton(MouseButton::Button1, Action::Release, _) => {
-                if self.orbit.dragging.take().is_some() {
+                if self.ik_drag.take().is_some() | self.orbit.dragging.take().is_some() {
                     return true;
                 }
             }
             WindowEvent::CursorPos(x, y) => {
+                if self.ik_drag.is_some() {
+                    self.continue_ik_drag(*x as f32, *y as f32);
+                    return true;
+                }
+                self.hovered = match &self.shown {
+                    Shown::Rigged(rigged)
+                        if self.show_skeleton.read()
+                            && self.orbit.dragging.is_none()
+                            && view.contains(*x as f32, *y as f32) =>
+                    {
+                        self.handle_at(rigged, &view, *x as f32, *y as f32)
+                    }
+                    _ => None,
+                };
                 if let Some((lx, ly)) = self.orbit.dragging {
                     self.orbit.yaw -= (*x - lx) as f32 * 0.01;
                     self.orbit.pitch =
@@ -1012,6 +1387,94 @@ impl UIElement for AssetPreview {
         self.panel.set_z_index(z);
         self.message.set_z_index(z + 3.0);
         self.hint.set_z_index(z + 3.0);
+        self.skeleton_button.set_z_index(z + 3.0);
+        self.reset_button.set_z_index(z + 3.0);
+    }
+}
+
+/// Window position of a world point inside `view`; `None` behind the eye.
+fn project(vp: &Matrix4<f32>, view: &Rect, p: Point3<f32>) -> Option<(f32, f32)> {
+    let clip = vp * p.to_homogeneous();
+    if clip.w <= 1e-6 {
+        return None;
+    }
+    let (x, y) = (clip.x / clip.w, clip.y / clip.w);
+    Some((
+        view.x + (x * 0.5 + 0.5) * view.w,
+        view.y + (0.5 - y * 0.5) * view.h,
+    ))
+}
+
+fn ray_plane(
+    origin: Point3<f32>,
+    dir: Vector3<f32>,
+    point: Point3<f32>,
+    normal: Vector3<f32>,
+) -> Option<Point3<f32>> {
+    let denom = dir.dot(normal);
+    if denom.abs() < 1e-6 {
+        return None;
+    }
+    let t = (point - origin).dot(normal) / denom;
+    (t > 0.0).then(|| origin + dir * t)
+}
+
+/// Lines drawn on top of everything, `width` pixels wide.
+fn render_thick_lines(vp: &Matrix4<f32>, lines: &Vec<Line>, color: (f32, f32, f32), view: &Rect, width: i32) {
+    let color = Vector3::new(color.0, color.1, color.2);
+    let half = width / 2;
+    for dy in -half..=half {
+        for dx in -half..=half {
+            // A translation after the projection shifts NDC by exactly it.
+            let shift = Matrix4::from_translation(Vector3::new(
+                dx as f32 * 2.0 / view.w.max(1.0),
+                dy as f32 * 2.0 / view.h.max(1.0),
+                0.0,
+            ));
+            LineRenderer::render_lines(&(shift * vp), lines, color, true);
+        }
+    }
+}
+
+fn segment(from: Point3<f32>, to: Point3<f32>) -> Option<Line> {
+    let d = to - from;
+    let length = d.magnitude();
+    (length > 1e-6).then(|| Line::new(from, d / length, length))
+}
+
+/// A wireframe diamond around `center`, `size` from its middle to a tip.
+fn diamond(center: Point3<f32>, size: f32) -> Vec<Line> {
+    let tips = [
+        Vector3::unit_x(),
+        -Vector3::unit_x(),
+        Vector3::unit_z(),
+        -Vector3::unit_z(),
+    ];
+    let mut lines = Vec::new();
+    for (i, a) in tips.iter().enumerate() {
+        let b = tips[[2, 3, 1, 0][i]];
+        lines.extend(segment(center + a * size, center + b * size));
+        lines.extend(segment(center + a * size, center + Vector3::unit_y() * size));
+        lines.extend(segment(center + a * size, center - Vector3::unit_y() * size));
+    }
+    lines
+}
+
+/// Draw the bones of a rigged model and the handles of its chains.
+fn render_skeleton(rigged: &Rigged, vp: &Matrix4<f32>, view: &Rect, hot: Option<usize>) {
+    let positions = rigged.skeleton.world_positions(&rigged.root());
+    let bones: Vec<Line> = rigged
+        .skeleton
+        .joints
+        .iter()
+        .enumerate()
+        .filter_map(|(i, joint)| segment(positions[joint.parent?], positions[i]))
+        .collect();
+    render_thick_lines(vp, &bones, BONE_COLOR, view, 2);
+    let size = rigged.radius * 0.035;
+    for (i, chain) in rigged.chains.iter().enumerate() {
+        let color = if Some(i) == hot { HANDLE_HOT_COLOR } else { HANDLE_COLOR };
+        render_thick_lines(vp, &diamond(positions[chain.end], size), color, view, 2);
     }
 }
 

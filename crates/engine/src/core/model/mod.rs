@@ -10,6 +10,7 @@ use crate::core::renderer::{
 
 mod animation;
 pub mod animation_graph;
+pub mod ik;
 mod bone;
 mod channel;
 pub mod material_maps;
