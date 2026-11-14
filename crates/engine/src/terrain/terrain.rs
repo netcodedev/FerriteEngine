@@ -178,6 +178,102 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
     /// terrain in `scene` (e.g. a tree that was felled): out of its chunk,
     /// with its collider, and for good: a chunk loaded again leaves it out.
     /// `None` if no scattered instance has that collider.
+    /// The layer (salt) and base position of the scattered instance with
+    /// `collider`, without taking it: what names it on every peer (see
+    /// `take_scattered_instance_at`).
+    pub fn scattered_instance_of(
+        scene: &Scene,
+        collider: ColliderHandle,
+    ) -> Option<(u64, Point3<f32>)> {
+        fn find<T: Chunk + Component + Send + 'static>(
+            entity: &Entity,
+            collider: ColliderHandle,
+        ) -> Option<(u64, Point3<f32>)> {
+            if entity.get_own_component::<Terrain<T>>().is_some() {
+                let found = entity.get_children().iter().find_map(|chunk| {
+                    chunk.components().iter().find_map(|component| {
+                        component
+                            .as_any()
+                            .downcast_ref::<ScatterInstances>()?
+                            .instance_of(collider)
+                    })
+                });
+                if found.is_some() {
+                    return found;
+                }
+            }
+            entity
+                .get_children()
+                .iter()
+                .find_map(|child| find::<T>(child, collider))
+        }
+        scene
+            .get_entities()
+            .iter()
+            .find_map(|entity| find::<T>(entity, collider))
+    }
+
+    /// Like `take_scattered_instance`, for the instance of the layer with
+    /// `salt` that stands at `position` (as `TakenInstance` gives them), so
+    /// every peer of a networked game finds the same one. Not loaded yet,
+    /// it is still left out for good when its chunk loads; `None` then.
+    pub fn take_scattered_instance_at(
+        scene: &mut Scene,
+        salt: u64,
+        position: Point3<f32>,
+    ) -> Option<TakenInstance> {
+        fn find<T: Chunk + Component + Send + 'static>(
+            entity: &Entity,
+            salt: u64,
+            position: Point3<f32>,
+        ) -> Option<ColliderHandle> {
+            if entity.get_own_component::<Terrain<T>>().is_some() {
+                let found = entity.get_children().iter().find_map(|chunk| {
+                    chunk.components().iter().find_map(|component| {
+                        component
+                            .as_any()
+                            .downcast_ref::<ScatterInstances>()?
+                            .collider_at(salt, position)
+                    })
+                });
+                if found.is_some() {
+                    return found;
+                }
+            }
+            entity
+                .get_children()
+                .iter()
+                .find_map(|child| find::<T>(child, salt, position))
+        }
+        let collider = scene
+            .get_entities()
+            .iter()
+            .find_map(|entity| find::<T>(entity, salt, position));
+        if let Some(taken) = collider.and_then(|c| Self::take_scattered_instance(scene, c)) {
+            return Some(taken);
+        }
+        fn mark<T: Chunk + Component + Send + 'static>(
+            entity: &mut Entity,
+            salt: u64,
+            position: Point3<f32>,
+        ) {
+            let terrain = entity
+                .components_mut()
+                .iter_mut()
+                .find_map(|c| c.as_any_mut().downcast_mut::<Terrain<T>>());
+            if let Some(terrain) = terrain {
+                terrain.scatter.mark_removed(salt, position);
+            }
+            for child in entity.get_children_mut() {
+                mark::<T>(child, salt, position);
+            }
+        }
+        for entity in scene.get_entities_mut() {
+            mark::<T>(entity, salt, position);
+        }
+        None
+    }
+
     pub fn take_scattered_instance(
         scene: &mut Scene,
         collider: ColliderHandle,

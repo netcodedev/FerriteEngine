@@ -698,6 +698,28 @@ impl ScatterInstances {
         })
     }
 
+    /// The collider of the instance of the layer with `salt` standing at
+    /// `position` (within a few centimetres), if it is one of these.
+    pub fn collider_at(&self, salt: u64, position: Point3<f32>) -> Option<ColliderHandle> {
+        if self.spec.salt != salt {
+            return None;
+        }
+        let index = self.placements.iter().position(|&(x, y, z, _)| {
+            (x - position.x).abs() < 0.05
+                && (y - position.y).abs() < 0.05
+                && (z - position.z).abs() < 0.05
+        })?;
+        self.colliders.get(index).copied()
+    }
+
+    /// The layer and base position of the instance whose collider is
+    /// `collider`, if it is one of these.
+    pub fn instance_of(&self, collider: ColliderHandle) -> Option<(u64, Point3<f32>)> {
+        let index = self.colliders.iter().position(|c| *c == collider)?;
+        let (x, y, z, _) = self.placements[index];
+        Some((self.spec.salt, Point3::new(x, y, z)))
+    }
+
     /// Height of the tallest part of `variant`, from its base.
     pub fn variant_height(spec: &ScatterSpec, variant: usize) -> f32 {
         spec.model
