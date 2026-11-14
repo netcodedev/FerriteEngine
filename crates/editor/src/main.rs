@@ -21,6 +21,7 @@ use editor::{
     asset_editor::{AssetEdit, AssetInspector, AssetPreview},
     dialogs::{self, ModalHost},
     drag::{DragLayer, DropAction, DropTarget},
+    export::Exporter,
     hierarchy::HierarchyPanel,
     inspector::InspectorPanel,
     layout::{Layout, RightColumn},
@@ -152,6 +153,7 @@ struct EditorLayer {
     pending_quit: bool,
     cursor_initialised: bool,
     scripts: Scripts,
+    exporter: Exporter,
     project: Project,
     /// The arrangement last saved to the project file.
     saved_settings: EditorSettings,
@@ -271,6 +273,7 @@ impl EditorLayer {
             pending_quit: false,
             cursor_initialised: false,
             scripts,
+            exporter: Exporter::default(),
             project,
             saved_settings: settings,
             settings_checked: Instant::now(),
@@ -667,6 +670,13 @@ impl EditorLayer {
             Command::ReloadScripts => {
                 if let Some(event) = self.scripts.rebuild() {
                     self.on_script_event(event);
+                }
+            }
+            Command::ExportGame => {
+                if self.exporter.is_running() {
+                    self.state.borrow_mut().set_status("An export is already running");
+                } else if let Some(out) = Exporter::pick_folder() {
+                    self.exporter.start(self.project.clone(), out);
                 }
             }
             Command::RefreshAssets => {
@@ -1099,6 +1109,9 @@ impl Layer for EditorLayer {
     fn on_update(&mut self, window: &Window, delta_time: f64) {
         if let Some(event) = self.scripts.poll() {
             self.on_script_event(event);
+        }
+        if let Some(status) = self.exporter.poll() {
+            self.state.borrow_mut().set_status(status);
         }
         self.save_settings_if_changed();
         let (show_stats, show_widgets, show_assets, workspace) = {

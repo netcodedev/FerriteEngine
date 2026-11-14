@@ -2,6 +2,7 @@ pub mod application;
 pub mod assets;
 pub mod camera;
 pub mod entity;
+pub mod export;
 pub mod model;
 pub mod mouse_picker;
 pub mod physics;

@@ -21,6 +21,22 @@ pub const REGISTER_SYMBOL: &[u8] = b"ferrite_register_scripts";
 
 const SCRIPTS_PACKAGE: &str = "ferrite_scripts";
 
+/// Name of the library the scripts are compiled into (without the
+/// platform's `lib` prefix and extension).
+pub const SCRIPTS_LIBRARY: &str = SCRIPTS_PACKAGE;
+
+/// The scripts library an exported game ships next to its executable, if
+/// this process is such a game.
+pub fn packaged_library() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let path = exe.parent()?.join(format!(
+        "{}{SCRIPTS_PACKAGE}{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    ));
+    path.is_file().then_some(path)
+}
+
 /// The engine's cargo workspace, where it was built from.
 pub fn engine_workspace() -> PathBuf {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

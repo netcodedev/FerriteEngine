@@ -32,7 +32,10 @@ use super::{
     scene::{scene_file::ComponentData, Scene},
 };
 
-pub use library::{engine_workspace, load_library, ScriptCrate, REGISTER_SYMBOL};
+pub use library::{
+    engine_workspace, load_library, packaged_library, ScriptCrate, REGISTER_SYMBOL,
+    SCRIPTS_LIBRARY,
+};
 
 /// What a script does. Every method is optional.
 #[allow(unused_variables)]

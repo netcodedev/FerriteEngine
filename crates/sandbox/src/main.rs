@@ -1,5 +1,7 @@
 //! Plays a project: the `.fp` file in the working directory (or the one
 //! given as the first argument), with its scripts and its startup scene.
+//! An exported game (`ferrite::core::export`) is this player next to the
+//! project it plays.
 
 // Links the engine as the shared library the project's scripts link too.
 #[allow(unused_imports)]
@@ -26,9 +28,18 @@ fn main() {
         }
     };
 
-    // The scripts, built if needed, before any scene refers to them.
-    let scripts = project.scripts();
-    match scripts.build().and_then(|()| load_library(&scripts.library_path())) {
+    // The scripts, before any scene refers to them: an exported game has
+    // them built next to it, otherwise they are built if needed.
+    let loaded = match script::packaged_library() {
+        Some(library) => load_library(&library),
+        None => {
+            let scripts = project.scripts();
+            scripts
+                .build()
+                .and_then(|()| load_library(&scripts.library_path()))
+        }
+    };
+    match loaded {
         Ok(registry) => script::install(registry),
         Err(e) => eprintln!("scripts: {e}"),
     }
@@ -52,11 +63,16 @@ fn main() {
 }
 
 fn open_project() -> Result<Project, String> {
-    // A project file, or a folder with one (the working directory if none
-    // is given).
+    // A project file, or a folder with one. Without one given: the folder
+    // of the executable (an exported game), else the working directory.
     let given = match std::env::args().nth(1) {
         Some(path) => PathBuf::from(path),
-        None => std::env::current_dir().map_err(|e| e.to_string())?,
+        None => std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(PathBuf::from))
+            .filter(|dir| Project::find_in(dir).is_some())
+            .map_or_else(std::env::current_dir, Ok)
+            .map_err(|e| e.to_string())?,
     };
     let path = if given.is_dir() {
         Project::find_in(&given).ok_or_else(|| {

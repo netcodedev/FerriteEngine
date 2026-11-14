@@ -70,6 +70,7 @@ impl Toolbar {
                 MenuItem::new("Save as...").icon(icons::SAVE).shortcut("Ctrl+Shift+S"),
                 MenuItem::new("New script...").icon(icons::FILE_CODE),
                 MenuItem::new("Reload scripts").icon(icons::ROTATE_CW).shortcut("Ctrl+R"),
+                MenuItem::new("Export game...").icon(icons::PACKAGE),
             ],
             Box::new(move |index, _scene| {
                 let command = match index {
@@ -78,7 +79,8 @@ impl Toolbar {
                     2 => Command::Save,
                     3 => Command::SaveAsDialog,
                     4 => Command::NewScriptDialog,
-                    _ => Command::ReloadScripts,
+                    5 => Command::ReloadScripts,
+                    _ => Command::ExportGame,
                 };
                 send(&file_state, command);
             }),
