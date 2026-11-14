@@ -18,6 +18,21 @@ pub fn take_quit_request() -> bool {
     QUIT_REQUESTED.swap(false, Ordering::Relaxed)
 }
 
+static RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// The game asks to start over: its startup scene loaded afresh, as when it
+/// was started (back to the main menu after a game, say). The player and
+/// the editor's play mode do it after the frame.
+pub fn request_restart() {
+    RESTART_REQUESTED.store(true, Ordering::Relaxed);
+}
+
+/// Whether the game asked to start over since the last call; clears the
+/// request.
+pub fn take_restart_request() -> bool {
+    RESTART_REQUESTED.swap(false, Ordering::Relaxed)
+}
+
 pub struct Application {
     window: Window,
     layers: Vec<Box<dyn Layer>>,

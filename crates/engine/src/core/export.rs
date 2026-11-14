@@ -6,6 +6,7 @@
 //! ```text
 //! <out>/<name>/
 //!     <name>                  the player; finds everything below next to it
+//!     <name>-server           the dedicated server (no window or GPU)
 //!     libferrite_dylib.so     the engine
 //!     libferrite_scripts.so   the project's scripts
 //!     libstd-<hash>.so        Rust's standard library
@@ -35,6 +36,8 @@ const GAME_FOLDERS: [&str; 3] = ["assets", "animations", "scenes"];
 const MARKER: &str = ".ferrite-export";
 
 const PLAYER_PACKAGE: &str = "sandbox";
+/// The dedicated server, exported as `<name>-server`.
+const SERVER_PACKAGE: &str = "ferrite-server";
 const ENGINE_LIBRARY: &str = "ferrite_dylib";
 
 /// The file name of a library called `name` on this platform.
@@ -61,6 +64,10 @@ pub fn export(project: &Project, out: &Path, progress: &dyn Fn(&str)) -> Result<
     copy_file(
         &release.join(format!("{PLAYER_PACKAGE}{}", std::env::consts::EXE_SUFFIX)),
         &target.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)),
+    )?;
+    copy_file(
+        &release.join(format!("{SERVER_PACKAGE}{}", std::env::consts::EXE_SUFFIX)),
+        &target.join(format!("{name}-server{}", std::env::consts::EXE_SUFFIX)),
     )?;
     // A dylib dependency is only left in `deps`; the scripts, being built
     // as a package of their own, are copied up as well.
@@ -134,7 +141,7 @@ fn build(project: &Project) -> Result<(), String> {
     let output = Command::new(cargo)
         .current_dir(engine_workspace())
         .args(["build", "--release", "--message-format=short"])
-        .args(["-p", PLAYER_PACKAGE, "-p", "ferrite_scripts"])
+        .args(["-p", PLAYER_PACKAGE, "-p", SERVER_PACKAGE, "-p", "ferrite_scripts"])
         .env("FERRITE_SCRIPTS", project.scripts().sources())
         .output()
         .map_err(|e| format!("could not run cargo: {e}"))?;

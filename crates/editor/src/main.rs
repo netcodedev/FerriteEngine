@@ -616,6 +616,8 @@ impl EditorLayer {
                 if mode == Mode::Edit {
                     return;
                 }
+                // A game played on a server leaves it with play mode.
+                ferrite::core::net::disconnect();
                 if let Some(snapshot) = self.play_snapshot.take() {
                     match Scene::from_file(&snapshot) {
                         Ok(scene) => self.replace_scene(scene),
@@ -1119,6 +1121,15 @@ impl Layer for EditorLayer {
             && self.state.borrow().mode == Mode::Play
         {
             self.state.borrow_mut().push(Command::Stop);
+            self.run_commands();
+        }
+        // The game asked to start over: play again from the scene as it
+        // was when play mode started.
+        if ferrite::core::application::take_restart_request()
+            && self.state.borrow().mode == Mode::Play
+        {
+            self.state.borrow_mut().push(Command::Stop);
+            self.state.borrow_mut().push(Command::Play);
             self.run_commands();
         }
         self.save_settings_if_changed();
