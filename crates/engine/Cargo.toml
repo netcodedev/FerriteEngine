@@ -7,6 +7,7 @@ edition = "2021"
 as-any = "0.3.2"
 bincode = "1"
 cgmath = "0.18.0"
+ctrlc = { version = "3", features = ["termination"] }
 env_logger = "0.11.11"
 fast-surface-nets = "0.2.1"
 ferrite_macros = { path = "../engine-macros" }
@@ -26,3 +27,9 @@ ron = "0.12.3"
 russimp-ng = { version = "3.2.7" }
 rusttype = { version = "0.9.3", features = ["gpu_cache"] }
 serde = { version = "1.0.229", features = ["derive"] }
+
+[features]
+# Assimp and GLFW built from source and linked in, instead of the
+# system's shared libraries: for exported games, which must run where
+# those are not installed.
+standalone = ["russimp-ng/static-link", "glfw/src-build"]

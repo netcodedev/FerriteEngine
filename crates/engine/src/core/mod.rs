@@ -10,6 +10,7 @@ pub mod net;
 pub mod physics;
 pub mod primitives;
 pub mod project;
+pub mod runtime;
 pub mod renderer;
 pub mod scene;
 pub mod script;

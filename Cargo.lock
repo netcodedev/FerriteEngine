@@ -755,6 +755,7 @@ dependencies = [
  "as-any",
  "bincode",
  "cgmath",
+ "ctrlc",
  "env_logger",
  "fast-surface-nets",
  "ferrite_macros",
@@ -793,14 +794,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrite-game"
+version = "0.1.0"
+dependencies = [
+ "ferrite",
+]
+
+[[package]]
 name = "ferrite-server"
 version = "0.1.0"
 dependencies = [
- "ctrlc",
- "env_logger",
  "ferrite",
  "ferrite_dylib",
- "log",
 ]
 
 [[package]]
