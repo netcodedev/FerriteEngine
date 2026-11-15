@@ -17,27 +17,19 @@ const float CLOUD_TOP    = 1650.0;
 // so a cumulus sky still has a few flatter and taller clouds in it.
 const float CLOUD_TYPE_SPREAD = 0.22;
 
-float cloudHash13(vec3 p) {
-    p = fract(p * 0.1031);
-    p += dot(p, p.yzx + 33.33);
-    return fract((p.x + p.y) * p.z);
-}
+// The value noise's lattice: one random value per point, repeating every
+// CLOUD_NOISE_SIZE points (`sky::noise`). Bound by the engine.
+const float CLOUD_NOISE_SIZE = 128.0;
+layout(binding = 17) uniform sampler3D cloudNoise;
 
-// Value noise in 3D, hermite-smoothed.
+// Value noise in 3D, hermite-smoothed: the position in the cell is bent by
+// the hermite curve, then the lattice is read with one trilinear lookup
+// (which blends the cell's eight corners by it).
 float cloudNoise3(vec3 p) {
     vec3 i = floor(p);
     vec3 f = fract(p);
     vec3 u = f * f * (3.0 - 2.0 * f);
-    float n000 = cloudHash13(i);
-    float n100 = cloudHash13(i + vec3(1.0, 0.0, 0.0));
-    float n010 = cloudHash13(i + vec3(0.0, 1.0, 0.0));
-    float n110 = cloudHash13(i + vec3(1.0, 1.0, 0.0));
-    float n001 = cloudHash13(i + vec3(0.0, 0.0, 1.0));
-    float n101 = cloudHash13(i + vec3(1.0, 0.0, 1.0));
-    float n011 = cloudHash13(i + vec3(0.0, 1.0, 1.0));
-    float n111 = cloudHash13(i + vec3(1.0, 1.0, 1.0));
-    return mix(mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
-               mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y), u.z);
+    return textureLod(cloudNoise, (i + u + 0.5) / CLOUD_NOISE_SIZE, 0.0).r;
 }
 
 // 3D fbm, normalised to 0..1. Rotates xz between octaves and offsets y so

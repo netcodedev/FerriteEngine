@@ -15,6 +15,12 @@ const CLOUD_UNIT: u32 = 13;
 /// height: they are soft, and the raymarch is the most expensive part of
 /// the frame.
 const CLOUD_DOWNSCALE: i32 = 2;
+/// Texture unit the clouds of the frame before are bound to while they are
+/// reprojected.
+const HISTORY_UNIT: u32 = 12;
+/// With reprojection, the texel of each 2x2 block drawn in each of four
+/// frames in turn.
+const PHASES: [[i32; 2]; 4] = [[0, 0], [1, 1], [1, 0], [0, 1]];
 
 lazy_static! {
     static ref START: Instant = Instant::now();
@@ -28,10 +34,47 @@ pub fn seconds() -> f32 {
 pub struct SkyRenderer {
     shader: Shader,
     cloud_shader: Shader,
+    reproject_shader: Shader,
     vao: GLuint,
     #[allow(dead_code)]
     vbo: GLuint,
     clouds: Option<CloudTarget>,
+    reprojection: Option<Reprojection>,
+}
+
+/// Where the camera looked, for the cloud reprojection.
+#[derive(Clone, Copy)]
+struct CameraBasis {
+    forward: Vector3<f32>,
+    right: Vector3<f32>,
+    up: Vector3<f32>,
+    tan_half_fov_x: f32,
+    tan_half_fov_y: f32,
+}
+
+/// The targets of the cloud reprojection (`CloudSettings::reprojection`):
+/// the quarter of the texels drawn each frame, and the full cloud texture
+/// of this frame and the one before, in turn.
+struct Reprojection {
+    fresh: CloudTarget,
+    history: [CloudTarget; 2],
+    /// Which of `history` holds the last frame's clouds.
+    current: usize,
+    frame: usize,
+    /// The camera of the last frame; `None` before the first.
+    previous: Option<CameraBasis>,
+}
+
+impl Reprojection {
+    fn new(width: i32, height: i32) -> Self {
+        Self {
+            fresh: CloudTarget::new((width + 1) / 2, (height + 1) / 2),
+            history: [CloudTarget::new(width, height), CloudTarget::new(width, height)],
+            current: 0,
+            frame: 0,
+            previous: None,
+        }
+    }
 }
 
 /// Offscreen target of the cloud pass.
@@ -104,6 +147,10 @@ impl SkyRenderer {
             include_str!("vertex.glsl"),
             &format!("#version 460 core\n{COMMON_GLSL}\n{}", include_str!("fragment.glsl")),
         );
+        let reproject_shader = Shader::new(
+            include_str!("vertex.glsl"),
+            &format!("#version 460 core\n{COMMON_GLSL}\n{}", include_str!("reproject.glsl")),
+        );
         let cloud_shader = Shader::new(
             include_str!("vertex.glsl"),
             &format!(
@@ -149,9 +196,11 @@ impl SkyRenderer {
         Self {
             shader,
             cloud_shader,
+            reproject_shader,
             vao,
             vbo,
             clouds: None,
+            reprojection: None,
         }
     }
 
@@ -175,6 +224,7 @@ impl SkyRenderer {
         precipitation: f32,
         scene_depth: Option<GLuint>,
     ) {
+        super::noise::bind();
         let mut r = RENDERER.lock().unwrap();
         let set_uniforms = |shader: &Shader| {
             shader.bind();
@@ -211,16 +261,12 @@ impl SkyRenderer {
             // Cloud pass, into the reduced-size target.
             let width = (viewport[2] / CLOUD_DOWNSCALE).max(1);
             let height = (viewport[3] / CLOUD_DOWNSCALE).max(1);
-            if r.clouds.as_ref().map_or(true, |c| (c.width, c.height) != (width, height)) {
-                r.clouds = Some(CloudTarget::new(width, height));
-            }
-            let clouds = r.clouds.as_ref().expect("just created");
-            gl::BindFramebuffer(gl::FRAMEBUFFER, clouds.framebuffer);
-            gl::Viewport(0, 0, width, height);
+            let r = &mut *r;
             set_uniforms(&r.cloud_shader);
             r.cloud_shader.set_uniform_1i("useSceneDepth", scene_depth.is_some() as i32);
+            r.cloud_shader.set_uniform_2f("cloudSize", width as f32, height as f32);
+            r.cloud_shader.set_uniform_1i("reproject", 0);
             if let Some(depth) = scene_depth {
-                // Bound where the clouds go later, for the sky pass.
                 gl::ActiveTexture(gl::TEXTURE0 + CLOUD_UNIT);
                 gl::BindTexture(gl::TEXTURE_2D, depth);
                 r.cloud_shader.set_uniform_1i("sceneDepth", CLOUD_UNIT as i32);
@@ -231,7 +277,78 @@ impl SkyRenderer {
                 );
             }
             gl::BindVertexArray(r.vao);
-            gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
+            let cloud_texture = if cloud_settings.reprojection {
+                r.clouds = None;
+                if r
+                    .reprojection
+                    .as_ref()
+                    .map_or(true, |p| (p.history[0].width, p.history[0].height) != (width, height))
+                {
+                    r.reprojection = Some(Reprojection::new(width, height));
+                }
+                let p = r.reprojection.as_mut().expect("just created");
+                let target = 1 - p.current;
+                let output = &p.history[target];
+                match p.previous {
+                    Some(previous) => {
+                        // A quarter of the texels, fresh.
+                        let [x, y] = PHASES[p.frame % PHASES.len()];
+                        gl::BindFramebuffer(gl::FRAMEBUFFER, p.fresh.framebuffer);
+                        gl::Viewport(0, 0, p.fresh.width, p.fresh.height);
+                        r.cloud_shader.bind();
+                        r.cloud_shader.set_uniform_1i("reproject", 1);
+                        r.cloud_shader.set_uniform_2i("phase", x, y);
+                        gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
+
+                        // The rest from the frame before.
+                        gl::BindFramebuffer(gl::FRAMEBUFFER, output.framebuffer);
+                        gl::Viewport(0, 0, width, height);
+                        let shader = &r.reproject_shader;
+                        set_uniforms(shader);
+                        shader.set_uniform_2i("phase", x, y);
+                        shader.set_uniform_3fv("prevForward", &previous.forward);
+                        shader.set_uniform_3fv("prevRight", &previous.right);
+                        shader.set_uniform_3fv("prevUp", &previous.up);
+                        shader.set_uniform_1f("prevTanHalfFovX", previous.tan_half_fov_x);
+                        shader.set_uniform_1f("prevTanHalfFovY", previous.tan_half_fov_y);
+                        gl::ActiveTexture(gl::TEXTURE0 + CLOUD_UNIT);
+                        gl::BindTexture(gl::TEXTURE_2D, p.fresh.texture);
+                        shader.set_uniform_1i("freshClouds", CLOUD_UNIT as i32);
+                        gl::ActiveTexture(gl::TEXTURE0 + HISTORY_UNIT);
+                        gl::BindTexture(gl::TEXTURE_2D, p.history[p.current].texture);
+                        shader.set_uniform_1i("history", HISTORY_UNIT as i32);
+                        gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
+                        gl::BindTexture(gl::TEXTURE_2D, 0);
+                    }
+                    None => {
+                        // Nothing to build on yet: all of them.
+                        gl::BindFramebuffer(gl::FRAMEBUFFER, output.framebuffer);
+                        gl::Viewport(0, 0, width, height);
+                        gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
+                    }
+                }
+                p.previous = Some(CameraBasis {
+                    forward: cam_forward,
+                    right: cam_right,
+                    up: cam_up,
+                    tan_half_fov_x,
+                    tan_half_fov_y,
+                });
+                p.current = target;
+                p.frame = p.frame.wrapping_add(1);
+                output.texture
+            } else {
+                r.reprojection = None;
+                if r.clouds.as_ref().map_or(true, |c| (c.width, c.height) != (width, height)) {
+                    r.clouds = Some(CloudTarget::new(width, height));
+                }
+                let clouds = r.clouds.as_ref().expect("just created");
+                gl::BindFramebuffer(gl::FRAMEBUFFER, clouds.framebuffer);
+                gl::Viewport(0, 0, width, height);
+                r.cloud_shader.bind();
+                gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
+                clouds.texture
+            };
 
             // The sky itself, with the clouds blended in.
             gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer as GLuint);
@@ -245,7 +362,7 @@ impl SkyRenderer {
                 gl::DepthFunc(gl::LEQUAL);
             }
             gl::ActiveTexture(gl::TEXTURE0 + CLOUD_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, clouds.texture);
+            gl::BindTexture(gl::TEXTURE_2D, cloud_texture);
             r.shader.set_uniform_1i("cloudTexture", CLOUD_UNIT as i32);
             gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
             gl::BindTexture(gl::TEXTURE_2D, 0);

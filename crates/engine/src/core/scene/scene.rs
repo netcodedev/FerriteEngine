@@ -360,6 +360,8 @@ impl Scene {
     }
 
     fn render_passes(&self, window: &Window) {
+        // The clouds' noise, for the sky and the cloud shadows.
+        crate::core::renderer::sky::noise::bind();
         self.frame_lighting.set(None);
         self.frame_lighting.set(Lighting::from_scene(self));
         self.render_passes_lit(window);
