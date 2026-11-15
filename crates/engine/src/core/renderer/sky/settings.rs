@@ -59,6 +59,10 @@ pub struct CloudSettings {
     pub altocumulus: f32,
     /// Streaks of ice high up, 0 (none) .. 1 (most of the sky).
     pub cirrus: f32,
+    /// Draw a quarter of the clouds each frame and take the rest from the
+    /// frames before: about 4x cheaper, but fast turns of the camera and
+    /// fast clouds can smear a little.
+    pub reprojection: bool,
 }
 
 impl Default for CloudSettings {
@@ -67,6 +71,7 @@ impl Default for CloudSettings {
             cloud_type: CloudType::Cumulus,
             altocumulus: 0.15,
             cirrus: 0.35,
+            reprojection: false,
         }
     }
 }
@@ -114,7 +119,7 @@ mod tests {
     fn scenes_without_cloud_settings_get_the_defaults() {
         let settings: CloudSettings = ron::from_str("()").unwrap();
         assert_eq!(settings, CloudSettings::default());
-        let clamped = CloudSettings { cloud_type: CloudType::Stratus, altocumulus: 3.0, cirrus: -1.0 }.sanitized();
+        let clamped = CloudSettings { cloud_type: CloudType::Stratus, altocumulus: 3.0, cirrus: -1.0, reprojection: false }.sanitized();
         assert_eq!((clamped.altocumulus, clamped.cirrus), (1.0, 0.0));
     }
 }

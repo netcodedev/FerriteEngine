@@ -172,7 +172,7 @@ impl SnowLayer {
         unsafe {
             // Whatever drew before may have left these otherwise.
             gl::Enable(gl::DEPTH_TEST);
-            gl::DepthFunc(gl::LESS);
+            gl::DepthFunc(gl::LEQUAL);
             gl::DepthMask(gl::TRUE);
             gl::Disable(gl::BLEND);
             gl::Disable(gl::CULL_FACE);

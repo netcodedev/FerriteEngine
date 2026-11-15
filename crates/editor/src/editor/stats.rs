@@ -8,6 +8,7 @@ use ferrite::core::{
     primitives::{Offset, Position, Size},
     renderer::{
         plane::{Plane, PlaneBuilder},
+        profiler,
         text::{icons, Text},
     },
     scene::Scene,
@@ -146,6 +147,8 @@ pub struct Stats {
     render_ms: Smoothed,
     ui_ms: Smoothed,
     gpu_ms: Smoothed,
+    /// Per pass, from the renderer's profiler.
+    pass_ms: Option<[f32; profiler::PASSES]>,
     pub counts: SceneCounts,
     pub memory: Memory,
     pub gl: GlInfo,
@@ -160,6 +163,7 @@ impl Stats {
             render_ms: Smoothed::default(),
             ui_ms: Smoothed::default(),
             gpu_ms: Smoothed::default(),
+            pass_ms: None,
             counts: SceneCounts::default(),
             memory: Memory::default(),
             gl: GlInfo::default(),
@@ -181,6 +185,7 @@ impl Stats {
         if let Some(gpu) = gpu_ms {
             self.gpu_ms.push(gpu);
         }
+        self.pass_ms = profiler::pass_ms();
     }
 
     /// Scene counts, memory and GL strings change slowly; refresh them a
@@ -499,11 +504,12 @@ impl UIElement for FrameGraph {
         }
     }
     fn render(&self) {
-        self.background.render();
-        for bar in &self.bars {
-            bar.render();
-        }
-        self.target_line.render();
+        // One draw call for the graph.
+        Plane::render_all(
+            std::iter::once(&self.background)
+                .chain(&self.bars)
+                .chain(std::iter::once(&self.target_line)),
+        );
     }
     fn handle_events(
         &mut self,
@@ -567,6 +573,8 @@ enum Key {
     Window,
     Viewport,
     Mode,
+    /// GPU time of one of the scene's passes (index into `Pass::ALL`).
+    Pass(usize),
 }
 
 const SECTIONS: &[(&str, &str, &[(Key, &str)])] = &[
@@ -588,6 +596,20 @@ const SECTIONS: &[(&str, &str, &[(Key, &str)])] = &[
             (Key::Gpu, "Scene render (GPU)"),
             (Key::Ui, "UI update + render"),
             (Key::CpuTotal, "Frame CPU total"),
+        ],
+    ),
+    (
+        "GPU passes",
+        icons::TIMER,
+        &[
+            (Key::Pass(0), "Weather maps"),
+            (Key::Pass(1), "Sun shadows"),
+            (Key::Pass(2), "Light shadows"),
+            (Key::Pass(3), "Depth prepass + AO"),
+            (Key::Pass(4), "Sky + clouds"),
+            (Key::Pass(5), "Opaque"),
+            (Key::Pass(6), "Transparent + weather"),
+            (Key::Pass(7), "HDR + post"),
         ],
     ),
     (
@@ -724,6 +746,10 @@ impl StatsPanel {
             Key::GlVersion => shorten(&stats.gl.version, 26),
             Key::Window => format!("{:.0} x {:.0}", layout.window_w, layout.window_h),
             Key::Viewport => format!("{:.0} x {:.0}", layout.viewport.w, layout.viewport.h),
+            Key::Pass(index) => match stats.pass_ms {
+                Some(passes) => ms(passes[index]),
+                None => "n/a".into(),
+            },
             Key::Mode => match mode {
                 Mode::Edit => "Edit".into(),
                 Mode::Play => "Play".into(),

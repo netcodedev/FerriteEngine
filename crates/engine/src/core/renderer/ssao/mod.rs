@@ -87,10 +87,17 @@ struct Targets {
 impl Targets {
     fn new(width: i32, height: i32) -> Self {
         unsafe {
-            let depth = texture(width, height, gl::DEPTH_COMPONENT32F, gl::DEPTH_COMPONENT, gl::FLOAT);
+            // As the HDR view's depth, so it can be copied from there.
+            let depth = texture(
+                width,
+                height,
+                gl::DEPTH24_STENCIL8,
+                gl::DEPTH_STENCIL,
+                gl::UNSIGNED_INT_24_8,
+            );
             let occlusion = texture(width, height, gl::R8, gl::RED, gl::UNSIGNED_BYTE);
             let blurred = texture(width, height, gl::R8, gl::RED, gl::UNSIGNED_BYTE);
-            let depth_framebuffer = framebuffer(gl::DEPTH_ATTACHMENT, depth);
+            let depth_framebuffer = framebuffer(gl::DEPTH_STENCIL_ATTACHMENT, depth);
             gl::DrawBuffer(gl::NONE);
             gl::ReadBuffer(gl::NONE);
             let occlusion_framebuffer = framebuffer(gl::COLOR_ATTACHMENT0, occlusion);
@@ -205,9 +212,26 @@ impl Ssao {
         }
     }
 
-    /// Bind and clear the depth target for a `width` × `height` view. Draw
-    /// the opaque scene from the camera after this, then call `resolve`.
-    pub fn begin_depth_pass(&mut self, width: i32, height: i32) {
+    /// Draw depth only into the bound target (the HDR view, cleared): the
+    /// opaque scene from the camera goes in after this, cheaply (the lit
+    /// shaders take their shadow pass path), and stays there as the depth
+    /// the shading pass tests against, so each pixel is shaded once. Then
+    /// call `take_depth`.
+    pub fn begin_depth_pass(&mut self) {
+        unsafe {
+            gl::ColorMask(gl::FALSE, gl::FALSE, gl::FALSE, gl::FALSE);
+            gl::DepthMask(gl::TRUE);
+            gl::Enable(gl::DEPTH_TEST);
+            gl::DepthFunc(gl::LESS);
+        }
+        DEPTH_PASS.store(true, Ordering::Relaxed);
+    }
+
+    /// End the depth pass and copy the depth of `framebuffer` (`width` ×
+    /// `height`, depth and stencil as `DEPTH24_STENCIL8`, possibly
+    /// multisampled) for `resolve`. Leaves `framebuffer` bound.
+    pub fn take_depth(&mut self, framebuffer: GLuint, width: i32, height: i32) {
+        DEPTH_PASS.store(false, Ordering::Relaxed);
         let (width, height) = (width.max(1), height.max(1));
         if self
             .targets
@@ -219,16 +243,26 @@ impl Ssao {
         }
         let targets = self.targets.as_ref().expect("just created");
         unsafe {
-            gl::BindFramebuffer(gl::FRAMEBUFFER, targets.depth_framebuffer);
-            gl::Viewport(0, 0, width, height);
-            gl::DepthMask(gl::TRUE);
-            gl::Enable(gl::DEPTH_TEST);
-            gl::Clear(gl::DEPTH_BUFFER_BIT);
+            gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
+            gl::BindFramebuffer(gl::READ_FRAMEBUFFER, framebuffer);
+            gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, targets.depth_framebuffer);
+            gl::BlitFramebuffer(
+                0,
+                0,
+                width,
+                height,
+                0,
+                0,
+                width,
+                height,
+                gl::DEPTH_BUFFER_BIT,
+                gl::NEAREST,
+            );
+            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
         }
-        DEPTH_PASS.store(true, Ordering::Relaxed);
     }
 
-    /// Work out the occlusion from the depth drawn since `begin_depth_pass`
+    /// Work out the occlusion from the depth taken by `take_depth`
     /// and blur it. Leaves the framebuffer unbound and the viewport for the
     /// caller to restore.
     pub fn resolve(&self, projection: &Matrix4<f32>, settings: &AmbientOcclusionSettings) {
@@ -285,6 +319,11 @@ impl Ssao {
                 gl::ActiveTexture(gl::TEXTURE0);
             }
         }
+    }
+
+    /// The depth taken by `take_depth` (the opaque scene from the camera).
+    pub fn depth_texture(&self) -> Option<GLuint> {
+        self.targets.as_ref().map(|t| t.depth)
     }
 
     /// The blurred occlusion, for debug views.

@@ -3,14 +3,23 @@ use crate::core::{
     renderer::shader::Shader,
 };
 
-use super::shader::DynamicVertexArray;
-
 pub mod plane;
 
+/// Draws planes from one buffer that every draw streams its planes into:
+/// a plane holds no GL objects of its own, and planes drawn together with
+/// `render_batch` take one draw call.
 pub struct PlaneRenderer {
     shader: Shader,
     width: f32,
     height: f32,
+    /// The size the shader's projection was last set for.
+    projection_for: Option<(f32, f32)>,
+    /// Vertex array, stream vertex buffer and the quads' index buffer;
+    /// created on the first draw.
+    buffers: Option<(u32, u32, u32)>,
+    /// Planes written to the stream buffer since it was last orphaned.
+    written: usize,
+    scratch: Vec<PlaneVertex>,
 }
 
 pub struct Plane {
@@ -19,7 +28,6 @@ pub struct Plane {
     pub border_thickness: f32,
     pub border_color: (f32, f32, f32, f32),
     pub border_radius: (f32, f32, f32, f32),
-    vertex_array: DynamicVertexArray<PlaneVertex>,
 }
 
 #[derive(Clone, Copy)]
@@ -38,4 +46,7 @@ pub struct PlaneVertex {
     pub position: (f32, f32, f32),
     pub color: (f32, f32, f32, f32),
     pub dimensions: (f32, f32, f32, f32),
+    pub border_color: (f32, f32, f32, f32),
+    pub border_radius: (f32, f32, f32, f32),
+    pub border_thickness: f32,
 }

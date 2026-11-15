@@ -1,5 +1,3 @@
-use core::panic;
-
 use std::time::Instant;
 
 use cgmath::{Matrix4, Point3, SquareMatrix, Vector3};
@@ -20,12 +18,11 @@ use crate::{
             texture::Texture,
         },
         scene::Scene,
-        view_frustum::ViewFrustum,
     },
     terrain::{
         materials,
         scatter::{SCATTER_MAX_Y, SCATTER_MIN_Y},
-        Chunk, ChunkBounds, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT, USE_LOD,
+        Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
     },
 };
 
@@ -58,72 +55,67 @@ const CLOUD_UNIFORMS: &str = "uniform float uTime;\nuniform float cloudType;";
 const SCENE_COLOR_UNIT: u32 = 11;
 const SCENE_DEPTH_UNIT: u32 = 12;
 
-use fast_surface_nets::{
-    ndshape::{AbstractShape, RuntimeShape},
-    {surface_nets, SurfaceNetsBuffer},
-};
 
 use super::{
+    density::{add_skirt, DensityField},
     water::{self, WaterVertex},
-    ChunkMesh, DualContouringChunk, Vertex,
+    ChunkMesh, DualContouringChunk, Vertex, LODS, LOD_DISTANCES, SKIRT_DEPTH, SKIRT_DEPTH_PER_STEP,
 };
 
 impl DualContouringChunk {
-    fn get_density_at(&self, (x, y, z): (usize, usize, usize)) -> f32 {
+    /// The terrain's noise at chunk-local column `(x, z)`, 0..1.
+    pub(super) fn column_noise(&self, x: i32, z: i32) -> f32 {
         let offset: f64 = 16777216.0;
         let sample_point = (
             (self.position.0 * CHUNK_SIZE_FLOAT) as f64 + x as f64 + offset,
-            (self.position.1 * CHUNK_SIZE_FLOAT) as f64 + y as f64 + offset,
             (self.position.2 * CHUNK_SIZE_FLOAT) as f64 + z as f64 + offset,
         );
-
-        let noise = ((1.0 + self.noise.sample([sample_point.0, sample_point.2])) / 2.0) as f32;
-        let _iso = ((1.0
-            + self
-                .cave
-                .sample([sample_point.0, sample_point.1, sample_point.2]))
-            / 2.0) as f32;
-        let height_iso = 1.0 - ((noise) / ((1.0 + y as f32) / CHUNK_SIZE_FLOAT));
-        height_iso
+        ((1.0 + self.noise.sample([sample_point.0, sample_point.1])) / 2.0) as f32
     }
 
-    fn generate_mesh(&self) -> ChunkMesh<Vertex> {
-        let mut vertices = Vec::<Vertex>::new();
-        let mut indices = Vec::<u32>::new();
-        let size = (self.chunk_size + 2) as u32;
-        let scale_factor = CHUNK_SIZE / self.chunk_size;
-        let shape = RuntimeShape::<u32, 3>::new([size, size, size]);
-        let mut sdf = vec![0.0; (size * size * size) as usize];
-        for i in 0..sdf.len() {
-            let [x, y, z] = shape.delinearize(i as u32);
-            sdf[i as usize] = self.get_density_at((
-                x as usize * scale_factor,
-                y as usize * scale_factor,
-                z as usize * scale_factor,
-            ));
+    /// The ground's meshes, finest first: surface nets over the density
+    /// field (see `DensityField`) sampled 1 metre apart, then 2, 4 and 8.
+    /// The field is a volume, so overhangs and caves mesh as well as hills.
+    /// The normals of every level come from the full-detail field, so the
+    /// light on the ground does not change when a chunk switches levels.
+    /// Each mesh has a skirt along its open edges, pushed into the ground,
+    /// deeper the coarser the level, which hides the gaps where a neighbour
+    /// drawn at another level meets it. Also returns how many indices of
+    /// the finest mesh are ground (before its skirt), for the collider.
+    fn generate_meshes(&self) -> (Vec<ChunkMesh<Vertex>>, usize) {
+        let coarsest = 1 << (LODS - 1);
+        let field = DensityField::new(self, coarsest);
+        let mut ground_indices = 0;
+        let mut meshes = Vec::with_capacity(LODS);
+        for lod in 0..LODS {
+            let step = 1 << lod;
+            let Some((mut vertices, mut indices)) = field.surface_nets(step) else {
+                // No ground in this chunk.
+                return (Vec::new(), 0);
+            };
+            if lod == 0 {
+                ground_indices = indices.len();
+            }
+            add_skirt(
+                &mut vertices,
+                &mut indices,
+                SKIRT_DEPTH + SKIRT_DEPTH_PER_STEP * step as f32,
+            );
+            meshes.push(ChunkMesh::new(vertices, Some(indices)));
         }
-        let mut buffer = SurfaceNetsBuffer::default();
-        surface_nets(&sdf, &shape, [0; 3], [size as u32 - 1; 3], &mut buffer);
-        for (i, vertex) in buffer.positions.into_iter().enumerate() {
-            let normal = buffer.normals[i];
-            vertices.push(Vertex {
-                position: [
-                    vertex[0] * scale_factor as f32,
-                    vertex[1] * scale_factor as f32,
-                    vertex[2] * scale_factor as f32,
-                ],
-                normal,
-                color: [0.0, 0.5, 0.1],
-            });
-        }
-        for index in buffer.indices {
-            indices.push(index);
-        }
-        ChunkMesh::new(vertices, Some(indices))
+        (meshes, ground_indices)
+    }
+
+    /// The level of detail to draw at `distance` metres from the camera.
+    fn lod_at(distance: f32) -> usize {
+        LOD_DISTANCES
+            .iter()
+            .position(|&limit| distance < limit)
+            .unwrap_or(LODS - 1)
     }
 
     /// World height of the ground at world `(x, z)`: where the density
-    /// field crosses zero (see `get_density_at`).
+    /// field crosses zero (see `density`).
     pub(super) fn ground_height(&self, x: f32, z: f32) -> f32 {
         let offset: f64 = 16777216.0;
         let n = self.noise.sample([x as f64 + offset, z as f64 + offset]);
@@ -190,46 +182,31 @@ impl DualContouringChunk {
         }
         out
     }
-
-    fn calculate_chunk_size(lod: usize) -> usize {
-        let lod = std::cmp::max(
-            8,
-            std::cmp::min(
-                CHUNK_SIZE,
-                CHUNK_SIZE / 2usize.pow(if lod > 0 { (lod - 1) as u32 } else { 0 }),
-            ),
-        );
-        if USE_LOD {
-            lod
-        } else {
-            CHUNK_SIZE
-        }
-    }
 }
 
 impl Chunk for DualContouringChunk {
-    fn new(seed: u64, position: (f32, f32, f32), lod: usize) -> Self {
+    fn new(seed: u64, position: (f32, f32, f32), _lod: usize) -> Self {
         let noise = Source::perlin(seed).scale([0.003; 2]).fbm(6, 1.0, 2.0, 0.5);
-        let cave = Source::perlin(seed).scale([0.1; 3]);
         let mut chunk = Self {
             position,
-            cave,
             noise,
-            chunk_size: DualContouringChunk::calculate_chunk_size(lod),
-            mesh: None,
+            meshes: Vec::new(),
+            ground_indices: 0,
             water_mesh: None,
         };
-        chunk.mesh = Some(chunk.generate_mesh());
+        (chunk.meshes, chunk.ground_indices) = chunk.generate_meshes();
         chunk.water_mesh = chunk.generate_water_mesh();
         chunk
     }
 
     fn buffer_data(&mut self) {
-        if let Some(mesh) = &mut self.mesh {
-            mesh.buffer_data();
+        // The collider is built (from the finest mesh) before this, so the
+        // copies in memory are not needed any more: the GPU has them.
+        for mesh in &mut self.meshes {
+            mesh.buffer_and_release();
         }
         if let Some(water_mesh) = &mut self.water_mesh {
-            water_mesh.buffer_data();
+            water_mesh.buffer_and_release();
         }
     }
 
@@ -278,19 +255,32 @@ impl Chunk for DualContouringChunk {
     }
 
     fn get_triangle_count(&self) -> usize {
-        if let Some(mesh) = &self.mesh {
-            mesh.get_triangle_count()
-        } else {
-            0
-        }
+        self.meshes.first().map_or(0, ChunkMesh::get_triangle_count)
     }
 
     fn scatter_points(&self, salt: u64, attempts: u32) -> Vec<(f32, f32, f32, f32)> {
         self.scatter(salt, attempts)
     }
 
+    fn draw(&self, shader: &Shader, transform: &Matrix4<f32>, distance: f32) {
+        if let Some(mesh) = self.meshes.get(Self::lod_at(distance)).or(self.meshes.last()) {
+            mesh.render(
+                shader,
+                &(transform
+                    * Matrix4::from_translation(Vector3::new(
+                        self.position.0 * CHUNK_SIZE_FLOAT,
+                        self.position.1 * CHUNK_SIZE_FLOAT,
+                        self.position.2 * CHUNK_SIZE_FLOAT,
+                    ))),
+                None,
+            );
+        }
+    }
+
     fn get_vertices(&self) -> Vec<[f32; 3]> {
-        if let Some(mesh) = &self.mesh {
+        // The finest level: the colliders follow the ground closely. Empty
+        // once the chunk is buffered (see `buffer_data`).
+        if let Some(mesh) = self.meshes.first() {
             mesh.vertices
                 .iter()
                 .map(|v| [v.position[0], v.position[1], v.position[2]])
@@ -301,9 +291,11 @@ impl Chunk for DualContouringChunk {
     }
 
     fn get_indices(&self) -> Vec<[u32; 3]> {
-        if let Some(mesh) = &self.mesh {
+        // The ground without its skirt.
+        if let Some(mesh) = self.meshes.first() {
             if let Some(indices) = &mesh.indices {
-                return indices.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+                let ground = &indices[..self.ground_indices.min(indices.len())];
+                return ground.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
             }
         }
         Vec::new()
@@ -409,44 +401,8 @@ impl Chunk for DualContouringChunk {
 impl Component for DualContouringChunk {
     fn update(&mut self, _: &mut Scene, _: &mut Entity, _: f64) {}
 
-    fn render(
-        &self,
-        scene: &Scene,
-        _: &Entity,
-        view_projection: &Matrix4<f32>,
-        parent_transform: &Matrix4<f32>,
-    ) {
-        if !ViewFrustum::is_bounds_in_frustum_matrix(view_projection, self.get_bounds()) {
-            return;
-        }
-        if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
-            let shader = terrain.get_shader();
-            if let Some(mesh) = &self.mesh {
-                if !mesh.is_buffered() {
-                    panic!("Mesh is not buffered");
-                }
-                terrain.bind_textures();
-                shader.bind();
-                shader.set_uniform_mat4("viewProjection", &view_projection);
-                unsafe {
-                    gl::Enable(gl::CULL_FACE);
-                }
-                mesh.render(
-                    &shader,
-                    &(parent_transform
-                        * Matrix4::from_translation(Vector3::new(
-                            self.position.0 * CHUNK_SIZE_FLOAT,
-                            self.position.1 * CHUNK_SIZE_FLOAT,
-                            self.position.2 * CHUNK_SIZE_FLOAT,
-                        ))),
-                    None,
-                );
-                unsafe {
-                    gl::Disable(gl::CULL_FACE);
-                }
-            }
-        }
-
+    fn render(&self, _: &Scene, _: &Entity, _: &Matrix4<f32>, _: &Matrix4<f32>) {
+        // Drawn by the terrain, with the other chunks (see `Chunk::draw`).
     }
 
     fn handle_event(&mut self, _: &mut Glfw, _: &mut glfw::Window, _: &WindowEvent) {}
@@ -455,5 +411,119 @@ impl Component for DualContouringChunk {
 impl VertexAttributes for Vertex {
     fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
         vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT)]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::density::DensityField;
+    use super::*;
+
+    #[test]
+    fn levels_get_coarser_with_distance() {
+        assert_eq!(DualContouringChunk::lod_at(0.0), 0);
+        assert_eq!(DualContouringChunk::lod_at(200.0), 1);
+        assert_eq!(DualContouringChunk::lod_at(400.0), 2);
+        assert_eq!(DualContouringChunk::lod_at(5000.0), LODS - 1);
+    }
+
+    #[test]
+    fn neighbours_meet_at_their_edge_on_every_level() {
+        let left = DualContouringChunk::new(2, (0.0, 0.0, 0.0), 0);
+        let right = DualContouringChunk::new(2, (1.0, 0.0, 0.0), 0);
+        assert_eq!(left.meshes.len(), LODS);
+        let n = CHUNK_SIZE_FLOAT;
+        // The ground alone, without the skirts.
+        let (fl, fr) = (DensityField::new(&left, 8), DensityField::new(&right, 8));
+        let ground = |field: &DensityField, lod: usize| -> Vec<[f32; 3]> {
+            field.surface_nets(1 << lod).unwrap().0.iter().map(|v| v.position).collect()
+        };
+        for lod in 0..LODS {
+            let step = (1 << lod) as f32;
+            let theirs = ground(&fr, lod);
+            // The left chunk's last row of vertices lies in the right
+            // one's first cells: the same points, so the meshes join.
+            let shared: Vec<_> = ground(&fl, lod)
+                .into_iter()
+                .filter(|p| p[0] > n && p[0] < n + step && p[1] > 0.0 && p[1] < n)
+                .collect();
+            assert!(!shared.is_empty(), "level {lod}");
+            for p in shared {
+                assert!(
+                    theirs.iter().any(|q| (q[0] + n - p[0]).abs() < 1e-3
+                        && (q[1] - p[1]).abs() < 1e-3
+                        && (q[2] - p[2]).abs() < 1e-3),
+                    "level {lod}: {p:?}"
+                );
+            }
+        }
+    }
+
+    /// Whether some triangle of `mesh` (moved `offset` along x) lies over
+    /// `(x, z)`.
+    fn covers(mesh: &(Vec<Vertex>, Vec<u32>), offset: f32, x: f32, z: f32) -> bool {
+        mesh.1.chunks(3).any(|t| {
+            let p = [t[0], t[1], t[2]].map(|i| {
+                let v = mesh.0[i as usize].position;
+                (v[0] + offset, v[2])
+            });
+            let side = |a: (f32, f32), b: (f32, f32)| (b.0 - a.0) * (z - a.1) - (b.1 - a.1) * (x - a.0);
+            let s = [side(p[0], p[1]), side(p[1], p[2]), side(p[2], p[0])];
+            s.iter().all(|&d| d >= 0.0) || s.iter().all(|&d| d <= 0.0)
+        })
+    }
+
+    #[test]
+    fn neighbours_on_any_levels_leave_no_gap_between_them() {
+        let left = DualContouringChunk::new(2, (0.0, 0.0, 0.0), 0);
+        let right = DualContouringChunk::new(2, (1.0, 0.0, 0.0), 0);
+        let (fl, fr) = (DensityField::new(&left, 8), DensityField::new(&right, 8));
+        let left: Vec<_> = (0..LODS).map(|lod| fl.surface_nets(1 << lod).unwrap()).collect();
+        let right: Vec<_> = (0..LODS).map(|lod| fr.surface_nets(1 << lod).unwrap()).collect();
+        for (a, mesh_a) in left.iter().enumerate() {
+            for (b, mesh_b) in right.iter().enumerate() {
+                for k in 0..60 {
+                    let z = 20.0 + k as f32 * 0.5;
+                    for x in [127.0, 127.5, 128.0, 128.5, 129.0] {
+                        assert!(
+                            covers(mesh_a, 0.0, x, z) || covers(mesh_b, CHUNK_SIZE_FLOAT, x, z),
+                            "gap at ({x}, {z}) between levels {a} and {b}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_finest_level_follows_the_ground() {
+        let chunk = DualContouringChunk::new(2, (0.0, 0.0, 0.0), 0);
+        let mesh = &chunk.meshes[0];
+        let indices = mesh.indices.as_ref().unwrap();
+        // The ground (not the skirt) lies where scatter and water put it.
+        for &i in &indices[..chunk.ground_indices] {
+            let v = mesh.vertices[i as usize];
+            let [x, y, z] = v.position;
+            assert!((y - chunk.ground_height(x, z)).abs() < 0.75, "{:?}", v.position);
+            let length = v.normal.iter().map(|c| c * c).sum::<f32>().sqrt();
+            assert!((length - 1.0).abs() < 1e-3 && v.normal[1] > 0.0);
+        }
+        // Triangles face out of the ground, as the normals do.
+        for t in indices[..chunk.ground_indices].chunks(3) {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| mesh.vertices[i as usize]);
+            let e1: [f32; 3] = std::array::from_fn(|k| b.position[k] - a.position[k]);
+            let e2: [f32; 3] = std::array::from_fn(|k| c.position[k] - a.position[k]);
+            let face_y = e1[2] * e2[0] - e1[0] * e2[2];
+            assert!(face_y >= -1e-4, "triangle facing down");
+        }
+        // The collider is the ground alone.
+        assert_eq!(chunk.get_indices().len() * 3, chunk.ground_indices);
+        assert!(indices.len() > chunk.ground_indices, "no skirt");
+    }
+
+    #[test]
+    fn a_chunk_without_ground_has_no_meshes() {
+        let chunk = DualContouringChunk::new(2, (0.0, 3.0, 0.0), 0);
+        assert!(chunk.meshes.is_empty());
     }
 }

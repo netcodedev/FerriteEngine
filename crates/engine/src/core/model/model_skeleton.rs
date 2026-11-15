@@ -120,6 +120,7 @@ impl Model {
                 set(root, &locals);
             }
         }
+        self.pose_changed();
     }
 
     pub fn apply_pose(&mut self, pose: &Pose) {
@@ -130,6 +131,7 @@ impl Model {
             }
         }
         self.position += root_translation * self.scale;
+        self.pose_changed();
     }
 
     fn render_child_bones(&self, bone: &Bone, root: cgmath::Matrix4<f32>) -> Vec<Line> {

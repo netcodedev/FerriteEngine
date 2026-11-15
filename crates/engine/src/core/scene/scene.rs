@@ -17,11 +17,13 @@ use crate::core::{
         plane::PlaneRenderer,
         text::TextRenderer,
         light::{
+            clusters::{ClusterBuffers, ClusterCamera},
             light::{self as lights, LightBuffer},
             shadow::{self, LightShadowMaps, ShadowPlanner},
             skylight::{SkyLight, SHADOW_CASCADES},
         },
         hdr::{self, Hdr, HdrSettings},
+        profiler::{self, Pass},
         sky::SkyRenderer,
         ssao::Ssao,
         texture::TextureRenderer,
@@ -34,6 +36,13 @@ use crate::core::{
 };
 
 use super::Scene;
+
+/// Every how many frames each of the sun's shadow cascades is drawn, near
+/// to far.
+const CASCADE_INTERVALS: [u64; SHADOW_CASCADES] = [1, 1, 2, 4];
+/// Metres the camera may move in a frame before every cascade is drawn
+/// again at once.
+const CASCADE_JUMP: f32 = 5.0;
 
 impl Scene {
     pub fn new() -> Self {
@@ -56,7 +65,12 @@ impl Scene {
             weather: RefCell::new(None),
             weather_maps: Cell::new(None),
             lights: RefCell::new(None),
+            light_clusters: RefCell::new(None),
             light_count: Cell::new(0),
+            frame_lighting: Cell::new(None),
+            drawn_cascades: Cell::new(None),
+            shadow_frame: Cell::new(0),
+            shadow_eye: Cell::new(None),
             light_sources: RefCell::new(Vec::new()),
             light_shadows: RefCell::new(None),
             shadow_planner: RefCell::new(ShadowPlanner::default()),
@@ -143,6 +157,7 @@ impl Scene {
         }
         // One square layer per cascade; the scene file's size is a layer's.
         self.shadow_fbo = Some(CascadedShadowMap::new(width.max(height), SHADOW_CASCADES as u32));
+        self.drawn_cascades.set(None);
         self.shadow_map_size = Some((width, height));
     }
 
@@ -208,6 +223,12 @@ impl Scene {
         self.light_count.get()
     }
 
+    /// The lighting looked up at the start of the frame being drawn, if one
+    /// is (see `frame_lighting`).
+    pub fn frame_lighting(&self) -> Option<Lighting> {
+        self.frame_lighting.get()
+    }
+
     /// Gather the scene's lights, keep the ones that matter for the camera
     /// and upload them for the shaders.
     fn upload_lights(&self) {
@@ -225,6 +246,17 @@ impl Scene {
         shadow::assign(&mut selected, eye);
         let mut buffer = self.lights.borrow_mut();
         buffer.get_or_insert_with(LightBuffer::new).upload(&selected);
+        let projection = camera.get_projection();
+        let cluster_camera = ClusterCamera {
+            view: camera.get_camera().get_matrix(),
+            projection: projection.get_matrix(),
+            near: projection.znear,
+            far: projection.get_zfar(),
+        };
+        self.light_clusters
+            .borrow_mut()
+            .get_or_insert_with(ClusterBuffers::new)
+            .upload(&cluster_camera, &selected);
         self.light_count.set(selected.len());
         *self.light_sources.borrow_mut() = selected;
     }
@@ -342,14 +374,32 @@ impl Scene {
     }
 
     fn render_passes(&self, window: &Window) {
+        // The clouds' noise, for the sky and the cloud shadows.
+        crate::core::renderer::sky::noise::bind();
+        self.frame_lighting.set(None);
+        self.frame_lighting.set(Lighting::from_scene(self));
+        profiler::begin_frame();
+        self.render_passes_lit(window);
+        profiler::end_frame();
+        // Whatever draws after the scene (previews, ...) has lights of its
+        // own, if any: not the scene's grid.
+        if let Some(clusters) = self.light_clusters.borrow().as_ref() {
+            clusters.disable();
+        }
+        self.frame_lighting.set(None);
+    }
+
+    fn render_passes_lit(&self, window: &Window) {
         let parent_transform = Matrix4::identity();
 
         // The weather's maps first: the snow layer needs them in the shadow
         // pass too.
+        profiler::mark(Pass::WeatherMaps);
         self.render_weather_maps(window);
         self.upload_lights();
 
         // Shadow Pass
+        profiler::mark(Pass::SunShadows);
         if let Some(shadow_fbo) = &self.shadow_fbo {
             if let Some(skylight) = self.get_component::<SkyLight>() {
                 unsafe {
@@ -357,7 +407,36 @@ impl Scene {
                     gl::ActiveTexture(gl::TEXTURE15);
                 }
                 shadow_fbo.texture().unbind_target();
-                for (index, cascade) in skylight.shadow_cascades().iter().enumerate() {
+                let frame = self.shadow_frame.get();
+                self.shadow_frame.set(frame.wrapping_add(1));
+                let eye = self
+                    .get_active_camera()
+                    .map(|camera| camera.get_camera().get_eye_position());
+                // A camera that jumped needs every cascade where it is now.
+                let jumped = match (eye, self.shadow_eye.get()) {
+                    (Some(eye), Some(last)) => (eye - last).magnitude() > CASCADE_JUMP,
+                    _ => true,
+                };
+                self.shadow_eye.set(eye);
+                let current = *skylight.shadow_cascades();
+                let mut drawn = match self.drawn_cascades.get() {
+                    Some(drawn) if !jumped => drawn,
+                    _ => {
+                        // All of them, this frame.
+                        self.drawn_cascades.set(None);
+                        current
+                    }
+                };
+                let redraw_all = self.drawn_cascades.get().is_none();
+                for (index, cascade) in current.iter().enumerate() {
+                    // The far cascades change little from frame to frame and
+                    // are drawn every few frames, staggered; the shaders use
+                    // the projection each was drawn with.
+                    let interval = CASCADE_INTERVALS[index];
+                    if !redraw_all && (frame + index as u64) % interval != 0 {
+                        continue;
+                    }
+                    drawn[index] = *cascade;
                     shadow_fbo.bind_cascade(index as u32);
                     window.clear_mask(gl::DEPTH_BUFFER_BIT);
                     for entity in self.entities.iter() {
@@ -365,11 +444,17 @@ impl Scene {
                     }
                     self.render_snow_layer(&cascade.view_projection, true);
                 }
+                self.drawn_cascades.set(Some(drawn));
+                if let Some(mut lighting) = self.frame_lighting.get() {
+                    lighting.shadow_cascades = Some(drawn);
+                    self.frame_lighting.set(Some(lighting));
+                }
                 FrameBuffer::unbind();
                 self.apply_viewport(window);
             }
         }
 
+        profiler::mark(Pass::LightShadows);
         self.render_light_shadows(window);
 
         // The passes since may have bound other textures where the weather's
@@ -382,28 +467,6 @@ impl Scene {
         if let Some(camera) = self.get_active_camera() {
             let view_projection = camera.get_view_projection();
 
-            // Ambient occlusion — the opaque scene's depth from the camera,
-            // and from it the occlusion the lit shaders darken their ambient
-            // light by.
-            let ambient_occlusion = self
-                .get_component::<SkyLight>()
-                .map(|skylight| *skylight.ambient_occlusion())
-                .filter(|settings| settings.enabled);
-            if let Some(settings) = ambient_occlusion {
-                let mut viewport = [0; 4];
-                unsafe { gl::GetIntegerv(gl::VIEWPORT, viewport.as_mut_ptr()) };
-                let mut ssao = self.ssao.borrow_mut();
-                let ssao = ssao.get_or_insert_with(Ssao::new);
-                ssao.begin_depth_pass(viewport[2], viewport[3]);
-                for entity in self.entities.iter() {
-                    entity.render(self, &view_projection, parent_transform);
-                }
-                self.render_snow_layer(&view_projection, true);
-                ssao.resolve(&camera.get_projection().get_matrix(), &settings);
-                ssao.bind_result();
-                self.apply_viewport(window);
-            }
-
             // Everything the camera sees goes into the HDR target, as big as
             // the viewport, and is tone mapped into the viewport at the end.
             let hdr_settings = self
@@ -411,14 +474,43 @@ impl Scene {
                 .map_or_else(HdrSettings::default, |skylight| *skylight.hdr());
             let mut hdr = self.hdr.borrow_mut();
             let hdr = hdr.get_or_insert_with(Hdr::new);
+            profiler::mark(Pass::DepthPrepass);
             hdr.begin();
-            if ambient_occlusion.is_some() {
-                self.ambient_occlusion_origin.set(Some([0, 0]));
-            }
+
+            // Ambient occlusion — the opaque scene's depth from the camera,
+            // and from it the occlusion the lit shaders darken their ambient
+            // light by. The depth is drawn into the HDR target and stays
+            // there: the shading pass below only shades the visible surface
+            // of each pixel (depth test LEQUAL against it).
+            let ambient_occlusion = self
+                .get_component::<SkyLight>()
+                .map(|skylight| *skylight.ambient_occlusion())
+                .filter(|settings| settings.enabled);
+            let depth_prepass = match (ambient_occlusion, hdr.view_framebuffer()) {
+                (Some(settings), Some((framebuffer, width, height))) => {
+                    let mut ssao = self.ssao.borrow_mut();
+                    let ssao = ssao.get_or_insert_with(Ssao::new);
+                    ssao.begin_depth_pass();
+                    for entity in self.entities.iter() {
+                        entity.render(self, &view_projection, parent_transform);
+                    }
+                    // Its full shape, trails and all, as the shading pass
+                    // draws it.
+                    self.render_snow_layer(&view_projection, false);
+                    ssao.take_depth(framebuffer, width, height);
+                    ssao.resolve(&camera.get_projection().get_matrix(), &settings);
+                    ssao.bind_result();
+                    hdr.rebind();
+                    self.ambient_occlusion_origin.set(Some([0, 0]));
+                    true
+                }
+                _ => false,
+            };
 
             // Sky pass — runs before opaque geometry so terrain/water overdraw
             // it naturally via the depth test. Depth write is disabled inside
             // the renderer so the sky never blocks scene geometry.
+            profiler::mark(Pass::Sky);
             if let Some(skylight) = self.get_component::<SkyLight>() {
                 let cam = camera.get_camera();
                 let proj = camera.get_projection();
@@ -446,9 +538,14 @@ impl Scene {
                     skylight.effective_cloud_type(),
                     skylight.clouds(),
                     skylight.weather().precipitation().1,
+                    // The opaque scene's depth, when it is drawn already.
+                    depth_prepass
+                        .then(|| self.ssao.borrow().as_ref().and_then(Ssao::depth_texture))
+                        .flatten(),
                 );
             }
 
+            profiler::mark(Pass::Opaque);
             if let Some(shadow_fbo) = &self.shadow_fbo {
                 unsafe {
                     gl::ActiveTexture(gl::TEXTURE15);
@@ -458,20 +555,28 @@ impl Scene {
             if let Some(maps) = self.light_shadows.borrow().as_ref() {
                 maps.bind();
             }
+            if depth_prepass {
+                unsafe { gl::DepthFunc(gl::LEQUAL) };
+            }
             for entity in self.entities.iter() {
                 entity.render(self, &view_projection, parent_transform);
             }
             self.render_snow_layer(&view_projection, false);
+            if depth_prepass {
+                unsafe { gl::DepthFunc(gl::LESS) };
+            }
             // Transparent pass — runs after every entity's opaque geometry is
             // in the depth buffer, so water with depth-write enabled correctly
             // depth-tests against the player and other dynamic geometry. It
             // reads a copy of the opaque scene (what lies under the water).
+            profiler::mark(Pass::Transparent);
             hdr.capture_opaque();
             for entity in self.entities.iter() {
                 entity.render_transparent(self, &view_projection, parent_transform);
             }
             self.render_precipitation(&view_projection);
             self.ambient_occlusion_origin.set(None);
+            profiler::mark(Pass::Post);
             hdr.finish(&hdr_settings);
             self.weather_maps.set(None);
             self.light_count.set(0);
@@ -553,11 +658,13 @@ impl Scene {
                 entity.render(self, &view_projection, Matrix4::identity());
             }
             targets.exposure.end();
-            let view_projection = targets.exposure.begin_ground();
-            for entity in self.entities.iter() {
-                entity.render(self, &view_projection, Matrix4::identity());
+            if targets.exposure.ground_due() {
+                let view_projection = targets.exposure.begin_ground();
+                for entity in self.entities.iter() {
+                    entity.render(self, &view_projection, Matrix4::identity());
+                }
+                targets.exposure.end();
             }
-            targets.exposure.end();
             if let Some((_, range)) = targets.exposure.projection() {
                 targets.shelter.update(&targets.exposure, range);
             }

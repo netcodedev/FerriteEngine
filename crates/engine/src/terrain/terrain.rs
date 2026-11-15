@@ -27,6 +27,7 @@ use crate::core::{
         line::Line,
         pbr::Lighting,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
+        weather::exposure,
     },
     physics::physics_engine::{collider_tag, PhysicsEngine},
     scene::{scene_file::ComponentData, Scene},
@@ -46,6 +47,37 @@ const SCATTER_PLANTINGS_PER_FRAME: usize = 4;
 /// Seconds the seed has to stay untouched before the terrain is rebuilt, so
 /// typing a number does not regenerate on every digit.
 const RESEED_DELAY: f64 = 0.6;
+
+/// A chunk as the loader threads send it: generated, with its collider
+/// built there too (the trimesh and its edge fixing are the slow part of
+/// adding a chunk), so the main thread only has to insert them.
+pub(super) struct LoadedChunk<T> {
+    chunk: T,
+    collider: Collider,
+}
+
+impl<T: Chunk> LoadedChunk<T> {
+    fn new(chunk: T) -> Self {
+        let vertices: Vec<Vector> = chunk
+            .get_vertices()
+            .iter()
+            .map(|v| Vector::new(v[0], v[1], v[2]))
+            .collect();
+        let position = chunk.get_position();
+        let collider = ColliderBuilder::trimesh_with_flags(
+            vertices,
+            chunk.get_indices(),
+            // FIX_INTERNAL_EDGES computes pseudo-normals on shared triangle edges,
+            // preventing ghost-collision impulses that launch the player into the air.
+            TriMeshFlags::FIX_INTERNAL_EDGES,
+        )
+        .expect("Failed to create collider")
+        .translation(Vector::new(position.x, position.y, position.z))
+        .user_data(collider_tag::TERRAIN)
+        .build();
+        Self { chunk, collider }
+    }
+}
 
 impl ChunkBounds {
     pub fn parse(position: cgmath::Vector3<f32>) -> Self {
@@ -74,6 +106,15 @@ impl ChunkBounds {
             && position.y < self.max.1 as f32
             && position.z >= self.min.2 as f32
             && position.z < self.max.2 as f32
+    }
+
+    /// Distance from `point` to the nearest point of the bounds, across
+    /// the ground (x and z).
+    pub fn distance_xz(&self, point: Point3<f32>) -> f32 {
+        let gap = |p: f32, min: i32, max: i32| (min as f32 - p).max(p - max as f32).max(0.0);
+        let dx = gap(point.x, self.min.0, self.max.0);
+        let dz = gap(point.z, self.min.2, self.max.2);
+        (dx * dx + dz * dz).sqrt()
     }
 
     pub fn center(&self) -> Point3<f32> {
@@ -142,10 +183,10 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
 
     /// Generate the origin chunk and start the worker threads for the rest.
     /// They stop on their own once the returned receiver is dropped.
-    fn start_chunkloaders(seed: u64) -> Receiver<T> {
+    fn start_chunkloaders(seed: u64) -> Receiver<LoadedChunk<T>> {
         let (tx, rx) = mpsc::channel();
-        let origin = T::new(seed, (0.0, 0.0, 0.0), 0);
-        tx.send(origin).unwrap();
+        tx.send(LoadedChunk::new(T::new(seed, (0.0, 0.0, 0.0), 0)))
+            .unwrap();
 
         let tx1 = tx.clone();
         let tx2 = tx.clone();
@@ -172,6 +213,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
             }
         }
         self.chunk_receiver = Self::start_chunkloaders(self.seed);
+        exposure::world_changed();
     }
 
     /// Take the scattered instance whose collider is `collider` out of the
@@ -323,7 +365,13 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         }
     }
 
-    fn chunkloader(seed: u64, radius: i32, x_dir: i32, z_dir: i32, tx: Sender<T>) {
+    fn chunkloader(
+        seed: u64,
+        radius: i32,
+        x_dir: i32,
+        z_dir: i32,
+        tx: Sender<LoadedChunk<T>>,
+    ) {
         let mut x: i32 = 1;
         let mut z: i32 = 0;
 
@@ -337,7 +385,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
                 ((z * z_dir) as f32, 0.0, (x * x_dir) as f32)
             };
             let new_chunk = T::new(seed, position, max(x.abs(), z.abs()) as usize);
-            let result = tx.send(new_chunk);
+            let result = tx.send(LoadedChunk::new(new_chunk));
             if result.is_err() {
                 break;
             }
@@ -432,6 +480,37 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         }
     }
 
+    /// Set the uniforms of the terrain's shader that hold for every chunk:
+    /// the sun, sky and weather.
+    fn set_uniforms(&self, scene: &Scene) {
+        if let Some(skylight) = scene.get_component::<SkyLight>() {
+            let light_position = skylight.get_position();
+            self.shader.bind();
+            self.shader.set_uniform_3f(
+                "lightPosition",
+                light_position.x,
+                light_position.y,
+                light_position.z,
+            );
+            self.shader
+                .set_uniform_1f("cloudCoverage", skylight.effective_cloud_coverage());
+            self.shader
+                .set_uniform_1f("cloudType", skylight.effective_cloud_type());
+            let sun = skylight.get_sun_direction();
+            self.shader.set_uniform_3f("sunDirection", sun.x, sun.y, sun.z);
+            self.shader.set_uniform_1f(
+                "uTime",
+                START.elapsed().as_secs_f32(),
+            );
+
+            self.shader
+                .set_uniform_1i("isShadowPass", !hdr::draws_to_view() as i32);
+            if let Some(lighting) = Lighting::from_scene(scene) {
+                lighting.apply(&self.shader);
+            }
+        }
+    }
+
     pub fn get_mouse_picker(&self) -> &MousePicker {
         &self.mouse_picker
     }
@@ -449,7 +528,7 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             }
         }
         self.scatter.tick(delta_time);
-        if let Ok(mut chunk) = self.chunk_receiver.try_recv() {
+        if let Ok(LoadedChunk { mut chunk, collider }) = self.chunk_receiver.try_recv() {
             chunk.buffer_data();
             let mut chunk_exists = false;
             for existing_chunk in entity.get_with_own_component::<T>() {
@@ -465,23 +544,6 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                     entity.child_count(),
                     chunk.get_position()
                 ));
-                let vertices: Vec<Vector> = chunk
-                    .get_vertices()
-                    .iter()
-                    .map(|v| Vector::new(v[0], v[1], v[2]))
-                    .collect();
-                let position = chunk.get_position();
-                let collider = ColliderBuilder::trimesh_with_flags(
-                    vertices,
-                    chunk.get_indices(),
-                    // FIX_INTERNAL_EDGES computes pseudo-normals on shared triangle edges,
-                    // preventing ghost-collision impulses that launch the player into the air.
-                    TriMeshFlags::FIX_INTERNAL_EDGES,
-                )
-                .expect("Failed to create collider")
-                    .translation(Vector::new(position.x, position.y, position.z))
-                    .user_data(collider_tag::TERRAIN)
-                    .build();
                 // The chunk entity sits at the origin, so its fixed body does
                 // too; colliders keep their world placement while becoming
                 // removable together with the chunk.
@@ -497,6 +559,7 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 chunk_entity.add_component(chunk_body);
                 chunk_entity.set_transient(true);
                 entity.add_child(chunk_entity);
+                exposure::world_changed();
             }
         }
         self.sync_scatter(scene, entity);
@@ -565,37 +628,36 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
     fn render(
         &self,
         scene: &Scene,
-        _: &Entity,
-        _: &Matrix4<f32>,
-        _: &Matrix4<f32>,
+        entity: &Entity,
+        view_projection: &Matrix4<f32>,
+        transform: &Matrix4<f32>,
     ) {
-        if let Some(skylight) = scene.get_component::<SkyLight>() {
-            let light_position = skylight.get_position();
-            self.shader.bind();
-            self.shader.set_uniform_3f(
-                "lightPosition",
-                light_position.x,
-                light_position.y,
-                light_position.z,
-            );
-            self.shader
-                .set_uniform_1f("cloudCoverage", skylight.effective_cloud_coverage());
-            self.shader
-                .set_uniform_1f("cloudType", skylight.effective_cloud_type());
-            let sun = skylight.get_sun_direction();
-            self.shader.set_uniform_3f("sunDirection", sun.x, sun.y, sun.z);
-            self.shader.set_uniform_1f(
-                "uTime",
-                START.elapsed().as_secs_f32(),
-            );
-
-            self.shader
-                .set_uniform_1i("isShadowPass", !hdr::draws_to_view() as i32);
-            if let Some(lighting) = Lighting::from_scene(scene) {
-                lighting.apply(&self.shader);
+        self.set_uniforms(scene);
+        // The chunks, with the shader and textures set up once for all of
+        // them. Scattered models draw after them (as components of the chunk
+        // entities) and may use the same texture units.
+        self.bind_textures();
+        self.shader.bind();
+        self.shader.set_uniform_mat4("viewProjection", view_projection);
+        unsafe {
+            gl::Enable(gl::CULL_FACE);
+        }
+        // Every pass picks the same level of detail for a chunk, by its
+        // distance from the camera: the shadows fall from the ground that
+        // is drawn, and the depth prepass matches the shading pass.
+        let eye = Lighting::from_scene(scene).map(|lighting| lighting.camera_position);
+        for child in entity.get_children() {
+            let Some(chunk) = child.get_own_component::<T>() else {
+                continue;
+            };
+            let bounds = chunk.get_bounds();
+            if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, bounds) {
+                let distance = eye.map_or(0.0, |eye| bounds.distance_xz(eye));
+                chunk.draw(&self.shader, &(transform * child.local_transform()), distance);
             }
-            // The chunks are child entities and draw themselves right after
-            // this, with the uniforms set here (see `bind_textures`).
+        }
+        unsafe {
+            gl::Disable(gl::CULL_FACE);
         }
     }
 
@@ -640,8 +702,16 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
 
     pub fn buffer_data(&mut self) {
         let mut vertex_array = DynamicVertexArray::new();
-        vertex_array.buffer_data(&self.vertices, &self.indices.clone());
+        vertex_array.buffer_data(&self.vertices, &self.indices);
         self.vertex_array = Some(vertex_array);
+    }
+
+    /// Buffer the mesh and drop its copy in memory: only the GPU's is
+    /// left. Its vertices and indices read empty after this.
+    pub fn buffer_and_release(&mut self) {
+        self.buffer_data();
+        self.vertices = Vec::new();
+        self.indices = self.indices.as_ref().map(|_| Vec::new());
     }
 
     pub fn render(&self, shader: &Shader, transform: &Matrix4<f32>, scale: Option<f32>) {
@@ -658,7 +728,7 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
         if let Some(vertex_array) = &self.vertex_array {
             vertex_array.bind();
             unsafe {
-                if let Some(_) = &self.indices {
+                if self.indices.is_some() {
                     gl::DrawElements(
                         gl::TRIANGLES,
                         vertex_array.get_element_count() as i32,
@@ -666,7 +736,7 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
                         std::ptr::null(),
                     );
                 } else {
-                    gl::DrawArrays(gl::TRIANGLES, 0, self.vertices.len() as i32);
+                    gl::DrawArrays(gl::TRIANGLES, 0, vertex_array.get_element_count() as i32);
                 }
             }
         }
@@ -680,6 +750,9 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
     }
 
     pub fn get_triangle_count(&self) -> usize {
+        if let Some(vertex_array) = &self.vertex_array {
+            return vertex_array.get_element_count() / 3;
+        }
         if let Some(indices) = &self.indices {
             indices.len() / 3
         } else {

@@ -16,7 +16,6 @@ use crate::core::{
 pub const CHUNK_RADIUS: usize = 5;
 pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
-pub const USE_LOD: bool = false;
 
 pub mod dual_contouring;
 pub mod marching_cubes;
@@ -33,7 +32,7 @@ pub struct Terrain<T: Chunk> {
     scatter: scatter::Scatter,
     /// Editor toggle: draw chunk and scatter colliders as wireframes.
     show_colliders: bool,
-    chunk_receiver: mpsc::Receiver<T>,
+    chunk_receiver: mpsc::Receiver<terrain::LoadedChunk<T>>,
     shader: Shader,
     textures: Vec<Texture>,
     mouse_picker: MousePicker,
@@ -62,6 +61,14 @@ pub trait Chunk {
     fn scatter_points(&self, _salt: u64, _attempts: u32) -> Vec<(f32, f32, f32, f32)> {
         Vec::new()
     }
+
+    /// Draw the chunk's ground. The terrain calls this for each of its
+    /// chunks in view, with its `shader` bound and set up (uniforms,
+    /// textures, `viewProjection`); `transform` is the chunk entity's,
+    /// `distance` from the camera to the nearest point of the chunk (for
+    /// its level of detail).
+    /// Backends that draw themselves as components keep the default.
+    fn draw(&self, _shader: &Shader, _transform: &Matrix4<f32>, _distance: f32) {}
 
     /// Optional transparent/overlay pass rendered after ALL chunks' opaque geometry.
     /// Override this to render water, glass, etc. Default is a no-op.

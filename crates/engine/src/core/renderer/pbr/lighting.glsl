@@ -68,6 +68,48 @@ layout(std140, binding = 1) uniform Lights {
 };
 uniform int lightCount;        // 0 while no light buffer is meant
 
+// Clustered lighting (`light::clusters`): the lights that can reach each
+// cluster of the camera's view. Must match the bindings and the grid there.
+layout(std140, binding = 2) uniform LightClusterGrid {
+    mat4 clusterView;          // world to the camera's view space
+    vec4 clusterProjection;    // x, y: projection scale, z: near, w: ln(far/near)
+    ivec4 clusterDims;         // tiles across, tiles up, slices, 1: in use
+};
+layout(std430, binding = 3) readonly buffer LightClusterRanges {
+    uvec2 clusterRanges[];     // first index, count
+};
+layout(std430, binding = 4) readonly buffer LightClusterIndices {
+    uint clusterLights[];
+};
+
+// The lights to go through at `P`: `count` of them, from `first` in
+// `clusterLights`, or (first < 0) the first `count` of `lights`.
+ivec2 lightsAt(vec3 P) {
+    ivec2 all = ivec2(-1, lightCount);
+    if (lightCount <= 0 || clusterDims.w != 1) {
+        return all;
+    }
+    vec3 v = (clusterView * vec4(P, 1.0)).xyz;
+    float depth = -v.z;
+    if (depth <= 0.0) {
+        return all;
+    }
+    vec2 ndc = clusterProjection.xy * v.xy / depth;
+    float slice = log(max(depth, clusterProjection.z) / clusterProjection.z) / clusterProjection.w;
+    if (any(greaterThan(abs(ndc), vec2(1.0))) || slice > 1.0) {
+        return all;
+    }
+    ivec3 dims = clusterDims.xyz;
+    ivec3 cell = min(ivec3(vec3(ndc * 0.5 + 0.5, slice) * vec3(dims)), dims - 1);
+    uvec2 range = clusterRanges[(cell.z * dims.y + cell.y) * dims.x + cell.x];
+    return ivec2(range);
+}
+
+// The `k`th light of what `lightsAt` gave, as an index into `lights`.
+int lightAt(ivec2 list, int k) {
+    return list.x < 0 ? k : int(clusterLights[list.x + k]);
+}
+
 // Shadow cube maps of point and spot lights (`light::shadow`), one cube
 // per layer, with hardware depth comparison. Must match `SHADOW_NEAR`.
 const float LIGHT_SHADOW_NEAR = 0.05;
@@ -76,7 +118,7 @@ uniform samplerCubeArrayShadow lightShadowMaps;
 // Cascaded shadow map: one depth layer per cascade, nearest first. Must
 // match `SHADOW_CASCADES` in `light/skylight.rs`.
 const int SHADOW_CASCADES = 4;
-uniform sampler2DArray shadowMap;
+uniform sampler2DArrayShadow shadowMap;
 uniform mat4 lightProjections[SHADOW_CASCADES];
 // World size of one texel of each cascade.
 uniform float cascadeTexel[SHADOW_CASCADES];
@@ -109,20 +151,16 @@ float cascadeShadow(int cascade, vec3 worldPos, vec3 geometryNormal, vec3 L) {
     vec3 p = cascadeCoord(cascade, worldPos + geometryNormal * cascadeTexel[cascade] * 1.5);
     float bias = 0.0002 + 0.0004 * (1.0 - max(dot(geometryNormal, L), 0.0));
     float reference = p.z - bias;
-    // Bilinear 3x3 PCF: 4x4 texel tests weighted by where the point falls
-    // between texels, so shadow edges are smooth instead of texel steps.
-    ivec2 size = textureSize(shadowMap, 0).xy;
-    vec2 texel = p.xy * vec2(size) - 0.5;
-    ivec2 base = ivec2(floor(texel));
-    vec2 f = texel - floor(texel);
-    vec4 wx = vec4(1.0 - f.x, 1.0, 1.0, f.x);
-    vec4 wy = vec4(1.0 - f.y, 1.0, 1.0, f.y);
+    // Bilinear 3x3 PCF: 3x3 taps a texel apart, each comparing the 2x2
+    // texels around it in hardware and weighting them by where the point
+    // falls between them, so shadow edges are smooth instead of texel
+    // steps. (The same as 4x4 texel tests weighted 1-f, 1, 1, f per axis.)
+    vec2 texel = 1.0 / vec2(textureSize(shadowMap, 0).xy);
     float lit = 0.0;
-    for (int j = 0; j < 4; ++j) {
-        for (int i = 0; i < 4; ++i) {
-            ivec2 at = clamp(base + ivec2(i - 1, j - 1), ivec2(0), size - 1);
-            float depth = texelFetch(shadowMap, ivec3(at, cascade), 0).r;
-            lit += wx[i] * wy[j] * (reference > depth ? 0.0 : 1.0);
+    for (int j = -1; j <= 1; ++j) {
+        for (int i = -1; i <= 1; ++i) {
+            vec2 at = p.xy + vec2(i, j) * texel;
+            lit += texture(shadowMap, vec4(at, float(cascade), reference));
         }
     }
     return lit / 9.0;
@@ -301,7 +339,12 @@ float spotCone(Light l, vec3 L) {
 vec3 localLights(vec3 P, vec3 N, vec3 Ng, vec3 V, vec3 albedo, float roughness, float metallic,
                  vec3 F0) {
     vec3 sum = vec3(0.0);
-    for (int i = 0; i < lightCount; ++i) {
+    ivec2 list = lightsAt(P);
+    for (int k = 0; k < list.y; ++k) {
+        int i = lightAt(list, k);
+        if (i >= lightCount) {
+            continue;
+        }
         Light l = lights[i];
         int kind = int(l.directionKind.w + 0.5);
         vec3 L;
@@ -335,7 +378,12 @@ vec3 localLights(vec3 P, vec3 N, vec3 Ng, vec3 V, vec3 albedo, float roughness, 
 // lit all round such as falling snow (no surface, no shadow).
 vec3 localLightAt(vec3 P) {
     vec3 sum = vec3(0.0);
-    for (int i = 0; i < lightCount; ++i) {
+    ivec2 list = lightsAt(P);
+    for (int k = 0; k < list.y; ++k) {
+        int i = lightAt(list, k);
+        if (i >= lightCount) {
+            continue;
+        }
         Light l = lights[i];
         int kind = int(l.directionKind.w + 0.5);
         if (kind == LIGHT_DIRECTIONAL) {
@@ -372,7 +420,12 @@ vec3 localBounce(vec3 P, vec3 N) {
     if (lightBounce <= 0.0) {
         return sum;
     }
-    for (int i = 0; i < lightCount; ++i) {
+    ivec2 list = lightsAt(P);
+    for (int k = 0; k < list.y; ++k) {
+        int i = lightAt(list, k);
+        if (i >= lightCount) {
+            continue;
+        }
         Light l = lights[i];
         float bounce = l.radianceBounce.w * lightBounce * BOUNCE_STRENGTH;
         if (bounce <= 0.0) {

@@ -9,6 +9,44 @@
 in vec2 ndcPos;
 out vec4 FragColor;
 
+// Reprojection (`reproject` 1): this pass draws a quarter of the cloud
+// texels, one of each 2x2 block (`phase` in it) into a target half as big
+// each way; the others come from earlier frames (`reproject.glsl`).
+uniform int reproject;
+uniform ivec2 phase;
+// The size of the full cloud texture.
+uniform vec2 cloudSize;
+
+// The cloud texel this fragment computes (its centre, in pixels of the
+// full cloud texture). Set at the start of `main`.
+vec2 cloudPixel;
+
+// The opaque scene's depth at full size, when it is drawn before the sky
+// (`useSceneDepth`): where geometry covers every pixel this cloud texel
+// can blend into, the clouds are hidden and not marched.
+uniform sampler2D sceneDepth;
+uniform int useSceneDepth;
+
+// Full-size pixels per cloud texel, along x and y.
+uniform vec2 sceneDepthScale;
+
+// Whether opaque geometry covers every full-size pixel whose sky samples
+// this texel: the sky filters the cloud texture bilinearly, so the pixels
+// of the texels around it count too.
+bool hiddenByScene() {
+    ivec2 last = textureSize(sceneDepth, 0) - 1;
+    ivec2 lo = clamp(ivec2(floor((cloudPixel - 1.5) * sceneDepthScale)), ivec2(0), last);
+    ivec2 hi = clamp(ivec2(ceil((cloudPixel + 1.5) * sceneDepthScale)), ivec2(0), last);
+    for (int y = lo.y; y <= hi.y; ++y) {
+        for (int x = lo.x; x <= hi.x; ++x) {
+            if (texelFetch(sceneDepth, ivec2(x, y), 0).r >= 1.0) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // Raymarch steps through the low layer: more for a tall storm layer, so
 // its steps stay short enough not to turn edges into grain.
 const int   MARCH_STEPS_MIN = 56;
@@ -102,7 +140,7 @@ vec4 lowClouds(vec3 dir, float dayFactor) {
     // Per-pixel ray offset hides banding; stable over time (a changing
     // one would crawl without TAA), and weaker for grazing rays where it
     // would turn into density noise.
-    float jitter = hash12(gl_FragCoord.xy);
+    float jitter = hash12(cloudPixel);
     float startLod = clamp(tEnter / 4000.0, 0.0, 1.0);
     vec3 pos = camPos + dir * (tEnter + stepLen * jitter * mix(1.0, 0.15, startLod));
 
@@ -274,7 +312,17 @@ vec4 cirrusClouds(vec3 dir, float dayFactor) {
 }
 
 void main() {
-    vec3 dir = viewRay(ndcPos);
+    vec2 ndc = ndcPos;
+    cloudPixel = gl_FragCoord.xy;
+    if (reproject == 1) {
+        cloudPixel = floor(gl_FragCoord.xy) * 2.0 + vec2(phase) + 0.5;
+        ndc = cloudPixel / cloudSize * 2.0 - 1.0;
+    }
+    if (useSceneDepth == 1 && hiddenByScene()) {
+        FragColor = vec4(0.0);
+        return;
+    }
+    vec3 dir = viewRay(ndc);
     float dayFactor = dayFactorOf(sunDirection);
 
     // Front to back: the low layer covers the mid one, which covers the

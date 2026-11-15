@@ -7,6 +7,7 @@ use russimp_ng::{
 };
 
 use crate::core::{
+    view_frustum::ViewFrustum,
     assets::MaterialMap,
     renderer::{
         hdr,
@@ -69,10 +70,13 @@ impl Model {
             visible: None,
             hidden_bones: Vec::new(),
             tint: None,
+            bone_cache: Default::default(),
+            cull_bounds: None,
         })
     }
 
     pub fn init(&mut self) {
+        self.pose_changed();
         let materials = &self.model.materials;
         self.textures = Vec::with_capacity(materials.len());
         for material in materials {
@@ -194,6 +198,23 @@ impl Model {
             model_mesh.buffer_data();
             self.meshes.insert(mesh.name.clone(), model_mesh);
         }
+        self.cull_bounds = self.model_space_bounds();
+    }
+
+    /// See `cull_bounds`.
+    fn model_space_bounds(&self) -> Option<(Point3<f32>, Point3<f32>)> {
+        if self.meshes.values().any(|mesh| mesh.root_bone.is_some()) {
+            return None;
+        }
+        let mut vertices = self.model.meshes.iter().flat_map(|mesh| mesh.vertices.iter());
+        let first = vertices.next()?;
+        let mut min = Point3::new(first.x, first.y, first.z);
+        let mut max = min;
+        for v in vertices {
+            min = Point3::new(min.x.min(v.x), min.y.min(v.y), min.z.min(v.z));
+            max = Point3::new(max.x.max(v.x), max.y.max(v.y), max.z.max(v.z));
+        }
+        Some((min, max))
     }
 
     pub(super) fn material_name(material: &russimp_ng::material::Material) -> Option<String> {
@@ -223,6 +244,14 @@ impl Model {
         parent_transform: &Matrix4<f32>,
         camera_projection: &Matrix4<f32>,
     ) {
+        let model_transform = parent_transform
+            * Matrix4::from_translation(self.position.to_vec())
+            * Matrix4::from_scale(self.scale);
+        if let Some((min, max)) = self.cull_bounds {
+            if !ViewFrustum::is_box_visible(&(camera_projection * model_transform), min, max) {
+                return;
+            }
+        }
         self.shader.bind();
         lighting.apply(&self.shader);
         // Shadow maps and the editor's selection mask draw into their own
@@ -249,19 +278,28 @@ impl Model {
                 panic!("Mesh is not buffered");
             }
             if let Some(root_bone) = &mesh.root_bone {
-                let hidden: &[String] = if draws_to_screen { &self.hidden_bones } else { &[] };
-                let bone_transforms =
-                    Model::get_bone_transformations(root_bone, Matrix4::identity(), hidden, None);
-                let max_id = bone_transforms.iter().map(|(id, _)| *id).max().unwrap_or(0);
-                let array_size = std::cmp::min(max_id + 1, 100);
-                let mut sorted = vec![Matrix4::identity(); array_size];
-                for (id, transform) in bone_transforms {
-                    if id < sorted.len() {
-                        sorted[id] = transform;
+                let collapse = draws_to_screen && !self.hidden_bones.is_empty();
+                let mut cache = self.bone_cache[collapse as usize].borrow_mut();
+                if !cache.contains_key(name) {
+                    let hidden: &[String] = if collapse { &self.hidden_bones } else { &[] };
+                    let bone_transforms = Model::get_bone_transformations(
+                        root_bone,
+                        Matrix4::identity(),
+                        hidden,
+                        None,
+                    );
+                    let max_id = bone_transforms.iter().map(|(id, _)| *id).max().unwrap_or(0);
+                    let array_size = std::cmp::min(max_id + 1, 100);
+                    let mut sorted = vec![Matrix4::identity(); array_size];
+                    for (id, transform) in bone_transforms {
+                        if id < sorted.len() {
+                            sorted[id] = transform;
+                        }
                     }
+                    cache.insert(name.clone(), sorted);
                 }
                 self.shader
-                    .set_uniform_mat4_array("boneTransforms", &sorted);
+                    .set_uniform_mat4_array("boneTransforms", &cache[name]);
             } else {
                 // Unskinned mesh: vertices were authored with bone slot 0 + full
                 // weight (see ModelMesh::new), so feed the shader an identity at
@@ -363,6 +401,14 @@ impl Model {
     /// Bones to draw collapsed when drawing to the screen; see the field.
     pub fn set_hidden_bones(&mut self, names: Vec<String>) {
         self.hidden_bones = names;
+        self.pose_changed();
+    }
+
+    /// Drop the cached skinning matrices (see `bone_cache`).
+    pub(super) fn pose_changed(&mut self) {
+        for cache in &mut self.bone_cache {
+            cache.get_mut().clear();
+        }
     }
 
     /// Draw the model as a see-through, lit silhouette of `rgba` (alpha

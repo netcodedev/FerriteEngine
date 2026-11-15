@@ -6,7 +6,10 @@ use super::{
     renderer::{
         framebuffer::{CascadedShadowMap, ShadowFrameBuffer},
         hdr::Hdr,
+        light::skylight::{ShadowCascade, SHADOW_CASCADES},
+        pbr::Lighting,
         light::{
+            clusters::ClusterBuffers,
             light::{LightBuffer, LightSource},
             shadow::{LightShadowMaps, ShadowPlanner},
         },
@@ -55,6 +58,9 @@ pub struct Scene {
     weather_maps: Cell<Option<WeatherMaps>>,
     /// The scene's lights for the shaders, made on the first frame with one.
     lights: RefCell<Option<LightBuffer>>,
+    /// Which lights reach which part of the camera's view (see
+    /// `light::clusters`), built with the lights.
+    light_clusters: RefCell<Option<ClusterBuffers>>,
     /// How many lights the buffer holds while the scene is drawn.
     light_count: Cell<usize>,
     /// The lights in the buffer this frame, with their shadow layers.
@@ -63,6 +69,17 @@ pub struct Scene {
     light_shadows: RefCell<Option<LightShadowMaps>>,
     /// Which of their faces are drawn this frame.
     shadow_planner: RefCell<ShadowPlanner>,
+    /// The sun, sky and camera part of `Lighting` while the scene is drawn,
+    /// looked up once per frame instead of on every draw (see
+    /// `Lighting::from_scene`).
+    frame_lighting: Cell<Option<Lighting>>,
+    /// The sun's shadow cascades as their layers were last drawn (the far
+    /// ones are not drawn every frame), `None` to draw them all.
+    drawn_cascades: Cell<Option<[ShadowCascade; SHADOW_CASCADES]>>,
+    /// Frames drawn with the sun's shadows, to stagger the far cascades.
+    shadow_frame: Cell<u64>,
+    /// Where the camera was at the last shadow pass.
+    shadow_eye: Cell<Option<cgmath::Point3<f32>>>,
     /// Work queued with `Scene::defer`, run once every entity is updated.
     deferred: Vec<Box<dyn FnOnce(&mut Scene)>>,
 }

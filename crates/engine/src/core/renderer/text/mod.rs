@@ -31,6 +31,8 @@ pub struct TextRenderer {
     texture_buffer: Texture,
     pub width: u32,
     height: u32,
+    /// The size the shader's projection was last set for.
+    projection_for: Option<(u32, u32)>,
 }
 
 pub struct Text {

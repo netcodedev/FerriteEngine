@@ -399,6 +399,7 @@ impl Component for SkyLight {
             ),
             Property::ranged("altocumulus", self.clouds.altocumulus, 0.0, 1.0),
             Property::ranged("cirrus", self.clouds.cirrus, 0.0, 1.0),
+            Property::bool("cloud reprojection", self.clouds.reprojection),
             Property::ranged(
                 "moonlight",
                 self.global_illumination.moonlight,
@@ -503,6 +504,7 @@ impl Component for SkyLight {
             }
             ("altocumulus", PropertyValue::Float(v)) => self.clouds.set_altocumulus(v),
             ("cirrus", PropertyValue::Float(v)) => self.clouds.set_cirrus(v),
+            ("cloud reprojection", PropertyValue::Bool(v)) => self.clouds.reprojection = v,
             ("moonlight", PropertyValue::Float(v)) => self.global_illumination.set_moonlight(v),
             ("night sky light", PropertyValue::Float(v)) => {
                 self.global_illumination.set_night_sky(v)
