@@ -507,7 +507,11 @@ fn create_project(state: &State, args: Value) -> Result<Value, String> {
 /// Copy the player prefab's model and animations from the engine's own
 /// assets into the project at `dir` (as the engine does for a new project).
 fn copy_player_assets(dir: &Path) -> Result<usize, String> {
-    let engine_assets = engine_workspace().join("assets");
+    copy_player_assets_from(&engine_workspace().join("assets"), dir)
+}
+
+/// [`copy_player_assets`] from the assets folder `engine_assets`.
+fn copy_player_assets_from(engine_assets: &Path, dir: &Path) -> Result<usize, String> {
     let mut files = vec![
         PathBuf::from("models/Mannequin.fbx"),
         PathBuf::from("models/Mannequin.fbx.asset.ron"),
@@ -1532,11 +1536,42 @@ mod tests {
             json!({"path": new_dir.to_str().unwrap(), "open": false}),
         )
         .unwrap();
-        assert!(v["player_assets"]["copied"].as_u64().unwrap() > 2, "{v}");
-        assert!(new_dir.join("assets/models/Mannequin.fbx").is_file());
-        assert!(new_dir.join("assets/animations/Idle.fbx").is_file());
+        // The engine's `assets` folder is not in the repository (CI has
+        // none): then the project is made all the same and the answer says
+        // why the player assets are missing.
+        let engine_assets = engine_workspace().join("assets");
+        if engine_assets.join("models/Mannequin.fbx").is_file() {
+            assert!(v["player_assets"]["copied"].as_u64().unwrap() > 2, "{v}");
+            assert!(new_dir.join("assets/models/Mannequin.fbx").is_file());
+            assert!(new_dir.join("assets/animations/Idle.fbx").is_file());
+        } else {
+            assert!(v["player_assets"]["copied"].is_u64() || v["player_assets"]["error"].is_string(), "{v}");
+        }
+        assert!(new_dir.join("scenes/main.ron").is_file());
         // `open: false` keeps the old project.
         assert_eq!(state.dir(), dir);
+    }
+
+    #[test]
+    fn the_player_model_and_animations_are_copied_from_the_engine_assets() {
+        let (_, dir) = tmp_project("player-assets-from");
+        let engine_assets = dir.join("engine-assets");
+        let project = dir.join("new");
+        fs::create_dir_all(engine_assets.join("models")).unwrap();
+        fs::create_dir_all(engine_assets.join("animations")).unwrap();
+        fs::write(engine_assets.join("models/Mannequin.fbx"), "model").unwrap();
+        fs::write(engine_assets.join("models/Mannequin.fbx.asset.ron"), "meta").unwrap();
+        fs::write(engine_assets.join("models/Other.fbx"), "other").unwrap();
+        fs::write(engine_assets.join("animations/Idle.fbx"), "idle").unwrap();
+
+        assert_eq!(copy_player_assets_from(&engine_assets, &project), Ok(3));
+        assert!(project.join("assets/models/Mannequin.fbx").is_file());
+        assert!(project.join("assets/models/Mannequin.fbx.asset.ron").is_file());
+        assert!(project.join("assets/animations/Idle.fbx").is_file());
+        assert!(!project.join("assets/models/Other.fbx").exists());
+        // Files already there are kept.
+        assert_eq!(copy_player_assets_from(&engine_assets, &project), Ok(0));
+        assert!(copy_player_assets_from(&dir.join("nowhere"), &project).is_err());
     }
 
     #[test]
