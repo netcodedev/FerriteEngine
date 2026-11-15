@@ -2,6 +2,7 @@
 name = "ferrite_dylib"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 # The engine as a shared library. Everything that depends on this crate
 # links the engine (and its dependencies) dynamically, so the editor and the
