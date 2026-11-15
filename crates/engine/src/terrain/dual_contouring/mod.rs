@@ -1,3 +1,4 @@
+mod density;
 pub mod dual_contouring;
 mod water;
 
@@ -9,7 +10,8 @@ use crate::terrain::ChunkMesh;
 /// Must match the water threshold in the terrain vertex shader.
 pub const WATER_LEVEL: f32 = 44.0;
 
-/// Levels of detail of the ground: grids 1, 2, 4 and 8 metres apart.
+/// Levels of detail of the ground: the density field meshed from samples
+/// 1, 2, 4 and 8 metres apart.
 const LODS: usize = 4;
 /// Up to which distance from the camera (to the nearest point of a chunk,
 /// in metres) each level but the last is drawn.
@@ -25,6 +27,8 @@ pub struct DualContouringChunk {
     /// The ground at each level of detail, finest first (see
     /// `generate_meshes`); empty for chunks above the ground.
     meshes: Vec<ChunkMesh<Vertex>>,
+    /// Indices of the finest mesh that are ground; its skirt follows.
+    ground_indices: usize,
     /// Water surface grid, present only when some terrain in this chunk
     /// comes near WATER_LEVEL. It reaches under the shore (see `water`).
     water_mesh: Option<ChunkMesh<water::WaterVertex>>,

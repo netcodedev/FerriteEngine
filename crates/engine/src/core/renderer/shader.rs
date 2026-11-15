@@ -14,8 +14,11 @@ pub struct DynamicVertexArray<T> {
     id: GLuint,
     vbo: GLuint,
     ebo: GLuint,
-    current_vertex_data: Option<Vec<T>>,
-    indices: Option<Vec<u32>>,
+    /// What was buffered: vertices, and indices if any. The data itself
+    /// lives on the GPU only.
+    vertex_count: usize,
+    index_count: Option<usize>,
+    vertex_type: std::marker::PhantomData<T>,
 }
 
 pub trait VertexAttributes {
@@ -370,15 +373,16 @@ impl<T: VertexAttributes + Clone> DynamicVertexArray<T> {
             id: vao,
             vbo,
             ebo,
-            current_vertex_data: None,
-            indices: None,
+            vertex_count: 0,
+            index_count: None,
+            vertex_type: std::marker::PhantomData,
         }
     }
 
     pub fn buffer_data(&mut self, data: &Vec<T>, indices: &Option<Vec<u32>>) {
+        self.vertex_count = data.len();
+        self.index_count = indices.as_ref().map(Vec::len);
         if crate::core::headless::is_headless() {
-            self.current_vertex_data = Some(data.to_vec());
-            self.indices = indices.clone();
             return;
         }
         self.bind();
@@ -433,19 +437,9 @@ impl<T: VertexAttributes + Clone> DynamicVertexArray<T> {
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
         }
-        self.current_vertex_data = Some(data.to_vec());
-        self.indices = indices.clone();
     }
     pub fn get_element_count(&self) -> usize {
-        if let Some(indices) = &self.indices {
-            indices.len()
-        } else {
-            if let Some(current_vertex_data) = &self.current_vertex_data {
-                current_vertex_data.len()
-            } else {
-                0
-            }
-        }
+        self.index_count.unwrap_or(self.vertex_count)
     }
 
     pub fn bind(&self) {

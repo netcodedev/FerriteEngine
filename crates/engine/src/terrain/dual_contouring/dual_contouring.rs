@@ -57,14 +57,14 @@ const SCENE_DEPTH_UNIT: u32 = 12;
 
 
 use super::{
+    density::{add_skirt, DensityField},
     water::{self, WaterVertex},
     ChunkMesh, DualContouringChunk, Vertex, LODS, LOD_DISTANCES, SKIRT_DEPTH, SKIRT_DEPTH_PER_STEP,
 };
 
 impl DualContouringChunk {
-    /// The terrain's noise at chunk-local column `(x, z)`, 0..1. The ground
-    /// is a height field (see `ground_height`).
-    fn column_noise(&self, x: i32, z: i32) -> f32 {
+    /// The terrain's noise at chunk-local column `(x, z)`, 0..1.
+    pub(super) fn column_noise(&self, x: i32, z: i32) -> f32 {
         let offset: f64 = 16777216.0;
         let sample_point = (
             (self.position.0 * CHUNK_SIZE_FLOAT) as f64 + x as f64 + offset,
@@ -73,89 +73,37 @@ impl DualContouringChunk {
         ((1.0 + self.noise.sample([sample_point.0, sample_point.1])) / 2.0) as f32
     }
 
-    /// The ground's meshes, finest first: `LODS` grids over the height
-    /// field, a metre apart and then 2, 4 and 8. Their normals all come
-    /// from the full-detail heights, so the light on the ground does not
-    /// change when a chunk switches between them. Each has a skirt hanging
-    /// down from its edges, deeper the coarser it is, which hides the gaps
-    /// where a neighbour with another level meets it.
-    fn generate_meshes(&self) -> Vec<ChunkMesh<Vertex>> {
-        if self.position.1 != 0.0 {
-            return Vec::new();
-        }
-        // The heights one point beyond the chunk on every side, for the
-        // normals at its edges.
-        let span = CHUNK_SIZE as i32 + 3;
-        let mut heights = Vec::with_capacity((span * span) as usize);
-        for z in -1..=CHUNK_SIZE as i32 + 1 {
-            for x in -1..=CHUNK_SIZE as i32 + 1 {
-                heights.push(self.column_noise(x, z) * CHUNK_SIZE_FLOAT - 1.0);
+    /// The ground's meshes, finest first: surface nets over the density
+    /// field (see `DensityField`) sampled 1 metre apart, then 2, 4 and 8.
+    /// The field is a volume, so overhangs and caves mesh as well as hills.
+    /// The normals of every level come from the full-detail field, so the
+    /// light on the ground does not change when a chunk switches levels.
+    /// Each mesh has a skirt along its open edges, pushed into the ground,
+    /// deeper the coarser the level, which hides the gaps where a neighbour
+    /// drawn at another level meets it. Also returns how many indices of
+    /// the finest mesh are ground (before its skirt), for the collider.
+    fn generate_meshes(&self) -> (Vec<ChunkMesh<Vertex>>, usize) {
+        let coarsest = 1 << (LODS - 1);
+        let field = DensityField::new(self, coarsest);
+        let mut ground_indices = 0;
+        let mut meshes = Vec::with_capacity(LODS);
+        for lod in 0..LODS {
+            let step = 1 << lod;
+            let Some((mut vertices, mut indices)) = field.surface_nets(step) else {
+                // No ground in this chunk.
+                return (Vec::new(), 0);
+            };
+            if lod == 0 {
+                ground_indices = indices.len();
             }
+            add_skirt(
+                &mut vertices,
+                &mut indices,
+                SKIRT_DEPTH + SKIRT_DEPTH_PER_STEP * step as f32,
+            );
+            meshes.push(ChunkMesh::new(vertices, Some(indices)));
         }
-        let height = |x: i32, z: i32| heights[((z + 1) * span + (x + 1)) as usize];
-        let normal = |x: i32, z: i32| {
-            let n = [height(x - 1, z) - height(x + 1, z), 2.0, height(x, z - 1) - height(x, z + 1)];
-            let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
-            [n[0] / length, n[1] / length, n[2] / length]
-        };
-        (0..LODS)
-            .map(|lod| {
-                let step = 1 << lod;
-                let cells = CHUNK_SIZE as i32 / step;
-                let side = cells + 1;
-                let mut vertices = Vec::with_capacity((side * side + 4 * side) as usize);
-                for j in 0..side {
-                    for i in 0..side {
-                        let (x, z) = (i * step, j * step);
-                        vertices.push(Vertex {
-                            position: [x as f32, height(x, z), z as f32],
-                            normal: normal(x, z),
-                            color: [0.0, 0.5, 0.1],
-                        });
-                    }
-                }
-                let at = |i: i32, j: i32| (j * side + i) as u32;
-                let mut indices = Vec::with_capacity((cells * cells * 6 + 4 * cells * 12) as usize);
-                for j in 0..cells {
-                    for i in 0..cells {
-                        indices.extend_from_slice(&[
-                            at(i, j),
-                            at(i, j + 1),
-                            at(i + 1, j),
-                            at(i + 1, j),
-                            at(i, j + 1),
-                            at(i + 1, j + 1),
-                        ]);
-                    }
-                }
-                // The skirt: each edge again, lowered, joined to the edge by
-                // quads facing both ways.
-                let depth = SKIRT_DEPTH + SKIRT_DEPTH_PER_STEP * step as f32;
-                let edges: [Vec<(i32, i32)>; 4] = [
-                    (0..side).map(|i| (i, 0)).collect(),
-                    (0..side).map(|i| (i, cells)).collect(),
-                    (0..side).map(|j| (0, j)).collect(),
-                    (0..side).map(|j| (cells, j)).collect(),
-                ];
-                for edge in edges {
-                    let first = vertices.len() as u32;
-                    for &(i, j) in &edge {
-                        let mut lowered = vertices[at(i, j) as usize];
-                        lowered.position[1] -= depth;
-                        vertices.push(lowered);
-                    }
-                    for k in 0..edge.len() - 1 {
-                        let (top0, top1) = (at(edge[k].0, edge[k].1), at(edge[k + 1].0, edge[k + 1].1));
-                        let (low0, low1) = (first + k as u32, first + k as u32 + 1);
-                        indices.extend_from_slice(&[
-                            top0, low0, top1, top1, low0, low1, // one side
-                            top0, top1, low0, top1, low1, low0, // the other
-                        ]);
-                    }
-                }
-                ChunkMesh::new(vertices, Some(indices))
-            })
-            .collect()
+        (meshes, ground_indices)
     }
 
     /// The level of detail to draw at `distance` metres from the camera.
@@ -243,19 +191,22 @@ impl Chunk for DualContouringChunk {
             position,
             noise,
             meshes: Vec::new(),
+            ground_indices: 0,
             water_mesh: None,
         };
-        chunk.meshes = chunk.generate_meshes();
+        (chunk.meshes, chunk.ground_indices) = chunk.generate_meshes();
         chunk.water_mesh = chunk.generate_water_mesh();
         chunk
     }
 
     fn buffer_data(&mut self) {
+        // The collider is built (from the finest mesh) before this, so the
+        // copies in memory are not needed any more: the GPU has them.
         for mesh in &mut self.meshes {
-            mesh.buffer_data();
+            mesh.buffer_and_release();
         }
         if let Some(water_mesh) = &mut self.water_mesh {
-            water_mesh.buffer_data();
+            water_mesh.buffer_and_release();
         }
     }
 
@@ -327,7 +278,8 @@ impl Chunk for DualContouringChunk {
     }
 
     fn get_vertices(&self) -> Vec<[f32; 3]> {
-        // The finest level: the colliders follow the ground closely.
+        // The finest level: the colliders follow the ground closely. Empty
+        // once the chunk is buffered (see `buffer_data`).
         if let Some(mesh) = self.meshes.first() {
             mesh.vertices
                 .iter()
@@ -339,9 +291,11 @@ impl Chunk for DualContouringChunk {
     }
 
     fn get_indices(&self) -> Vec<[u32; 3]> {
+        // The ground without its skirt.
         if let Some(mesh) = self.meshes.first() {
             if let Some(indices) = &mesh.indices {
-                return indices.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+                let ground = &indices[..self.ground_indices.min(indices.len())];
+                return ground.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
             }
         }
         Vec::new()
@@ -472,23 +426,66 @@ mod tests {
         assert_eq!(DualContouringChunk::lod_at(5000.0), LODS - 1);
     }
 
+    fn positions(chunk: &DualContouringChunk, lod: usize) -> Vec<[f32; 3]> {
+        chunk.meshes[lod].vertices.iter().map(|v| v.position).collect()
+    }
+
     #[test]
     fn neighbours_meet_at_their_edge_on_every_level() {
         let left = DualContouringChunk::new(2, (0.0, 0.0, 0.0), 0);
         let right = DualContouringChunk::new(2, (1.0, 0.0, 0.0), 0);
         assert_eq!(left.meshes.len(), LODS);
+        let n = CHUNK_SIZE_FLOAT;
         for lod in 0..LODS {
-            let side = CHUNK_SIZE / (1 << lod) + 1;
-            for j in 0..side {
-                let a = left.meshes[lod].vertices[j * side + side - 1];
-                let b = right.meshes[lod].vertices[j * side];
-                assert_eq!(a.position[1], b.position[1]);
-                assert_eq!(a.position[2], b.position[2]);
-                assert_eq!(a.normal, b.normal);
+            let step = (1 << lod) as f32;
+            let theirs = positions(&right, lod);
+            // The left chunk's last row of vertices lies in the right
+            // one's first cells: the same points, so the meshes join.
+            let shared: Vec<_> = positions(&left, lod)
+                .into_iter()
+                .filter(|p| p[0] > n && p[0] < n + step && p[1] > 0.0 && p[1] < n)
+                .collect();
+            assert!(!shared.is_empty(), "level {lod}");
+            for p in shared {
+                assert!(
+                    theirs.iter().any(|q| (q[0] + n - p[0]).abs() < 1e-3
+                        && (q[1] - p[1]).abs() < 1e-3
+                        && (q[2] - p[2]).abs() < 1e-3),
+                    "level {lod}: {p:?}"
+                );
             }
         }
-        // The finest level follows the ground the scatter and water use.
-        let v = left.meshes[0].vertices[5 * (CHUNK_SIZE + 1) + 7];
-        assert!((v.position[1] - left.ground_height(7.0, 5.0)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_finest_level_follows_the_ground() {
+        let chunk = DualContouringChunk::new(2, (0.0, 0.0, 0.0), 0);
+        let mesh = &chunk.meshes[0];
+        let indices = mesh.indices.as_ref().unwrap();
+        // The ground (not the skirt) lies where scatter and water put it.
+        for &i in &indices[..chunk.ground_indices] {
+            let v = mesh.vertices[i as usize];
+            let [x, y, z] = v.position;
+            assert!((y - chunk.ground_height(x, z)).abs() < 0.75, "{:?}", v.position);
+            let length = v.normal.iter().map(|c| c * c).sum::<f32>().sqrt();
+            assert!((length - 1.0).abs() < 1e-3 && v.normal[1] > 0.0);
+        }
+        // Triangles face out of the ground, as the normals do.
+        for t in indices[..chunk.ground_indices].chunks(3) {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| mesh.vertices[i as usize]);
+            let e1: [f32; 3] = std::array::from_fn(|k| b.position[k] - a.position[k]);
+            let e2: [f32; 3] = std::array::from_fn(|k| c.position[k] - a.position[k]);
+            let face_y = e1[2] * e2[0] - e1[0] * e2[2];
+            assert!(face_y >= -1e-4, "triangle facing down");
+        }
+        // The collider is the ground alone.
+        assert_eq!(chunk.get_indices().len() * 3, chunk.ground_indices);
+        assert!(indices.len() > chunk.ground_indices, "no skirt");
+    }
+
+    #[test]
+    fn a_chunk_without_ground_has_no_meshes() {
+        let chunk = DualContouringChunk::new(2, (0.0, 3.0, 0.0), 0);
+        assert!(chunk.meshes.is_empty());
     }
 }
