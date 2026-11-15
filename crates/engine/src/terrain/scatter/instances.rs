@@ -1,3 +1,5 @@
+//! One chunk's placements of a layer and drawing them instanced.
+
 use std::cell::RefCell;
 
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, Vector3, Zero};

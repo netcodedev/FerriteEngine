@@ -1,3 +1,5 @@
+//! Ready-made effects to start from.
+
 use serde::{Deserialize, Serialize};
 
 use super::*;

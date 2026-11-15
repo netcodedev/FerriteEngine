@@ -1,3 +1,5 @@
+//! Reading tool arguments and the scene they name.
+
 use std::path::PathBuf;
 
 use serde_json::Value;

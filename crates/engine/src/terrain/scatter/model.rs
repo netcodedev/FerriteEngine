@@ -1,3 +1,5 @@
+//! Loading scatter models: their variants, LODs, GPU buffers and colliders.
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

@@ -1,3 +1,5 @@
+//! A model's materials and the textures they are given.
+
 use russimp_ng::material::TextureType;
 
 use crate::core::{assets::MaterialMap, renderer::texture::Texture};

@@ -1,3 +1,5 @@
+//! Gizmo drags: picking a handle and moving, turning or scaling with it.
+
 use cgmath::{
     EuclideanSpace, InnerSpace, Matrix3, Matrix4, Point3, Quaternion, Rad, Rotation, Rotation3,
     SquareMatrix, Vector3,

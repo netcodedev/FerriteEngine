@@ -1,3 +1,5 @@
+//! Scene file tools: reading and changing scene files on disk.
+
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};

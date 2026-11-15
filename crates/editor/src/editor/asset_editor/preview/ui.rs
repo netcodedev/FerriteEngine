@@ -1,3 +1,5 @@
+//! The preview as a UI element: drawing it and handling its input.
+
 use std::time::Instant;
 
 use cgmath::{InnerSpace, Matrix4, Point3, SquareMatrix, Transform, Vector3};

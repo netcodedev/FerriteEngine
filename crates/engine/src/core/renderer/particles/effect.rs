@@ -1,3 +1,5 @@
+//! What an effect looks like: its shape, look, blending and settings.
+
 use cgmath::{InnerSpace, Vector3};
 use serde::{Deserialize, Serialize};
 

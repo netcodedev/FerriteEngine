@@ -1,3 +1,5 @@
+//! The asset settings in the left column of the asset workspace.
+
 use cgmath::{InnerSpace, Vector3};
 use ferrite::core::{
     assets::{self, AssetId, AssetKind},

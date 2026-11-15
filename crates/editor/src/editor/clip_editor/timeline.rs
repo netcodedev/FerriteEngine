@@ -1,3 +1,5 @@
+//! The timeline below the preview: keys per bone over the clip's length.
+
 use cgmath::{InnerSpace, Matrix4, Point3, Vector3};
 use ferrite::core::{
     model::clip_file::KEY_EPSILON,

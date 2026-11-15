@@ -1,3 +1,5 @@
+//! The `ParticleEmitter` component and one-shot bursts.
+
 use std::cell::{Cell, RefCell};
 
 use cgmath::{Matrix4, Point3, SquareMatrix, Vector3};

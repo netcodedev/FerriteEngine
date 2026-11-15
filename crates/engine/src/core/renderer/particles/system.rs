@@ -1,3 +1,5 @@
+//! Simulating an effect's particles on the CPU.
+
 use cgmath::{InnerSpace, Matrix4, Vector3, Vector4};
 
 use super::*;

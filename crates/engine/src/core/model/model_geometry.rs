@@ -1,3 +1,5 @@
+//! A model's geometry: submeshes, variants, vertices and indices.
+
 use super::Model;
 
 impl Model {

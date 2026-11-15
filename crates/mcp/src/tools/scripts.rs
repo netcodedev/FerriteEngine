@@ -1,3 +1,5 @@
+//! Script tools: reading, writing and building the project's scripts.
+
 use std::{
     path::{Path, PathBuf},
     process::Command,

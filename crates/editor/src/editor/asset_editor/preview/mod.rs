@@ -1,3 +1,6 @@
+//! The preview of the asset being edited, where the scene viewport normally
+//! is.
+
 use std::time::Instant;
 
 use cgmath::{

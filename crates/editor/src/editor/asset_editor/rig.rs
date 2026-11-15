@@ -1,3 +1,6 @@
+//! Skinned models in the preview: a posed model, one held in the player's
+//! hand, and the drags on them.
+
 use std::{path::PathBuf, time::Instant};
 
 use cgmath::{EuclideanSpace, Matrix4, Point3, SquareMatrix, Vector3};

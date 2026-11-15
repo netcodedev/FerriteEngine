@@ -1,3 +1,5 @@
+//! Scatter layers: a model plus a density, as stored and as loaded.
+
 use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};

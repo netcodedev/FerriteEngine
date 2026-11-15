@@ -1,3 +1,5 @@
+//! Line shapes the viewport draws: gizmo handles and markers.
+
 use cgmath::{InnerSpace, Matrix4, Point3, Vector3};
 use ferrite::core::renderer::line::{Line, LineRenderer};
 

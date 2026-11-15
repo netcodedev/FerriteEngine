@@ -1,3 +1,5 @@
+//! A model's bones: posing, IK skeletons and drawing them.
+
 use std::{collections::HashMap, rc::Rc};
 
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3, Vector4, Zero};

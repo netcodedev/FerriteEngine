@@ -1,3 +1,6 @@
+//! Drawing helpers for the preview: projecting points and drawing lines and
+//! skeletons.
+
 use cgmath::{InnerSpace, Matrix4, Point3, Vector3};
 use ferrite::core::renderer::line::{Line, LineRenderer};
 

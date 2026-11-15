@@ -1,3 +1,6 @@
+//! `editor_*` tools: changes to the scene open in a running editor, through
+//! its bridge.
+
 use serde_json::{json, Value};
 
 use crate::bridge;

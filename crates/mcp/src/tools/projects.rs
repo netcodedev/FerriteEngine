@@ -1,3 +1,5 @@
+//! Project tools: creating, opening and describing projects.
+
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};

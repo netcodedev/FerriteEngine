@@ -1,3 +1,5 @@
+//! The tools this server offers, with their input schemas (`tools/list`).
+
 use serde_json::{json, Value};
 
 use super::*;
