@@ -1,0 +1,22 @@
+[package]
+name = "ferrite-mcp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Model Context Protocol server for Ferrite projects"
+
+[[bin]]
+name = "ferrite-mcp"
+path = "src/main.rs"
+
+[lib]
+name = "ferrite_mcp"
+path = "src/lib.rs"
+
+[dependencies]
+# Pure on-disk work — no engine link, no GL. The MCP server reads and edits
+# project files (`.fp`, scene `.ron` files) the way the editor would, but
+# without a GPU context.
+ron = "0.12.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

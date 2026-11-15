@@ -167,6 +167,9 @@ impl Projection {
     }
 }
 
+/// Degrees the camera turns per pixel the mouse moves, by default.
+pub const DEFAULT_MOUSE_SENSITIVITY: f32 = 0.12;
+
 #[derive(Debug)]
 pub struct CameraController {
     amount_left: f32,
@@ -176,12 +179,20 @@ pub struct CameraController {
     amount_up: f32,
     amount_down: f32,
     speed: DataSource<f32>,
-    /// Set by PlayerController each frame; when false this controller is a no-op.
+    /// Degrees per pixel of mouse movement while flying.
+    sensitivity: f32,
+    /// Mouse movement not yet applied, in pixels.
+    pending_look: (f32, f32),
+    last_cursor: Option<(f64, f64)>,
+    /// Whether this controller flies the camera (WASD or arrow keys, Space
+    /// and Shift for up and down, the mouse to look while the cursor is
+    /// captured). A player controller turns it off while it drives the
+    /// camera itself.
     pub is_free: bool,
 }
 
 impl CameraController {
-    pub fn new(speed: f32, _sensitivity: f32) -> Self {
+    pub fn new(speed: f32, sensitivity: f32) -> Self {
         Self {
             amount_left: 0.0,
             amount_right: 0.0,
@@ -190,6 +201,9 @@ impl CameraController {
             amount_up: 0.0,
             amount_down: 0.0,
             speed: DataSource::new(speed),
+            sensitivity,
+            pending_look: (0.0, 0.0),
+            last_cursor: None,
             is_free: false,
         }
     }
@@ -209,85 +223,88 @@ impl CameraController {
         }
     }
 
+    pub fn get_sensitivity(&self) -> f32 {
+        self.sensitivity
+    }
+
+    pub fn set_sensitivity(&mut self, sensitivity: f32) {
+        self.sensitivity = sensitivity.max(0.0);
+    }
+
+    /// Track a key; returns whether it is one of the flying keys.
+    pub fn process_key(&mut self, key: Key, action: Action) -> bool {
+        if !self.is_free {
+            return false;
+        }
+        let value = match action {
+            Action::Press => 1.0,
+            Action::Release => 0.0,
+            Action::Repeat => return true,
+        };
+        let amount = match key {
+            Key::W | Key::Up => &mut self.amount_forward,
+            Key::S | Key::Down => &mut self.amount_backward,
+            Key::A | Key::Left => &mut self.amount_left,
+            Key::D | Key::Right => &mut self.amount_right,
+            Key::Space | Key::E => &mut self.amount_up,
+            Key::LeftShift | Key::Q => &mut self.amount_down,
+            _ => return false,
+        };
+        *amount = value;
+        true
+    }
+
     pub fn process_keyboard(
         &mut self,
         _window: &mut glfw::Window,
         event: &glfw::WindowEvent,
     ) -> bool {
-        if !self.is_free {
-            return false;
-        }
         match event {
-            glfw::WindowEvent::Key(Key::Up, _, action, _) => {
-                self.amount_forward = match action {
-                    Action::Press => 1.0,
-                    Action::Release => 0.0,
-                    _ => return false,
-                };
-                true
-            }
-            glfw::WindowEvent::Key(Key::Down, _, action, _) => {
-                self.amount_backward = match action {
-                    Action::Press => 1.0,
-                    Action::Release => 0.0,
-                    _ => return false,
-                };
-                true
-            }
-            glfw::WindowEvent::Key(Key::Left, _, action, _) => {
-                self.amount_left = match action {
-                    Action::Press => 1.0,
-                    Action::Release => 0.0,
-                    _ => return false,
-                };
-                true
-            }
-            glfw::WindowEvent::Key(Key::Right, _, action, _) => {
-                self.amount_right = match action {
-                    Action::Press => 1.0,
-                    Action::Release => 0.0,
-                    _ => return false,
-                };
-                true
-            }
-            glfw::WindowEvent::Key(Key::Space, _, action, _) => {
-                self.amount_up = match action {
-                    Action::Press => 1.0,
-                    Action::Release => 0.0,
-                    _ => return false,
-                };
-                true
-            }
-            glfw::WindowEvent::Key(Key::LeftShift, _, action, _) => {
-                self.amount_down = match action {
-                    Action::Press => 1.0,
-                    Action::Release => 0.0,
-                    _ => return false,
-                };
-                true
-            }
+            glfw::WindowEvent::Key(key, _, action, _) => self.process_key(*key, *action),
             _ => false,
         }
     }
 
-    pub fn process_mouse(&mut self, _window: &mut glfw::Window, event: &glfw::WindowEvent) {
-        if let glfw::WindowEvent::Scroll(_, y) = event {
-            self.set_speed(self.speed.read() + (*y as f32 * 10.0));
+    /// Track the cursor; `captured` is whether the game holds the mouse
+    /// (cursor disabled). Only a captured cursor turns the camera.
+    pub fn process_cursor(&mut self, x: f64, y: f64, captured: bool) {
+        if let (true, true, Some((last_x, last_y))) = (self.is_free, captured, self.last_cursor) {
+            self.pending_look.0 += (x - last_x) as f32;
+            self.pending_look.1 += (y - last_y) as f32;
+        }
+        self.last_cursor = Some((x, y));
+    }
+
+    pub fn process_mouse(&mut self, window: &mut glfw::Window, event: &glfw::WindowEvent) {
+        match event {
+            glfw::WindowEvent::Scroll(_, y) => {
+                self.set_speed(self.speed.read() + (*y as f32 * 10.0));
+            }
+            glfw::WindowEvent::CursorPos(x, y) => {
+                let captured = window.get_cursor_mode() == glfw::CursorMode::Disabled;
+                self.process_cursor(*x, *y, captured);
+            }
+            _ => {}
         }
     }
 
     pub fn update_camera(&mut self, camera: &mut Camera, delta_time: f32) {
         if !self.is_free {
+            self.pending_look = (0.0, 0.0);
             return;
         }
 
-        let (yaw_sin, yaw_cos) = camera.yaw.0.sin_cos();
+        let (dx, dy) = std::mem::take(&mut self.pending_look);
+        let turn = self.sensitivity.to_radians();
+        let yaw = Rad(camera.yaw.0 + dx * turn);
+        let limit = 89f32.to_radians();
+        let pitch = Rad((camera.pitch.0 - dy * turn).clamp(-limit, limit));
+
+        let (yaw_sin, yaw_cos) = yaw.0.sin_cos();
         let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
         let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
 
         let mut position = camera.relative_position;
-        let yaw = camera.yaw;
-        let pitch = camera.pitch;
         let speed = self.speed.read();
 
         position += forward * (self.amount_forward - self.amount_backward) * speed * delta_time;
@@ -295,5 +312,119 @@ impl CameraController {
         position.y += (self.amount_up - self.amount_down) * speed * delta_time;
 
         camera.update(position, yaw, pitch);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cgmath::{Deg, SquareMatrix};
+
+    fn projection() -> Projection {
+        Projection::new(1600, 900, Deg(60.0), 0.1, 1000.0)
+    }
+
+    #[test]
+    fn a_new_projection_has_the_frame_aspect() {
+        let p = projection();
+        assert!((p.aspect - (1600.0 / 900.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn set_aspect_only_rebuilds_when_the_value_changes() {
+        let mut p = projection();
+        let before = p.get_matrix();
+        p.set_aspect(p.aspect);
+        assert_eq!(before, p.get_matrix());
+        p.set_aspect(1.0);
+        assert_ne!(before, p.get_matrix());
+    }
+
+    #[test]
+    fn set_aspect_rejects_zero_and_non_finite() {
+        let mut p = projection();
+        let before = p.get_matrix();
+        p.set_aspect(0.0);
+        p.set_aspect(f32::NAN);
+        p.set_aspect(-1.0);
+        assert_eq!(before, p.get_matrix());
+    }
+
+    #[test]
+    fn set_clip_keeps_znear_positive_and_zfar_above_znear() {
+        let mut p = projection();
+        p.set_clip(-5.0, -10.0);
+        assert!(p.znear > 0.0);
+        assert!(p.get_zfar() > p.znear);
+    }
+
+    #[test]
+    fn a_camera_matrix_at_the_origin_is_not_identity() {
+        // Looking down +x from the origin: the view matrix is a rotation,
+        // not the identity.
+        let mut cam = Camera::new((0.0, 0.0, 0.0), Rad(0.0), Rad(0.0));
+        cam.update(Point3::new(0.0, 0.0, 0.0), Rad(0.0), Rad(0.0));
+        assert_ne!(cam.get_matrix(), Matrix4::identity());
+    }
+
+    #[test]
+    fn a_controller_that_is_not_free_ignores_input() {
+        let mut controller = CameraController::new(10.0, DEFAULT_MOUSE_SENSITIVITY);
+        let mut cam = Camera::new((0.0, 0.0, 0.0), Rad(0.0), Rad(0.0));
+        assert!(!controller.process_key(Key::W, Action::Press));
+        controller.process_cursor(0.0, 0.0, true);
+        controller.process_cursor(100.0, 0.0, true);
+        controller.update_camera(&mut cam, 1.0);
+        assert_eq!(cam.get_eye_position(), Point3::new(0.0, 0.0, 0.0));
+        assert_eq!(cam.get_yaw(), Rad(0.0));
+    }
+
+    #[test]
+    fn a_free_controller_flies_with_wasd_and_the_arrow_keys() {
+        let mut controller = CameraController::new(10.0, DEFAULT_MOUSE_SENSITIVITY);
+        controller.is_free = true;
+        let mut cam = Camera::new((0.0, 0.0, 0.0), Rad(0.0), Rad(0.0));
+        // Yaw 0 looks along +x.
+        assert!(controller.process_key(Key::W, Action::Press));
+        controller.update_camera(&mut cam, 0.5);
+        assert!((cam.get_eye_position().x - 5.0).abs() < 1e-4);
+        controller.process_key(Key::W, Action::Release);
+        controller.process_key(Key::Up, Action::Press);
+        controller.process_key(Key::Space, Action::Press);
+        controller.update_camera(&mut cam, 0.5);
+        let eye = cam.get_eye_position();
+        assert!((eye.x - 10.0).abs() < 1e-4);
+        assert!((eye.y - 5.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_free_controller_looks_around_only_with_a_captured_cursor() {
+        let mut controller = CameraController::new(10.0, 1.0);
+        controller.is_free = true;
+        let mut cam = Camera::new((0.0, 0.0, 0.0), Rad(0.0), Rad(0.0));
+        // A free cursor (over the UI) does not turn the camera.
+        controller.process_cursor(0.0, 0.0, false);
+        controller.process_cursor(50.0, 0.0, false);
+        controller.update_camera(&mut cam, 0.0);
+        assert_eq!(cam.get_yaw(), Rad(0.0));
+        // Captured: 30 px right and 10 px up at 1°/px.
+        controller.process_cursor(80.0, -10.0, true);
+        controller.update_camera(&mut cam, 0.0);
+        assert!((Deg::from(cam.get_yaw()).0 - 30.0).abs() < 1e-3);
+        assert!((Deg::from(cam.get_pitch()).0 - 10.0).abs() < 1e-3);
+        // Pitch stops short of straight up.
+        controller.process_cursor(80.0, -1000.0, true);
+        controller.update_camera(&mut cam, 0.0);
+        assert!(Deg::from(cam.get_pitch()).0 <= 89.0 + 1e-3);
+    }
+
+    #[test]
+    fn get_eye_position_follows_position_and_relative() {
+        let mut cam = Camera::new((10.0, 0.0, 0.0), Rad(0.0), Rad(0.0));
+        cam.set_relative_position((1.0, 2.0, 3.0));
+        let eye = cam.get_eye_position();
+        assert!((eye.x - 11.0).abs() < 1e-5);
+        assert!((eye.y - 2.0).abs() < 1e-5);
+        assert!((eye.z - 3.0).abs() < 1e-5);
     }
 }

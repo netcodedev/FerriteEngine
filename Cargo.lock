@@ -753,6 +753,7 @@ name = "ferrite"
 version = "0.1.0"
 dependencies = [
  "as-any",
+ "base64 0.22.1",
  "bincode",
  "cgmath",
  "ctrlc",
@@ -775,12 +776,14 @@ dependencies = [
  "russimp-ng",
  "rusttype",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "ferrite-editor"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "cgmath",
  "env_logger",
  "ferrite",
@@ -788,9 +791,11 @@ dependencies = [
  "ferrite_dylib",
  "gl",
  "glfw",
+ "image",
  "libloading",
  "log",
  "rfd",
+ "serde_json",
 ]
 
 [[package]]
@@ -798,6 +803,15 @@ name = "ferrite-game"
 version = "0.1.0"
 dependencies = [
  "ferrite",
+]
+
+[[package]]
+name = "ferrite-mcp"
+version = "0.1.0"
+dependencies = [
+ "ron",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

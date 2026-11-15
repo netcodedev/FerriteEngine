@@ -15,6 +15,7 @@ use crate::{
                 animation_component::AnimationComponent, camera_component::CameraComponent,
                 debug_component::DebugController, missing_component::MissingComponent,
                 model_component::ModelComponent,
+                shape_component::{ShapeComponent, ShapeKind},
             },
             Entity, EntityHandle,
         },
@@ -82,6 +83,10 @@ pub enum ComponentData {
         near: f32,
         far: f32,
         speed: f32,
+        /// Flies with WASD and the mouse when nothing else (a player
+        /// controller) drives it. Missing in older scenes: off.
+        #[serde(default)]
+        free: bool,
     },
     SkyLight {
         time_of_day: f32,
@@ -122,6 +127,12 @@ pub enum ComponentData {
     Model {
         asset: AssetRef,
     },
+    /// A cube, sphere or cylinder in one colour (sRGB, 0 to 1), one metre
+    /// across. Needs no asset.
+    Shape {
+        kind: ShapeKind,
+        color: [f32; 3],
+    },
     /// A component written in a game crate (see `core::script`), by name,
     /// with the data it is built from.
     Script {
@@ -146,6 +157,7 @@ impl ComponentData {
             ComponentData::Player => "Player",
             ComponentData::AnimationGraph { .. } => "Animation",
             ComponentData::Model { .. } => "Model",
+            ComponentData::Shape { .. } => "Shape",
             ComponentData::Script { name, .. } => return format!("Script {name}"),
         }
         .to_string()
@@ -167,6 +179,7 @@ impl ComponentData {
             ("Sky light".into(), ComponentData::default_sky_light()),
             ("Terrain".into(), ComponentData::bare_terrain(2)),
             ("Debug controller".into(), ComponentData::DebugController),
+            ("Shape".into(), ComponentData::default_shape()),
         ]
     }
 
@@ -179,6 +192,14 @@ impl ComponentData {
             near: 0.1,
             far: 1000.0,
             speed: 10.0,
+            free: true,
+        }
+    }
+
+    pub fn default_shape() -> Self {
+        ComponentData::Shape {
+            kind: ShapeKind::Cube,
+            color: [0.8, 0.8, 0.8],
         }
     }
 
@@ -216,11 +237,14 @@ impl ComponentData {
                 near,
                 far,
                 speed,
+                free,
             } => {
                 let camera = Camera::new(*position, Deg(*yaw_deg), Deg(*pitch_deg));
                 // The real aspect is applied every frame by whoever renders.
                 let projection = Projection::new(1280, 720, Deg(*fov_deg), *near, *far);
-                let controller = CameraController::new(*speed, 1.0);
+                let mut controller =
+                    CameraController::new(*speed, crate::core::camera::DEFAULT_MOUSE_SENSITIVITY);
+                controller.is_free = *free;
                 entity.add_component(CameraComponent::new(camera, projection, controller));
             }
             ComponentData::SkyLight {
@@ -274,6 +298,13 @@ impl ComponentData {
                     }
                 }
             }
+            ComponentData::Shape { kind, color } => match ShapeComponent::new(*kind, *color) {
+                Ok(shape) => entity.add_component(shape),
+                Err(e) => {
+                    log::warn!("could not build shape: {e}");
+                    entity.add_component(MissingComponent::new(self.clone(), e));
+                }
+            },
             ComponentData::Model { asset } => {
                 let result = match entity.get_component_mut::<ModelComponent>() {
                     // A prefab was already built with this model.
@@ -455,12 +486,15 @@ impl Scene {
                 // Keep the entity and what it should be, so the rest of the
                 // scene loads and saving it loses nothing.
                 Err(e) => {
-                    log::warn!("could not build player '{}': {e}", data.name);
+                    let reason = format!(
+                        "{e} (the player prefab needs assets/models/{} and the animations \
+                         in assets/animations; a new project gets them from the engine's \
+                         assets folder)",
+                        crate::player::PLAYER_MODEL_FILE
+                    );
+                    log::warn!("could not build player '{}': {reason}", data.name);
                     let mut entity = plain(data);
-                    entity.add_component(MissingComponent::new(
-                        ComponentData::Player,
-                        e.to_string(),
-                    ));
+                    entity.add_component(MissingComponent::new(ComponentData::Player, reason));
                     entity
                 }
             }
@@ -483,6 +517,12 @@ impl Scene {
         Ok(entity)
     }
 }
+
+/// The scene a new project starts with (also what `ferrite-mcp` writes for
+/// one): a free-flying camera above the terrain, a sky light in the
+/// morning and a terrain. Ids are fixed; they only have to be unique
+/// within the scene.
+pub const STARTER_SCENE: &str = include_str!("starter_scene.ron");
 
 /// The scene the editor and sandbox start with: camera, sky, terrain with a
 /// player standing on it, and the debug controller.
@@ -527,6 +567,7 @@ pub fn default_scene_file() -> SceneFile {
                     near: 0.1,
                     far: 1000.0,
                     speed: 10.0,
+                    free: false,
                 }],
             ),
             entity("skylight", [0.0; 3], vec![ComponentData::default_sky_light()]),
@@ -540,6 +581,40 @@ pub fn default_scene_file() -> SceneFile {
 mod tests {
     use super::*;
     use crate::core::assets::AssetId;
+
+    #[test]
+    fn the_starter_scene_parses_and_has_a_free_camera_sky_and_terrain() {
+        let file = SceneFile::from_ron(STARTER_SCENE).unwrap();
+        let components: Vec<&ComponentData> =
+            file.entities.iter().flat_map(|e| &e.components).collect();
+        assert!(components
+            .iter()
+            .any(|c| matches!(c, ComponentData::Camera { free: true, .. })));
+        assert!(components
+            .iter()
+            .any(|c| matches!(c, ComponentData::SkyLight { time_of_day, .. } if *time_of_day > 0.3)));
+        assert!(components.iter().any(|c| matches!(c, ComponentData::Terrain { .. })));
+        let mut ids: Vec<u64> = file.entities.iter().map(|e| e.id).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), file.entities.len());
+    }
+
+    #[test]
+    fn a_shape_and_a_free_camera_round_trip_through_ron() {
+        let shape = ComponentData::Shape {
+            kind: ShapeKind::Sphere,
+            color: [1.0, 0.5, 0.0],
+        };
+        let text = ron::to_string(&shape).unwrap();
+        assert_eq!(ron::from_str::<ComponentData>(&text).unwrap(), shape);
+        // A camera saved before `free` existed is not free.
+        let old = "Camera(position:(0.0,1.0,2.0),yaw_deg:0.0,pitch_deg:0.0,fov_deg:60.0,near:0.1,far:100.0,speed:5.0)";
+        assert!(matches!(
+            ron::from_str::<ComponentData>(old).unwrap(),
+            ComponentData::Camera { free: false, .. }
+        ));
+    }
 
     #[test]
     fn a_component_that_could_not_be_built_is_saved_as_what_it_should_be() {

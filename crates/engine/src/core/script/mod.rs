@@ -26,15 +26,15 @@ use serde::{de::DeserializeOwned, Serialize};
 use super::{
     entity::{
         component::{Component, Property, PropertyValue},
-        Entity,
+        Entity, EntityHandle,
     },
     physics::physics_engine::PhysicsEngine,
     scene::{scene_file::ComponentData, Scene},
 };
 
 pub use library::{
-    engine_workspace, load_library, packaged_library, ScriptCrate, REGISTER_SYMBOL,
-    SCRIPTS_LIBRARY,
+    clean_cargo_env, engine_workspace, is_inherited_cargo_var, load_library, packaged_library,
+    ScriptCrate, REGISTER_SYMBOL, SCRIPTS_LIBRARY,
 };
 
 /// What a script does. Every method is optional.
@@ -176,6 +176,75 @@ impl<S: Script> Component for ScriptComponent<S> {
             Ok(data) => self.script.apply(data),
             Err(e) => log::warn!("script {}: cannot set {name}: {e}", S::NAME),
         }
+    }
+}
+
+impl Entity {
+    /// This entity's own script of type `S`, if it has one.
+    pub fn script<S: Script>(&self) -> Option<&S> {
+        self.get_own_component::<ScriptComponent<S>>()
+            .map(ScriptComponent::script)
+    }
+
+    /// This entity's own script of type `S`, to change it.
+    pub fn script_mut<S: Script>(&mut self) -> Option<&mut S> {
+        self.components_mut()
+            .iter_mut()
+            .find_map(|c| c.as_any_mut().downcast_mut::<ScriptComponent<S>>())
+            .map(ScriptComponent::script_mut)
+    }
+}
+
+impl Scene {
+    /// Every script of type `S` in the scene, at any depth, with the entity
+    /// it is on. The entity whose update is running at the moment is not
+    /// in the scene and is left out: a script sees the others, not itself.
+    pub fn scripts<S: Script>(&self) -> Vec<(&Entity, &S)> {
+        fn walk<'a, S: Script>(entity: &'a Entity, found: &mut Vec<(&'a Entity, &'a S)>) {
+            if let Some(script) = entity.script::<S>() {
+                found.push((entity, script));
+            }
+            for child in entity.get_children() {
+                walk(child, found);
+            }
+        }
+        let mut found = Vec::new();
+        for entity in self.get_entities() {
+            walk(entity, &mut found);
+        }
+        found
+    }
+
+    /// The script of type `S` on the entity `id`, to change it.
+    pub fn script_mut<S: Script>(&mut self, id: &EntityHandle) -> Option<&mut S> {
+        self.get_entity_mut(id)?.script_mut::<S>()
+    }
+
+    /// The first entity named `name`, at any depth.
+    pub fn find_entity(&self, name: &str) -> Option<&Entity> {
+        fn walk<'a>(entity: &'a Entity, name: &str) -> Option<&'a Entity> {
+            if entity.get_name() == name {
+                return Some(entity);
+            }
+            entity.get_children().iter().find_map(|child| walk(child, name))
+        }
+        self.get_entities().iter().find_map(|entity| walk(entity, name))
+    }
+
+    /// The first entity named `name`, at any depth, to change it.
+    pub fn find_entity_mut(&mut self, name: &str) -> Option<&mut Entity> {
+        fn walk<'a>(entity: &'a mut Entity, name: &str) -> Option<&'a mut Entity> {
+            if entity.get_name() == name {
+                return Some(entity);
+            }
+            entity
+                .get_children_mut()
+                .iter_mut()
+                .find_map(|child| walk(child, name))
+        }
+        self.get_entities_mut()
+            .iter_mut()
+            .find_map(|entity| walk(entity, name))
     }
 }
 
@@ -363,6 +432,36 @@ mod tests {
         );
         assert!(create("Nope", &Value::Unit).is_err());
         install(ScriptRegistry::default());
+    }
+
+    #[test]
+    fn scripts_are_found_on_other_entities_by_type_and_name() {
+        // No GL in tests.
+        crate::core::headless::enable();
+        let mut scene = Scene::new();
+        let mut fan = Entity::new("fan");
+        fan.add_component(ScriptComponent::new(Spin {
+            speed: 1.0,
+            ..Default::default()
+        }));
+        let mut wheel = Entity::new("wheel");
+        wheel.add_component(ScriptComponent::new(Spin {
+            speed: 2.0,
+            ..Default::default()
+        }));
+        let wheel_id = wheel.id;
+        fan.add_child(wheel);
+        scene.add_entity(fan);
+        scene.add_entity(Entity::new("plain"));
+
+        let speeds: Vec<f32> = scene.scripts::<Spin>().iter().map(|(_, s)| s.speed).collect();
+        assert_eq!(speeds, [1.0, 2.0]);
+        scene.script_mut::<Spin>(&wheel_id).unwrap().speed = 5.0;
+        assert_eq!(scene.find_entity("wheel").unwrap().script::<Spin>().unwrap().speed, 5.0);
+        assert!(scene.find_entity("plain").unwrap().script::<Spin>().is_none());
+        assert!(scene.find_entity("nobody").is_none());
+        scene.find_entity_mut("plain").unwrap().set_name("renamed".into());
+        assert!(scene.find_entity("renamed").is_some());
     }
 
     /// Tests that install a registry take turns.

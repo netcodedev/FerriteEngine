@@ -28,6 +28,8 @@ ron = "0.12.3"
 russimp-ng = { version = "3.2.7" }
 rusttype = { version = "0.9.3", features = ["gpu_cache"] }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
 
 [features]
 # Assimp and GLFW built from source and linked in, instead of the

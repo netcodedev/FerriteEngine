@@ -1,0 +1,46 @@
+(
+    version: 1,
+    entities: [
+        (
+            id: 1001,
+            name: "camera",
+            position: (0.0, 0.0, 0.0),
+            rotation: (1.0, 0.0, 0.0, 0.0),
+            components: [
+                Camera(
+                    position: (0.0, 70.0, -30.0),
+                    yaw_deg: 90.0,
+                    pitch_deg: -25.0,
+                    fov_deg: 64.0,
+                    near: 0.1,
+                    far: 1000.0,
+                    speed: 15.0,
+                    free: true,
+                ),
+            ],
+        ),
+        (
+            id: 1002,
+            name: "sky light",
+            position: (0.0, 0.0, 0.0),
+            rotation: (1.0, 0.0, 0.0, 0.0),
+            components: [
+                SkyLight(
+                    time_of_day: 0.38,
+                    day_length_seconds: 600.0,
+                    paused: true,
+                    cloud_coverage: 0.3,
+                ),
+            ],
+        ),
+        (
+            id: 1003,
+            name: "terrain",
+            position: (0.0, 0.0, 0.0),
+            rotation: (1.0, 0.0, 0.0, 0.0),
+            components: [
+                Terrain(seed: 2, scatter: []),
+            ],
+        ),
+    ],
+)

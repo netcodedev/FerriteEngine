@@ -206,6 +206,19 @@ impl Viewport {
         self.position + self.forward() * 15.0
     }
 
+    /// Move or turn the camera; what is `None` stays.
+    pub fn set_pose(&mut self, position: Option<Point3<f32>>, yaw: Option<Deg<f32>>, pitch: Option<Deg<f32>>) {
+        if let Some(position) = position {
+            self.position = position;
+        }
+        if let Some(yaw) = yaw {
+            self.yaw = Rad::from(yaw);
+        }
+        if let Some(pitch) = pitch {
+            self.pitch = Rad::from(Deg(pitch.0.clamp(-89.0, 89.0)));
+        }
+    }
+
     pub fn camera_pose(&self) -> (Point3<f32>, Deg<f32>, Deg<f32>) {
         (self.position, Deg::from(self.yaw), Deg::from(self.pitch))
     }

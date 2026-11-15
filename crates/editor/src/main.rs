@@ -19,6 +19,7 @@ use editor::{
     },
     asset_browser::AssetBrowser,
     asset_editor::{AssetEdit, AssetInspector, AssetPreview},
+    bridge_handler::{self, Dispatch},
     clip_editor::{self, ClipRequest},
     dialogs::{self, ModalHost},
     drag::{DragLayer, DropAction, DropTarget},
@@ -41,6 +42,7 @@ use editor::{
 use ferrite::core::{
     application::{Application, Layer},
     assets,
+    mcp_bridge,
     project::Project,
     entity::{
         component::{
@@ -74,12 +76,37 @@ fn main() {
     // The editor draws its own title bar.
     let mut application = Application::with_decorations(1280, 720, "Ferrite Editor", false);
     application.set_clear_color(ferrite_ui::ui::theme::BG_APP);
-    // A project in the working directory is opened right away; without one
+    // The project given as the first argument (a .fp file or its folder),
+    // or one in the working directory, is opened right away; without one
     // the user picks or creates one.
-    let here = std::env::current_dir().ok();
-    let project = here.as_deref().and_then(Project::find_in);
-    application.add_layer(Box::new(EditorApp::new(project)));
+    let app = match project_to_open() {
+        Ok(project) => EditorApp::new(project),
+        Err(e) => EditorApp::Launcher(Launcher::new(Some(e))),
+    };
+    application.add_layer(Box::new(app));
     application.start();
+}
+
+fn project_to_open() -> Result<Option<PathBuf>, String> {
+    match std::env::args_os().nth(1) {
+        Some(arg) => find_project(Path::new(&arg)).map(Some),
+        None => Ok(std::env::current_dir()
+            .ok()
+            .as_deref()
+            .and_then(Project::find_in)),
+    }
+}
+
+/// The project file `given` names: itself, or the one in the folder.
+fn find_project(given: &Path) -> Result<PathBuf, String> {
+    if given.is_dir() {
+        Project::find_in(given)
+            .ok_or_else(|| format!("no project (.fp file) in {}", given.display()))
+    } else if given.is_file() {
+        Ok(given.to_path_buf())
+    } else {
+        Err(format!("{} does not exist", given.display()))
+    }
 }
 
 /// The launcher until a project is chosen, the loading screen while it is
@@ -152,6 +179,8 @@ struct EditorLayer {
     pending_cursor: Option<CursorMode>,
     /// Set by `Command::Quit`; the window is closed on the next event.
     pending_quit: bool,
+    /// Bridge screenshot requests waiting on the next rendered frame.
+    pending_screenshots: Vec<(mcp_bridge::PendingRequest, bridge_handler::Shot)>,
     cursor_initialised: bool,
     scripts: Scripts,
     exporter: Exporter,
@@ -261,6 +290,12 @@ impl EditorLayer {
         add(&mut ui, Box::new(ToggleWindow::new(show_widgets, widgets_popup)));
         add(&mut ui, Box::new(ModalHost::new(state.clone())));
 
+        // MCP bridge: let an external AI tool see and change this editor.
+        match mcp_bridge::start(project.dir()) {
+            Ok(port) => log::info!("MCP bridge listening on 127.0.0.1:{port}"),
+            Err(e) => log::warn!("MCP bridge: {e}"),
+        }
+
         Self {
             scene,
             ui,
@@ -272,6 +307,7 @@ impl EditorLayer {
             play_snapshot: None,
             pending_cursor: None,
             pending_quit: false,
+            pending_screenshots: Vec::new(),
             cursor_initialised: false,
             scripts,
             exporter: Exporter::default(),
@@ -331,7 +367,9 @@ impl EditorLayer {
                 }
             }
         };
-        self.state.borrow_mut().set_status(message);
+        let mut state = self.state.borrow_mut();
+        state.scripts_message = Some(message.clone());
+        state.set_status(message);
     }
 
     /// The project's startup scene, or an empty one.
@@ -394,6 +432,7 @@ impl EditorLayer {
                         near: 0.1,
                         far: 1000.0,
                         speed: 10.0,
+                        free: true,
                     }],
                 ),
                 entity("sky light", vec![ComponentData::default_sky_light()]),
@@ -417,6 +456,7 @@ impl EditorLayer {
                     near: 0.1,
                     far: 1000.0,
                     speed: 10.0,
+                    free: true,
                 }],
             ),
             EntityTemplate::SkyLight => (
@@ -489,6 +529,55 @@ impl EditorLayer {
     fn replace_scene(&mut self, scene: Scene) {
         self.scene = scene;
         // The viewport re-installs its camera on the next update.
+    }
+
+    /// Drain pending MCP bridge requests and answer them against the
+    /// live scene. Screenshots go on a short queue; `service_pending_screenshots`
+    /// finishes them after the frame is drawn.
+    fn process_bridge_requests(&mut self) {
+        for pending in mcp_bridge::drain_pending() {
+            let request = pending.request.clone();
+            let mut state = self.state.borrow_mut();
+            let dispatch = bridge_handler::dispatch(
+                request,
+                pending,
+                bridge_handler::Context {
+                    scene: &mut self.scene,
+                    state: &mut state,
+                    viewport: &mut self.viewport,
+                },
+            );
+            drop(state);
+            match dispatch {
+                Dispatch::Done => {}
+                Dispatch::Screenshot(pending, shot) => {
+                    self.pending_screenshots.push((pending, shot));
+                }
+            }
+        }
+        // Apply any Play/Stop/Save commands bridge requests queued.
+        self.run_commands();
+    }
+
+    /// Finish any screenshot requests on the queue by reading the
+    /// framebuffer. Runs at the end of `on_update`, so the frame has
+    /// already been drawn.
+    fn service_pending_screenshots(&mut self, window: &Window) {
+        if self.pending_screenshots.is_empty() {
+            return;
+        }
+        let viewport = self.state.borrow().layout.viewport_gl();
+        let full_width = window.width.max(1);
+        let full_height = window.height.max(1);
+        for (pending, shot) in std::mem::take(&mut self.pending_screenshots) {
+            let (x, y, w, h) = if shot.source == 1 {
+                (0, 0, full_width as i32, full_height as i32)
+            } else {
+                (viewport[0], viewport[1], viewport[2], viewport[3])
+            };
+            let response = capture_viewport(x, y, w.max(1), h.max(1), &shot);
+            pending.respond(response);
+        }
     }
 
     fn run_commands(&mut self) {
@@ -612,6 +701,12 @@ impl EditorLayer {
                 self.scene.set_physics_enabled(true);
                 self.state.borrow_mut().mode = Mode::Play;
                 self.pending_cursor = Some(CursorMode::Disabled);
+                if self.scene.get_active_camera().is_none() {
+                    self.state.borrow_mut().set_status(
+                        "Nothing to see: the scene has no camera. Add a Camera component \
+                         (with \"free fly\" on, it flies with WASD and the mouse).",
+                    );
+                }
             }
             Command::Stop => {
                 if mode == Mode::Edit {
@@ -1142,11 +1237,20 @@ impl EditorLayer {
     }
 }
 
+impl Drop for EditorLayer {
+    /// Take the bridge's lockfile away, so tools do not look for an editor
+    /// that is gone.
+    fn drop(&mut self) {
+        mcp_bridge::stop();
+    }
+}
+
 impl Layer for EditorLayer {
     fn on_update(&mut self, window: &Window, delta_time: f64) {
         if let Some(event) = self.scripts.poll() {
             self.on_script_event(event);
         }
+        self.process_bridge_requests();
         if let Some(status) = self.exporter.poll() {
             self.state.borrow_mut().set_status(status);
         }
@@ -1266,6 +1370,7 @@ impl Layer for EditorLayer {
         self.ui.render();
         let ui_ms = ui_start.elapsed().as_secs_f32() * 1000.0;
 
+        self.service_pending_screenshots(window);
         self.capture_if_requested(window);
 
         let mut state = self.state.borrow_mut();
@@ -1484,9 +1589,68 @@ fn split_camel_case(word: &str) -> Vec<String> {
     words
 }
 
+/// Read a sub-rectangle of the default framebuffer and encode it for the
+/// bridge response, upright and scaled as `shot` asks.
+fn capture_viewport(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    shot: &bridge_handler::Shot,
+) -> mcp_bridge::BridgeResponse {
+    use ferrite::core::mcp_bridge::BridgeResponse;
+    let w = width.max(1) as usize;
+    let h = height.max(1) as usize;
+    let mut buffer = vec![0u8; w * h * 3];
+    unsafe {
+        gl::PixelStorei(gl::PACK_ALIGNMENT, 1);
+        gl::ReadBuffer(gl::BACK);
+        gl::ReadPixels(
+            x,
+            y,
+            width,
+            height,
+            gl::RGB,
+            gl::UNSIGNED_BYTE,
+            buffer.as_mut_ptr() as *mut _,
+        );
+    }
+    // glReadPixels is bottom-left origin; flip rows so the PNG is upright.
+    let row = w * 3;
+    let mut flipped = vec![0u8; buffer.len()];
+    for r in 0..h {
+        let src = r * row;
+        let dst = (h - 1 - r) * row;
+        flipped[dst..dst + row].copy_from_slice(&buffer[src..src + row]);
+    }
+    match bridge_handler::encode_screenshot(flipped, w as u32, h as u32, shot.max_width, shot.format) {
+        Ok((b64, width, height)) => BridgeResponse::data(serde_json::json!({
+            "image_base64": b64,
+            "mime_type": shot.format.mime(),
+            "width": width,
+            "height": height,
+        })),
+        Err(e) => BridgeResponse::err(e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_project_argument_is_a_file_or_its_folder() {
+        let dir = std::env::temp_dir().join(format!("ferrite-editor-arg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(find_project(&dir).unwrap_err().contains("no project"));
+        let file = dir.join("Game.fp");
+        std::fs::write(&file, "(version: 1, name: \"Game\")").unwrap();
+        assert_eq!(find_project(&dir).unwrap(), file);
+        assert_eq!(find_project(&file).unwrap(), file);
+        assert!(find_project(&dir.join("missing")).unwrap_err().contains("does not exist"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_new_script_is_named_after_what_the_user_typed() {

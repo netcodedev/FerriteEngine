@@ -316,3 +316,100 @@ impl Entity {
         self.name.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_entity_is_at_the_origin_with_an_identity_rotation() {
+        let e = Entity::new("Rock");
+        assert_eq!(e.get_name(), "Rock");
+        assert_eq!(e.get_position(), Point3::new(0.0, 0.0, 0.0));
+        assert_eq!(e.get_scale(), Vector3::new(1.0, 1.0, 1.0));
+        assert_eq!(e.child_count(), 0);
+        assert!(e.components().is_empty());
+        assert!(!e.is_transient());
+    }
+
+    #[test]
+    fn add_child_grows_the_tree() {
+        let mut root = Entity::new("Root");
+        root.add_child(Entity::new("Leaf"));
+        root.add_child(Entity::new("Branch"));
+        assert_eq!(root.child_count(), 2);
+    }
+
+    #[test]
+    fn get_child_finds_a_nested_descendant() {
+        let mut root = Entity::new("Root");
+        let mut branch = Entity::new("Branch");
+        let leaf = Entity::new("Leaf");
+        let leaf_id = leaf.id;
+        branch.add_child(leaf);
+        root.add_child(branch);
+        let found = root.get_child(&leaf_id).expect("leaf is in the tree");
+        assert_eq!(found.get_name(), "Leaf");
+    }
+
+    #[test]
+    fn remove_descendant_takes_a_nested_entity_out_of_the_tree() {
+        let mut root = Entity::new("Root");
+        let mut branch = Entity::new("Branch");
+        let leaf = Entity::new("Leaf");
+        let leaf_id = leaf.id;
+        branch.add_child(leaf);
+        root.add_child(branch);
+
+        let removed = root
+            .remove_descendant(&leaf_id)
+            .expect("leaf should come out");
+        assert_eq!(removed.get_name(), "Leaf");
+        assert!(root.get_child(&leaf_id).is_none());
+    }
+
+    #[test]
+    fn remove_descendant_returns_none_for_an_unknown_id() {
+        let mut root = Entity::new("Root");
+        root.add_child(Entity::new("Leaf"));
+        assert!(root.remove_descendant(&EntityHandle::new()).is_none());
+    }
+
+    #[test]
+    fn set_local_position_moves_the_entity_without_a_scene() {
+        let mut e = Entity::new("Pivot");
+        e.set_local_position(Point3::new(5.0, 6.0, 7.0));
+        assert_eq!(e.get_position(), Point3::new(5.0, 6.0, 7.0));
+    }
+
+    #[test]
+    fn local_transform_combines_translation_rotation_and_scale() {
+        use cgmath::{Deg, Rotation3};
+        let mut e = Entity::new("T");
+        e.set_local_position(Point3::new(1.0, 2.0, 3.0));
+        e.set_local_scale(Vector3::new(2.0, 2.0, 2.0));
+        e.set_local_rotation(Quaternion::from_angle_y(Deg(0.0)));
+        let m = e.local_transform();
+        // The last column is the translation.
+        assert!((m.w.x - 1.0).abs() < 1e-5);
+        assert!((m.w.y - 2.0).abs() < 1e-5);
+        assert!((m.w.z - 3.0).abs() < 1e-5);
+        // The diagonal carries the uniform scale of 2.
+        assert!((m.x.x - 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn set_name_updates_what_get_name_reads() {
+        let mut e = Entity::new("Old");
+        e.set_name("New".to_string());
+        assert_eq!(e.get_name(), "New");
+    }
+
+    #[test]
+    fn set_transient_flips_the_flag() {
+        let mut e = Entity::new("Transient");
+        assert!(!e.is_transient());
+        e.set_transient(true);
+        assert!(e.is_transient());
+    }
+}

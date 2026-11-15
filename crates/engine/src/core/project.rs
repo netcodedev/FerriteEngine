@@ -8,7 +8,14 @@ use std::path::{Path, PathBuf};
 use ron::Value;
 use serde::{Deserialize, Serialize};
 
-use super::{assets, script::ScriptCrate};
+use super::{
+    assets,
+    scene::scene_file::STARTER_SCENE,
+    script::{engine_workspace, ScriptCrate},
+};
+
+/// Where a new project's startup scene goes.
+pub const STARTER_SCENE_PATH: &str = "scenes/main.ron";
 
 /// Extension of a project file.
 pub const PROJECT_EXTENSION: &str = "fp";
@@ -69,12 +76,18 @@ impl Project {
             let folder = dir.join(folder);
             std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
         }
+        let scene = dir.join(STARTER_SCENE_PATH);
+        std::fs::write(&scene, STARTER_SCENE).map_err(|e| format!("{}: {e}", scene.display()))?;
+        match copy_player_assets(dir) {
+            Ok(_) => {}
+            Err(e) => log::warn!("the player prefab will not work in this project: {e}"),
+        }
         let project = Project {
             path: dir.join(format!("{name}.{PROJECT_EXTENSION}")),
             file: ProjectFile {
                 version: PROJECT_VERSION,
                 name,
-                startup_scene: None,
+                startup_scene: Some(STARTER_SCENE_PATH.to_string()),
                 editor: Value::Unit,
             },
         };
@@ -139,6 +152,43 @@ impl Project {
     }
 }
 
+/// Copy what the player prefab needs (its model and animations) from the
+/// engine's own `assets` folder into the project at `dir`, keeping files
+/// that are already there. Returns how many files were copied.
+pub fn copy_player_assets(dir: &Path) -> Result<usize, String> {
+    let engine_assets = engine_workspace().join("assets");
+    if !engine_assets.is_dir() {
+        return Err(format!("no engine assets at {}", engine_assets.display()));
+    }
+    let model = crate::player::PLAYER_MODEL_FILE;
+    let mut files: Vec<PathBuf> = vec![
+        PathBuf::from("models").join(model),
+        PathBuf::from("models").join(format!("{model}{}", assets::META_SUFFIX)),
+    ];
+    let animations = engine_assets.join("animations");
+    let entries =
+        std::fs::read_dir(&animations).map_err(|e| format!("{}: {e}", animations.display()))?;
+    for entry in entries.flatten() {
+        if entry.path().is_file() {
+            files.push(PathBuf::from("animations").join(entry.file_name()));
+        }
+    }
+    let mut copied = 0;
+    for file in files {
+        let from = engine_assets.join(&file);
+        let to = dir.join("assets").join(&file);
+        if to.exists() || !from.is_file() {
+            continue;
+        }
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        std::fs::copy(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+        copied += 1;
+    }
+    Ok(copied)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,6 +203,12 @@ mod tests {
         for folder in FOLDERS {
             assert!(project.dir().join(folder).is_dir(), "{folder}");
         }
+        // It opens with a scene to look at, and the player prefab works.
+        assert_eq!(project.file.startup_scene.as_deref(), Some(STARTER_SCENE_PATH));
+        assert!(project.dir().join(STARTER_SCENE_PATH).is_file());
+        let model = format!("assets/models/{}", crate::player::PLAYER_MODEL_FILE);
+        assert!(project.dir().join(model).is_file());
+        assert!(project.dir().join("assets/animations/Idle.fbx").is_file());
 
         let mut changed = project.clone();
         changed.file.startup_scene = Some("scenes/main.ron".into());

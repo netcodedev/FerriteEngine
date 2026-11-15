@@ -87,6 +87,7 @@ impl Component for CameraComponent {
             near: self.projection.znear,
             far: self.projection.get_zfar(),
             speed: self.camera_controller.get_speed(),
+            free: self.camera_controller.is_free,
         })
     }
 
@@ -102,10 +103,23 @@ impl Component for CameraComponent {
             Property::float("near", self.projection.znear),
             Property::float("far", self.projection.get_zfar()),
             Property::float("speed", self.camera_controller.get_speed()),
+            Property::bool("free fly", self.camera_controller.is_free),
+            Property::ranged(
+                "look sensitivity",
+                self.camera_controller.get_sensitivity(),
+                0.01,
+                1.0,
+            ),
         ]
     }
 
     fn set_property(&mut self, name: &str, value: PropertyValue) {
+        if name == "free fly" {
+            if let Some(free) = value.as_bool() {
+                self.camera_controller.is_free = free;
+            }
+            return;
+        }
         let Some(v) = value.as_f32() else {
             return;
         };
@@ -135,6 +149,7 @@ impl Component for CameraComponent {
             "near" => self.projection.set_clip(v, self.projection.get_zfar()),
             "far" => self.projection.set_clip(self.projection.znear, v),
             "speed" => self.camera_controller.set_speed(v),
+            "look sensitivity" => self.camera_controller.set_sensitivity(v),
             _ => {}
         }
     }

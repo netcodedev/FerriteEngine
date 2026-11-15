@@ -84,3 +84,52 @@ pub struct ChunkBounds {
     pub min: (i32, i32, i32),
     pub max: (i32, i32, i32),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cgmath::{Point3, Vector3};
+
+    #[test]
+    fn parse_snaps_the_origin_to_the_chunk_at_the_origin() {
+        let b = ChunkBounds::parse(Vector3::new(0.0, 0.0, 0.0));
+        assert_eq!(b.min, (0, 0, 0));
+        assert_eq!(
+            b.max,
+            (CHUNK_SIZE as i32, CHUNK_SIZE as i32, CHUNK_SIZE as i32)
+        );
+    }
+
+    #[test]
+    fn parse_wraps_a_point_just_past_a_boundary_into_the_next_chunk() {
+        let just_over = CHUNK_SIZE_FLOAT + 0.5;
+        let b = ChunkBounds::parse(Vector3::new(just_over, 0.0, 0.0));
+        assert_eq!(b.min.0, CHUNK_SIZE as i32);
+        assert_eq!(b.max.0, 2 * CHUNK_SIZE as i32);
+    }
+
+    #[test]
+    fn parse_handles_negative_coordinates() {
+        let b = ChunkBounds::parse(Vector3::new(-1.0, -1.0, -1.0));
+        assert_eq!(b.min.0, -(CHUNK_SIZE as i32));
+        assert_eq!(b.max.0, 0);
+    }
+
+    #[test]
+    fn contains_matches_half_open_bounds() {
+        let b = ChunkBounds::parse(Vector3::new(0.0, 0.0, 0.0));
+        assert!(b.contains(Point3::new(1.0, 1.0, 1.0)));
+        assert!(b.contains(Point3::new(0.0, 0.0, 0.0)));
+        // The far wall is exclusive.
+        assert!(!b.contains(Point3::new(CHUNK_SIZE_FLOAT, 0.0, 0.0)));
+        assert!(!b.contains(Point3::new(-0.1, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn center_is_the_average_of_min_and_max() {
+        let b = ChunkBounds::parse(Vector3::new(0.0, 0.0, 0.0));
+        let c = b.center();
+        assert!((c.x - CHUNK_SIZE_FLOAT / 2.0).abs() < 1e-5);
+        assert!((c.y - CHUNK_SIZE_FLOAT / 2.0).abs() < 1e-5);
+    }
+}

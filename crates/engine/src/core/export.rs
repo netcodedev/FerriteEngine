@@ -211,6 +211,7 @@ fn prepare_folder(target: &Path) -> Result<Option<PathBuf>, String> {
 fn build(project: &Project, platform: Platform) -> Result<(), String> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let mut command = Command::new(cargo);
+    crate::core::script::clean_cargo_env(&mut command);
     command
         .current_dir(engine_workspace())
         .args(["build", "--release", "--message-format=short", "-p", GAME_PACKAGE])

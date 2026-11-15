@@ -82,6 +82,7 @@ impl ScriptCrate {
     pub fn build(&self) -> Result<(), String> {
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
         let mut command = Command::new(cargo);
+        clean_cargo_env(&mut command);
         command
             .current_dir(engine_workspace())
             .args(["build", "-p", SCRIPTS_PACKAGE, "--message-format=short"])
@@ -103,6 +104,37 @@ impl ScriptCrate {
         // Paths of the script files, shown relative to the project.
         let first = first.replace(&format!("{}/", self.sources.display()), "scripts/");
         Err(first.trim().to_string())
+    }
+}
+
+/// Whether `name` is a variable cargo sets for a program it runs (`cargo
+/// run`), as opposed to one that configures cargo itself.
+pub fn is_inherited_cargo_var(name: &str) -> bool {
+    const EXACT: [&str; 9] = [
+        "CARGO_MANIFEST_DIR",
+        "CARGO_MANIFEST_PATH",
+        "CARGO_MANIFEST_LINKS",
+        "CARGO_CRATE_NAME",
+        "CARGO_BIN_NAME",
+        "CARGO_PRIMARY_PACKAGE",
+        "CARGO_TARGET_TMPDIR",
+        "CARGO_RUSTC_CURRENT_DIR",
+        "OUT_DIR",
+    ];
+    EXACT.contains(&name)
+        || name.starts_with("CARGO_PKG_")
+        || name.starts_with("CARGO_CFG_")
+        || name.starts_with("CARGO_BIN_EXE_")
+}
+
+/// Drop the variables an editor started with `cargo run` inherits. Build
+/// scripts of dependencies (ring's, for one) rerun when they change, which
+/// rebuilds the engine library under the running editor.
+pub fn clean_cargo_env(command: &mut Command) {
+    for (name, _) in std::env::vars_os() {
+        if name.to_str().is_some_and(is_inherited_cargo_var) {
+            command.env_remove(name);
+        }
     }
 }
 
@@ -139,4 +171,38 @@ pub fn load_library(path: &Path) -> Result<ScriptRegistry, String> {
     // Mapped by now (or not loaded at all); the file itself is not needed.
     let _ = std::fs::remove_file(&copy);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn variables_cargo_run_sets_are_dropped_but_cargo_config_is_kept() {
+        for name in [
+            "CARGO_MANIFEST_DIR",
+            "CARGO_PKG_NAME",
+            "CARGO_PKG_VERSION_MAJOR",
+            "CARGO_CFG_TARGET_OS",
+            "CARGO_BIN_EXE_ferrite-editor",
+            "OUT_DIR",
+        ] {
+            assert!(is_inherited_cargo_var(name), "{name}");
+        }
+        for name in ["CARGO", "CARGO_HOME", "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "PATH"] {
+            assert!(!is_inherited_cargo_var(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn clean_cargo_env_removes_inherited_variables_from_the_command() {
+        // Already set when run by `cargo test`; set it for any other runner.
+        std::env::set_var("CARGO_PKG_NAME", "ferrite-engine");
+        let mut command = Command::new("true");
+        clean_cargo_env(&mut command);
+        let removed = command
+            .get_envs()
+            .any(|(name, value)| name == "CARGO_PKG_NAME" && value.is_none());
+        assert!(removed);
+    }
 }

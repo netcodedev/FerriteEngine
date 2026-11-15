@@ -16,6 +16,7 @@ use ferrite_ui::ui::elements::tree::NO_SELECTION;
 
 pub mod anim;
 pub mod asset_browser;
+pub mod bridge_handler;
 pub mod asset_editor;
 pub mod clip_editor;
 pub mod dialogs;
@@ -205,6 +206,11 @@ pub struct EditorState {
     pub scene_path: Option<PathBuf>,
     pub dirty: bool,
     status: Option<(String, Instant)>,
+    /// The latest status message, kept after it fades from the screen (for
+    /// tools asking what happened, e.g. over the MCP bridge).
+    last_status: Option<String>,
+    /// What the last script build or load said.
+    pub scripts_message: Option<String>,
     pub commands: Vec<Command>,
     pub layout: layout::Layout,
     /// Sizes the user dragged the panels to.
@@ -245,6 +251,8 @@ impl EditorState {
             scene_path: None,
             dirty: false,
             status: None,
+            last_status: None,
+            scripts_message: None,
             commands: Vec::new(),
             layout: layout::Layout::compute(
                 1280.0,
@@ -285,7 +293,14 @@ impl EditorState {
     }
 
     pub fn set_status(&mut self, message: impl Into<String>) {
-        self.status = Some((message.into(), Instant::now()));
+        let message = message.into();
+        self.last_status = Some(message.clone());
+        self.status = Some((message, Instant::now()));
+    }
+
+    /// The latest status message, also after it fades from the screen.
+    pub fn last_status(&self) -> Option<&str> {
+        self.last_status.as_deref()
     }
 
     /// The latest status message, hidden after a few seconds.
