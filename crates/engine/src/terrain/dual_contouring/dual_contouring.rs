@@ -416,6 +416,7 @@ impl VertexAttributes for Vertex {
 
 #[cfg(test)]
 mod tests {
+    use super::super::density::DensityField;
     use super::*;
 
     #[test]
@@ -426,22 +427,23 @@ mod tests {
         assert_eq!(DualContouringChunk::lod_at(5000.0), LODS - 1);
     }
 
-    fn positions(chunk: &DualContouringChunk, lod: usize) -> Vec<[f32; 3]> {
-        chunk.meshes[lod].vertices.iter().map(|v| v.position).collect()
-    }
-
     #[test]
     fn neighbours_meet_at_their_edge_on_every_level() {
         let left = DualContouringChunk::new(2, (0.0, 0.0, 0.0), 0);
         let right = DualContouringChunk::new(2, (1.0, 0.0, 0.0), 0);
         assert_eq!(left.meshes.len(), LODS);
         let n = CHUNK_SIZE_FLOAT;
+        // The ground alone, without the skirts.
+        let (fl, fr) = (DensityField::new(&left, 8), DensityField::new(&right, 8));
+        let ground = |field: &DensityField, lod: usize| -> Vec<[f32; 3]> {
+            field.surface_nets(1 << lod).unwrap().0.iter().map(|v| v.position).collect()
+        };
         for lod in 0..LODS {
             let step = (1 << lod) as f32;
-            let theirs = positions(&right, lod);
+            let theirs = ground(&fr, lod);
             // The left chunk's last row of vertices lies in the right
             // one's first cells: the same points, so the meshes join.
-            let shared: Vec<_> = positions(&left, lod)
+            let shared: Vec<_> = ground(&fl, lod)
                 .into_iter()
                 .filter(|p| p[0] > n && p[0] < n + step && p[1] > 0.0 && p[1] < n)
                 .collect();
@@ -453,6 +455,42 @@ mod tests {
                         && (q[2] - p[2]).abs() < 1e-3),
                     "level {lod}: {p:?}"
                 );
+            }
+        }
+    }
+
+    /// Whether some triangle of `mesh` (moved `offset` along x) lies over
+    /// `(x, z)`.
+    fn covers(mesh: &(Vec<Vertex>, Vec<u32>), offset: f32, x: f32, z: f32) -> bool {
+        mesh.1.chunks(3).any(|t| {
+            let p = [t[0], t[1], t[2]].map(|i| {
+                let v = mesh.0[i as usize].position;
+                (v[0] + offset, v[2])
+            });
+            let side = |a: (f32, f32), b: (f32, f32)| (b.0 - a.0) * (z - a.1) - (b.1 - a.1) * (x - a.0);
+            let s = [side(p[0], p[1]), side(p[1], p[2]), side(p[2], p[0])];
+            s.iter().all(|&d| d >= 0.0) || s.iter().all(|&d| d <= 0.0)
+        })
+    }
+
+    #[test]
+    fn neighbours_on_any_levels_leave_no_gap_between_them() {
+        let left = DualContouringChunk::new(2, (0.0, 0.0, 0.0), 0);
+        let right = DualContouringChunk::new(2, (1.0, 0.0, 0.0), 0);
+        let (fl, fr) = (DensityField::new(&left, 8), DensityField::new(&right, 8));
+        let left: Vec<_> = (0..LODS).map(|lod| fl.surface_nets(1 << lod).unwrap()).collect();
+        let right: Vec<_> = (0..LODS).map(|lod| fr.surface_nets(1 << lod).unwrap()).collect();
+        for (a, mesh_a) in left.iter().enumerate() {
+            for (b, mesh_b) in right.iter().enumerate() {
+                for k in 0..60 {
+                    let z = 20.0 + k as f32 * 0.5;
+                    for x in [127.0, 127.5, 128.0, 128.5, 129.0] {
+                        assert!(
+                            covers(mesh_a, 0.0, x, z) || covers(mesh_b, CHUNK_SIZE_FLOAT, x, z),
+                            "gap at ({x}, {z}) between levels {a} and {b}"
+                        );
+                    }
+                }
             }
         }
     }
