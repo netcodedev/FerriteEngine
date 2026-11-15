@@ -1,8 +1,8 @@
-use super::{live::*, scripts::*};
+use std::fs;
+
 use crate::scene::fresh_id;
 
 use super::*;
-use std::fs;
 
 fn tmp_project(name: &str) -> (State, PathBuf) {
     let dir = std::env::temp_dir().join(format!(
