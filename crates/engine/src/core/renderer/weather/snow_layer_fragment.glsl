@@ -28,10 +28,15 @@ void main() {
         FragColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
-    // Slope of the pressed snow, on the ground's.
+    // Slope of the pressed snow, on the ground's: from the trails blurred
+    // a little (one mipmap, chosen here, not by the screen), since slopes
+    // of the bilinear map are flat facets.
     const float e = 0.05;
-    float dx = snowDent(WorldPos.xz + vec2(e, 0.0)) - snowDent(WorldPos.xz - vec2(e, 0.0));
-    float dz = snowDent(WorldPos.xz + vec2(0.0, e)) - snowDent(WorldPos.xz - vec2(0.0, e));
+    const float blur = 0.1;
+    float dx = snowDentBlurred(WorldPos.xz + vec2(e, 0.0), blur)
+        - snowDentBlurred(WorldPos.xz - vec2(e, 0.0), blur);
+    float dz = snowDentBlurred(WorldPos.xz + vec2(0.0, e), blur)
+        - snowDentBlurred(WorldPos.xz - vec2(0.0, e), blur);
     vec3 Ng = normalize(GroundNormal + vec3(dx, 0.0, dz) / (2.0 * e) * Cover);
 
     vec3 albedo = SNOW_ALBEDO;

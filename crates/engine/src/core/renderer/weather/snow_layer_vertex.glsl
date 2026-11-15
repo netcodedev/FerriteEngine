@@ -5,7 +5,7 @@
 layout(location = 0) in vec2 aGrid; // cell corner, 0..cells on each side
 
 uniform mat4 viewProjection;
-// World x, z of the ring's centre, metres between vertices, cells a side.
+uniform vec3 cameraPosition;
 uniform vec2 levelCenter;
 uniform float spacing;
 uniform float cells;
@@ -32,12 +32,16 @@ void main() {
     vec2 p = levelCenter + g * spacing;
     // Toward its edge a ring turns into the next coarser grid (every
     // other vertex slides onto its neighbour), so the rings meet without
-    // cracks.
-    vec2 off = abs(p - levelCenter) / (cells * 0.5 * spacing);
-    float edge = max(off.x, off.y);
+    // cracks. How far it has turned goes by the distance from the camera,
+    // not from the ring's centre (which moves in steps): nothing jumps when
+    // a ring moves on. It is done a little before the ring's edge, which
+    // lies at least one spacing short of `reach` (half its side) from the camera.
+    float reach = cells * 0.5 * spacing;
+    vec2 off = abs(p - cameraPosition.xz);
+    float distance = max(off.x, off.y);
     float morph = 0.0;
     if (outermost == 0) {
-        morph = smoothstep(0.75, 0.95, edge);
+        morph = smoothstep(0.7 * reach, reach - 2.0 * spacing, distance);
         p -= mod(aGrid, 2.0) * spacing * morph;
     }
 
@@ -62,7 +66,7 @@ void main() {
         * smoothstep(0.0, 0.2, cover);
     // The outermost ring sinks into the ground at its edge, where the
     // terrain's own snow takes over.
-    float fade = outermost == 1 ? 1.0 - smoothstep(0.55, 0.92, edge) : 1.0;
+    float fade = outermost == 1 ? 1.0 - smoothstep(0.55 * reach, 0.92 * reach - spacing, distance) : 1.0;
     Cover = share * fade;
 
     // The trails blurred to what this grid can hold (1.5 times its spacing,

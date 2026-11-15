@@ -19,8 +19,10 @@ const EXTENT: f32 = 160.0;
 const RANGE: f32 = 600.0;
 /// How far above the camera the map starts: anything higher counts as sky.
 const ABOVE_CAMERA: f32 = 250.0;
-/// The map moves in steps this big, so it is not redrawn every frame.
-const SNAP: f32 = 8.0;
+/// The map moves in steps this big, so it is not redrawn every frame: a
+/// whole number of texels (64), so its texels stay where they were and
+/// what is read from it does not jump when it moves.
+const SNAP: f32 = EXTENT / SIZE as f32 * 64.0;
 /// Frames a map is kept while the camera stays put, before it is drawn
 /// again for things that moved.
 const REDRAW_FRAMES: u32 = 30;

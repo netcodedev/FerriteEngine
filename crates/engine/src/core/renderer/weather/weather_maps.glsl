@@ -103,7 +103,9 @@ vec2 snowTrail(vec2 p) {
     if (fade <= 0.0) {
         return vec2(0.0);
     }
-    return texture(snowTrailMap, uv).rg * fade;
+    // The full map, never a mipmap picked from screen derivatives: those
+    // are undefined after a discard or in a loop, and flicker.
+    return textureLod(snowTrailMap, uv, 0.0).rg * fade;
 }
 
 // `snowTrail`, blurred over about `metres` (from the trail map's mipmaps):
