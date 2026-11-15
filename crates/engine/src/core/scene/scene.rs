@@ -22,6 +22,7 @@ use crate::core::{
             skylight::{SkyLight, SHADOW_CASCADES},
         },
         hdr::{self, Hdr, HdrSettings},
+        profiler::{self, Pass},
         sky::SkyRenderer,
         ssao::Ssao,
         texture::TextureRenderer,
@@ -364,7 +365,9 @@ impl Scene {
         crate::core::renderer::sky::noise::bind();
         self.frame_lighting.set(None);
         self.frame_lighting.set(Lighting::from_scene(self));
+        profiler::begin_frame();
         self.render_passes_lit(window);
+        profiler::end_frame();
         self.frame_lighting.set(None);
     }
 
@@ -373,10 +376,12 @@ impl Scene {
 
         // The weather's maps first: the snow layer needs them in the shadow
         // pass too.
+        profiler::mark(Pass::WeatherMaps);
         self.render_weather_maps(window);
         self.upload_lights();
 
         // Shadow Pass
+        profiler::mark(Pass::SunShadows);
         if let Some(shadow_fbo) = &self.shadow_fbo {
             if let Some(skylight) = self.get_component::<SkyLight>() {
                 unsafe {
@@ -431,6 +436,7 @@ impl Scene {
             }
         }
 
+        profiler::mark(Pass::LightShadows);
         self.render_light_shadows(window);
 
         // The passes since may have bound other textures where the weather's
@@ -450,6 +456,7 @@ impl Scene {
                 .map_or_else(HdrSettings::default, |skylight| *skylight.hdr());
             let mut hdr = self.hdr.borrow_mut();
             let hdr = hdr.get_or_insert_with(Hdr::new);
+            profiler::mark(Pass::DepthPrepass);
             hdr.begin();
 
             // Ambient occlusion — the opaque scene's depth from the camera,
@@ -485,6 +492,7 @@ impl Scene {
             // Sky pass — runs before opaque geometry so terrain/water overdraw
             // it naturally via the depth test. Depth write is disabled inside
             // the renderer so the sky never blocks scene geometry.
+            profiler::mark(Pass::Sky);
             if let Some(skylight) = self.get_component::<SkyLight>() {
                 let cam = camera.get_camera();
                 let proj = camera.get_projection();
@@ -519,6 +527,7 @@ impl Scene {
                 );
             }
 
+            profiler::mark(Pass::Opaque);
             if let Some(shadow_fbo) = &self.shadow_fbo {
                 unsafe {
                     gl::ActiveTexture(gl::TEXTURE15);
@@ -542,12 +551,14 @@ impl Scene {
             // in the depth buffer, so water with depth-write enabled correctly
             // depth-tests against the player and other dynamic geometry. It
             // reads a copy of the opaque scene (what lies under the water).
+            profiler::mark(Pass::Transparent);
             hdr.capture_opaque();
             for entity in self.entities.iter() {
                 entity.render_transparent(self, &view_projection, parent_transform);
             }
             self.render_precipitation(&view_projection);
             self.ambient_occlusion_origin.set(None);
+            profiler::mark(Pass::Post);
             hdr.finish(&hdr_settings);
             self.weather_maps.set(None);
             self.light_count.set(0);
@@ -629,11 +640,13 @@ impl Scene {
                 entity.render(self, &view_projection, Matrix4::identity());
             }
             targets.exposure.end();
-            let view_projection = targets.exposure.begin_ground();
-            for entity in self.entities.iter() {
-                entity.render(self, &view_projection, Matrix4::identity());
+            if targets.exposure.ground_due() {
+                let view_projection = targets.exposure.begin_ground();
+                for entity in self.entities.iter() {
+                    entity.render(self, &view_projection, Matrix4::identity());
+                }
+                targets.exposure.end();
             }
-            targets.exposure.end();
             if let Some((_, range)) = targets.exposure.projection() {
                 targets.shelter.update(&targets.exposure, range);
             }

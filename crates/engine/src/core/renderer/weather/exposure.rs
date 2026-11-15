@@ -4,7 +4,7 @@
 //! Drawn a second time with the terrain alone (`ground`), it tells how high
 //! anything is above the ground, so snow can bury what lies on it.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use cgmath::{ortho, Matrix4, Point3, Vector3};
 use gl::types::*;
@@ -23,9 +23,19 @@ const ABOVE_CAMERA: f32 = 250.0;
 /// whole number of texels (64), so its texels stay where they were and
 /// what is read from it does not jump when it moves.
 const SNAP: f32 = EXTENT / SIZE as f32 * 64.0;
-/// Frames a map is kept while the camera stays put, before it is drawn
-/// again for things that moved.
-const REDRAW_FRAMES: u32 = 30;
+/// Frames a map is kept while the camera stays put and the terrain does
+/// not change, before it is drawn again for other things that moved
+/// (characters stay out of it). The ground map is not redrawn for that.
+const REDRAW_FRAMES: u32 = 120;
+
+/// Counts changes of the terrain (chunks loaded, edited or rebuilt); the
+/// maps are drawn again when it moves on.
+static WORLD_REVISION: AtomicU64 = AtomicU64::new(0);
+
+/// The terrain changed: draw the maps again.
+pub fn world_changed() {
+    WORLD_REVISION.fetch_add(1, Ordering::Relaxed);
+}
 
 /// Set while the exposure map is drawn: shaders see a framebuffer of their
 /// own then, as in the shadow pass, and characters (whose feet would keep
@@ -94,6 +104,10 @@ pub struct SkyExposure {
     /// Corner (x, z) and top the map was drawn for, and frames since.
     drawn: Option<[f32; 3]>,
     age: u32,
+    /// `WORLD_REVISION` when drawn.
+    revision: u64,
+    /// Whether the ground map needs drawing after this `begin`.
+    ground_due: bool,
     view_projection: Matrix4<f32>,
 }
 
@@ -108,6 +122,8 @@ impl SkyExposure {
             ground,
             drawn: None,
             age: 0,
+            revision: 0,
+            ground_due: true,
             view_projection: Matrix4::from_scale(1.0),
         }
     }
@@ -118,11 +134,17 @@ impl SkyExposure {
     pub fn begin(&mut self, eye: Point3<f32>) -> Option<Matrix4<f32>> {
         let snap = |v: f32| (v / SNAP).round() * SNAP;
         let area = [snap(eye.x), snap(eye.z), snap(eye.y + ABOVE_CAMERA)];
-        if self.drawn == Some(area) && self.age < REDRAW_FRAMES {
+        let revision = WORLD_REVISION.load(Ordering::Relaxed);
+        let moved = self.drawn != Some(area) || self.revision != revision;
+        if !moved && self.age < REDRAW_FRAMES {
             self.age += 1;
             return None;
         }
+        // The ground map holds the terrain alone, which only changes with
+        // the area or the terrain.
+        self.ground_due = moved;
         self.drawn = Some(area);
+        self.revision = revision;
         self.age = 0;
 
         let [x, z, top] = area;
@@ -166,6 +188,12 @@ impl SkyExposure {
         EXPOSURE_PASS.store(true, Ordering::Relaxed);
         GROUND_PASS.store(true, Ordering::Relaxed);
         self.view_projection
+    }
+
+    /// After a `begin` that drew the map: whether the ground map must be
+    /// drawn again too (see `begin_ground`).
+    pub fn ground_due(&self) -> bool {
+        self.ground_due
     }
 
     /// Done drawing the map; the default framebuffer is bound again.

@@ -27,6 +27,7 @@ use crate::core::{
         line::Line,
         pbr::Lighting,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
+        weather::exposure,
     },
     physics::physics_engine::{collider_tag, PhysicsEngine},
     scene::{scene_file::ComponentData, Scene},
@@ -212,6 +213,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
             }
         }
         self.chunk_receiver = Self::start_chunkloaders(self.seed);
+        exposure::world_changed();
     }
 
     /// Take the scattered instance whose collider is `collider` out of the
@@ -557,6 +559,7 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 chunk_entity.add_component(chunk_body);
                 chunk_entity.set_transient(true);
                 entity.add_child(chunk_entity);
+                exposure::world_changed();
             }
         }
         self.sync_scatter(scene, entity);
@@ -699,8 +702,16 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
 
     pub fn buffer_data(&mut self) {
         let mut vertex_array = DynamicVertexArray::new();
-        vertex_array.buffer_data(&self.vertices, &self.indices.clone());
+        vertex_array.buffer_data(&self.vertices, &self.indices);
         self.vertex_array = Some(vertex_array);
+    }
+
+    /// Buffer the mesh and drop its copy in memory: only the GPU's is
+    /// left. Its vertices and indices read empty after this.
+    pub fn buffer_and_release(&mut self) {
+        self.buffer_data();
+        self.vertices = Vec::new();
+        self.indices = self.indices.as_ref().map(|_| Vec::new());
     }
 
     pub fn render(&self, shader: &Shader, transform: &Matrix4<f32>, scale: Option<f32>) {
@@ -717,7 +728,7 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
         if let Some(vertex_array) = &self.vertex_array {
             vertex_array.bind();
             unsafe {
-                if let Some(_) = &self.indices {
+                if self.indices.is_some() {
                     gl::DrawElements(
                         gl::TRIANGLES,
                         vertex_array.get_element_count() as i32,
@@ -725,7 +736,7 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
                         std::ptr::null(),
                     );
                 } else {
-                    gl::DrawArrays(gl::TRIANGLES, 0, self.vertices.len() as i32);
+                    gl::DrawArrays(gl::TRIANGLES, 0, vertex_array.get_element_count() as i32);
                 }
             }
         }
@@ -739,6 +750,9 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
     }
 
     pub fn get_triangle_count(&self) -> usize {
+        if let Some(vertex_array) = &self.vertex_array {
+            return vertex_array.get_element_count() / 3;
+        }
         if let Some(indices) = &self.indices {
             indices.len() / 3
         } else {
