@@ -41,14 +41,14 @@ float texelBlend(vec4 texels, vec2 f) {
     return mix(mix(texels.w, texels.z, f.x), mix(texels.x, texels.y, f.x), f.y);
 }
 
-// Share of the sky above `worldPos` that is open, 0..1. The point is moved
-// off the surface along its normal first, so walls and cliffs (which see
-// their own top from above) count as open. Only what is well above the
+// Share of the sky above `worldPos` that is open, 0..1, in any pass. The
+// point is moved off the surface along its normal first, so walls and
+// cliffs (which see their own top from above) count as open. Only what is well above the
 // point shelters it: grass and bumps of the ground do not. The map is
 // filtered (each texel's shelter blended bilinearly, over a few texels),
 // so the edge of what is sheltered is soft instead of blocky.
-float skyExposure(vec3 worldPos, vec3 Ng) {
-    if (useExposure == 0 || isShadowPass == 1) {
+float skyExposureMap(vec3 worldPos, vec3 Ng) {
+    if (useExposure == 0) {
         return 1.0;
     }
     vec3 p = worldPos + Ng * 0.3 + vec3(0.0, 0.05, 0.0);
@@ -78,6 +78,15 @@ float skyExposure(vec3 worldPos, vec3 Ng) {
         }
     }
     return mix(1.0 - sheltered / 9.0, 1.0, outside);
+}
+
+// `skyExposureMap`, but everything counts as open while drawing shadows
+// or other depth: what is wet or snowed on does not change those.
+float skyExposure(vec3 worldPos, vec3 Ng) {
+    if (isShadowPass == 1) {
+        return 1.0;
+    }
+    return skyExposureMap(worldPos, Ng);
 }
 
 // The trail map at `p`: (pressed 0..1, rim 0..1). Zero outside it.

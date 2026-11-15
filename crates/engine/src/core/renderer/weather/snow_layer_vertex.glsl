@@ -49,7 +49,9 @@ void main() {
 
     // Snow lies under open sky, above the water, on what is not too steep
     // (as on the terrain, see `snowShare`).
-    float cover = snowCover * skyExposure(vec3(p.x, ground, p.y), GroundNormal)
+    // The same in every pass: the shadow maps see the layer where the
+    // camera does.
+    float cover = snowCover * skyExposureMap(vec3(p.x, ground, p.y), GroundNormal)
         * smoothstep(waterLine, waterLine + 0.4, ground);
     float n = weatherNoise(p * 1.7) * 0.6 + weatherNoise(p * 6.0) * 0.4;
     float threshold = mix(0.92, 0.45, cover) + (n - 0.5) * 0.2;

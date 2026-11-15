@@ -282,6 +282,10 @@ impl Scene {
     fn render_passes(&self, window: &Window) {
         let parent_transform = Matrix4::identity();
 
+        // The weather's maps first: the snow layer needs them in the shadow
+        // pass too.
+        self.render_weather_maps(window);
+
         // Shadow Pass
         if let Some(shadow_fbo) = &self.shadow_fbo {
             if let Some(skylight) = self.get_component::<SkyLight>() {
@@ -296,13 +300,12 @@ impl Scene {
                     for entity in self.entities.iter() {
                         entity.render(self, &cascade.view_projection, parent_transform);
                     }
+                    self.render_snow_layer(&cascade.view_projection);
                 }
                 FrameBuffer::unbind();
                 self.apply_viewport(window);
             }
         }
-
-        self.render_weather_maps(window);
 
         // Render Pass
         self.apply_viewport(window);
@@ -326,6 +329,7 @@ impl Scene {
                 for entity in self.entities.iter() {
                     entity.render(self, &view_projection, parent_transform);
                 }
+                self.render_snow_layer(&view_projection);
                 ssao.resolve(&camera.get_projection().get_matrix(), &settings);
                 ssao.bind_result();
                 self.apply_viewport(window);
@@ -496,7 +500,8 @@ impl Scene {
     }
 
     /// The layer of snow on the ground near the camera, with the opaque
-    /// scene.
+    /// scene: in the shadow maps, the ambient occlusion's depth and the
+    /// camera's view.
     fn render_snow_layer(&self, view_projection: &Matrix4<f32>) {
         let (Some(skylight), Some(lighting), Some(maps)) = (
             self.get_component::<SkyLight>(),

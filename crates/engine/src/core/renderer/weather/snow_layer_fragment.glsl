@@ -23,6 +23,11 @@ void main() {
     if (hasFiner == 1 && max(inner.x, inner.y) < finerHalf) {
         discard;
     }
+    // Shadow maps and the ambient occlusion's depth need only the depth.
+    if (isShadowPass == 1) {
+        FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
     // Slope of the pressed snow, on the ground's.
     const float e = 0.05;
     float dx = snowDent(WorldPos.xz + vec2(e, 0.0)) - snowDent(WorldPos.xz - vec2(e, 0.0));
