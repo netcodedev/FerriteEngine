@@ -16,6 +16,9 @@ out vec2 TexCoords;
 uniform mat4 model;
 uniform mat4 viewProjection;
 uniform mat4 boneTransforms[MAX_BONES];
+// The depth-only program (`depth_pass`) runs this shader too; the shading
+// pass tests LEQUAL against the prepass' depth.
+invariant gl_Position;
 
 void main()
 {

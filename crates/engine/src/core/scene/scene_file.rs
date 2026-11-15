@@ -24,7 +24,7 @@ use crate::{
             light::{
                 global_illumination::GlobalIllumination,
                 light::{Light, LightKind, LightSettings},
-                skylight::SkyLight,
+                skylight::{ShadowSettings, SkyLight},
             },
             particles::{ParticleEffect, ParticleEmitter, ParticlePreset},
             sky::CloudSettings,
@@ -116,6 +116,10 @@ pub enum ComponentData {
         /// scenes saved before it existed: the defaults.
         #[serde(default)]
         global_illumination: GlobalIllumination,
+        /// How often the shadow cascades are drawn. Missing in scenes saved
+        /// before it existed: every cascade as often as before.
+        #[serde(default)]
+        shadows: ShadowSettings,
     },
     /// A point, spot or directional light in any colour (sRGB, 0 to 1).
     /// Every field may be left out for its default (see `LightSettings`).
@@ -329,6 +333,7 @@ impl ComponentData {
             hdr: *sky.hdr(),
             weather: *sky.weather(),
             global_illumination: *sky.global_illumination(),
+            shadows: *sky.shadows(),
         }
     }
 
@@ -421,6 +426,7 @@ impl ComponentData {
                 hdr,
                 weather,
                 global_illumination,
+                shadows,
             } => {
                 let mut sky = SkyLight::new((30.0, 20.0, 10.0));
                 sky.set_time_of_day(*time_of_day);
@@ -432,6 +438,7 @@ impl ComponentData {
                 sky.set_hdr(*hdr);
                 sky.set_weather(*weather);
                 sky.set_global_illumination(*global_illumination);
+                sky.set_shadows(*shadows);
                 entity.add_component(sky);
             }
             ComponentData::Light { .. } => {

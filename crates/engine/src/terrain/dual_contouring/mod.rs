@@ -29,6 +29,8 @@ pub struct DualContouringChunk {
     meshes: Vec<ChunkMesh<Vertex>>,
     /// Indices of the finest mesh that are ground; its skirt follows.
     ground_indices: usize,
+    /// World box around every level's mesh, skirts and all.
+    drawn_bounds: crate::terrain::ChunkBounds,
     /// Water surface grid, present only when some terrain in this chunk
     /// comes near WATER_LEVEL. It reaches under the shore (see `water`).
     water_mesh: Option<ChunkMesh<water::WaterVertex>>,

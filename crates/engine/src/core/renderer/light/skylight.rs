@@ -60,6 +60,25 @@ pub struct SkyLight {
     weather: Weather,
     /// Moonlight, the night sky's light and lamp light bounce.
     global_illumination: GlobalIllumination,
+    /// How often the shadow cascades are drawn.
+    shadows: ShadowSettings,
+}
+
+/// How often the sun's shadow cascades are drawn again.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+#[serde(default)]
+pub struct ShadowSettings {
+    /// Draw the second cascade every other frame (the third and fourth are
+    /// drawn every 2nd and 4th frame anyway). Saves about a quarter of the
+    /// shadow pass; a fast turn or move can show its shadows a frame late.
+    pub stagger_second_cascade: bool,
+}
+
+impl ShadowSettings {
+    /// Every how many frames each cascade is drawn, nearest first.
+    pub fn intervals(&self) -> [u64; SHADOW_CASCADES] {
+        [1, if self.stagger_second_cascade { 2 } else { 1 }, 2, 4]
+    }
 }
 
 impl SkyLight {
@@ -98,6 +117,7 @@ impl SkyLight {
             hdr: HdrSettings::default(),
             weather: Weather::default(),
             global_illumination: GlobalIllumination::default(),
+            shadows: ShadowSettings::default(),
         };
         sl.position = Point3::from_vec(sl.compute_sun_direction() * SUN_DISTANCE);
         sl
@@ -137,6 +157,14 @@ impl SkyLight {
 
     pub fn set_global_illumination(&mut self, settings: GlobalIllumination) {
         self.global_illumination = settings.sanitized();
+    }
+
+    pub fn shadows(&self) -> &ShadowSettings {
+        &self.shadows
+    }
+
+    pub fn set_shadows(&mut self, settings: ShadowSettings) {
+        self.shadows = settings;
     }
 
     /// The moon and indirect light as the lit shaders get them.
@@ -383,6 +411,7 @@ impl Component for SkyLight {
             hdr: self.hdr,
             weather: self.weather,
             global_illumination: self.global_illumination,
+            shadows: self.shadows,
         })
     }
 
@@ -400,6 +429,7 @@ impl Component for SkyLight {
             Property::ranged("altocumulus", self.clouds.altocumulus, 0.0, 1.0),
             Property::ranged("cirrus", self.clouds.cirrus, 0.0, 1.0),
             Property::bool("cloud reprojection", self.clouds.reprojection),
+            Property::bool("staggered near shadows", self.shadows.stagger_second_cascade),
             Property::ranged(
                 "moonlight",
                 self.global_illumination.moonlight,
@@ -505,6 +535,9 @@ impl Component for SkyLight {
             ("altocumulus", PropertyValue::Float(v)) => self.clouds.set_altocumulus(v),
             ("cirrus", PropertyValue::Float(v)) => self.clouds.set_cirrus(v),
             ("cloud reprojection", PropertyValue::Bool(v)) => self.clouds.reprojection = v,
+            ("staggered near shadows", PropertyValue::Bool(v)) => {
+                self.shadows.stagger_second_cascade = v
+            }
             ("moonlight", PropertyValue::Float(v)) => self.global_illumination.set_moonlight(v),
             ("night sky light", PropertyValue::Float(v)) => {
                 self.global_illumination.set_night_sky(v)
@@ -583,6 +616,18 @@ mod tests {
         sky.set_time_of_day(0.0);
         assert!((sky.shadow_light_direction() - sky.get_moon_direction()).magnitude() < 1e-6);
         assert!(sky.shadow_light_direction().y > 0.5);
+    }
+
+    #[test]
+    fn the_second_cascade_is_staggered_only_when_asked_and_saved() {
+        let mut sky = SkyLight::new((30.0, 20.0, 10.0));
+        assert_eq!(sky.shadows().intervals(), [1, 1, 2, 4]);
+        sky.set_property("staggered near shadows", PropertyValue::Bool(true));
+        assert_eq!(sky.shadows().intervals(), [1, 2, 2, 4]);
+        match sky.to_data() {
+            Some(ComponentData::SkyLight { shadows, .. }) => assert!(shadows.stagger_second_cascade),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

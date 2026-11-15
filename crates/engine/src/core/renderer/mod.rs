@@ -1,3 +1,4 @@
+pub mod depth_pass;
 pub mod framebuffer;
 pub mod hdr;
 pub mod light;
