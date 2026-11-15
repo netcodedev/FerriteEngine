@@ -13,6 +13,9 @@ uniform float cells;
 uniform int outermost;
 // No snow at or below the water's surface.
 uniform float waterLine;
+// 1 while drawing shadows or the ambient occlusion's depth: the layer
+// without its trails (the fragments shade those smoothly themselves).
+uniform int flatLayer;
 // Snow kept under a footprint's bottom (metres).
 uniform float minUnderPrint;
 
@@ -22,6 +25,8 @@ out vec3 GroundNormal;
 out float Cover;
 // 1 where the ground map knows the ground; less is not drawn.
 out float Valid;
+// Metres from here up to the untouched top of the snow.
+out float Lift;
 
 // How far a sunk layer goes under the ground, so it never fights the
 // terrain's own surface for the same depth.
@@ -73,8 +78,10 @@ void main() {
     // more where it turns into the next ring), so coarse rings make soft
     // dents instead of sharp facets; the fragments add the detail back
     // through their normals.
+    float full = snowDepth * Cover;
     float left = snowDepth - snowDentBlurred(p, 1.5 * spacing * (1.0 + morph));
-    float top = max(left, min(minUnderPrint, snowDepth)) * Cover;
+    float top = flatLayer == 1 ? full : max(left, min(minUnderPrint, snowDepth)) * Cover;
+    Lift = full - top;
     WorldPos = vec3(p.x, ground + top - (1.0 - Cover) * SINK, p.y);
     gl_Position = viewProjection * vec4(WorldPos, 1.0);
 }

@@ -300,12 +300,16 @@ impl Scene {
                     for entity in self.entities.iter() {
                         entity.render(self, &cascade.view_projection, parent_transform);
                     }
-                    self.render_snow_layer(&cascade.view_projection);
+                    self.render_snow_layer(&cascade.view_projection, true);
                 }
                 FrameBuffer::unbind();
                 self.apply_viewport(window);
             }
         }
+
+        // The passes since may have bound other textures where the weather's
+        // maps go.
+        self.bind_weather_maps();
 
         // Render Pass
         self.apply_viewport(window);
@@ -329,7 +333,7 @@ impl Scene {
                 for entity in self.entities.iter() {
                     entity.render(self, &view_projection, parent_transform);
                 }
-                self.render_snow_layer(&view_projection);
+                self.render_snow_layer(&view_projection, true);
                 ssao.resolve(&camera.get_projection().get_matrix(), &settings);
                 ssao.bind_result();
                 self.apply_viewport(window);
@@ -387,7 +391,7 @@ impl Scene {
             for entity in self.entities.iter() {
                 entity.render(self, &view_projection, parent_transform);
             }
-            self.render_snow_layer(&view_projection);
+            self.render_snow_layer(&view_projection, false);
             // Transparent pass — runs after every entity's opaque geometry is
             // in the depth buffer, so water with depth-write enabled correctly
             // depth-tests against the player and other dynamic geometry. It
@@ -499,10 +503,23 @@ impl Scene {
         self.apply_viewport(window);
     }
 
+    /// Bind the weather's maps to their units again (see
+    /// `render_weather_maps`).
+    fn bind_weather_maps(&self) {
+        if self.weather_maps.get().is_none() {
+            return;
+        }
+        if let Some(targets) = self.weather.borrow().as_ref() {
+            targets.exposure.bind();
+            targets.trails.bind();
+        }
+    }
+
     /// The layer of snow on the ground near the camera, with the opaque
     /// scene: in the shadow maps, the ambient occlusion's depth and the
     /// camera's view.
-    fn render_snow_layer(&self, view_projection: &Matrix4<f32>) {
+    /// `flat`: without the trails pressed in (shadows, ambient occlusion).
+    fn render_snow_layer(&self, view_projection: &Matrix4<f32>, flat: bool) {
         let (Some(skylight), Some(lighting), Some(maps)) = (
             self.get_component::<SkyLight>(),
             Lighting::from_scene(self),
@@ -518,6 +535,7 @@ impl Scene {
                 &lighting,
                 &maps,
                 skylight.effective_cloud_type(),
+                flat,
             );
         }
     }

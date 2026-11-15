@@ -106,7 +106,10 @@ void applySnow(vec3 worldPos, vec3 Ng, float share,
     if (share <= 0.0) {
         return;
     }
-    vec2 grain = vec2(weatherNoise(worldPos.xz * 40.0), weatherNoise(worldPos.zx * 40.0 + 5.0)) - 0.5;
+    // The fine grain only close up: further away it is smaller than a
+    // pixel and would sparkle as the view moves.
+    float close = 1.0 - smoothstep(4.0, 12.0, length(cameraPosition - worldPos));
+    vec2 grain = (vec2(weatherNoise(worldPos.xz * 40.0), weatherNoise(worldPos.zx * 40.0 + 5.0)) - 0.5) * close;
     // Soft drifts the wind piled up, a metre or two across.
     vec2 q = worldPos.xz * 0.7;
     float d0 = weatherNoise(q);

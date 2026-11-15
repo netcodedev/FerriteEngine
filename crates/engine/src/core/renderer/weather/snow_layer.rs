@@ -142,6 +142,10 @@ impl SnowLayer {
 
     /// Draw the layer around `eye` into the bound target, if enough snow
     /// lies and the ground map is there. The weather maps must be bound.
+    /// `flat` leaves the trails out of the shape, for shadows and the
+    /// ambient occlusion's depth: the camera's view shades them smoothly
+    /// itself, and what the depth of a few centimetres of print would add
+    /// there is mostly shimmer.
     pub fn render(
         &self,
         view_projection: &Matrix4<f32>,
@@ -149,6 +153,7 @@ impl SnowLayer {
         lighting: &Lighting,
         maps: &WeatherMaps,
         cloud_type: f32,
+        flat: bool,
     ) {
         let weather = &lighting.weather;
         if full_reach(weather.snow_depth, weather.snow_cover) <= 0.0 || maps.exposure.is_none() {
@@ -161,6 +166,7 @@ impl SnowLayer {
         shader.set_uniform_1f("cells", CELLS as f32);
         shader.set_uniform_1f("waterLine", WATER_LINE);
         shader.set_uniform_1f("minUnderPrint", MIN_UNDER_PRINT);
+        shader.set_uniform_1i("flatLayer", flat as i32);
         shader.set_uniform_1f("uTime", sky::seconds());
         shader.set_uniform_1f("cloudType", cloud_type);
         unsafe {
