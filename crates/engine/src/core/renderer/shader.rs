@@ -19,6 +19,7 @@ pub trait VertexAttributes {
 }
 
 impl Shader {
+    #[track_caller]
     pub fn new(vertex_source: &str, fragment_source: &str) -> Self {
         Shader {
             id: Shader::create_shader(vertex_source, fragment_source),
@@ -138,83 +139,198 @@ impl Shader {
         }
     }
 
+    /// Compiles and links a program. On failure the info log is reported
+    /// (with the offending source lines) and 0 is returned, so the caller
+    /// draws nothing instead of crashing.
+    #[track_caller]
     pub fn create_shader(vertex_shader_source: &str, fragment_shader_source: &str) -> GLuint {
         if crate::core::headless::is_headless() {
             return 0;
         }
+        let caller = std::panic::Location::caller();
         unsafe {
-            // 1. Compile vertex shader
-            let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
-            let c_str_vert = CString::new(vertex_shader_source.as_bytes()).unwrap();
-            gl::ShaderSource(vertex_shader, 1, &c_str_vert.as_ptr(), ptr::null());
-            gl::CompileShader(vertex_shader);
+            let vertex_shader = compile_stage(gl::VERTEX_SHADER, vertex_shader_source, caller);
+            let fragment_shader =
+                compile_stage(gl::FRAGMENT_SHADER, fragment_shader_source, caller);
+            let (Some(vertex_shader), Some(fragment_shader)) = (vertex_shader, fragment_shader)
+            else {
+                vertex_shader.map(|s| gl::DeleteShader(s));
+                fragment_shader.map(|s| gl::DeleteShader(s));
+                return 0;
+            };
 
-            // 2. Check for vertex shader compilation errors
-            let mut success = gl::FALSE as GLint;
-            let mut info_log = Vec::with_capacity(512);
-            info_log.set_len(512 - 1); // subtract 1 to skip the trailing null character
-            gl::GetShaderiv(vertex_shader, gl::COMPILE_STATUS, &mut success);
-            if success != gl::TRUE as GLint {
-                gl::GetShaderInfoLog(
-                    vertex_shader,
-                    512,
-                    ptr::null_mut(),
-                    info_log.as_mut_ptr() as *mut GLchar,
-                );
-                println!(
-                    "Vertex Shader Compilation failed\n{}",
-                    String::from_utf8_lossy(&info_log)
-                );
-            }
-
-            // 3. Compile fragment shader
-            let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
-            let c_str_frag = CString::new(fragment_shader_source.as_bytes()).unwrap();
-            gl::ShaderSource(fragment_shader, 1, &c_str_frag.as_ptr(), ptr::null());
-            gl::CompileShader(fragment_shader);
-
-            // 4. Check for fragment shader compilation errors
-            gl::GetShaderiv(fragment_shader, gl::COMPILE_STATUS, &mut success);
-            if success != gl::TRUE as GLint {
-                gl::GetShaderInfoLog(
-                    fragment_shader,
-                    512,
-                    ptr::null_mut(),
-                    info_log.as_mut_ptr() as *mut GLchar,
-                );
-                println!(
-                    "Fragment Shader Compilation failed\n{}",
-                    String::from_utf8_lossy(&info_log)
-                );
-            }
-
-            // 5. Link shaders
             let shader_program = gl::CreateProgram();
             gl::AttachShader(shader_program, vertex_shader);
             gl::AttachShader(shader_program, fragment_shader);
             gl::LinkProgram(shader_program);
-
-            // 6. Check for linking errors
-            gl::GetProgramiv(shader_program, gl::LINK_STATUS, &mut success);
-            if success != gl::TRUE as GLint {
-                gl::GetProgramInfoLog(
-                    shader_program,
-                    512,
-                    ptr::null_mut(),
-                    info_log.as_mut_ptr() as *mut GLchar,
-                );
-                println!(
-                    "Linking shaders failed\n{}",
-                    String::from_utf8_lossy(&info_log)
-                );
-            }
-
-            // 7. Delete the shaders as they're linked into our program now and no longer necessary
+            // The shaders live on in the program; flag them for deletion now.
             gl::DeleteShader(vertex_shader);
             gl::DeleteShader(fragment_shader);
 
+            let mut success = gl::FALSE as GLint;
+            gl::GetProgramiv(shader_program, gl::LINK_STATUS, &mut success);
+            if success != gl::TRUE as GLint {
+                let mut len: GLint = 0;
+                gl::GetProgramiv(shader_program, gl::INFO_LOG_LENGTH, &mut len);
+                let mut buffer = vec![0u8; len.max(1) as usize];
+                let mut written: GLsizei = 0;
+                gl::GetProgramInfoLog(
+                    shader_program,
+                    buffer.len() as GLsizei,
+                    &mut written,
+                    buffer.as_mut_ptr() as *mut GLchar,
+                );
+                buffer.truncate(written.max(0) as usize);
+                report_shader_error(&format!(
+                    "shader program (created at {caller}) failed to link:\n{}",
+                    String::from_utf8_lossy(&buffer).trim_end()
+                ));
+                gl::DeleteProgram(shader_program);
+                return 0;
+            }
+
             shader_program
         }
+    }
+}
+
+/// Compiles one stage; on failure reports the log and returns `None`.
+unsafe fn compile_stage(
+    stage: GLenum,
+    source: &str,
+    caller: &std::panic::Location<'_>,
+) -> Option<GLuint> {
+    let stage_name = match stage {
+        gl::VERTEX_SHADER => "vertex",
+        gl::FRAGMENT_SHADER => "fragment",
+        _ => "unknown",
+    };
+    let c_source = match CString::new(source.as_bytes()) {
+        Ok(c) => c,
+        Err(_) => {
+            report_shader_error(&format!(
+                "{stage_name} shader (created at {caller}) contains a NUL byte"
+            ));
+            return None;
+        }
+    };
+    let shader = gl::CreateShader(stage);
+    gl::ShaderSource(shader, 1, &c_source.as_ptr(), ptr::null());
+    gl::CompileShader(shader);
+
+    let mut success = gl::FALSE as GLint;
+    gl::GetShaderiv(shader, gl::COMPILE_STATUS, &mut success);
+    if success == gl::TRUE as GLint {
+        return Some(shader);
+    }
+    let mut len: GLint = 0;
+    gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &mut len);
+    let mut buffer = vec![0u8; len.max(1) as usize];
+    let mut written: GLsizei = 0;
+    gl::GetShaderInfoLog(
+        shader,
+        buffer.len() as GLsizei,
+        &mut written,
+        buffer.as_mut_ptr() as *mut GLchar,
+    );
+    buffer.truncate(written.max(0) as usize);
+    gl::DeleteShader(shader);
+    let log = String::from_utf8_lossy(&buffer);
+    report_shader_error(&format!(
+        "{stage_name} shader (created at {caller}) failed to compile:\n{}",
+        annotate_info_log(&log, source)
+    ));
+    None
+}
+
+fn report_shader_error(message: &str) {
+    // Many objects compile the same source (one shader per model), so report
+    // each distinct error only once.
+    static REPORTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    if let Ok(mut reported) = REPORTED.lock() {
+        if reported.iter().any(|m| m == message) {
+            return;
+        }
+        reported.push(message.to_owned());
+    }
+    // Use the engine's logger when one is installed, otherwise stderr, so the
+    // error is never swallowed.
+    if log::log_enabled!(log::Level::Error) {
+        log::error!("{message}");
+    } else {
+        eprintln!("[shader error] {message}");
+    }
+}
+
+/// Appends the source line each info-log message refers to.
+fn annotate_info_log(log: &str, source: &str) -> String {
+    let source_lines: Vec<&str> = source.lines().collect();
+    let mut out = String::new();
+    let mut last_shown = None;
+    for line in log.lines().filter(|l| !l.trim().is_empty()) {
+        out.push_str("  ");
+        out.push_str(line.trim_end());
+        out.push('\n');
+        let number = info_log_line_number(line);
+        if number == last_shown {
+            continue;
+        }
+        last_shown = number;
+        if let Some(n) = number {
+            if let Some(text) = n.checked_sub(1).and_then(|i| source_lines.get(i)) {
+                out.push_str(&format!("    {n:>4} | {}\n", text.trim_end()));
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push_str("  (empty info log)\n");
+    }
+    out.truncate(out.trim_end().len());
+    out
+}
+
+/// Extracts the source line number from a driver info-log line. Handles
+/// Mesa (`0:12(5): error: ...`), NVIDIA (`0(12) : error C1234: ...`) and
+/// AMD/Intel-style (`ERROR: 0:12: ...`) formats.
+fn info_log_line_number(line: &str) -> Option<usize> {
+    let line = line.trim_start();
+    let line = line
+        .strip_prefix("ERROR:")
+        .or_else(|| line.strip_prefix("WARNING:"))
+        .unwrap_or(line)
+        .trim_start();
+    // Source-string index first.
+    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    let rest = &line[digits..];
+    let rest = rest.strip_prefix(':').or_else(|| rest.strip_prefix('('))?;
+    let n = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if n == 0 {
+        return None;
+    }
+    rest[..n].parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_driver_log_line_numbers() {
+        assert_eq!(info_log_line_number("0:12(5): error: `foo' undeclared"), Some(12));
+        assert_eq!(info_log_line_number("0(7) : error C1008: undefined variable"), Some(7));
+        assert_eq!(info_log_line_number("ERROR: 0:3: 'x' : undeclared identifier"), Some(3));
+        assert_eq!(info_log_line_number("error: linking failed"), None);
+    }
+
+    #[test]
+    fn annotates_log_with_source() {
+        let source = "#version 330 core\nvoid main() {\n  foo = 1;\n}";
+        let out = annotate_info_log("0:3(3): error: `foo' undeclared\n", source);
+        assert!(out.contains("0:3(3): error"));
+        assert!(out.contains("3 |   foo = 1;"));
     }
 }
 
