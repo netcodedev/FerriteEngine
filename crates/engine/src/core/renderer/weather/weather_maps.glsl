@@ -14,6 +14,9 @@ uniform mat4 exposureMatrix;
 uniform float exposureRange; // metres the depth 0..1 spans
 // The same view of the terrain alone: how high things are above the ground.
 uniform sampler2D groundMap;
+// How open the sky is over the ground there, smoothed over about a metre
+// (`weather/shelter.rs`), over the same area.
+uniform sampler2D shelterMap;
 
 // Trails pressed into the snow: r how far pressed down (0..1), g the snow
 // pushed up around a print. `trailArea` is (x, z) of its corner and size.
@@ -178,4 +181,18 @@ bool groundHeight(vec2 p, out float height) {
     // `q.z` is the depth of height 0; depth grows downward, linearly.
     height = (q.z - texelBlend(depth, f)) * exposureRange;
     return true;
+}
+
+// Share of the sky open over the ground at `p` (x, z), smoothed over
+// about a metre, so snow under trees thins out gently instead of following
+// every gap in the leaves.
+float openSkySmooth(vec2 p) {
+    if (useExposure == 0) {
+        return 1.0;
+    }
+    vec4 clip = exposureMatrix * vec4(p.x, 0.0, p.y, 1.0);
+    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    vec2 edge = abs(uv * 2.0 - 1.0);
+    float outside = smoothstep(0.85, 0.98, max(edge.x, edge.y));
+    return mix(textureLod(shelterMap, uv, 0.0).r, 1.0, outside);
 }

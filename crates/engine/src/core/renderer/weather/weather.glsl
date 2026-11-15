@@ -10,6 +10,27 @@ uniform float weatherTime;   // seconds
 
 const vec3 SNOW_ALBEDO = vec3(0.80, 0.83, 0.88);
 
+// The snow's scan (`terrain/materials.rs`, `load_snow`): colour with
+// roughness in alpha, and the normal (OpenGL style) with occlusion in alpha.
+// Laid on from above, `SNOW_TILE` metres a tile.
+uniform int hasSnowTextures;
+uniform sampler2DArray snowColourMap;
+uniform sampler2DArray snowSurfaceMap;
+const float SNOW_TILE = 2.0;
+// The scan's average colour (linear): it is scaled to `SNOW_ALBEDO`.
+const vec3 SNOW_SCAN_AVERAGE = vec3(0.699, 0.707, 0.723);
+
+// Screen derivatives of the scan's coordinates, which pick its mipmap.
+// Set by `snowGradients` at the start of a fragment shader, where every
+// pixel still runs: later (after a discard, in a branch) they are
+// undefined, and the scan would flicker.
+vec4 snowGrad = vec4(0.0);
+
+void snowGradients(vec3 worldPos) {
+    vec2 uv = worldPos.xz / SNOW_TILE;
+    snowGrad = vec4(dFdx(uv), dFdy(uv));
+}
+
 // Height (dh/dx, dh/dz) of rings spreading where drops hit standing water,
 // for rain of `amount` 0..1 at `p` (metres); `footprint` is the metres one
 // pixel covers there (`length(fwidth(p))`, taken where all pixels run).
@@ -99,25 +120,42 @@ float snowShare(vec3 worldPos, vec3 N, vec3 Ng, float exposure) {
     return smoothstep(threshold - 0.08, threshold + 0.08, up) * smoothstep(0.0, 0.2, cover);
 }
 
-// Cover the surface with `share` of snow: bright, rough, with a fine
-// grain whose facets glint.
+// Cover the surface with `share` of snow: the scan's colour and grain
+// where there is one (otherwise a plain colour with a fine grain whose
+// facets glint), and soft drifts the wind piled up.
 void applySnow(vec3 worldPos, vec3 Ng, float share,
                inout vec3 albedo, inout vec3 N, inout float roughness, inout float metallic) {
     if (share <= 0.0) {
         return;
     }
-    // The fine grain only close up: further away it is smaller than a
-    // pixel and would sparkle as the view moves.
-    float close = 1.0 - smoothstep(4.0, 12.0, length(cameraPosition - worldPos));
-    vec2 grain = (vec2(weatherNoise(worldPos.xz * 40.0), weatherNoise(worldPos.zx * 40.0 + 5.0)) - 0.5) * close;
     // Soft drifts the wind piled up, a metre or two across.
     vec2 q = worldPos.xz * 0.7;
     float d0 = weatherNoise(q);
     vec2 drift = vec2(weatherNoise(q + vec2(0.15, 0.0)) - d0, weatherNoise(q + vec2(0.0, 0.15)) - d0);
-    vec3 snowN = normalize(Ng + vec3(grain.x, 0.0, grain.y) * 0.25 - vec3(drift.x, 0.0, drift.y) * 1.2);
-    albedo = mix(albedo, SNOW_ALBEDO, share);
+    vec3 snowAlbedo = SNOW_ALBEDO;
+    float snowRoughness = 0.55;
+    vec3 snowN;
+    if (hasSnowTextures == 1) {
+        vec3 uv = vec3(worldPos.xz / SNOW_TILE, 0.0);
+        vec4 colour = textureGrad(snowColourMap, uv, snowGrad.xy, snowGrad.zw);
+        vec4 surface = textureGrad(snowSurfaceMap, uv, snowGrad.xy, snowGrad.zw);
+        snowAlbedo = colour.rgb * (SNOW_ALBEDO / SNOW_SCAN_AVERAGE) * mix(1.0, surface.a, 0.5);
+        snowRoughness = colour.a;
+        // Tangent space laid flat on the ground (as the terrain's top
+        // projection): x along x, the map's v (green flipped) along z.
+        vec3 t = surface.xyz * 2.0 - 1.0;
+        t.y = -t.y;
+        snowN = normalize(vec3(t.x + Ng.x, abs(t.z) * Ng.y, t.y + Ng.z) - vec3(drift.x, 0.0, drift.y) * 1.2);
+    } else {
+        // The fine grain only close up: further away it is smaller than a
+        // pixel and would sparkle as the view moves.
+        float close = 1.0 - smoothstep(4.0, 12.0, length(cameraPosition - worldPos));
+        vec2 grain = (vec2(weatherNoise(worldPos.xz * 40.0), weatherNoise(worldPos.zx * 40.0 + 5.0)) - 0.5) * close;
+        snowN = normalize(Ng + vec3(grain.x, 0.0, grain.y) * 0.25 - vec3(drift.x, 0.0, drift.y) * 1.2);
+    }
+    albedo = mix(albedo, snowAlbedo, share);
     N = normalize(mix(N, snowN, share));
-    roughness = mix(roughness, 0.55, share);
+    roughness = mix(roughness, snowRoughness, share);
     metallic = mix(metallic, 0.0, share);
 }
 

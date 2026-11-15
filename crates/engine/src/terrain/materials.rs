@@ -127,6 +127,45 @@ pub fn load(shader: &Shader) -> Vec<Texture> {
     textures
 }
 
+/// Folder below `assets/textures/terrain/` with the snow's scan.
+pub const SNOW_FOLDER: &str = "snow";
+
+/// The snow's textures from `assets/textures/terrain/snow/`, as one-layer
+/// arrays: colour with roughness in alpha (sRGB colour), and the normal
+/// with occlusion in alpha. Nothing when there is no colour map.
+pub fn load_snow() -> Option<[Texture; 2]> {
+    let layer = load_layer(&Path::new(FOLDER).join(SNOW_FOLDER))?;
+    let (width, height) = layer.albedo.dimensions();
+    let fit = |image: &RgbaImage| {
+        if image.dimensions() == (width, height) {
+            image.clone()
+        } else {
+            image::imageops::resize(image, width, height, FilterType::Triangle)
+        }
+    };
+    let roughness = layer.roughness.as_ref().map(|i| fit(i).into_raw());
+    let gloss = layer.gloss.as_ref().map(|i| fit(i).into_raw());
+    let normal = layer.normal.as_ref().map(|i| fit(i).into_raw());
+    let occlusion = layer.occlusion.as_ref().map(|i| fit(i).into_raw());
+    let mut colour = layer.albedo.into_raw();
+    let mut surface = vec![0u8; colour.len()];
+    for i in 0..(width * height) as usize {
+        let at = i * 4;
+        colour[at + 3] = match (&roughness, &gloss) {
+            (Some(r), _) => r[at],
+            (None, Some(g)) => 255 - g[at],
+            (None, None) => DEFAULT_ROUGHNESS,
+        };
+        let n = normal.as_ref().map_or(DEFAULT_NORMAL, |n| [n[at], n[at + 1], n[at + 2], 255]);
+        surface[at..at + 3].copy_from_slice(&n[..3]);
+        surface[at + 3] = occlusion.as_ref().map_or(255, |o| o[at]);
+    }
+    let mut textures = [Texture::new(), Texture::new()];
+    textures[0].load_array(width, height, &[colour], true);
+    textures[1].load_array(width, height, &[surface], false);
+    Some(textures)
+}
+
 fn load_layer(folder: &Path) -> Option<LayerImages> {
     let files: Vec<PathBuf> = std::fs::read_dir(folder)
         .ok()?

@@ -180,6 +180,11 @@ impl SkyExposure {
         self.drawn.map(|_| (self.view_projection, RANGE))
     }
 
+    /// GL names of the exposure map and the ground map.
+    pub fn textures(&self) -> (GLuint, GLuint) {
+        (self.depth, self.ground)
+    }
+
     pub fn bind(&self) {
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0 + EXPOSURE_UNIT);

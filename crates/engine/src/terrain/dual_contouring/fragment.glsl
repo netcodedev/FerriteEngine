@@ -238,6 +238,7 @@ void terrainSnow(float exposure, inout vec3 albedo, inout vec3 N, vec3 Ng,
 }
 
 void main() {
+    snowGradients(WorldPos);
     if (isShadowPass == 1) {
         FragColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;

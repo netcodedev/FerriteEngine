@@ -40,6 +40,7 @@ float printShadow(vec2 p, float depth, vec3 L) {
 }
 
 void main() {
+    snowGradients(WorldPos);
     if (Valid < 0.999 || Cover < 0.01) {
         discard;
     }

@@ -487,8 +487,12 @@ impl Scene {
                 entity.render(self, &view_projection, Matrix4::identity());
             }
             targets.exposure.end();
+            if let Some((_, range)) = targets.exposure.projection() {
+                targets.shelter.update(&targets.exposure, range);
+            }
         }
         targets.exposure.bind();
+        targets.shelter.bind();
         let trails = if weather.snow_cover > 0.0 {
             targets.trails.update(eye, weather.shading().snow, &footprints);
             targets.trails.bind();
@@ -496,9 +500,11 @@ impl Scene {
         } else {
             None
         };
+        targets.bind_snow_textures();
         self.weather_maps.set(Some(WeatherMaps {
             exposure: targets.exposure.projection(),
             trails,
+            snow_textures: targets.snow_textures.is_some(),
         }));
         self.apply_viewport(window);
     }
@@ -511,7 +517,9 @@ impl Scene {
         }
         if let Some(targets) = self.weather.borrow().as_ref() {
             targets.exposure.bind();
+            targets.shelter.bind();
             targets.trails.bind();
+            targets.bind_snow_textures();
         }
     }
 
