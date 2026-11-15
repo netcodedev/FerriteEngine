@@ -20,7 +20,13 @@ use crate::{
             Entity, EntityHandle,
         },
         renderer::{
-            hdr::HdrSettings, light::skylight::SkyLight, sky::CloudSettings,
+            hdr::HdrSettings,
+            light::{
+                global_illumination::GlobalIllumination,
+                light::{Light, LightKind, LightSettings},
+                skylight::SkyLight,
+            },
+            sky::CloudSettings,
             ssao::AmbientOcclusionSettings, weather::Weather,
         },
         script,
@@ -105,6 +111,32 @@ pub enum ComponentData {
         /// Missing in scenes saved before it existed: clear and dry.
         #[serde(default)]
         weather: Weather,
+        /// Moonlight, night sky light and lamp light bounce. Missing in
+        /// scenes saved before it existed: the defaults.
+        #[serde(default)]
+        global_illumination: GlobalIllumination,
+    },
+    /// A point, spot or directional light in any colour (sRGB, 0 to 1).
+    /// Every field may be left out for its default (see `LightSettings`).
+    Light {
+        #[serde(default)]
+        kind: LightKind,
+        #[serde(default = "light_default::color")]
+        color: [f32; 3],
+        #[serde(default = "light_default::intensity")]
+        intensity: f32,
+        #[serde(default = "light_default::range")]
+        range: f32,
+        #[serde(default = "light_default::inner_angle")]
+        inner_angle: f32,
+        #[serde(default = "light_default::outer_angle")]
+        outer_angle: f32,
+        #[serde(default = "light_default::bounce")]
+        bounce: f32,
+        #[serde(default = "light_default::enabled")]
+        enabled: bool,
+        #[serde(default = "light_default::shadows")]
+        shadows: bool,
     },
     Terrain {
         seed: u64,
@@ -146,12 +178,43 @@ fn unit_value() -> ron::Value {
     ron::Value::Unit
 }
 
+/// Defaults of the `Light` fields left out of a scene file.
+mod light_default {
+    use super::LightSettings;
+
+    pub fn color() -> [f32; 3] {
+        LightSettings::default().color
+    }
+    pub fn intensity() -> f32 {
+        LightSettings::default().intensity
+    }
+    pub fn range() -> f32 {
+        LightSettings::default().range
+    }
+    pub fn inner_angle() -> f32 {
+        LightSettings::default().inner_angle
+    }
+    pub fn outer_angle() -> f32 {
+        LightSettings::default().outer_angle
+    }
+    pub fn bounce() -> f32 {
+        LightSettings::default().bounce
+    }
+    pub fn enabled() -> bool {
+        LightSettings::default().enabled
+    }
+    pub fn shadows() -> bool {
+        LightSettings::default().shadows
+    }
+}
+
 impl ComponentData {
     /// Short name of the kind, for messages.
     pub fn label(&self) -> String {
         match self {
             ComponentData::Camera { .. } => "Camera",
             ComponentData::SkyLight { .. } => "Sky light",
+            ComponentData::Light { .. } => "Light",
             ComponentData::Terrain { .. } => "Terrain",
             ComponentData::DebugController => "Debug controller",
             ComponentData::Player => "Player",
@@ -177,6 +240,27 @@ impl ComponentData {
         vec![
             ("Camera".into(), ComponentData::default_camera()),
             ("Sky light".into(), ComponentData::default_sky_light()),
+            ("Point light".into(), ComponentData::light(LightSettings::default())),
+            (
+                "Spot light".into(),
+                ComponentData::light(LightSettings {
+                    kind: LightKind::Spot,
+                    color: [1.0, 0.95, 0.85],
+                    intensity: 30.0,
+                    range: 25.0,
+                    ..LightSettings::default()
+                }),
+            ),
+            (
+                "Directional light".into(),
+                ComponentData::light(LightSettings {
+                    kind: LightKind::Directional,
+                    color: [0.6, 0.7, 1.0],
+                    intensity: 0.5,
+                    bounce: 0.0,
+                    ..LightSettings::default()
+                }),
+            ),
             ("Terrain".into(), ComponentData::bare_terrain(2)),
             ("Debug controller".into(), ComponentData::DebugController),
             ("Shape".into(), ComponentData::default_shape()),
@@ -222,6 +306,60 @@ impl ComponentData {
             ambient_occlusion: *sky.ambient_occlusion(),
             hdr: *sky.hdr(),
             weather: *sky.weather(),
+            global_illumination: *sky.global_illumination(),
+        }
+    }
+
+    pub fn light(settings: LightSettings) -> Self {
+        let LightSettings {
+            kind,
+            color,
+            intensity,
+            range,
+            inner_angle,
+            outer_angle,
+            bounce,
+            enabled,
+            shadows,
+        } = settings;
+        ComponentData::Light {
+            kind,
+            color,
+            intensity,
+            range,
+            inner_angle,
+            outer_angle,
+            bounce,
+            enabled,
+            shadows,
+        }
+    }
+
+    /// The settings of a `Light`, `None` for other kinds.
+    pub fn light_settings(&self) -> Option<LightSettings> {
+        match *self {
+            ComponentData::Light {
+                kind,
+                color,
+                intensity,
+                range,
+                inner_angle,
+                outer_angle,
+                bounce,
+                enabled,
+                shadows,
+            } => Some(LightSettings {
+                kind,
+                color,
+                intensity,
+                range,
+                inner_angle,
+                outer_angle,
+                bounce,
+                enabled,
+                shadows,
+            }),
+            _ => None,
         }
     }
 
@@ -256,6 +394,7 @@ impl ComponentData {
                 ambient_occlusion,
                 hdr,
                 weather,
+                global_illumination,
             } => {
                 let mut sky = SkyLight::new((30.0, 20.0, 10.0));
                 sky.set_time_of_day(*time_of_day);
@@ -266,7 +405,12 @@ impl ComponentData {
                 sky.set_ambient_occlusion(*ambient_occlusion);
                 sky.set_hdr(*hdr);
                 sky.set_weather(*weather);
+                sky.set_global_illumination(*global_illumination);
                 entity.add_component(sky);
+            }
+            ComponentData::Light { .. } => {
+                let settings = self.light_settings().expect("a light");
+                entity.add_component(Light::new(settings));
             }
             ComponentData::Terrain { seed, scatter } => {
                 entity.add_component(
@@ -581,6 +725,7 @@ pub fn default_scene_file() -> SceneFile {
 mod tests {
     use super::*;
     use crate::core::assets::AssetId;
+    use crate::core::entity::component::Component;
 
     #[test]
     fn the_starter_scene_parses_and_has_a_free_camera_sky_and_terrain() {
@@ -679,6 +824,71 @@ mod tests {
             file.entities[0].components,
             vec![ComponentData::bare_terrain(2), ComponentData::Player]
         );
+    }
+
+    #[test]
+    fn a_light_round_trips_and_may_leave_out_any_field() {
+        let data = ComponentData::light(LightSettings {
+            kind: LightKind::Spot,
+            color: [0.2, 0.5, 1.0],
+            intensity: 12.0,
+            range: 18.0,
+            inner_angle: 15.0,
+            outer_angle: 25.0,
+            bounce: 0.5,
+            enabled: false,
+            shadows: false,
+        });
+        let text = ron::to_string(&data).unwrap();
+        assert!(text.starts_with("Light("), "{text}");
+        assert_eq!(ron::from_str::<ComponentData>(&text).unwrap(), data);
+
+        let short = ron::from_str::<ComponentData>("Light(kind: Spot, color: (1.0, 0.0, 0.0))")
+            .unwrap()
+            .light_settings()
+            .unwrap();
+        assert_eq!(short.kind, LightKind::Spot);
+        assert_eq!(short.color, [1.0, 0.0, 0.0]);
+        assert_eq!(short.range, LightSettings::default().range);
+        assert!(short.enabled);
+        assert_eq!(
+            ron::from_str::<ComponentData>("Light()").unwrap().light_settings(),
+            Some(LightSettings::default())
+        );
+    }
+
+    #[test]
+    fn a_light_attaches_as_a_light_component_and_saves_back() {
+        let data = ComponentData::light(LightSettings {
+            kind: LightKind::Directional,
+            ..LightSettings::default()
+        });
+        let mut entity = Entity::new("lamp");
+        data.attach(&mut entity);
+        let light = entity.get_own_component::<Light>().expect("a light");
+        assert_eq!(light.settings().kind, LightKind::Directional);
+        assert_eq!(light.to_data(), Some(data));
+    }
+
+    #[test]
+    fn the_catalog_offers_every_kind_of_light() {
+        let kinds: Vec<LightKind> = ComponentData::catalog()
+            .iter()
+            .filter_map(|(_, data)| data.light_settings())
+            .map(|s| s.kind)
+            .collect();
+        assert_eq!(kinds, LightKind::ALL);
+    }
+
+    #[test]
+    fn sky_lights_from_before_global_illumination_get_its_defaults() {
+        let old = "SkyLight(time_of_day: 0.5, day_length_seconds: 60.0, paused: false, cloud_coverage: 0.3)";
+        match ron::from_str::<ComponentData>(old).unwrap() {
+            ComponentData::SkyLight { global_illumination, .. } => {
+                assert_eq!(global_illumination, GlobalIllumination::default())
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

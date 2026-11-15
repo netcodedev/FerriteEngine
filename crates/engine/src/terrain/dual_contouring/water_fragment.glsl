@@ -200,6 +200,46 @@ vec4 screenSky(vec3 R) {
     return vec4(min(texture(sceneColor, uv).rgb, vec3(4.0)), edgeFade(uv));
 }
 
+// The scene's lamps mirrored in the surface: a glint for each, drawn out
+// into a streak by the waves (GGX, like the sun), behind their shadows.
+vec3 lampReflections(vec3 N, vec3 V, float NdotV, float roughness) {
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < lightCount; ++i) {
+        Light l = lights[i];
+        int kind = int(l.directionKind.w + 0.5);
+        vec3 L;
+        float attenuation = 1.0;
+        if (kind == LIGHT_DIRECTIONAL) {
+            L = -l.directionKind.xyz;
+        } else {
+            vec3 toLight = l.positionRange.xyz - WorldPos;
+            float d2 = dot(toLight, toLight);
+            float range = l.positionRange.w;
+            if (d2 >= range * range) {
+                continue;
+            }
+            float d = sqrt(d2);
+            L = toLight / max(d, 1e-4);
+            attenuation = rangeFade(d, range) / max(d2, 0.01);
+            if (kind == LIGHT_SPOT) {
+                attenuation *= spotCone(l, L);
+            }
+        }
+        float NdotL = dot(N, L);
+        if (attenuation <= 0.0 || NdotL <= 0.0) {
+            continue;
+        }
+        attenuation *= lightShadow(l, WorldPos, vec3(0.0, 1.0, 0.0), L);
+        vec3 H = normalize(V + L);
+        float NdotH = max(dot(N, H), 0.0);
+        float F = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - max(dot(H, V), 0.0), 5.0);
+        float specular = distributionGGX(NdotH, roughness * roughness)
+            * geometrySmith(NdotV, NdotL, roughness) * F / max(4.0 * NdotV * NdotL, 1e-4);
+        sum += l.radianceBounce.rgb * attenuation * specular * NdotL;
+    }
+    return sum;
+}
+
 void main()
 {
     if (isShadowPass == 1) {
@@ -236,7 +276,10 @@ void main()
     vec3 sunLight = sunRadiance();
     float shadow = sunShadow(WorldPos, vec3(0.0, 1.0, 0.0), L);
     // Daylight inside the water, which it scatters back.
-    vec3 ambient = skyLight(vec3(0.0, 1.0, 0.0)) + sunLight * max(L.y, 0.0) * (0.35 + 0.65 * shadow);
+    vec3 ambient = skyLight(vec3(0.0, 1.0, 0.0)) + sunLight * max(L.y, 0.0) * (0.35 + 0.65 * shadow)
+        + moonRadiance() * max(moonDirection.y, 0.0) * 0.5
+        // Lamp light the water scatters back around the lamp.
+        + localLightAt(WorldPos) * 0.35;
     vec3 scattered = SCATTER_COLOR * ambient;
 
     vec3 underwater;
@@ -315,6 +358,13 @@ void main()
         float specular = distributionGGX(NdotH, roughness * roughness)
             * geometrySmith(NdotV, NdotL, roughness) * F / max(4.0 * NdotV * NdotL, 1e-4);
         color += sunLight * specular * NdotL * shadow;
+    }
+
+    // ── Lamps ─────────────────────────────────────────────────────────
+    if (!below && lightCount > 0) {
+        // A little rougher than for the sun: a lamp is a point, and its
+        // reflection would otherwise be a single sparkling pixel.
+        color += lampReflections(N, V, NdotV, mix(0.12, 0.2, far));
     }
 
     // Light through the crests, toward a camera looking at the sun.

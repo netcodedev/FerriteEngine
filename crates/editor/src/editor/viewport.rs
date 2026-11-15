@@ -7,7 +7,10 @@ use cgmath::{
 use ferrite::core::{
     camera::{Camera, CameraController, Projection},
     entity::{component::camera_component::CameraComponent, Entity, EntityHandle},
-    renderer::line::{Line, LineRenderer},
+    renderer::{
+        light::light::{srgb_to_linear, Light, LightKind},
+        line::{Line, LineRenderer},
+    },
     scene::Scene,
 };
 use glfw::{Action, CursorMode, Key, MouseButton, WindowEvent};
@@ -36,6 +39,8 @@ const CIRCLE_SEGMENTS: usize = 48;
 /// Translate arrows relative to the rotate rings.
 const ARROW_SCALE: f32 = 0.5;
 const GIZMO_LINE_WIDTH: i32 = 3;
+/// Size of a light's marker, relative to the gizmos.
+const LIGHT_MARKER_SCALE: f32 = 0.12;
 /// How close (in pixels) a click must be to a marker to select its entity.
 const MARKER_PICK_RADIUS: f32 = 8.0;
 
@@ -450,6 +455,7 @@ impl Viewport {
             return;
         };
         let vp = camera.get_view_projection();
+        self.render_lights(scene, &vp, rect, selected);
 
         let Some(id) = selected else {
             return;
@@ -491,6 +497,107 @@ impl Viewport {
             render_thick_lines(&vp, &lines, color, rect, GIZMO_LINE_WIDTH);
         }
     }
+}
+
+impl Viewport {
+    /// A small star in its colour for every light, so lights can be seen
+    /// and clicked; for the selected one also where it reaches: its range
+    /// (point), its cone (spot) or its direction (directional).
+    fn render_lights(
+        &self,
+        scene: &Scene,
+        vp: &Matrix4<f32>,
+        rect: Rect,
+        selected: Option<EntityHandle>,
+    ) {
+        for (id, transform, light) in collect_lights(scene) {
+            let s = light.settings();
+            let center = Point3::from_vec(transform.w.truncate());
+            let down = (transform * Vector4::new(0.0, -1.0, 0.0, 0.0)).truncate();
+            let dir = if down.magnitude2() > 1e-12 {
+                down.normalize()
+            } else {
+                -Vector3::unit_y()
+            };
+            // What the colour looks like on screen, but never so dark the
+            // marker disappears; switched off lights are grey.
+            let color = if s.enabled {
+                let c = Vector3::from(s.color.map(srgb_to_linear));
+                c / c.x.max(c.y).max(c.z).max(1e-3)
+            } else {
+                Vector3::new(0.35, 0.35, 0.35)
+            };
+            let size = self.gizmo_size(center) * LIGHT_MARKER_SCALE;
+            let mut lines = star_lines(center, size);
+            if s.kind != LightKind::Point {
+                lines.extend(arrow_lines(center, dir, size * 3.0));
+            }
+            let is_selected = selected == Some(id);
+            if is_selected {
+                lines.extend(match s.kind {
+                    LightKind::Point => AXES
+                        .iter()
+                        .flat_map(|axis| circle_lines(center, *axis, s.range))
+                        .collect(),
+                    LightKind::Spot => cone_lines(center, dir, s.range, s.outer_angle),
+                    LightKind::Directional => arrow_lines(center, dir, self.gizmo_size(center) * 2.5),
+                });
+            }
+            let width = if is_selected { 2 } else { 1 };
+            render_thick_lines(vp, &lines, color, rect, width);
+        }
+    }
+}
+
+/// Every light in the scene with its entity and world transform.
+fn collect_lights(scene: &Scene) -> Vec<(EntityHandle, Matrix4<f32>, &Light)> {
+    fn visit<'a>(
+        entity: &'a Entity,
+        parent: Matrix4<f32>,
+        out: &mut Vec<(EntityHandle, Matrix4<f32>, &'a Light)>,
+    ) {
+        let world = parent * entity.local_transform();
+        for component in entity.components() {
+            if let Some(light) = component.as_any().downcast_ref::<Light>() {
+                out.push((entity.id, world, light));
+            }
+        }
+        for child in entity.get_children() {
+            visit(child, world, out);
+        }
+    }
+    let mut out = Vec::new();
+    for entity in scene.get_entities() {
+        visit(entity, Matrix4::identity(), &mut out);
+    }
+    out
+}
+
+/// Three crossed lines and four diagonals around `center`.
+fn star_lines(center: Point3<f32>, size: f32) -> Vec<Line> {
+    let diagonal = 1.0 / 3f32.sqrt();
+    let mut dirs: Vec<Vector3<f32>> = AXES.to_vec();
+    for (x, z) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
+        dirs.push(Vector3::new(x * diagonal, diagonal, z * diagonal));
+    }
+    dirs.into_iter()
+        .map(|d| Line::new(center - d * size, d, size * 2.0))
+        .collect()
+}
+
+/// The outline of a spot light's cone: its rim at `range` and four lines
+/// from the light to it.
+fn cone_lines(apex: Point3<f32>, dir: Vector3<f32>, range: f32, angle_deg: f32) -> Vec<Line> {
+    let angle = angle_deg.to_radians();
+    let (height, radius) = (range * angle.cos(), range * angle.sin());
+    let rim = apex + dir * height;
+    let (u, v) = perpendicular_basis(dir);
+    let mut lines = circle_lines(rim, dir, radius);
+    for side in [u, -u, v, -v] {
+        let edge = rim + side * radius - apex;
+        lines.push(Line::new(apex, edge.normalize(), edge.magnitude()));
+    }
+    lines
 }
 
 /// Draw `lines` `width` pixels thick by repeating them shifted by whole
@@ -818,4 +925,35 @@ fn collect_world_positions(scene: &Scene) -> Vec<(EntityHandle, Point3<f32>)> {
         visit(entity, Matrix4::identity(), &mut out);
     }
     out
+}
+
+#[cfg(test)]
+mod light_marker_tests {
+    use super::*;
+
+    #[test]
+    fn a_spot_lights_cone_reaches_its_range_at_its_angle() {
+        let apex = Point3::new(1.0, 5.0, 2.0);
+        let dir = -Vector3::unit_y();
+        let lines = cone_lines(apex, dir, 10.0, 30.0);
+        let sides = &lines[lines.len() - 4..];
+        for side in sides {
+            assert_eq!(side.position, apex);
+            assert!((side.length - 10.0).abs() < 1e-4);
+            let cos = side.direction.dot(dir);
+            assert!((cos - 30f32.to_radians().cos()).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn a_light_marker_is_a_star_around_the_light() {
+        let center = Point3::new(0.0, 2.0, 0.0);
+        let lines = star_lines(center, 0.5);
+        assert_eq!(lines.len(), 7);
+        for line in &lines {
+            let middle = line.position + line.direction * (line.length / 2.0);
+            assert!((middle - center).magnitude() < 1e-5);
+            assert!((line.length - 1.0).abs() < 1e-5);
+        }
+    }
 }

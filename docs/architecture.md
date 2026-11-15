@@ -69,7 +69,8 @@ crates/engine/src/
 │   ├── renderer      everything that touches OpenGL
 │   │                  ├── framebuffer (shadow maps, debug maps)
 │   │                  ├── hdr (ACES / filmic tone mapping, bloom, exposure)
-│   │                  ├── light (sky light, cascaded shadow maps)
+│   │                  ├── light (sky light, cascaded shadow maps, scene
+│   │                  │         lights, moon and bounce light)
 │   │                  ├── pbr (shading)
 │   │                  ├── shader (compile / link, VAOs, attributes)
 │   │                  ├── sky (cumulus, altocumulus, cumulonimbus)
@@ -101,8 +102,9 @@ Scene::update
 In edit mode the editor calls `Scene::update_in_editor` instead: no
 physics, no gameplay, only `update_in_editor` of each component.
 
-`Scene::render` (see `render_passes` in `core/scene/scene.rs`) draws the
-weather maps (rain and snow exposure), the cascaded shadow maps, the
+`Scene::render` (see `render_passes` in `core/scene/scene.rs`) uploads the
+scene's lights for the shaders, draws the weather maps (rain and snow
+exposure), the cascaded shadow maps, the lamps' shadow cube maps, the
 ambient occlusion from the camera's depth, then the scene into an HDR
 target, which is tone-mapped (with bloom) to the screen. The editor draws
 its UI on top.
@@ -132,7 +134,9 @@ cargo test --workspace
 The tests cover what runs without a GPU: scene and project files, the
 starter scene, the camera and projection math, the view frustum, terrain
 chunk bounds, entity trees, finding scripts in a scene, the shapes' meshes,
-the network protocol, the UI's text input and sliders, the animation
+the network protocol, the UI's text input and sliders, lights (settings,
+placement, choosing the frame's lights, the moon, which lights get
+shadows and which cube faces are drawn), the animation
 graphs, scatter seeding, the weather, the editor's bridge handling
 (property conversion, screenshots) and the whole MCP server, including the
 bridge against a stand-in editor. Rendering and the editor's interactive

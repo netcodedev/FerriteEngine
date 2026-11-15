@@ -690,6 +690,26 @@ mod tests {
     }
 
     #[test]
+    fn the_catalog_offers_lights_as_ron_the_editor_reads_back() {
+        let catalog = component_catalog();
+        let entries = catalog["components"].as_array().expect("components");
+        for name in ["Point light", "Spot light", "Directional light"] {
+            let entry = entries.iter().find(|e| e["name"] == name).expect(name);
+            let ron = entry["ron"].as_str().unwrap();
+            let data: ComponentData = ron::from_str(ron).unwrap();
+            assert!(data.light_settings().is_some(), "{name}: {ron}");
+        }
+    }
+
+    #[test]
+    fn light_properties_are_found_by_scene_file_names() {
+        let light = ferrite::core::renderer::light::light::Light::default();
+        let props = ferrite::core::entity::component::Component::properties(&light);
+        assert_eq!(find_property(&props, "inner_angle").unwrap().name, "inner angle");
+        assert_eq!(find_property(&props, "Color_R").unwrap().name, "color r");
+    }
+
+    #[test]
     fn properties_are_found_by_scene_file_names_and_case() {
         let props = vec![
             Property::float("time of day", 0.3),

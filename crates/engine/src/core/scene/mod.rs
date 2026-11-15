@@ -6,6 +6,10 @@ use super::{
     renderer::{
         framebuffer::{CascadedShadowMap, ShadowFrameBuffer},
         hdr::Hdr,
+        light::{
+            light::{LightBuffer, LightSource},
+            shadow::{LightShadowMaps, ShadowPlanner},
+        },
         ssao::Ssao,
         texture::TextureRenderer,
         weather::{WeatherMaps, WeatherTargets},
@@ -49,6 +53,16 @@ pub struct Scene {
     weather: RefCell<Option<WeatherTargets>>,
     /// Where the weather's maps lie while the scene is shaded with them.
     weather_maps: Cell<Option<WeatherMaps>>,
+    /// The scene's lights for the shaders, made on the first frame with one.
+    lights: RefCell<Option<LightBuffer>>,
+    /// How many lights the buffer holds while the scene is drawn.
+    light_count: Cell<usize>,
+    /// The lights in the buffer this frame, with their shadow layers.
+    light_sources: RefCell<Vec<LightSource>>,
+    /// Shadow cube maps of point and spot lights, made when first needed.
+    light_shadows: RefCell<Option<LightShadowMaps>>,
+    /// Which of their faces are drawn this frame.
+    shadow_planner: RefCell<ShadowPlanner>,
     /// Work queued with `Scene::defer`, run once every entity is updated.
     deferred: Vec<Box<dyn FnOnce(&mut Scene)>>,
 }

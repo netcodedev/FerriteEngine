@@ -67,7 +67,8 @@ This is the starter scene a new project gets (plus a crate), in
 | RON | |
 | --- | --- |
 | `Camera(position, yaw_deg, pitch_deg, fov_deg, near, far, speed, free)` | `free` (default false): flies with WASD and the mouse in play mode |
-| `SkyLight(time_of_day, day_length_seconds, paused, cloud_coverage, …)` | `clouds`, `ambient_occlusion`, `hdr`, `weather` are optional |
+| `SkyLight(time_of_day, day_length_seconds, paused, cloud_coverage, …)` | `clouds`, `ambient_occlusion`, `hdr`, `weather`, `global_illumination` are optional |
+| `Light(kind: Point \| Spot \| Directional, color, intensity, range, inner_angle, outer_angle, bounce, enabled, shadows)` | Every field optional; see [lighting.md](lighting.md) |
 | `Terrain(seed, scatter: [(asset: …, density: …)])` | `density`: placements tried per 100 m × 100 m |
 | `Shape(kind: Cube \| Sphere \| Cylinder, color: (r, g, b))` | sRGB, 0 to 1; one metre across |
 | `Model(asset: …)` | A model asset (its id from the `.asset.ron` file) |
@@ -80,7 +81,8 @@ This is the starter scene a new project gets (plus a crate), in
 
 `time_of_day` runs from 0 to 1 over a day: 0.25 is sunrise (the sun on the
 horizon, still dark), 0.5 noon, 0.75 sunset. Daylight is good from about
-0.3 to 0.7.
+0.3 to 0.7. At night the moon lights the scene (see
+[lighting.md](lighting.md)).
 
 ## When something cannot be loaded
 

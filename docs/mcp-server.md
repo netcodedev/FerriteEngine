@@ -83,7 +83,7 @@ saves. Use the `editor_*` tools for it, or open another scene first.
 | `editor_select` | Select an entity (the inspector shows it) |
 | `editor_component_catalog` | Every component kind with ready-to-use RON; every script with its parameters |
 | `editor_add_component` / `editor_remove_component` | Components |
-| `editor_set_property` | One property of one component: script parameters, time of day, camera speed, shape colour, … |
+| `editor_set_property` | One property of one component: script parameters, time of day, moonlight, camera speed, shape or light colour, … |
 | `editor_open_scene` | Open a scene (refused with unsaved changes unless `discard_changes`) |
 | `editor_reload_scripts` | Build and load the scripts |
 | `editor_play` / `editor_stop` / `editor_save` | Play mode, saving |
@@ -119,6 +119,9 @@ Changes made during play mode last until play mode stops.
 // → {"results": [{"result": {"id": 1234}}]}
 {"tool": "editor_add_component", "arguments": {"id": 1234,
   "ron": "Shape(kind: Cylinder, color: (0.3, 0.25, 0.2))"}}
+// A warm light in it (spot and directional lights point along the entity's -Y).
+{"tool": "editor_add_component", "arguments": {"id": 1234,
+  "ron": "Light(kind: Point, color: (1.0, 0.7, 0.4), intensity: 10.0, range: 12.0)"}}
 {"tool": "editor_set_property", "arguments": {"id": 1234, "component_index": 0,
   "name": "color r", "value": 1.0}}
 {"tool": "editor_focus", "arguments": {"id": 1234}}

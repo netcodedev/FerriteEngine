@@ -16,7 +16,11 @@ use crate::core::{
         line::Line,
         plane::PlaneRenderer,
         text::TextRenderer,
-        light::skylight::{SkyLight, SHADOW_CASCADES},
+        light::{
+            light::{self as lights, LightBuffer},
+            shadow::{self, LightShadowMaps, ShadowPlanner},
+            skylight::{SkyLight, SHADOW_CASCADES},
+        },
         hdr::{self, Hdr, HdrSettings},
         sky::SkyRenderer,
         ssao::Ssao,
@@ -51,6 +55,11 @@ impl Scene {
             ambient_occlusion_origin: Cell::new(None),
             weather: RefCell::new(None),
             weather_maps: Cell::new(None),
+            lights: RefCell::new(None),
+            light_count: Cell::new(0),
+            light_sources: RefCell::new(Vec::new()),
+            light_shadows: RefCell::new(None),
+            shadow_planner: RefCell::new(ShadowPlanner::default()),
             deferred: Vec::new(),
         }
     }
@@ -193,6 +202,59 @@ impl Scene {
         self.weather_maps.get()
     }
 
+    /// How many of the scene's lights the lit shaders get while it is drawn
+    /// (see `light::light::select`), 0 otherwise.
+    pub fn light_count(&self) -> usize {
+        self.light_count.get()
+    }
+
+    /// Gather the scene's lights, keep the ones that matter for the camera
+    /// and upload them for the shaders.
+    fn upload_lights(&self) {
+        self.light_count.set(0);
+        self.light_sources.borrow_mut().clear();
+        let Some(camera) = self.get_active_camera() else {
+            return;
+        };
+        let found = lights::gather(self);
+        if found.is_empty() && self.lights.borrow().is_none() {
+            return;
+        }
+        let eye = camera.get_camera().get_eye_position();
+        let mut selected = lights::select(found, eye);
+        shadow::assign(&mut selected, eye);
+        let mut buffer = self.lights.borrow_mut();
+        buffer.get_or_insert_with(LightBuffer::new).upload(&selected);
+        self.light_count.set(selected.len());
+        *self.light_sources.borrow_mut() = selected;
+    }
+
+    /// The shadow cube maps of the point and spot lights that get one this
+    /// frame (see `light::shadow`): the faces due are drawn, depth only.
+    fn render_light_shadows(&self, window: &Window) {
+        let sources = self.light_sources.borrow();
+        if sources.iter().all(|l| l.shadow_layer.is_none()) {
+            return;
+        }
+        let mut maps = self.light_shadows.borrow_mut();
+        let maps = maps.get_or_insert_with(LightShadowMaps::new);
+        maps.unbind();
+        let plan = self.shadow_planner.borrow_mut().plan(&sources);
+        for (layer, face) in plan {
+            let Some(light) = sources.iter().find(|l| l.shadow_layer == Some(layer)) else {
+                continue;
+            };
+            let view_projection = shadow::face_view_projection(light.position, light.range, face);
+            maps.begin_face(layer, face);
+            for entity in self.entities.iter() {
+                entity.render(self, &view_projection, Matrix4::identity());
+            }
+            self.render_snow_layer(&view_projection, true);
+        }
+        FrameBuffer::unbind();
+        self.apply_viewport(window);
+    }
+
     /// GL name of the last frame's ambient occlusion (one red channel, as big
     /// as the viewport), for debug views.
     pub fn ambient_occlusion_texture(&self) -> Option<u32> {
@@ -285,6 +347,7 @@ impl Scene {
         // The weather's maps first: the snow layer needs them in the shadow
         // pass too.
         self.render_weather_maps(window);
+        self.upload_lights();
 
         // Shadow Pass
         if let Some(shadow_fbo) = &self.shadow_fbo {
@@ -306,6 +369,8 @@ impl Scene {
                 self.apply_viewport(window);
             }
         }
+
+        self.render_light_shadows(window);
 
         // The passes since may have bound other textures where the weather's
         // maps go.
@@ -374,6 +439,8 @@ impl Scene {
                     tan_half_x,
                     tan_half_y,
                     skylight.get_sun_direction(),
+                    skylight.get_moon_direction(),
+                    skylight.global_illumination().moonlight,
                     skylight.get_time_of_day(),
                     skylight.effective_cloud_coverage(),
                     skylight.effective_cloud_type(),
@@ -387,6 +454,9 @@ impl Scene {
                     gl::ActiveTexture(gl::TEXTURE15);
                 }
                 shadow_fbo.texture().bind();
+            }
+            if let Some(maps) = self.light_shadows.borrow().as_ref() {
+                maps.bind();
             }
             for entity in self.entities.iter() {
                 entity.render(self, &view_projection, parent_transform);
@@ -404,6 +474,7 @@ impl Scene {
             self.ambient_occlusion_origin.set(None);
             hdr.finish(&hdr_settings);
             self.weather_maps.set(None);
+            self.light_count.set(0);
         }
 
         // ── Debug overlay (F10) ───────────────────────────────────────────

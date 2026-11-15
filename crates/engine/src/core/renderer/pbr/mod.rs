@@ -8,7 +8,11 @@ use russimp_ng::material::TextureType;
 
 use crate::core::{
     renderer::{
-        light::skylight::{ShadowCascade, SkyLight, SHADOW_CASCADES},
+        light::{
+            global_illumination::IndirectShading,
+            shadow::LIGHT_SHADOW_UNIT,
+            skylight::{ShadowCascade, SkyLight, SHADOW_CASCADES},
+        },
         hdr,
         shader::Shader,
         ssao::SSAO_UNIT,
@@ -18,7 +22,7 @@ use crate::core::{
     scene::Scene,
 };
 
-/// Sun, sky, shadows, the BRDF (`shadeSurface`, `toDisplay`) and the
+/// Sun, moon, sky, the scene's lights, shadows, the BRDF (`shadeSurface`, `toDisplay`) and the
 /// weather on surfaces (`applyWeather`). Goes
 /// right after a fragment shader's `#version` line.
 pub const LIGHTING_GLSL: &str = concat!(
@@ -54,6 +58,11 @@ pub struct Lighting {
     /// Where the weather's maps lie (bound to `weather::EXPOSURE_UNIT` and
     /// `weather::SNOW_TRAIL_UNIT`) while the scene is shaded.
     pub weather_maps: Option<WeatherMaps>,
+    /// The moon, the night sky and lamp light bounce.
+    pub indirect: IndirectShading,
+    /// How many of the scene's lights the light buffer holds this frame
+    /// (`light::light::LightBuffer`); 0 shades without them.
+    pub light_count: usize,
 }
 
 impl Lighting {
@@ -74,6 +83,8 @@ impl Lighting {
             ambient_occlusion_origin: scene.ambient_occlusion_origin(),
             weather: skylight.weather().shading(),
             weather_maps: scene.weather_maps(),
+            indirect: skylight.indirect_shading(),
+            light_count: scene.light_count(),
         })
     }
 
@@ -87,6 +98,8 @@ impl Lighting {
             ambient_occlusion_origin: None,
             weather: WeatherShading::default(),
             weather_maps: None,
+            indirect: IndirectShading::preview(sun_direction.normalize()),
+            light_count: 0,
         }
     }
 
@@ -125,6 +138,16 @@ impl Lighting {
             }
             None => shader.set_uniform_1i("useSsao", 0),
         }
+        let indirect = &self.indirect;
+        shader.set_uniform_3fv("moonDirection", &indirect.moon_direction);
+        shader.set_uniform_1f("moonlight", indirect.settings.moonlight);
+        shader.set_uniform_1f("nightSky", indirect.settings.night_sky);
+        shader.set_uniform_1f("lightBounce", indirect.settings.bounce);
+        shader.set_uniform_1i("moonShadows", indirect.moon_shadows as i32);
+        shader.set_uniform_1i("lightCount", self.light_count as i32);
+        // Set even without shadows, like `ssaoMap`: left on unit 0 it would
+        // clash with the material's maps.
+        shader.set_uniform_1i("lightShadowMaps", LIGHT_SHADOW_UNIT as i32);
         self.weather.apply(shader, self.weather_maps.as_ref());
     }
 }

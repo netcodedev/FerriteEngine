@@ -9,6 +9,9 @@ use crate::core::{
     },
     renderer::{
         hdr::{HdrSettings, Tonemapper},
+        light::global_illumination::{
+            moon_casts_shadows, moon_direction, GlobalIllumination, IndirectShading,
+        },
         sky::{CloudSettings, CloudType},
         ssao::AmbientOcclusionSettings,
         weather::{Weather, WeatherMode},
@@ -55,6 +58,8 @@ pub struct SkyLight {
     hdr: HdrSettings,
     /// Rain and snow, and what they left on the ground.
     weather: Weather,
+    /// Moonlight, the night sky's light and lamp light bounce.
+    global_illumination: GlobalIllumination,
 }
 
 impl SkyLight {
@@ -92,6 +97,7 @@ impl SkyLight {
             ambient_occlusion: AmbientOcclusionSettings::default(),
             hdr: HdrSettings::default(),
             weather: Weather::default(),
+            global_illumination: GlobalIllumination::default(),
         };
         sl.position = Point3::from_vec(sl.compute_sun_direction() * SUN_DISTANCE);
         sl
@@ -107,6 +113,35 @@ impl SkyLight {
 
     pub fn get_sun_direction(&self) -> Vector3<f32> {
         self.compute_sun_direction()
+    }
+
+    /// Toward the moon (see `global_illumination::moon_direction`).
+    pub fn get_moon_direction(&self) -> Vector3<f32> {
+        moon_direction(self.compute_sun_direction())
+    }
+
+    /// Toward the light the shadow cascades are cast from: the sun by day,
+    /// the moon once the sun has set.
+    pub fn shadow_light_direction(&self) -> Vector3<f32> {
+        let sun = self.compute_sun_direction();
+        if moon_casts_shadows(sun) {
+            moon_direction(sun)
+        } else {
+            sun
+        }
+    }
+
+    pub fn global_illumination(&self) -> &GlobalIllumination {
+        &self.global_illumination
+    }
+
+    pub fn set_global_illumination(&mut self, settings: GlobalIllumination) {
+        self.global_illumination = settings.sanitized();
+    }
+
+    /// The moon and indirect light as the lit shaders get them.
+    pub fn indirect_shading(&self) -> IndirectShading {
+        IndirectShading::for_sun(self.compute_sun_direction(), self.global_illumination)
     }
 
     pub fn get_time_of_day(&self) -> f32 {
@@ -221,8 +256,9 @@ impl SkyLight {
         let tan_y = (projection.fovy.0 / 2.0).tan();
         let tan_x = tan_y * projection.aspect;
 
-        // Rotation into light space: looking along the sunlight.
-        let light_direction = -self.position.to_vec().normalize();
+        // Rotation into light space: looking along the sunlight (the
+        // moonlight at night).
+        let light_direction = -self.shadow_light_direction();
         let light_up = if light_direction.x.abs() < 0.001 && light_direction.z.abs() < 0.001 {
             Vector3::unit_z()
         } else {
@@ -346,6 +382,7 @@ impl Component for SkyLight {
             ambient_occlusion: self.ambient_occlusion,
             hdr: self.hdr,
             weather: self.weather,
+            global_illumination: self.global_illumination,
         })
     }
 
@@ -362,6 +399,24 @@ impl Component for SkyLight {
             ),
             Property::ranged("altocumulus", self.clouds.altocumulus, 0.0, 1.0),
             Property::ranged("cirrus", self.clouds.cirrus, 0.0, 1.0),
+            Property::ranged(
+                "moonlight",
+                self.global_illumination.moonlight,
+                GlobalIllumination::MOONLIGHT_RANGE.0,
+                GlobalIllumination::MOONLIGHT_RANGE.1,
+            ),
+            Property::ranged(
+                "night sky light",
+                self.global_illumination.night_sky,
+                GlobalIllumination::NIGHT_SKY_RANGE.0,
+                GlobalIllumination::NIGHT_SKY_RANGE.1,
+            ),
+            Property::ranged(
+                "light bounce",
+                self.global_illumination.bounce,
+                GlobalIllumination::BOUNCE_RANGE.0,
+                GlobalIllumination::BOUNCE_RANGE.1,
+            ),
             Property::bool("ambient occlusion", self.ambient_occlusion.enabled),
             Property::ranged(
                 "AO radius",
@@ -448,6 +503,11 @@ impl Component for SkyLight {
             }
             ("altocumulus", PropertyValue::Float(v)) => self.clouds.set_altocumulus(v),
             ("cirrus", PropertyValue::Float(v)) => self.clouds.set_cirrus(v),
+            ("moonlight", PropertyValue::Float(v)) => self.global_illumination.set_moonlight(v),
+            ("night sky light", PropertyValue::Float(v)) => {
+                self.global_illumination.set_night_sky(v)
+            }
+            ("light bounce", PropertyValue::Float(v)) => self.global_illumination.set_bounce(v),
             ("ambient occlusion", PropertyValue::Bool(v)) => self.ambient_occlusion.enabled = v,
             ("AO radius", PropertyValue::Float(v)) => self.ambient_occlusion.set_radius(v),
             ("AO intensity", PropertyValue::Float(v)) => self.ambient_occlusion.set_intensity(v),
@@ -511,5 +571,33 @@ mod tests {
         }
         // The first cascade covers far less than an even share.
         assert!(splits[0] < SHADOW_DISTANCE / SHADOW_CASCADES as f32);
+    }
+
+    #[test]
+    fn shadows_are_cast_from_the_sun_by_day_and_the_moon_by_night() {
+        let mut sky = SkyLight::new((30.0, 20.0, 10.0));
+        sky.set_time_of_day(0.5);
+        assert!((sky.shadow_light_direction() - sky.get_sun_direction()).magnitude() < 1e-6);
+        sky.set_time_of_day(0.0);
+        assert!((sky.shadow_light_direction() - sky.get_moon_direction()).magnitude() < 1e-6);
+        assert!(sky.shadow_light_direction().y > 0.5);
+    }
+
+    #[test]
+    fn global_illumination_is_edited_and_saved_with_the_sky() {
+        let mut sky = SkyLight::new((30.0, 20.0, 10.0));
+        sky.set_property("moonlight", PropertyValue::Float(2.0));
+        sky.set_property("night sky light", PropertyValue::Float(99.0));
+        sky.set_property("light bounce", PropertyValue::Float(0.5));
+        let gi = *sky.global_illumination();
+        assert_eq!(gi.moonlight, 2.0);
+        assert_eq!(gi.night_sky, GlobalIllumination::NIGHT_SKY_RANGE.1);
+        assert_eq!(gi.bounce, 0.5);
+        match sky.to_data() {
+            Some(ComponentData::SkyLight { global_illumination, .. }) => {
+                assert_eq!(global_illumination, gi)
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

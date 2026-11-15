@@ -12,6 +12,11 @@ const vec3 MURK = vec3(0.50, 0.53, 0.57);
 
 // Linear brightness of the sun disk, relative to a white sky.
 const float SUN_DISK_RADIANCE = 40.0;
+// The moon disk and the glow of the sky around and under it (display
+// colours, at `moonlight` 1).
+const float MOON_DISK_RADIANCE = 3.0;
+const vec3 MOON_SKY_ZENITH = vec3(0.020, 0.032, 0.070);
+const vec3 MOON_SKY_HORIZON = vec3(0.035, 0.050, 0.095);
 
 void main() {
     vec3 dir = viewRay(ndcPos);
@@ -29,6 +34,9 @@ void main() {
     float vBlend = sqrt(up);
     vec3 dayCol   = mix(horizonDay,   zenithDay,   vBlend);
     vec3 nightCol = mix(horizonNight, zenithNight, vBlend);
+    // A moonlit night sky is a deep blue, not black.
+    float moonUp = smoothstep(-0.05, 0.25, moonDirection.y) * clamp(moonlight, 0.0, 4.0);
+    nightCol += mix(MOON_SKY_HORIZON, MOON_SKY_ZENITH, vBlend) * moonUp;
     vec3 sky = mix(nightCol, dayCol, dayFactor);
 
     // ── Sunset/sunrise glow (only when sun is near horizon) ────────────
@@ -113,5 +121,20 @@ void main() {
     sky = pow(max(sky, vec3(0.0)), vec3(2.2));
     float sunCover = 1.0 - clouds.a;
     sky += vec3(1.00, 0.95, 0.85) * SUN_DISK_RADIANCE * sunDisk * sunVisible * sunCover;
+
+    // ── Moon disk and halo, at night ───────────────────────────────────
+    float moonDot = clamp(dot(dir, moonDirection), -1.0, 1.0);
+    float moonVisible = smoothstep(-0.03, 0.05, moonDirection.y)
+        * (1.0 - dayFactor) * min(moonlight, 1.0);
+    if (moonVisible > 0.0) {
+        float moonDisk = smoothstep(0.99955, 0.99975, moonDot);
+        float moonHalo = pow(max(moonDot, 0.0), 400.0) * 0.08;
+        // Darker patches on the disk ("seas"), fixed to the moon.
+        vec3 across = dir - moonDirection * moonDot;
+        float seas = 0.82 + 0.18 * hash13(floor(across * 900.0));
+        vec3 moonColor = vec3(0.80, 0.86, 1.00);
+        sky += moonColor * (MOON_DISK_RADIANCE * moonDisk * seas + moonHalo)
+            * moonVisible * sunCover;
+    }
     FragColor = vec4(sky, 1.0);
 }

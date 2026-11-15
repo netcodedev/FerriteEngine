@@ -166,6 +166,8 @@ impl SkyRenderer {
         tan_half_fov_x: f32,
         tan_half_fov_y: f32,
         sun_direction: Vector3<f32>,
+        moon_direction: Vector3<f32>,
+        moonlight: f32,
         time_of_day: f32,
         cloud_coverage: f32,
         cloud_type: f32,
@@ -182,6 +184,8 @@ impl SkyRenderer {
             shader.set_uniform_1f("tanHalfFovY", tan_half_fov_y);
             shader.set_uniform_3f("sunDirection", sun_direction.x, sun_direction.y, sun_direction.z);
             shader.set_uniform_1f("timeOfDay", time_of_day);
+            shader.set_uniform_3f("moonDirection", moon_direction.x, moon_direction.y, moon_direction.z);
+            shader.set_uniform_1f("moonlight", moonlight);
             shader.set_uniform_1f("cloudCoverage", cloud_coverage);
             shader.set_uniform_1f("cloudType", cloud_type);
             shader.set_uniform_1f("altocumulus", cloud_settings.altocumulus);

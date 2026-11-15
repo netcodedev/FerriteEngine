@@ -19,6 +19,7 @@ uniform mat4 exposureMatrix;
 
 out vec2 corner;
 out float strength;
+out vec3 worldPos;
 
 vec3 hash3(uint n) {
     n = (n << 13U) ^ n;
@@ -79,6 +80,7 @@ void main() {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         return;
     }
+    worldPos = world;
     gl_Position = viewProjection * vec4(world, 1.0);
 }
 #endif
@@ -86,6 +88,7 @@ void main() {
 #ifdef FRAGMENT
 in vec2 corner;
 in float strength;
+in vec3 worldPos;
 out vec4 FragColor;
 uniform int snowing;
 
@@ -94,12 +97,15 @@ void main() {
     if (snowing == 1) {
         float d = length(corner);
         float a = 1.0 - smoothstep(0.4, 1.0, d);
-        vec3 light = skyLight(up) + sunRadiance() * 0.25;
+        // Flakes catch the moon and the lamps they fall past.
+        vec3 light = skyLight(up) + (sunRadiance() + moonRadiance()) * 0.25
+            + localLightAt(worldPos) * 0.3;
         FragColor = vec4(SNOW_ALBEDO * light, a * strength * 0.9);
     } else {
         float a = (1.0 - abs(corner.x)) * (1.0 - smoothstep(0.3, 1.0, abs(corner.y)));
         // Drops show the sky they refract and reflect.
-        vec3 light = skyLight(up) * 1.6 + sunRadiance() * 0.05;
+        vec3 light = skyLight(up) * 1.6 + sunRadiance() * 0.05
+            + localLightAt(worldPos) * 0.15;
         FragColor = vec4(light, a * strength * 0.35);
     }
 }

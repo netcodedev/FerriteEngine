@@ -58,6 +58,9 @@ vec3 sunlightAt(float altitude) {
 vec3 cloudAmbient(vec3 dir, float dayFactor) {
     vec3 day   = vec3(0.78, 0.82, 0.90);
     vec3 night = vec3(0.060, 0.077, 0.126);
+    // Moonlit clouds stand out grey-blue against the night sky.
+    night += vec3(0.10, 0.12, 0.17) * smoothstep(-0.05, 0.25, moonDirection.y)
+        * clamp(moonlight, 0.0, 4.0);
     vec3 ambient = mix(night, day, dayFactor);
 
     float twilight = 1.0 - smoothstep(0.0, 0.28, abs(sunDirection.y + 0.02));

@@ -1,5 +1,7 @@
-// Shared physically based lighting (metal/roughness workflow): the sun with
-// its shadow map and cloud cover, the sky as ambient light, and the BRDF.
+// Shared physically based lighting (metal/roughness workflow): the sun and
+// the moon with the shadow map and cloud cover, the sky as ambient light,
+// the scene's lights (`light/light.rs`) with the light they bounce around
+// (`light/global_illumination.rs`), and the BRDF.
 // Inserted after the `#version` line (after `hdr/tonemap.glsl`); colours
 // are linear until `toDisplay`.
 
@@ -14,6 +16,21 @@ vec3 weatherFog(vec3 color, vec3 worldPos);
 const float SUN_INTENSITY = 3.5;
 const vec3 SKY_DAY = vec3(0.50, 0.55, 0.65);
 const vec3 SKY_NIGHT = vec3(0.004, 0.005, 0.009);
+// The night sky's own light (stars, airglow), times `nightSky`: what is left
+// where the moon does not reach.
+const vec3 NIGHT_SKY_GLOW = vec3(0.010, 0.013, 0.026);
+// Moonlight at `moonlight` 1: a cool blue, about a tenth of the sun.
+const vec3 MOON_COLOR = vec3(0.55, 0.68, 1.0);
+const float MOON_INTENSITY = 0.5;
+// Share of the moon's light the moonlit sky gives as ambient light.
+const float MOON_SKY = 0.25;
+// Must match `MOON_SHADOW_BELOW` in `light/global_illumination.rs`: the
+// moon only shines once the sun is this far down.
+const float MOON_SHADOW_BELOW = -0.06;
+// How much of a lamp's light comes back from its surroundings, and how far
+// past its range (`localBounce`).
+const float BOUNCE_STRENGTH = 1.5;
+const float BOUNCE_REACH = 2.0;
 const vec3 GROUND_TINT = vec3(0.45, 0.42, 0.38);
 // Sky light that comes from around the sun (relative to the sun's own
 // light), and the share of the even sky light it replaces.
@@ -25,6 +42,36 @@ uniform vec3 cameraPosition;
 uniform float cloudCoverage;   // 0..1
 uniform int isShadowPass;
 uniform int useShadowMap;
+
+// The moon and the indirect light (`light::global_illumination`).
+uniform vec3 moonDirection;    // normalized, points toward the moon
+uniform float moonlight;       // 0 = moonless
+uniform float nightSky;        // night sky light scale
+uniform float lightBounce;     // lamp light bounce scale
+uniform int moonShadows;       // 1: the shadow map is cast from the moon
+
+// The scene's lights, uploaded once a frame (`light::LightBuffer`). Must
+// match `MAX_LIGHTS` and `LIGHTS_BINDING` in `light/light.rs`.
+const int MAX_LIGHTS = 64;
+const int LIGHT_POINT = 0;
+const int LIGHT_SPOT = 1;
+const int LIGHT_DIRECTIONAL = 2;
+struct Light {
+    vec4 positionRange;  // xyz world position, w range
+    vec4 radianceBounce; // rgb linear colour × intensity, w bounce
+    vec4 directionKind;  // xyz direction it shines, w kind
+    vec4 cone;           // x cos inner angle, y cos outer angle,
+                         // z shadow layer (-1: no shadow)
+};
+layout(std140, binding = 1) uniform Lights {
+    Light lights[MAX_LIGHTS];
+};
+uniform int lightCount;        // 0 while no light buffer is meant
+
+// Shadow cube maps of point and spot lights (`light::shadow`), one cube
+// per layer, with hardware depth comparison. Must match `SHADOW_NEAR`.
+const float LIGHT_SHADOW_NEAR = 0.05;
+uniform samplerCubeArrayShadow lightShadowMaps;
 
 // Cascaded shadow map: one depth layer per cascade, nearest first. Must
 // match `SHADOW_CASCADES` in `light/skylight.rs`.
@@ -117,6 +164,21 @@ vec3 sunRadiance() {
     return color * SUN_INTENSITY * above * clouds;
 }
 
+// Moonlight from above the horizon, before it fades for the dawn.
+vec3 moonGlow() {
+    float above = smoothstep(-0.05, 0.15, moonDirection.y);
+    float clouds = 1.0 - 0.85 * clamp(cloudCoverage, 0.0, 1.0);
+    return MOON_COLOR * MOON_INTENSITY * moonlight * above * clouds;
+}
+
+// Direct moonlight. It fades out just before the sun comes up (and in just
+// after it has set), in a short window so dawn does not go darker than the
+// night before it.
+vec3 moonRadiance() {
+    float night = 1.0 - smoothstep(MOON_SHADOW_BELOW - 0.06, MOON_SHADOW_BELOW, sunDirection.y);
+    return moonGlow() * night;
+}
+
 // Light arriving from the sky in direction `dir`: sky above, a darker
 // ground bounce below, and a brighter glow toward the sun. The glow also
 // reaches surfaces the sun itself is blocked from, so bumps in shadow still
@@ -124,7 +186,9 @@ vec3 sunRadiance() {
 vec3 skyLight(vec3 dir) {
     float day = smoothstep(-0.10, 0.20, sunDirection.y);
     float cover = clamp(cloudCoverage, 0.0, 1.0);
-    vec3 sky = mix(SKY_NIGHT, SKY_DAY, day) * (1.0 - 0.3 * cover);
+    // The moonlit sky fades into the day sky with the mix below.
+    vec3 night = SKY_NIGHT + NIGHT_SKY_GLOW * nightSky + moonGlow() * MOON_SKY;
+    vec3 sky = mix(night, SKY_DAY, day) * (1.0 - 0.3 * cover);
     vec3 hemisphere = mix(sky * GROUND_TINT, sky, clamp(dir.y * 0.5 + 0.5, 0.0, 1.0));
     float towardSun = max(dot(dir, normalize(sunDirection)), 0.0);
     vec3 glow = sunRadiance() * SUN_GLOW * towardSun * towardSun * (1.0 - 0.5 * cover);
@@ -158,6 +222,192 @@ vec3 envBrdf(vec3 F0, float roughness, float NdotV) {
     return F0 * ab.x + ab.y;
 }
 
+// Light a surface reflects toward `V` from a light from `L` with
+// irradiance 1, the cosine included.
+vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 albedo, float roughness, float metallic, vec3 F0) {
+    float NdotL = max(dot(N, L), 0.0);
+    if (NdotL <= 0.0) {
+        return vec3(0.0);
+    }
+    float NdotV = max(dot(N, V), 1e-4);
+    vec3 H = normalize(V + L);
+    float NdotH = max(dot(N, H), 0.0);
+    float HdotV = max(dot(H, V), 0.0);
+    vec3 F = fresnelSchlick(HdotV, F0);
+    vec3 specular = distributionGGX(NdotH, roughness * roughness)
+        * geometrySmith(NdotV, NdotL, roughness) * F
+        / max(4.0 * NdotV * NdotL, 1e-4);
+    vec3 kd = (1.0 - F) * (1.0 - metallic);
+    return (kd * albedo / PI + specular) * NdotL;
+}
+
+// Light reaching `P` from light `l` past what stands in between, 0..1.
+// `Ng` is the geometric normal (zero for particles), `L` toward the light.
+float lightShadow(Light l, vec3 P, vec3 Ng, vec3 L) {
+    float layer = l.cone.z;
+    if (layer < 0.0 || isShadowPass == 1) {
+        return 1.0;
+    }
+    vec3 lightPos = l.positionRange.xyz;
+    float range = l.positionRange.w;
+    vec3 v = P - lightPos;
+    vec3 a = abs(v);
+    float major = max(a.x, max(a.y, a.z));
+    // World size of one texel here (a face spans 90°).
+    float texel = 2.0 * major / float(textureSize(lightShadowMaps, 0).x);
+    // Offset along the normal and toward the light, more at grazing
+    // angles, so surfaces do not shadow themselves.
+    float NdotL = dot(Ng, Ng) > 0.0 ? max(dot(Ng, L), 0.0) : 1.0;
+    v += Ng * texel * 1.5;
+    a = abs(v);
+    major = max(a.x, max(a.y, a.z)) - texel * (1.0 + 2.0 * (1.0 - NdotL));
+    major = max(major, LIGHT_SHADOW_NEAR);
+    // The depth a surface at this distance along the face's axis has in
+    // the map (the faces' perspective projection).
+    float n = LIGHT_SHADOW_NEAR;
+    float f = range;
+    float depth = ((f + n) / (f - n) - 2.0 * f * n / ((f - n) * major)) * 0.5 + 0.5;
+    // Four taps around the direction, each a 2×2 hardware comparison.
+    vec3 dir = normalize(v);
+    vec3 helper = abs(dir.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 u = normalize(cross(dir, helper));
+    vec3 w = cross(dir, u);
+    float spread = texel * 1.25 / max(length(v), 1e-4);
+    float lit = 0.0;
+    lit += texture(lightShadowMaps, vec4(dir + (u + w) * spread, layer), depth);
+    lit += texture(lightShadowMaps, vec4(dir + (u - w) * spread, layer), depth);
+    lit += texture(lightShadowMaps, vec4(dir + (-u + w) * spread, layer), depth);
+    lit += texture(lightShadowMaps, vec4(dir + (-u - w) * spread, layer), depth);
+    return lit * 0.25;
+}
+
+// Smooth fade to nothing at `range` (the inverse square law alone never
+// reaches 0).
+float rangeFade(float d, float range) {
+    float x = d / range;
+    float w = clamp(1.0 - x * x * x * x, 0.0, 1.0);
+    return w * w;
+}
+
+// 0 outside a spot light's cone, 1 inside its core, smooth in between.
+float spotCone(Light l, vec3 L) {
+    float c = dot(-L, l.directionKind.xyz);
+    float t = clamp((c - l.cone.y) / max(l.cone.x - l.cone.y, 1e-4), 0.0, 1.0);
+    return t * t;
+}
+
+// Direct light of the scene's lights reflected toward `V`, with their
+// shadows (`Ng`: the geometric normal).
+vec3 localLights(vec3 P, vec3 N, vec3 Ng, vec3 V, vec3 albedo, float roughness, float metallic,
+                 vec3 F0) {
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < lightCount; ++i) {
+        Light l = lights[i];
+        int kind = int(l.directionKind.w + 0.5);
+        vec3 L;
+        float attenuation = 1.0;
+        if (kind == LIGHT_DIRECTIONAL) {
+            L = -l.directionKind.xyz;
+        } else {
+            vec3 toLight = l.positionRange.xyz - P;
+            float d2 = dot(toLight, toLight);
+            float range = l.positionRange.w;
+            if (d2 >= range * range) {
+                continue;
+            }
+            float d = sqrt(d2);
+            L = toLight / max(d, 1e-4);
+            attenuation = rangeFade(d, range) / max(d2, 0.01);
+            if (kind == LIGHT_SPOT) {
+                attenuation *= spotCone(l, L);
+            }
+        }
+        if (attenuation <= 0.0 || dot(N, L) <= 0.0) {
+            continue;
+        }
+        attenuation *= lightShadow(l, P, Ng, L);
+        sum += brdf(N, V, L, albedo, roughness, metallic, F0) * l.radianceBounce.rgb * attenuation;
+    }
+    return sum;
+}
+
+// Light of the scene's lights arriving at `P` from every side, for things
+// lit all round such as falling snow (no surface, no shadow).
+vec3 localLightAt(vec3 P) {
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < lightCount; ++i) {
+        Light l = lights[i];
+        int kind = int(l.directionKind.w + 0.5);
+        if (kind == LIGHT_DIRECTIONAL) {
+            sum += l.radianceBounce.rgb;
+            continue;
+        }
+        vec3 toLight = l.positionRange.xyz - P;
+        float d2 = dot(toLight, toLight);
+        float range = l.positionRange.w;
+        if (d2 >= range * range) {
+            continue;
+        }
+        float d = sqrt(d2);
+        float attenuation = rangeFade(d, range) / max(d2, 0.01);
+        if (kind == LIGHT_SPOT) {
+            attenuation *= spotCone(l, toLight / max(d, 1e-4));
+        }
+        if (attenuation > 0.0) {
+            attenuation *= lightShadow(l, P, vec3(0.0), toLight / max(d, 1e-4));
+        }
+        sum += l.radianceBounce.rgb * attenuation;
+    }
+    return sum;
+}
+
+// Light of the scene's lights that reaches `P` after bouncing off what is
+// around them, as radiance like `skyLight`: a soft, wide glow that also
+// gets around corners and onto the sides facing away. A point light's
+// bounce comes from around the light, a spot light's from where its cone
+// points and in proportion to the share of light it sends out; a
+// directional light's comes up from the ground everywhere.
+vec3 localBounce(vec3 P, vec3 N) {
+    vec3 sum = vec3(0.0);
+    if (lightBounce <= 0.0) {
+        return sum;
+    }
+    for (int i = 0; i < lightCount; ++i) {
+        Light l = lights[i];
+        float bounce = l.radianceBounce.w * lightBounce * BOUNCE_STRENGTH;
+        if (bounce <= 0.0) {
+            continue;
+        }
+        int kind = int(l.directionKind.w + 0.5);
+        vec3 dir = l.directionKind.xyz;
+        if (kind == LIGHT_DIRECTIONAL) {
+            // Up from the lit ground: strongest on what faces down.
+            float facing = 0.5 + 0.5 * dot(N, dir);
+            sum += l.radianceBounce.rgb * bounce * 0.15 * facing;
+            continue;
+        }
+        float range = l.positionRange.w;
+        vec3 source = l.positionRange.xyz;
+        float share = 1.0;
+        if (kind == LIGHT_SPOT) {
+            source += dir * range * 0.3;
+            share = (1.0 - l.cone.y) * 0.5;
+        }
+        vec3 toSource = source - P;
+        float d2 = dot(toSource, toSource);
+        float reach = range * BOUNCE_REACH;
+        if (d2 >= reach * reach) {
+            continue;
+        }
+        float d = sqrt(d2);
+        float soft = range * 0.35;
+        float attenuation = rangeFade(d, reach) / (d2 + soft * soft);
+        float facing = 0.6 + 0.4 * dot(N, toSource / max(d, 1e-4));
+        sum += l.radianceBounce.rgb * bounce * share * attenuation * facing;
+    }
+    return sum / PI;
+}
+
 // Light leaving a surface toward the camera, in linear space. `N` is the
 // shading normal, `Ng` the geometric one (for shadow lookups); `sunFactor`
 // dims the direct sun, e.g. for cloud shadows. The ambient light is
@@ -170,20 +420,24 @@ vec3 shadeSurface(vec3 worldPos, vec3 N, vec3 Ng, vec3 albedo, float roughness,
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
 
     float NdotV = max(dot(N, V), 1e-4);
-    float NdotL = max(dot(N, L), 0.0);
-    vec3 H = normalize(V + L);
-    float NdotH = max(dot(N, H), 0.0);
-    float HdotV = max(dot(H, V), 0.0);
 
-    vec3 F = fresnelSchlick(HdotV, F0);
-    vec3 specular = distributionGGX(NdotH, roughness * roughness)
-        * geometrySmith(NdotV, NdotL, roughness) * F
-        / max(4.0 * NdotV * NdotL, 1e-4);
-    vec3 kd = (1.0 - F) * (1.0 - metallic);
-    float shadow = NdotL > 0.0 ? sunShadow(worldPos, Ng, L) : 0.0;
-    vec3 direct = (kd * albedo / PI + specular) * sunRadiance() * NdotL * shadow * sunFactor;
+    // The sun, and the moon at night; the shadow map belongs to whichever
+    // of them is up (the other gives no light then).
+    vec3 direct = vec3(0.0);
+    vec3 sun = sunRadiance();
+    if (moonShadows == 0 && dot(sun, sun) > 0.0 && dot(N, L) > 0.0) {
+        direct += brdf(N, V, L, albedo, roughness, metallic, F0) * sun
+            * sunShadow(worldPos, Ng, L) * sunFactor;
+    }
+    vec3 moon = moonRadiance();
+    vec3 M = normalize(moonDirection);
+    if (dot(moon, moon) > 0.0 && dot(N, M) > 0.0) {
+        float shadow = moonShadows == 1 ? sunShadow(worldPos, Ng, M) : 1.0;
+        direct += brdf(N, V, M, albedo, roughness, metallic, F0) * moon * shadow;
+    }
+    direct += localLights(worldPos, N, Ng, V, albedo, roughness, metallic, F0);
 
-    vec3 ambient = skyLight(N) * albedo * (1.0 - metallic)
+    vec3 ambient = (skyLight(N) + localBounce(worldPos, N)) * albedo * (1.0 - metallic)
         + skyLight(reflect(-V, N)) * envBrdf(F0, roughness, NdotV);
     return weatherFog(direct + ambient * ao * screenOcclusion(), worldPos);
 }

@@ -18,6 +18,8 @@ uniform float cloudCoverage; // 0..1 — fraction of sky the low layer covers
 uniform float cloudType;     // 0 stratus .. 1 cumulonimbus (see `CloudType`)
 uniform float altocumulus;   // 0..1 — amount of the mid layer
 uniform float cirrus;        // 0..1 — amount of the high layer
+uniform vec3 moonDirection;  // normalized, toward the moon
+uniform float moonlight;     // 0 = moonless (see `GlobalIllumination`)
 
 float hash13(vec3 p) {
     p = fract(p * 0.1031);
