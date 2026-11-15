@@ -121,7 +121,9 @@ vec2 snowTrailBlurred(vec2 p, float metres) {
         return vec2(0.0);
     }
     float texel = trailArea.z / float(textureSize(snowTrailMap, 0).x);
-    float lod = max(log2(metres / texel), 0.0);
+    // At most level 5: the map moves in steps of 32 texels
+    // (`snow.rs`), which keeps up to that level in place in the world.
+    float lod = clamp(log2(metres / texel), 0.0, 5.0);
     return textureLod(snowTrailMap, uv, lod).rg * fade;
 }
 

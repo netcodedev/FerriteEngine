@@ -74,9 +74,9 @@ void main() {
     float depth = trailDent(p) * Cover;
     float around = snowDentBlurred(p, 0.4) * Cover;
     float pressed = smoothstep(0.0, 0.03, depth);
-    albedo *= 1.0 - 0.12 * pressed;
+    albedo *= 1.0 - 0.04 * pressed;
     roughness = mix(roughness, 0.6, pressed);
-    float ao = 1.0 - 0.55 * smoothstep(0.0, 0.12, depth - around * 0.5);
+    float ao = 1.0 - 0.3 * smoothstep(0.0, 0.12, depth - around * 0.5);
 
     // Lit as the untouched top above it: that is what the shadow maps
     // hold, so the print is not shadowed by the snow it is pressed into.

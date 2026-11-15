@@ -15,6 +15,11 @@ use crate::core::renderer::shader::Shader;
 const SIZE: i32 = 1024;
 /// Metres the map spans per side (about 5 cm per texel).
 const EXTENT: f32 = 48.0;
+/// The map moves in steps of this many texels: a power of two, so the
+/// texels of its mipmaps (which the snow layer reads, `snowDentBlurred`)
+/// stay where they were in the world as it moves, up to that level, and
+/// what is read from them does not jump.
+const STEP: i32 = 32;
 /// Seconds of full snowfall that fill a footprint again.
 const REFILL_SECONDS: f32 = 90.0;
 
@@ -111,7 +116,9 @@ impl SnowTrails {
     /// `footprints`. Leaves the default framebuffer bound.
     pub fn update(&mut self, eye: Point3<f32>, snowfall: f32, footprints: &[Footprint]) {
         let texel = EXTENT / SIZE as f32;
-        let corner = |v: f32| ((v - EXTENT * 0.5) / texel).floor() as i32;
+        let corner = |v: f32| {
+            (((v - EXTENT * 0.5) / texel).floor() as i32).div_euclid(STEP) * STEP
+        };
         let origin = [corner(eye.x), corner(eye.z)];
         // Nothing carries over from a map far away (or none at all).
         let shift = match self.origin {
