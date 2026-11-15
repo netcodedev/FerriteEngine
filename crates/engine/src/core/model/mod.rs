@@ -17,7 +17,10 @@ pub mod clip_file;
 pub mod grip;
 pub mod material_maps;
 mod model;
+mod model_geometry;
+mod model_materials;
 mod model_mesh;
+mod model_skeleton;
 pub mod outline;
 mod pose;
 
