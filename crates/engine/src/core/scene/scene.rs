@@ -17,6 +17,7 @@ use crate::core::{
         plane::PlaneRenderer,
         text::TextRenderer,
         light::{
+            clusters::{ClusterBuffers, ClusterCamera},
             light::{self as lights, LightBuffer},
             shadow::{self, LightShadowMaps, ShadowPlanner},
             skylight::{SkyLight, SHADOW_CASCADES},
@@ -64,6 +65,7 @@ impl Scene {
             weather: RefCell::new(None),
             weather_maps: Cell::new(None),
             lights: RefCell::new(None),
+            light_clusters: RefCell::new(None),
             light_count: Cell::new(0),
             frame_lighting: Cell::new(None),
             drawn_cascades: Cell::new(None),
@@ -244,6 +246,17 @@ impl Scene {
         shadow::assign(&mut selected, eye);
         let mut buffer = self.lights.borrow_mut();
         buffer.get_or_insert_with(LightBuffer::new).upload(&selected);
+        let projection = camera.get_projection();
+        let cluster_camera = ClusterCamera {
+            view: camera.get_camera().get_matrix(),
+            projection: projection.get_matrix(),
+            near: projection.znear,
+            far: projection.get_zfar(),
+        };
+        self.light_clusters
+            .borrow_mut()
+            .get_or_insert_with(ClusterBuffers::new)
+            .upload(&cluster_camera, &selected);
         self.light_count.set(selected.len());
         *self.light_sources.borrow_mut() = selected;
     }
@@ -368,6 +381,11 @@ impl Scene {
         profiler::begin_frame();
         self.render_passes_lit(window);
         profiler::end_frame();
+        // Whatever draws after the scene (previews, ...) has lights of its
+        // own, if any: not the scene's grid.
+        if let Some(clusters) = self.light_clusters.borrow().as_ref() {
+            clusters.disable();
+        }
         self.frame_lighting.set(None);
     }
 

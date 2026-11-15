@@ -9,6 +9,7 @@ use super::{
         light::skylight::{ShadowCascade, SHADOW_CASCADES},
         pbr::Lighting,
         light::{
+            clusters::ClusterBuffers,
             light::{LightBuffer, LightSource},
             shadow::{LightShadowMaps, ShadowPlanner},
         },
@@ -57,6 +58,9 @@ pub struct Scene {
     weather_maps: Cell<Option<WeatherMaps>>,
     /// The scene's lights for the shaders, made on the first frame with one.
     lights: RefCell<Option<LightBuffer>>,
+    /// Which lights reach which part of the camera's view (see
+    /// `light::clusters`), built with the lights.
+    light_clusters: RefCell<Option<ClusterBuffers>>,
     /// How many lights the buffer holds while the scene is drawn.
     light_count: Cell<usize>,
     /// The lights in the buffer this frame, with their shadow layers.
