@@ -9,8 +9,6 @@ use crate::{
 
 use super::*;
 
-// ---- helpers ------------------------------------------------------------
-
 pub(super) fn resolve_scene(state: &State, args: &Value) -> Result<(Project, PathBuf), String> {
     let project = state.project()?;
     let scene = string_field(args, "scene")?;

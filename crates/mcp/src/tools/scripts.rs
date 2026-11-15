@@ -5,10 +5,7 @@ use std::{
 
 use serde_json::{json, Value};
 
-
 use super::*;
-
-// ---- scripts ------------------------------------------------------------
 
 pub(super) fn list_scripts(state: &State) -> Result<Value, String> {
     Ok(json!({"scripts": state.project()?.list_scripts()}))
@@ -16,7 +13,7 @@ pub(super) fn list_scripts(state: &State) -> Result<Value, String> {
 
 /// `scripts/<name>.rs` of the project. The file name is the module name,
 /// so it has to be snake_case.
-pub(super) fn script_path(state: &State, name: &str) -> Result<PathBuf, String> {
+fn script_path(state: &State, name: &str) -> Result<PathBuf, String> {
     let name = name.trim_end_matches(".rs");
     let valid = name.chars().next().is_some_and(|c| c.is_ascii_lowercase())
         && name

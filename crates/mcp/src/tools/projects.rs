@@ -10,8 +10,6 @@ use crate::{
 
 use super::*;
 
-// ---- projects -----------------------------------------------------------
-
 pub(super) fn project_info(state: &State) -> Result<Value, String> {
     let p = state.project()?;
     Ok(json!({
@@ -25,7 +23,7 @@ pub(super) fn project_info(state: &State) -> Result<Value, String> {
 }
 
 /// A path a tool gave: absolute, or relative to where the server runs.
-pub(super) fn given_path(path: &str) -> PathBuf {
+fn given_path(path: &str) -> PathBuf {
     let path = PathBuf::from(path);
     if path.is_absolute() {
         path
@@ -86,7 +84,7 @@ pub(super) fn create_project(state: &State, args: Value) -> Result<Value, String
 
 /// Copy the player prefab's model and animations from the engine's own
 /// assets into the project at `dir` (as the engine does for a new project).
-pub(super) fn copy_player_assets(dir: &Path) -> Result<usize, String> {
+fn copy_player_assets(dir: &Path) -> Result<usize, String> {
     copy_player_assets_from(&engine_workspace().join("assets"), dir)
 }
 

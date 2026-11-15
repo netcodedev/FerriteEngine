@@ -9,11 +9,9 @@ use crate::{
 
 use super::*;
 
-// ---- scene files --------------------------------------------------------
-
 /// Refuse to change the file of the scene a running editor has open: its
 /// next save would write its own state over the change.
-pub(super) fn guard_open_scene(state: &State, path: &Path) -> Result<(), String> {
+fn guard_open_scene(state: &State, path: &Path) -> Result<(), String> {
     let dir = state.dir();
     if !bridge::is_available(&dir) {
         return Ok(());
@@ -35,7 +33,7 @@ pub(super) fn guard_open_scene(state: &State, path: &Path) -> Result<(), String>
 }
 
 /// A scene file to change, after the editor guard.
-pub(super) fn scene_to_change(state: &State, args: &Value) -> Result<PathBuf, String> {
+fn scene_to_change(state: &State, args: &Value) -> Result<PathBuf, String> {
     let (_project, path) = resolve_scene(state, args)?;
     guard_open_scene(state, &path)?;
     Ok(path)
@@ -57,7 +55,7 @@ pub(super) fn scene_summary(state: &State, args: Value) -> Result<Value, String>
     }))
 }
 
-pub(super) fn summary_entry(entity: &EntityData) -> Value {
+fn summary_entry(entity: &EntityData) -> Value {
     json!({
         "id": entity.id,
         "name": entity.name,

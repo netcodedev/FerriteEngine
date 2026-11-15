@@ -133,8 +133,6 @@ pub fn dispatch(state: &State, name: &str, args: Value) -> Result<Value, String>
     }
 }
 
-// ---- several at once ----------------------------------------------------
-
 fn batch(state: &State, args: Value) -> Result<Value, String> {
     let operations = args
         .get("operations")

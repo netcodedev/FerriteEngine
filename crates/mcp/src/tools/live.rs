@@ -1,11 +1,8 @@
-
 use serde_json::{json, Value};
 
 use crate::bridge;
 
 use super::*;
-
-// ---- live editor --------------------------------------------------------
 
 pub(super) fn editor_call(state: &State, payload: Value) -> Result<Value, String> {
     let response = bridge::call(&state.dir(), &payload)?;
@@ -74,7 +71,7 @@ pub(super) fn editor_open_scene(state: &State, args: Value) -> Result<Value, Str
 
 /// Screenshots are scaled to this many pixels across unless asked
 /// otherwise: enough to see a scene, a fraction of the full size.
-pub(super) const DEFAULT_SCREENSHOT_WIDTH: u64 = 1280;
+const DEFAULT_SCREENSHOT_WIDTH: u64 = 1280;
 
 pub(super) fn viewport_screenshot(state: &State, args: Value) -> Result<Value, String> {
     let source = match args.get("source").and_then(Value::as_str).unwrap_or("viewport") {

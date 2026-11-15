@@ -1,10 +1,8 @@
-
 use serde_json::{json, Value};
-
 
 use super::*;
 
-pub(super) fn tool(name: &'static str, description: &'static str, properties: Value, required: &[&str]) -> Tool {
+fn tool(name: &'static str, description: &'static str, properties: Value, required: &[&str]) -> Tool {
     Tool {
         name,
         description,
@@ -17,16 +15,16 @@ pub(super) fn tool(name: &'static str, description: &'static str, properties: Va
     }
 }
 
-pub(super) fn vec3() -> Value {
+fn vec3() -> Value {
     json!({"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3})
 }
 
-pub(super) fn quat() -> Value {
+fn quat() -> Value {
     json!({"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4,
            "description": "Quaternion [w, x, y, z]"})
 }
 
-pub(super) fn scene_arg() -> Value {
+fn scene_arg() -> Value {
     json!({"type": "string", "description": "Scene file, e.g. main.ron or scenes/main.ron"})
 }
 
