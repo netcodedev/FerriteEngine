@@ -6,10 +6,7 @@ use glfw::WindowEvent;
 use rapier3d::prelude::{ColliderBuilder, ColliderHandle, Pose, Rotation, Vector};
 
 use crate::core::{
-    entity::{
-        component::Component,
-        Entity,
-    },
+    entity::{component::Component, Entity},
     physics::physics_engine::{collider_tag, PhysicsEngine},
     renderer::pbr::{self, Lighting},
     scene::Scene,

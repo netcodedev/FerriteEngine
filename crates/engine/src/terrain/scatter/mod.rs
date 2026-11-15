@@ -15,7 +15,10 @@ use std::collections::HashSet;
 
 use cgmath::Point3;
 
-use crate::core::{assets::AssetRef, entity::component::{Property, PropertyValue}};
+use crate::core::{
+    assets::AssetRef,
+    entity::component::{Property, PropertyValue},
+};
 
 use super::{dual_contouring::WATER_LEVEL, CHUNK_SIZE_FLOAT};
 

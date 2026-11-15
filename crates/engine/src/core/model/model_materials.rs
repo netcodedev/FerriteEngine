@@ -2,7 +2,10 @@ use russimp_ng::material::TextureType;
 
 use crate::core::{assets::MaterialMap, renderer::texture::Texture};
 
-use super::{material_maps::{self, MapKind}, Model};
+use super::{
+    material_maps::{self, MapKind},
+    Model,
+};
 
 impl Model {
     /// Display name of the material at `idx`, if assimp reported one.

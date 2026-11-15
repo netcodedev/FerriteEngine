@@ -9,7 +9,10 @@
 //! `catalog()` is what `tools/list` answers; `dispatch` is what
 //! `tools/call` runs.
 
-use std::{cell::RefCell, path::{Path, PathBuf}};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{json, Value};
 
