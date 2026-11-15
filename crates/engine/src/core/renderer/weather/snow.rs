@@ -75,7 +75,13 @@ impl SnowTrails {
                 gl::FLOAT,
                 std::ptr::null(),
             );
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as GLint);
+            // Mipmapped: the snow layer's coarser rings read the trails
+            // blurred to their spacing (`snowDentLod`).
+            gl::TexParameteri(
+                gl::TEXTURE_2D,
+                gl::TEXTURE_MIN_FILTER,
+                gl::LINEAR_MIPMAP_LINEAR as GLint,
+            );
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as GLint);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as GLint);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as GLint);
@@ -93,6 +99,9 @@ impl SnowTrails {
             gl::ClearColor(0.0, 0.0, 0.0, 0.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            gl::BindTexture(gl::TEXTURE_2D, texture);
+            gl::GenerateMipmap(gl::TEXTURE_2D);
+            gl::BindTexture(gl::TEXTURE_2D, 0);
         }
         Target { framebuffer, texture }
     }
@@ -148,6 +157,8 @@ impl SnowTrails {
             gl::BindVertexArray(self.vao);
             gl::DrawArrays(gl::TRIANGLES, 0, 3);
             gl::BindVertexArray(0);
+            gl::BindTexture(gl::TEXTURE_2D, self.targets[to].texture);
+            gl::GenerateMipmap(gl::TEXTURE_2D);
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::Enable(gl::DEPTH_TEST);
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);

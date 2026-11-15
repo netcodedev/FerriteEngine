@@ -494,6 +494,11 @@ impl WeatherShading {
         shader.set_uniform_1i("exposureMap", EXPOSURE_UNIT as i32);
         shader.set_uniform_1i("snowTrailMap", SNOW_TRAIL_UNIT as i32);
         shader.set_uniform_1i("groundMap", GROUND_UNIT as i32);
+        let layer = maps.is_some_and(|maps| maps.exposure.is_some());
+        shader.set_uniform_1f(
+            "snowLayerReach",
+            if layer { snow_layer::full_reach(self.snow_depth, self.snow_cover) } else { 0.0 },
+        );
         match maps.and_then(|maps| maps.exposure) {
             Some((matrix, range)) => {
                 shader.set_uniform_1i("useExposure", 1);

@@ -20,6 +20,9 @@ uniform sampler2D groundMap;
 uniform int useSnowTrails;
 uniform sampler2D snowTrailMap;
 uniform vec3 trailArea;
+// Metres around the camera (in x and in z) where the snow layer
+// (`snow_layer.rs`) lies in full and shows the trails; 0 without it.
+uniform float snowLayerReach;
 
 float weatherHash(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -101,6 +104,29 @@ vec2 snowTrail(vec2 p) {
         return vec2(0.0);
     }
     return texture(snowTrailMap, uv).rg * fade;
+}
+
+// `snowTrail`, blurred over about `metres` (from the trail map's mipmaps):
+// what a grid that coarse can show of it without sharp facets.
+vec2 snowTrailBlurred(vec2 p, float metres) {
+    if (useSnowTrails == 0) {
+        return vec2(0.0);
+    }
+    vec2 uv = (p - trailArea.xy) / trailArea.z;
+    vec2 edge = abs(uv * 2.0 - 1.0);
+    float fade = 1.0 - smoothstep(0.9, 1.0, max(edge.x, edge.y));
+    if (fade <= 0.0) {
+        return vec2(0.0);
+    }
+    float texel = trailArea.z / float(textureSize(snowTrailMap, 0).x);
+    float lod = max(log2(metres / texel), 0.0);
+    return textureLod(snowTrailMap, uv, lod).rg * fade;
+}
+
+// `snowDent` for a grid with `metres` between its points.
+float snowDentBlurred(vec2 p, float metres) {
+    vec2 trail = snowTrailBlurred(p, metres);
+    return snowDepth * (0.9 * trail.r - 0.35 * trail.g);
 }
 
 // How far the snow's surface at `p` lies below its untouched top, in

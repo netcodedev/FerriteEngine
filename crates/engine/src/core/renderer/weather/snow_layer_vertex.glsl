@@ -13,6 +13,8 @@ uniform float cells;
 uniform int outermost;
 // No snow at or below the water's surface.
 uniform float waterLine;
+// Snow kept under a footprint's bottom (metres).
+uniform float minUnderPrint;
 
 out vec3 WorldPos;
 out vec3 GroundNormal;
@@ -33,8 +35,9 @@ void main() {
     // cracks.
     vec2 off = abs(p - levelCenter) / (cells * 0.5 * spacing);
     float edge = max(off.x, off.y);
+    float morph = 0.0;
     if (outermost == 0) {
-        float morph = smoothstep(0.75, 0.95, edge);
+        morph = smoothstep(0.75, 0.95, edge);
         p -= mod(aGrid, 2.0) * spacing * morph;
     }
 
@@ -62,7 +65,12 @@ void main() {
     float fade = outermost == 1 ? 1.0 - smoothstep(0.55, 0.92, edge) : 1.0;
     Cover = share * fade;
 
-    float top = (snowDepth - snowDent(p)) * Cover;
+    // The trails blurred to what this grid can hold (1.5 times its spacing,
+    // more where it turns into the next ring), so coarse rings make soft
+    // dents instead of sharp facets; the fragments add the detail back
+    // through their normals.
+    float left = snowDepth - snowDentBlurred(p, 1.5 * spacing * (1.0 + morph));
+    float top = max(left, min(minUnderPrint, snowDepth)) * Cover;
     WorldPos = vec3(p.x, ground + top - (1.0 - Cover) * SINK, p.y);
     gl_Position = viewProjection * vec4(WorldPos, 1.0);
 }

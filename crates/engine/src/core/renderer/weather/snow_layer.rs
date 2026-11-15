@@ -37,6 +37,23 @@ const WATER_LINE: f32 = crate::terrain::dual_contouring::WATER_LEVEL;
 /// Uniforms the cloud field needs that `LIGHTING_GLSL` does not declare.
 const CLOUD_UNIFORMS: &str = "uniform float uTime;\nuniform float cloudType;";
 
+/// Metres around the camera (in x and in z) where the layer lies in full
+/// for snow `depth` metres deep, 0 where it is not drawn at all. Inside,
+/// the terrain leaves the trails to the layer.
+pub fn full_reach(depth: f32, cover: f32) -> f32 {
+    if depth < MIN_DEPTH || cover <= 0.0 {
+        return 0.0;
+    }
+    let outer = FINEST * (1u32 << (LEVELS - 1)) as f32;
+    // The outermost ring starts sinking at 0.55 of its half side, and its
+    // centre may lie up to two spacings off the camera.
+    CELLS as f32 * 0.5 * outer * 0.5 - 2.0 * outer
+}
+
+/// Snow kept under a footprint's bottom (metres), so the layer stays
+/// clear of the terrain there.
+const MIN_UNDER_PRINT: f32 = 0.03;
+
 pub struct SnowLayer {
     shader: Shader,
     vao: GLuint,
@@ -134,8 +151,7 @@ impl SnowLayer {
         cloud_type: f32,
     ) {
         let weather = &lighting.weather;
-        if weather.snow_depth < MIN_DEPTH || weather.snow_cover <= 0.0 || maps.exposure.is_none()
-        {
+        if full_reach(weather.snow_depth, weather.snow_cover) <= 0.0 || maps.exposure.is_none() {
             return;
         }
         let shader = &self.shader;
@@ -144,6 +160,7 @@ impl SnowLayer {
         shader.set_uniform_mat4("viewProjection", view_projection);
         shader.set_uniform_1f("cells", CELLS as f32);
         shader.set_uniform_1f("waterLine", WATER_LINE);
+        shader.set_uniform_1f("minUnderPrint", MIN_UNDER_PRINT);
         shader.set_uniform_1f("uTime", sky::seconds());
         shader.set_uniform_1f("cloudType", cloud_type);
         unsafe {

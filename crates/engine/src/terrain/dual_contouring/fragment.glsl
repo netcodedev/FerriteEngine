@@ -171,6 +171,12 @@ void terrainSnow(float exposure, inout vec3 albedo, inout vec3 N, vec3 Ng,
     vec2 at = WorldPos.xz;
     vec3 toEye = cameraPosition - WorldPos;
     float near = 1.0 - smoothstep(TRAIL_DISTANCE * 0.6, TRAIL_DISTANCE, length(toEye));
+    // Where the snow layer lies, it shows the trails: here the snow stays
+    // untouched, so nothing of the ground shows through the layer.
+    vec2 fromEye = abs(toEye.xz);
+    if (max(fromEye.x, fromEye.y) < snowLayerReach) {
+        near = 0.0;
+    }
     vec2 trail = vec2(0.0);
     vec3 snowN = Ng;
     if (useSnowTrails == 1 && near > 0.0 && snowDepth > 0.005) {
