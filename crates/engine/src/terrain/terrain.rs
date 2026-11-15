@@ -28,6 +28,7 @@ use crate::core::{
         pbr::Lighting,
         shader::{DynamicVertexArray, Shader, VertexAttributes},
         weather::exposure,
+        depth_pass,
     },
     physics::physics_engine::{collider_tag, PhysicsEngine},
     scene::{scene_file::ComponentData, Scene},
@@ -151,6 +152,8 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         let shader_source = T::get_shader_source();
         let shader = Shader::new(&shader_source.0, &shader_source.1);
         let textures = T::get_textures(&shader);
+        let depth_shader = T::get_depth_shader_source()
+            .map(|(vertex, fragment)| Shader::new(&vertex, &fragment));
 
         Self {
             seed,
@@ -159,6 +162,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
             show_colliders: false,
             chunk_receiver: Self::start_chunkloaders(seed),
             shader,
+            depth_shader,
             textures,
             mouse_picker: MousePicker::new(),
         }
@@ -632,13 +636,21 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         view_projection: &Matrix4<f32>,
         transform: &Matrix4<f32>,
     ) {
-        self.set_uniforms(scene);
-        // The chunks, with the shader and textures set up once for all of
-        // them. Scattered models draw after them (as components of the chunk
-        // entities) and may use the same texture units.
-        self.bind_textures();
-        self.shader.bind();
-        self.shader.set_uniform_mat4("viewProjection", view_projection);
+        // Depth alone: no textures, no light.
+        let shader = match &self.depth_shader {
+            Some(depth_shader) if depth_pass::is_active() => depth_shader,
+            _ => {
+                self.set_uniforms(scene);
+                // The chunks, with the shader and textures set up once for
+                // all of them. Scattered models draw after them (as
+                // components of the chunk entities) and may use the same
+                // texture units.
+                self.bind_textures();
+                &self.shader
+            }
+        };
+        shader.bind();
+        shader.set_uniform_mat4("viewProjection", view_projection);
         unsafe {
             gl::Enable(gl::CULL_FACE);
         }
@@ -650,10 +662,13 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             let Some(chunk) = child.get_own_component::<T>() else {
                 continue;
             };
-            let bounds = chunk.get_bounds();
-            if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, bounds) {
-                let distance = eye.map_or(0.0, |eye| bounds.distance_xz(eye));
-                chunk.draw(&self.shader, &(transform * child.local_transform()), distance);
+            // Culled by the box around what it draws, which is far flatter
+            // than the chunk's cube (it matters most for the sun's shadow
+            // maps, which see the boxes from the side); the level comes
+            // from the chunk's own square.
+            if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_drawn_bounds()) {
+                let distance = eye.map_or(0.0, |eye| chunk.get_bounds().distance_xz(eye));
+                chunk.draw(shader, &(transform * child.local_transform()), distance);
             }
         }
         unsafe {

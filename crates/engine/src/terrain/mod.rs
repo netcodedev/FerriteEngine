@@ -34,6 +34,9 @@ pub struct Terrain<T: Chunk> {
     show_colliders: bool,
     chunk_receiver: mpsc::Receiver<terrain::LoadedChunk<T>>,
     shader: Shader,
+    /// Draws the chunks in depth-only passes (see `depth_pass`), if the
+    /// chunk type has such a program.
+    depth_shader: Option<Shader>,
     textures: Vec<Texture>,
     mouse_picker: MousePicker,
 }
@@ -42,9 +45,19 @@ pub trait Chunk {
     fn new(seed: u64, position: (f32, f32, f32), lod: usize) -> Self;
     fn buffer_data(&mut self);
     fn get_bounds(&self) -> ChunkBounds;
+    /// A box around everything the chunk draws, for culling; the chunk's
+    /// cube unless the type knows better.
+    fn get_drawn_bounds(&self) -> ChunkBounds {
+        self.get_bounds()
+    }
     fn process_line(&mut self, line: &Line, button: &MouseButton) -> bool;
     fn get_position(&self) -> Point3<f32>;
     fn get_shader_source() -> (String, String);
+    /// Vertex and fragment shader that draw the chunks' depth alone, for
+    /// depth-only passes; `None` draws them with the shading program.
+    fn get_depth_shader_source() -> Option<(String, String)> {
+        None
+    }
     /// Textures bound to units 0, 1, ... while the terrain draws. May set
     /// uniforms of `shader` that stay fixed.
     fn get_textures(shader: &Shader) -> Vec<Texture>;

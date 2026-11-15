@@ -8,6 +8,9 @@ out vec3 WorldPos;
 
 uniform mat4 model;
 uniform mat4 viewProjection;
+// The same as in the depth-only program (`depth_vertex.glsl`): the shading
+// pass tests LEQUAL against the prepass' depth.
+invariant gl_Position;
 
 void main()
 {

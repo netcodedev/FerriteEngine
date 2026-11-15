@@ -10,7 +10,11 @@ use rapier3d::prelude::{ColliderBuilder, ColliderHandle, Pose, Rotation, Vector}
 use crate::core::{
     entity::{component::Component, Entity},
     physics::physics_engine::{collider_tag, PhysicsEngine},
-    renderer::pbr::{self, Lighting},
+    renderer::{
+        depth_pass,
+        pbr::{self, Lighting},
+        shader::Shader,
+    },
     scene::Scene,
     view_frustum::ViewFrustum,
 };
@@ -47,6 +51,24 @@ pub struct ScatterInstances {
     /// without removing the chunk they stand on.
     colliders: Vec<ColliderHandle>,
     gpu: RefCell<Option<ScatterGpu>>,
+}
+
+thread_local! {
+    static DEPTH_SHADER: std::cell::OnceCell<std::rc::Rc<Shader>> = const { std::cell::OnceCell::new() };
+}
+
+/// The scattered models' depth-only program (see `depth_pass`): placed as
+/// `scatter_instanced_vertex.glsl` places them, cut out by the colour map.
+fn depth_shader() -> std::rc::Rc<Shader> {
+    DEPTH_SHADER.with(|cell| {
+        cell.get_or_init(|| {
+            std::rc::Rc::new(Shader::new(
+                include_str!("scatter_instanced_vertex.glsl"),
+                depth_pass::ALPHA_TEST_FRAGMENT,
+            ))
+        })
+        .clone()
+    })
 }
 
 /// Edge of the squares instances are culled and tiered by, in metres.
@@ -525,10 +547,16 @@ impl ScatterInstances {
 
         {
             let r = &*self.spec.model;
-            r.shader.bind();
-            r.shader.set_uniform_mat4("viewProjection", view_projection);
-            r.shader.set_uniform_mat4("parentTransform", parent_transform);
-            lighting.apply(&r.shader);
+            // Depth alone in depth passes: the cut-out, no light.
+            let depth_only = depth_pass::is_active();
+            let shader = if depth_only { depth_shader() } else { r.shader.clone() };
+            let shader = &*shader;
+            shader.bind();
+            shader.set_uniform_mat4("viewProjection", view_projection);
+            shader.set_uniform_mat4("parentTransform", parent_transform);
+            if !depth_only {
+                lighting.apply(shader);
+            }
 
             unsafe {
                 gl::Enable(gl::DEPTH_TEST);
@@ -597,7 +625,7 @@ impl ScatterInstances {
                         let vaos = &variant_gpu.vaos[lod_idx];
                         for (sub_idx, sub) in lod.submeshes.iter().enumerate() {
                             pbr::bind_material(
-                                &r.shader,
+                                shader,
                                 kind.model.material_textures(sub.material_index),
                             );
                             gl::BindVertexArray(vaos[sub_idx]);

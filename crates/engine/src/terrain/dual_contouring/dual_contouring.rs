@@ -10,6 +10,7 @@ use crate::{
     core::{
         entity::{component::Component, Entity},
         renderer::{
+            depth_pass,
             hdr,
             line::Line,
             pbr::{self, Lighting},
@@ -106,6 +107,31 @@ impl DualContouringChunk {
         (meshes, ground_indices)
     }
 
+    /// The box around every vertex of every level (see `drawn_bounds`),
+    /// rounded outwards to whole metres.
+    fn measure_drawn_bounds(&self) -> ChunkBounds {
+        let mut min = [f32::MAX; 3];
+        let mut max = [f32::MIN; 3];
+        for mesh in &self.meshes {
+            for v in &mesh.vertices {
+                for i in 0..3 {
+                    min[i] = min[i].min(v.position[i]);
+                    max[i] = max[i].max(v.position[i]);
+                }
+            }
+        }
+        if min[0] > max[0] {
+            return self.get_bounds();
+        }
+        let origin = [self.position.0, self.position.1, self.position.2].map(|c| c * CHUNK_SIZE_FLOAT);
+        let low = |i: usize| (origin[i] + min[i]).floor() as i32;
+        let high = |i: usize| (origin[i] + max[i]).ceil() as i32;
+        ChunkBounds {
+            min: (low(0), low(1), low(2)),
+            max: (high(0), high(1), high(2)),
+        }
+    }
+
     /// The level of detail to draw at `distance` metres from the camera.
     fn lod_at(distance: f32) -> usize {
         LOD_DISTANCES
@@ -192,15 +218,20 @@ impl Chunk for DualContouringChunk {
             noise,
             meshes: Vec::new(),
             ground_indices: 0,
+            drawn_bounds: ChunkBounds {
+                min: (0, 0, 0),
+                max: (0, 0, 0),
+            },
             water_mesh: None,
         };
         (chunk.meshes, chunk.ground_indices) = chunk.generate_meshes();
+        chunk.drawn_bounds = chunk.measure_drawn_bounds();
         chunk.water_mesh = chunk.generate_water_mesh();
         chunk
     }
 
     fn buffer_data(&mut self) {
-        // The collider is built (from the finest mesh) before this, so the
+        // The collider and the drawn bounds are made before this, so the
         // copies in memory are not needed any more: the GPU has them.
         for mesh in &mut self.meshes {
             mesh.buffer_and_release();
@@ -223,6 +254,10 @@ impl Chunk for DualContouringChunk {
                 ((self.position.2 + 1.0) * CHUNK_SIZE as f32) as i32,
             ),
         }
+    }
+
+    fn get_drawn_bounds(&self) -> ChunkBounds {
+        self.drawn_bounds
     }
 
     fn process_line(&mut self, _: &Line, _: &MouseButton) -> bool {
@@ -248,6 +283,13 @@ impl Chunk for DualContouringChunk {
                 include_str!("fragment.glsl")
             ),
         )
+    }
+
+    fn get_depth_shader_source() -> Option<(String, String)> {
+        Some((
+            include_str!("depth_vertex.glsl").to_string(),
+            depth_pass::EMPTY_FRAGMENT.to_string(),
+        ))
     }
 
     fn get_textures(shader: &Shader) -> Vec<Texture> {
@@ -519,6 +561,21 @@ mod tests {
         // The collider is the ground alone.
         assert_eq!(chunk.get_indices().len() * 3, chunk.ground_indices);
         assert!(indices.len() > chunk.ground_indices, "no skirt");
+    }
+
+    #[test]
+    fn the_drawn_bounds_hold_every_level_and_are_flatter_than_the_chunk() {
+        let chunk = DualContouringChunk::new(2, (1.0, 0.0, -1.0), 0);
+        let b = chunk.get_drawn_bounds();
+        for mesh in &chunk.meshes {
+            for v in &mesh.vertices {
+                let p = [v.position[0] + 128.0, v.position[1], v.position[2] - 128.0];
+                assert!(p[0] >= b.min.0 as f32 && p[0] <= b.max.0 as f32);
+                assert!(p[1] >= b.min.1 as f32 && p[1] <= b.max.1 as f32);
+                assert!(p[2] >= b.min.2 as f32 && p[2] <= b.max.2 as f32);
+            }
+        }
+        assert!(b.max.1 - b.min.1 < CHUNK_SIZE as i32 / 2, "{b:?}");
     }
 
     #[test]

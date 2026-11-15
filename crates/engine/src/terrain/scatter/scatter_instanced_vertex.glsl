@@ -13,6 +13,9 @@ layout (location = 6) in vec4 instanceCol3;
 
 uniform mat4 viewProjection;
 uniform mat4 parentTransform;
+// The depth-only program (`depth_pass`) runs this shader too; the shading
+// pass tests LEQUAL against the prepass' depth.
+invariant gl_Position;
 
 out vec3 Normal;
 out vec3 WorldPos;

@@ -10,6 +10,7 @@ use crate::core::{
     view_frustum::ViewFrustum,
     assets::MaterialMap,
     renderer::{
+        depth_pass,
         hdr,
         pbr::{self, Lighting},
         shader::Shader,
@@ -25,6 +26,15 @@ use super::{
     Bone, Model, ModelBuilder, ModelMesh,
 };
 use crate::core::utils::ToMatrix4;
+
+thread_local! {
+    /// Every model's depth-only program (see `depth_pass`): its vertices
+    /// skinned as `vertex.glsl` does, the colour map's cut-out, no light.
+    static DEPTH_SHADER: Shader = Shader::new(
+        include_str!("vertex.glsl"),
+        depth_pass::ALPHA_TEST_FRAGMENT,
+    );
+}
 
 impl Model {
     /// Load a model by its path below `assets/models/`.
@@ -252,17 +262,38 @@ impl Model {
                 return;
             }
         }
-        self.shader.bind();
-        lighting.apply(&self.shader);
+        // A tinted model writes no depth: nothing to draw in a depth pass.
+        let depth_only = depth_pass::is_active();
+        if depth_only && self.tint.is_some() {
+            return;
+        }
+        DEPTH_SHADER.with(|depth_shader| {
+            let shader = if depth_only { depth_shader } else { &self.shader };
+            self.draw_meshes(shader, depth_only, lighting, parent_transform, camera_projection);
+        });
+    }
+
+    fn draw_meshes(
+        &self,
+        shader: &Shader,
+        depth_only: bool,
+        lighting: &Lighting,
+        parent_transform: &Matrix4<f32>,
+        camera_projection: &Matrix4<f32>,
+    ) {
+        shader.bind();
+        if !depth_only {
+            lighting.apply(shader);
+        }
         // Shadow maps and the editor's selection mask draw into their own
         // framebuffers and keep every bone. The ambient occlusion's depth
         // pass has its own too, but sees what the camera sees.
         let draws_to_screen = hdr::draws_to_view() || ssao::in_depth_pass();
-        self.shader
+        shader
             .set_uniform_mat4("viewProjection", &camera_projection);
         let [r, g, b, a] = self.tint.unwrap_or([1.0; 4]);
-        self.shader.set_uniform_1i("useTint", self.tint.is_some() as i32);
-        self.shader.set_uniform_4f("tint", r, g, b, a);
+        shader.set_uniform_1i("useTint", self.tint.is_some() as i32);
+        shader.set_uniform_4f("tint", r, g, b, a);
         if self.tint.is_some() {
             unsafe {
                 gl::Enable(gl::BLEND);
@@ -298,19 +329,19 @@ impl Model {
                     }
                     cache.insert(name.clone(), sorted);
                 }
-                self.shader
+                shader
                     .set_uniform_mat4_array("boneTransforms", &cache[name]);
             } else {
                 // Unskinned mesh: vertices were authored with bone slot 0 + full
                 // weight (see ModelMesh::new), so feed the shader an identity at
                 // that slot.
-                self.shader
+                shader
                     .set_uniform_mat4_array("boneTransforms", &vec![Matrix4::identity()]);
             }
-            pbr::bind_material(&self.shader, self.textures.get(mesh.material_index));
+            pbr::bind_material(shader, self.textures.get(mesh.material_index));
             unsafe { gl::Disable(gl::CULL_FACE) };
             mesh.render(
-                &self.shader,
+                shader,
                 parent_transform * Matrix4::from_translation(self.position.to_vec().into()),
                 Some(self.scale),
             );

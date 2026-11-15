@@ -22,6 +22,7 @@ use crate::core::{
             shadow::{self, LightShadowMaps, ShadowPlanner},
             skylight::{SkyLight, SHADOW_CASCADES},
         },
+        depth_pass::DepthPass,
         hdr::{self, Hdr, HdrSettings},
         profiler::{self, Pass},
         sky::SkyRenderer,
@@ -37,9 +38,6 @@ use crate::core::{
 
 use super::Scene;
 
-/// Every how many frames each of the sun's shadow cascades is drawn, near
-/// to far.
-const CASCADE_INTERVALS: [u64; SHADOW_CASCADES] = [1, 1, 2, 4];
 /// Metres the camera may move in a frame before every cascade is drawn
 /// again at once.
 const CASCADE_JUMP: f32 = 5.0;
@@ -272,6 +270,7 @@ impl Scene {
         let maps = maps.get_or_insert_with(LightShadowMaps::new);
         maps.unbind();
         let plan = self.shadow_planner.borrow_mut().plan(&sources);
+        let _depth_only = DepthPass::begin();
         for (layer, face) in plan {
             let Some(light) = sources.iter().find(|l| l.shadow_layer == Some(layer)) else {
                 continue;
@@ -428,15 +427,17 @@ impl Scene {
                     }
                 };
                 let redraw_all = self.drawn_cascades.get().is_none();
+                let intervals = skylight.shadows().intervals();
                 for (index, cascade) in current.iter().enumerate() {
                     // The far cascades change little from frame to frame and
                     // are drawn every few frames, staggered; the shaders use
                     // the projection each was drawn with.
-                    let interval = CASCADE_INTERVALS[index];
+                    let interval = intervals[index];
                     if !redraw_all && (frame + index as u64) % interval != 0 {
                         continue;
                     }
                     drawn[index] = *cascade;
+                    let _depth_only = DepthPass::begin();
                     shadow_fbo.bind_cascade(index as u32);
                     window.clear_mask(gl::DEPTH_BUFFER_BIT);
                     for entity in self.entities.iter() {
@@ -491,12 +492,14 @@ impl Scene {
                     let mut ssao = self.ssao.borrow_mut();
                     let ssao = ssao.get_or_insert_with(Ssao::new);
                     ssao.begin_depth_pass();
+                    let depth_only = DepthPass::begin();
                     for entity in self.entities.iter() {
                         entity.render(self, &view_projection, parent_transform);
                     }
                     // Its full shape, trails and all, as the shading pass
                     // draws it.
                     self.render_snow_layer(&view_projection, false);
+                    drop(depth_only);
                     ssao.take_depth(framebuffer, width, height);
                     ssao.resolve(&camera.get_projection().get_matrix(), &settings);
                     ssao.bind_result();
@@ -654,6 +657,7 @@ impl Scene {
         let mut targets = self.weather.borrow_mut();
         let targets = targets.get_or_insert_with(WeatherTargets::new);
         if let Some(view_projection) = targets.exposure.begin(eye) {
+            let _depth_only = DepthPass::begin();
             for entity in self.entities.iter() {
                 entity.render(self, &view_projection, Matrix4::identity());
             }
