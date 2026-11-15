@@ -296,8 +296,9 @@ fn read_gpu_memory() -> Option<(u64, u64)> {
             gl::GetIntegerv(NVX_TOTAL, &mut total);
             gl::GetIntegerv(NVX_AVAILABLE, &mut available);
         }
-        let total = total as u64 * 1024;
-        let available = available as u64 * 1024;
+        // Drivers that only pretend to have it (Mesa's llvmpipe) answer -1.
+        let total = total.max(0) as u64 * 1024;
+        let available = available.max(0) as u64 * 1024;
         return Some((total.saturating_sub(available), total));
     }
     if has_extension("GL_ATI_meminfo") {
@@ -307,7 +308,7 @@ fn read_gpu_memory() -> Option<(u64, u64)> {
         }
         // [free in pool, largest free block, aux free, largest aux block]
         // No total is reported; show free memory as "used = 0 of free".
-        return Some((0, info[0] as u64 * 1024));
+        return Some((0, info[0].max(0) as u64 * 1024));
     }
     None
 }
