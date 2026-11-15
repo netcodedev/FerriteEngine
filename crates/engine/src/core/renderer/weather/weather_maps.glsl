@@ -38,10 +38,28 @@ float weatherNoise(vec2 p) {
                mix(weatherHash(i + vec2(0.0, 1.0)), weatherHash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
 
-// Bilinear blend of four texels from `textureGather` (its order: (0,1),
-// (1,1), (1,0), (0,0)), `f` the spot's place between them.
+// The four texels of `map` around `uv` (at (0,0), (1,0), (0,1), (1,1))
+// and in `f` where `uv` lies between them. Picked here, with the same
+// numbers as `f`: `textureGather` picks its four with a coarser rounding of
+// its own, so near a texel's edge it can take the next four while `f`
+// still weighs these, and a point reads a wrong value now and then.
+vec4 texelQuad(sampler2D map, vec2 uv, out vec2 f) {
+    ivec2 size = textureSize(map, 0);
+    vec2 t = uv * vec2(size) - 0.5;
+    vec2 base = floor(t);
+    f = t - base;
+    ivec2 c = ivec2(base);
+    ivec2 last = size - 1;
+    return vec4(
+        texelFetch(map, clamp(c, ivec2(0), last), 0).r,
+        texelFetch(map, clamp(c + ivec2(1, 0), ivec2(0), last), 0).r,
+        texelFetch(map, clamp(c + ivec2(0, 1), ivec2(0), last), 0).r,
+        texelFetch(map, clamp(c + ivec2(1, 1), ivec2(0), last), 0).r);
+}
+
+// Bilinear blend of the four texels from `texelQuad`.
 float texelBlend(vec4 texels, vec2 f) {
-    return mix(mix(texels.w, texels.z, f.x), mix(texels.x, texels.y, f.x), f.y);
+    return mix(mix(texels.x, texels.y, f.x), mix(texels.z, texels.w, f.x), f.y);
 }
 
 // Share of the sky above `worldPos` that is open, 0..1, in any pass. The
@@ -73,10 +91,9 @@ float skyExposureMap(vec3 worldPos, vec3 Ng) {
     float sheltered = 0.0;
     for (int j = -1; j <= 1; ++j) {
         for (int i = -1; i <= 1; ++i) {
-            vec2 uv = q.xy + vec2(i, j) * 1.5 / size;
-            vec2 f = fract(uv * size - 0.5);
-            vec4 s = smoothstep(vec4(low), vec4(high),
-                                (q.z - textureGather(exposureMap, uv, 0)) * exposureRange);
+            vec2 f;
+            vec4 depth = texelQuad(exposureMap, q.xy + vec2(i, j) * 1.5 / size, f);
+            vec4 s = smoothstep(vec4(low), vec4(high), (q.z - depth) * exposureRange);
             sheltered += texelBlend(s, f);
         }
     }
@@ -152,13 +169,13 @@ bool groundHeight(vec2 p, out float height) {
     if (any(lessThan(q.xy, vec2(0.0))) || any(greaterThan(q.xy, vec2(1.0)))) {
         return false;
     }
-    vec2 size = vec2(textureSize(groundMap, 0));
-    vec4 depth = textureGather(groundMap, q.xy, 0);
+    vec2 f;
+    vec4 depth = texelQuad(groundMap, q.xy, f);
     // Cleared to the far end: no terrain there.
     if (max(max(depth.x, depth.y), max(depth.z, depth.w)) >= 1.0) {
         return false;
     }
     // `q.z` is the depth of height 0; depth grows downward, linearly.
-    height = (q.z - texelBlend(depth, fract(q.xy * size - 0.5))) * exposureRange;
+    height = (q.z - texelBlend(depth, f)) * exposureRange;
     return true;
 }
