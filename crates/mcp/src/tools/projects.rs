@@ -2,11 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::{
-    bridge,
-    project::{Project, PROJECT_EXTENSION},
-    scene::scene_path,
-};
+use crate::{bridge, project::{Project, PROJECT_EXTENSION}, scene::scene_path};
 
 use super::*;
 

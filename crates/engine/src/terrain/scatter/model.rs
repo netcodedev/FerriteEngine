@@ -4,9 +4,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gl::types::{GLsizei, GLsizeiptr, GLuint, GLvoid};
-use rapier3d::prelude::{
-    SharedShape, TriMeshFlags, Vector,
-};
+use rapier3d::prelude::{SharedShape, TriMeshFlags, Vector};
 
 use crate::core::{
     assets::{self, AssetDatabase, AssetKind, AssetRef, MaterialMap, ModelSettings},

@@ -1,9 +1,6 @@
 use cgmath::{InnerSpace, Matrix4, Vector3};
 
-use crate::core::{
-    entity::component::{Component, PropertyValue},
-    scene::scene_file::ComponentData,
-};
+use crate::core::{entity::component::{Component, PropertyValue}, scene::scene_file::ComponentData};
 
 use super::*;
 

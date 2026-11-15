@@ -2,10 +2,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::{
-    project::Project,
-    scene::scene_path,
-};
+use crate::{project::Project, scene::scene_path};
 
 use super::*;
 

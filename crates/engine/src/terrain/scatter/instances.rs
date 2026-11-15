@@ -3,9 +3,7 @@ use std::cell::RefCell;
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, Vector3, Zero};
 use gl::types::{GLsizei, GLsizeiptr, GLuint, GLvoid};
 use glfw::WindowEvent;
-use rapier3d::prelude::{
-    ColliderBuilder, ColliderHandle, Pose, Rotation, Vector,
-};
+use rapier3d::prelude::{ColliderBuilder, ColliderHandle, Pose, Rotation, Vector};
 
 use crate::core::{
     entity::{

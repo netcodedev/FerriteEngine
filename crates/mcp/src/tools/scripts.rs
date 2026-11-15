@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::{path::{Path, PathBuf}, process::Command};
 
 use serde_json::{json, Value};
 
