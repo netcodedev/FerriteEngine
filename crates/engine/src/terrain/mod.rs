@@ -18,6 +18,7 @@ pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 
 pub mod dual_contouring;
+pub mod generator;
 pub mod marching_cubes;
 pub mod materials;
 pub mod scatter;
@@ -26,6 +27,8 @@ pub mod voxel;
 
 pub struct Terrain<T: Chunk> {
     seed: u64,
+    /// Shapes the ground; shared with the loader threads and the chunks.
+    generator: std::sync::Arc<generator::WorldGenerator>,
     /// Countdown until the chunks are rebuilt for an edited seed.
     reseed_in: Option<f64>,
     /// Models scattered over the chunks. Optional; see `scatter`.
@@ -43,6 +46,18 @@ pub struct Terrain<T: Chunk> {
 
 pub trait Chunk {
     fn new(seed: u64, position: (f32, f32, f32), lod: usize) -> Self;
+    /// The chunk at `position` (in chunks) as `generator` shapes the world.
+    /// Backends that make their own ground from the seed keep the default.
+    fn generate(
+        generator: &std::sync::Arc<generator::WorldGenerator>,
+        position: (f32, f32, f32),
+        lod: usize,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        Self::new(generator.seed(), position, lod)
+    }
     fn buffer_data(&mut self);
     fn get_bounds(&self) -> ChunkBounds;
     /// A box around everything the chunk draws, for culling; the chunk's

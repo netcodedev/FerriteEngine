@@ -4,22 +4,25 @@
 //! minus the ground's height), but nothing here assumes that: overhangs and
 //! caves only need `DensityField::at` to say so.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use fast_surface_nets::{
     ndshape::{RuntimeShape, Shape},
     surface_nets, SurfaceNetsBuffer,
 };
 
-use super::{DualContouringChunk, Vertex};
-use crate::terrain::{CHUNK_SIZE, CHUNK_SIZE_FLOAT};
+use super::Vertex;
+use crate::terrain::{
+    generator::{ChunkCoord, Column, WorldGenerator, COLUMN_MARGIN},
+    CHUNK_SIZE, CHUNK_SIZE_FLOAT,
+};
 
 /// The density around one chunk at whole metres, from one metre before
 /// to one metre past where the coarsest level samples (a step beyond the
 /// chunk on every side).
 pub(super) struct DensityField {
-    /// Ground height per column, `(x, z)` from `margin` before the corner.
-    heights: Vec<f32>,
+    /// The ground's height over the chunk's square (see `Column`).
+    column: Arc<Column>,
     span: i32,
     margin: i32,
     /// The chunk's floor, in world metres.
@@ -27,32 +30,24 @@ pub(super) struct DensityField {
 }
 
 impl DensityField {
-    /// The field for `chunk`, far enough for levels up to `coarsest`
-    /// metres between samples.
-    pub(super) fn new(chunk: &DualContouringChunk, coarsest: i32) -> Self {
+    /// The field of the chunk at `coord`, far enough for levels up to
+    /// `coarsest` metres between samples.
+    pub(super) fn new(generator: &WorldGenerator, coord: ChunkCoord, coarsest: i32) -> Self {
         // A level samples from one step before the chunk to one step past
         // it, and the normals look one metre further.
-        let margin = coarsest + 1;
-        let span = CHUNK_SIZE as i32 + 2 * margin + 1;
-        let mut heights = Vec::with_capacity((span * span) as usize);
-        for z in -margin..span - margin {
-            for x in -margin..span - margin {
-                heights.push(chunk.column_noise(x, z) * CHUNK_SIZE_FLOAT - 1.0);
-            }
-        }
+        assert!(coarsest < COLUMN_MARGIN, "the column is too narrow for steps of {coarsest} m");
         Self {
-            heights,
-            span,
-            margin,
-            floor: chunk.position.1 * CHUNK_SIZE_FLOAT,
+            column: generator.column(coord.x, coord.z),
+            span: Column::SPAN,
+            margin: COLUMN_MARGIN,
+            floor: coord.y as f32 * CHUNK_SIZE_FLOAT,
         }
     }
 
     /// Density at chunk-local `(x, y, z)`, in metres from the surface
     /// (roughly): negative inside the ground.
     pub(super) fn at(&self, x: i32, y: i32, z: i32) -> f32 {
-        let column = (z + self.margin) * self.span + (x + self.margin);
-        self.floor + y as f32 - self.heights[column as usize]
+        self.floor + y as f32 - self.column.height(x, z)
     }
 
     /// The field at chunk-local `p`, blended from the eight whole-metre

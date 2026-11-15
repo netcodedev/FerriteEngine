@@ -1,5 +1,6 @@
 use std::{
     cmp::max,
+    sync::Arc,
     sync::mpsc::{self, Receiver, Sender},
     thread,
     time::Instant,
@@ -36,6 +37,7 @@ use crate::core::{
 };
 
 use super::{
+    generator::WorldGenerator,
     scatter::{Scatter, ScatterInstances, ScatterLayerData, TakenInstance},
     Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
 };
@@ -155,12 +157,14 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         let depth_shader = T::get_depth_shader_source()
             .map(|(vertex, fragment)| Shader::new(&vertex, &fragment));
 
+        let generator = WorldGenerator::new(seed);
         Self {
             seed,
+            chunk_receiver: Self::start_chunkloaders(&generator),
+            generator,
             reseed_in: None,
             scatter: Scatter::new(Vec::new()),
             show_colliders: false,
-            chunk_receiver: Self::start_chunkloaders(seed),
             shader,
             depth_shader,
             textures,
@@ -187,19 +191,17 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
 
     /// Generate the origin chunk and start the worker threads for the rest.
     /// They stop on their own once the returned receiver is dropped.
-    fn start_chunkloaders(seed: u64) -> Receiver<LoadedChunk<T>> {
+    fn start_chunkloaders(generator: &Arc<WorldGenerator>) -> Receiver<LoadedChunk<T>> {
         let (tx, rx) = mpsc::channel();
-        tx.send(LoadedChunk::new(T::new(seed, (0.0, 0.0, 0.0), 0)))
+        tx.send(LoadedChunk::new(T::generate(generator, (0.0, 0.0, 0.0), 0)))
             .unwrap();
 
-        let tx1 = tx.clone();
-        let tx2 = tx.clone();
-        let tx3 = tx.clone();
-        let tx4 = tx.clone();
-        let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, 1, 1, tx1));
-        let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, -1, 1, tx2));
-        let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, 1, -1, tx3));
-        let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, -1, -1, tx4));
+        for (x_dir, z_dir) in [(1, 1), (-1, 1), (1, -1), (-1, -1)] {
+            let (generator, tx) = (generator.clone(), tx.clone());
+            let _ = thread::spawn(move || {
+                Terrain::chunkloader(&generator, CHUNK_RADIUS as i32, x_dir, z_dir, tx)
+            });
+        }
         rx
     }
 
@@ -216,7 +218,8 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
                 index += 1;
             }
         }
-        self.chunk_receiver = Self::start_chunkloaders(self.seed);
+        self.generator = WorldGenerator::new(self.seed);
+        self.chunk_receiver = Self::start_chunkloaders(&self.generator);
         exposure::world_changed();
     }
 
@@ -370,7 +373,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
     }
 
     fn chunkloader(
-        seed: u64,
+        generator: &Arc<WorldGenerator>,
         radius: i32,
         x_dir: i32,
         z_dir: i32,
@@ -388,7 +391,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
             } else {
                 ((z * z_dir) as f32, 0.0, (x * x_dir) as f32)
             };
-            let new_chunk = T::new(seed, position, max(x.abs(), z.abs()) as usize);
+            let new_chunk = T::generate(generator, position, max(x.abs(), z.abs()) as usize);
             let result = tx.send(LoadedChunk::new(new_chunk));
             if result.is_err() {
                 break;

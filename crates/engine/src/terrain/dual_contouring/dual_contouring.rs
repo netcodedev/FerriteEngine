@@ -4,7 +4,7 @@ use cgmath::{Matrix4, Point3, SquareMatrix, Vector3};
 use lazy_static::lazy_static;
 use gl::types::GLuint;
 use glfw::{Glfw, MouseButton, WindowEvent};
-use libnoise::prelude::*;
+use std::sync::Arc;
 
 use crate::{
     core::{
@@ -23,6 +23,7 @@ use crate::{
     terrain::{
         materials,
         scatter::{SCATTER_MAX_Y, SCATTER_MIN_Y},
+        generator::{ChunkCoord, WorldGenerator},
         Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
     },
 };
@@ -64,16 +65,6 @@ use super::{
 };
 
 impl DualContouringChunk {
-    /// The terrain's noise at chunk-local column `(x, z)`, 0..1.
-    pub(super) fn column_noise(&self, x: i32, z: i32) -> f32 {
-        let offset: f64 = 16777216.0;
-        let sample_point = (
-            (self.position.0 * CHUNK_SIZE_FLOAT) as f64 + x as f64 + offset,
-            (self.position.2 * CHUNK_SIZE_FLOAT) as f64 + z as f64 + offset,
-        );
-        ((1.0 + self.noise.sample([sample_point.0, sample_point.1])) / 2.0) as f32
-    }
-
     /// The ground's meshes, finest first: surface nets over the density
     /// field (see `DensityField`) sampled 1 metre apart, then 2, 4 and 8.
     /// The field is a volume, so overhangs and caves mesh as well as hills.
@@ -85,7 +76,7 @@ impl DualContouringChunk {
     /// the finest mesh are ground (before its skirt), for the collider.
     fn generate_meshes(&self) -> (Vec<ChunkMesh<Vertex>>, usize) {
         let coarsest = 1 << (LODS - 1);
-        let field = DensityField::new(self, coarsest);
+        let field = DensityField::new(&self.generator, self.coord, coarsest);
         let mut ground_indices = 0;
         let mut meshes = Vec::with_capacity(LODS);
         for lod in 0..LODS {
@@ -143,9 +134,7 @@ impl DualContouringChunk {
     /// World height of the ground at world `(x, z)`: where the density
     /// field crosses zero (see `density`).
     pub(super) fn ground_height(&self, x: f32, z: f32) -> f32 {
-        let offset: f64 = 16777216.0;
-        let n = self.noise.sample([x as f64 + offset, z as f64 + offset]);
-        ((1.0 + n) / 2.0) as f32 * CHUNK_SIZE_FLOAT - 1.0
+        self.generator.surface_height(x as f64, z as f64)
     }
 
     /// The water surface over this chunk (see `water`). Only the bottom
@@ -211,11 +200,15 @@ impl DualContouringChunk {
 }
 
 impl Chunk for DualContouringChunk {
-    fn new(seed: u64, position: (f32, f32, f32), _lod: usize) -> Self {
-        let noise = Source::perlin(seed).scale([0.003; 2]).fbm(6, 1.0, 2.0, 0.5);
+    fn new(seed: u64, position: (f32, f32, f32), lod: usize) -> Self {
+        Self::generate(&WorldGenerator::new(seed), position, lod)
+    }
+
+    fn generate(generator: &Arc<WorldGenerator>, position: (f32, f32, f32), _lod: usize) -> Self {
         let mut chunk = Self {
             position,
-            noise,
+            coord: ChunkCoord::from_position(position),
+            generator: generator.clone(),
             meshes: Vec::new(),
             ground_indices: 0,
             drawn_bounds: ChunkBounds {
@@ -476,7 +469,7 @@ mod tests {
         assert_eq!(left.meshes.len(), LODS);
         let n = CHUNK_SIZE_FLOAT;
         // The ground alone, without the skirts.
-        let (fl, fr) = (DensityField::new(&left, 8), DensityField::new(&right, 8));
+        let (fl, fr) = (DensityField::new(&left.generator, left.coord, 8), DensityField::new(&right.generator, right.coord, 8));
         let ground = |field: &DensityField, lod: usize| -> Vec<[f32; 3]> {
             field.surface_nets(1 << lod).unwrap().0.iter().map(|v| v.position).collect()
         };
@@ -519,7 +512,7 @@ mod tests {
     fn neighbours_on_any_levels_leave_no_gap_between_them() {
         let left = DualContouringChunk::new(2, (0.0, 0.0, 0.0), 0);
         let right = DualContouringChunk::new(2, (1.0, 0.0, 0.0), 0);
-        let (fl, fr) = (DensityField::new(&left, 8), DensityField::new(&right, 8));
+        let (fl, fr) = (DensityField::new(&left.generator, left.coord, 8), DensityField::new(&right.generator, right.coord, 8));
         let left: Vec<_> = (0..LODS).map(|lod| fl.surface_nets(1 << lod).unwrap()).collect();
         let right: Vec<_> = (0..LODS).map(|lod| fr.surface_nets(1 << lod).unwrap()).collect();
         for (a, mesh_a) in left.iter().enumerate() {
