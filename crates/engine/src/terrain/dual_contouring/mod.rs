@@ -11,7 +11,6 @@ pub const WATER_LEVEL: f32 = 44.0;
 
 pub struct DualContouringChunk {
     position: (f32, f32, f32),
-    cave: Scale<3, Perlin<3>>,
     noise: Fbm<2, Scale<2, Perlin<2>>>,
     chunk_size: usize,
     mesh: Option<ChunkMesh<Vertex>>,

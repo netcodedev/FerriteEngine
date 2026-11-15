@@ -57,6 +57,7 @@ impl Scene {
             weather_maps: Cell::new(None),
             lights: RefCell::new(None),
             light_count: Cell::new(0),
+            frame_lighting: Cell::new(None),
             light_sources: RefCell::new(Vec::new()),
             light_shadows: RefCell::new(None),
             shadow_planner: RefCell::new(ShadowPlanner::default()),
@@ -208,6 +209,12 @@ impl Scene {
         self.light_count.get()
     }
 
+    /// The lighting looked up at the start of the frame being drawn, if one
+    /// is (see `frame_lighting`).
+    pub fn frame_lighting(&self) -> Option<Lighting> {
+        self.frame_lighting.get()
+    }
+
     /// Gather the scene's lights, keep the ones that matter for the camera
     /// and upload them for the shaders.
     fn upload_lights(&self) {
@@ -342,6 +349,13 @@ impl Scene {
     }
 
     fn render_passes(&self, window: &Window) {
+        self.frame_lighting.set(None);
+        self.frame_lighting.set(Lighting::from_scene(self));
+        self.render_passes_lit(window);
+        self.frame_lighting.set(None);
+    }
+
+    fn render_passes_lit(&self, window: &Window) {
         let parent_transform = Matrix4::identity();
 
         // The weather's maps first: the snow layer needs them in the shadow

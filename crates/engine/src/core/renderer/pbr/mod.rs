@@ -43,6 +43,7 @@ pub fn fragment_source(body: &str) -> String {
 }
 
 /// The light a PBR shader is drawn with.
+#[derive(Clone, Copy)]
 pub struct Lighting {
     /// Toward the sun.
     pub sun_direction: Vector3<f32>,
@@ -68,6 +69,14 @@ pub struct Lighting {
 impl Lighting {
     /// The scene's sun, sky and camera. `None` without a sky light.
     pub fn from_scene(scene: &Scene) -> Option<Self> {
+        // While the scene is drawn, the sun, sky and camera stay put: only
+        // what the passes change is read again.
+        if let Some(mut lighting) = scene.frame_lighting() {
+            lighting.ambient_occlusion_origin = scene.ambient_occlusion_origin();
+            lighting.weather_maps = scene.weather_maps();
+            lighting.light_count = scene.light_count();
+            return Some(lighting);
+        }
         let skylight = scene.get_component::<SkyLight>()?;
         let camera_position = scene
             .get_active_camera()
@@ -117,13 +126,10 @@ impl Lighting {
         shader.set_uniform_1i("shadowMap", SHADOW_MAP_UNIT);
         match &self.shadow_cascades {
             Some(cascades) => {
-                for (i, cascade) in cascades.iter().enumerate() {
-                    shader.set_uniform_mat4(
-                        &format!("lightProjections[{i}]"),
-                        &cascade.view_projection,
-                    );
-                    shader.set_uniform_1f(&format!("cascadeTexel[{i}]"), cascade.texel_size);
-                }
+                let projections = cascades.map(|cascade| cascade.view_projection);
+                shader.set_uniform_mat4_array("lightProjections", &projections);
+                let texels = cascades.map(|cascade| cascade.texel_size);
+                shader.set_uniform_1fv("cascadeTexel", &texels);
                 shader.set_uniform_1i("useShadowMap", 1);
             }
             None => shader.set_uniform_1i("useShadowMap", 0),

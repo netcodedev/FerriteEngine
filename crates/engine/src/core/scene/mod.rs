@@ -6,6 +6,7 @@ use super::{
     renderer::{
         framebuffer::{CascadedShadowMap, ShadowFrameBuffer},
         hdr::Hdr,
+        pbr::Lighting,
         light::{
             light::{LightBuffer, LightSource},
             shadow::{LightShadowMaps, ShadowPlanner},
@@ -63,6 +64,10 @@ pub struct Scene {
     light_shadows: RefCell<Option<LightShadowMaps>>,
     /// Which of their faces are drawn this frame.
     shadow_planner: RefCell<ShadowPlanner>,
+    /// The sun, sky and camera part of `Lighting` while the scene is drawn,
+    /// looked up once per frame instead of on every draw (see
+    /// `Lighting::from_scene`).
+    frame_lighting: Cell<Option<Lighting>>,
     /// Work queued with `Scene::defer`, run once every entity is updated.
     deferred: Vec<Box<dyn FnOnce(&mut Scene)>>,
 }

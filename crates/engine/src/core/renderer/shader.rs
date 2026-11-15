@@ -1,9 +1,13 @@
 use cgmath::{Array, Matrix};
 use gl::types::*;
-use std::{ffi::CString, ptr};
+use std::{cell::RefCell, collections::HashMap, ffi::CString, ptr};
 
 pub struct Shader {
     pub id: GLuint,
+    /// Uniform locations looked up so far, by name: asking the driver (and
+    /// building a C string for it) on every set is a hot path, as uniforms
+    /// are set per draw.
+    locations: RefCell<HashMap<String, GLint>>,
 }
 
 pub struct DynamicVertexArray<T> {
@@ -23,6 +27,7 @@ impl Shader {
     pub fn new(vertex_source: &str, fragment_source: &str) -> Self {
         Shader {
             id: Shader::create_shader(vertex_source, fragment_source),
+            locations: RefCell::new(HashMap::new()),
         }
     }
 
@@ -35,24 +40,46 @@ impl Shader {
         }
     }
 
+    /// Location of the uniform `name` (-1 if the program has none, which
+    /// GL ignores on set), asked of the driver once per name.
+    fn location(&self, name: &str) -> GLint {
+        if let Some(&location) = self.locations.borrow().get(name) {
+            return location;
+        }
+        let location = match CString::new(name) {
+            Ok(c_name) => unsafe { gl::GetUniformLocation(self.id, c_name.as_ptr()) },
+            Err(_) => -1,
+        };
+        self.locations.borrow_mut().insert(name.to_owned(), location);
+        location
+    }
+
+    pub fn set_uniform_1fv(&self, name: &str, values: &[f32]) {
+        if crate::core::headless::is_headless() {
+            return;
+        }
+        unsafe {
+            let location = self.location(name);
+            gl::Uniform1fv(location, values.len() as GLsizei, values.as_ptr());
+        }
+    }
+
     pub fn set_uniform_mat4(&self, name: &str, matrix: &cgmath::Matrix4<f32>) {
         if crate::core::headless::is_headless() {
             return;
         }
         unsafe {
-            let name = CString::new(name).unwrap();
-            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            let location = self.location(name);
             gl::UniformMatrix4fv(location, 1, gl::FALSE, matrix.as_ptr());
         }
     }
 
-    pub fn set_uniform_mat4_array(&self, name: &str, matrices: &Vec<cgmath::Matrix4<f32>>) {
+    pub fn set_uniform_mat4_array(&self, name: &str, matrices: &[cgmath::Matrix4<f32>]) {
         if crate::core::headless::is_headless() {
             return;
         }
         unsafe {
-            let name = CString::new(name).unwrap();
-            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            let location = self.location(name);
             gl::UniformMatrix4fv(
                 location,
                 matrices.len() as i32,
@@ -67,8 +94,7 @@ impl Shader {
             return;
         }
         unsafe {
-            let name = CString::new(name).unwrap();
-            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            let location = self.location(name);
             gl::Uniform1i(location, value);
         }
     }
@@ -78,8 +104,7 @@ impl Shader {
             return;
         }
         unsafe {
-            let name = CString::new(name).unwrap();
-            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            let location = self.location(name);
             gl::Uniform1f(location, value);
         }
     }
@@ -89,8 +114,7 @@ impl Shader {
             return;
         }
         unsafe {
-            let name = CString::new(name).unwrap();
-            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            let location = self.location(name);
             gl::Uniform2i(location, int1, int2);
         }
     }
@@ -100,8 +124,7 @@ impl Shader {
             return;
         }
         unsafe {
-            let name = CString::new(name).unwrap();
-            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            let location = self.location(name);
             gl::Uniform2f(location, float1, float2);
         }
     }
@@ -111,8 +134,7 @@ impl Shader {
             return;
         }
         unsafe {
-            let name = CString::new(name).unwrap();
-            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            let location = self.location(name);
             gl::Uniform3f(location, float1, float2, float3);
         }
     }
@@ -122,8 +144,7 @@ impl Shader {
             return;
         }
         unsafe {
-            let name = CString::new(name).unwrap();
-            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            let location = self.location(name);
             gl::Uniform4f(location, float1, float2, float3, float4);
         }
     }
@@ -133,8 +154,7 @@ impl Shader {
             return;
         }
         unsafe {
-            let name = CString::new(name).unwrap();
-            let location = gl::GetUniformLocation(self.id, name.as_ptr());
+            let location = self.location(name);
             gl::Uniform3fv(location, 1, value.as_ptr());
         }
     }

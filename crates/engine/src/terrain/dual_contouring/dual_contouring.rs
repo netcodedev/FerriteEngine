@@ -1,5 +1,3 @@
-use core::panic;
-
 use std::time::Instant;
 
 use cgmath::{Matrix4, Point3, SquareMatrix, Vector3};
@@ -20,12 +18,11 @@ use crate::{
             texture::Texture,
         },
         scene::Scene,
-        view_frustum::ViewFrustum,
     },
     terrain::{
         materials,
         scatter::{SCATTER_MAX_Y, SCATTER_MIN_Y},
-        Chunk, ChunkBounds, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT, USE_LOD,
+        Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT, USE_LOD,
     },
 };
 
@@ -69,22 +66,21 @@ use super::{
 };
 
 impl DualContouringChunk {
-    fn get_density_at(&self, (x, y, z): (usize, usize, usize)) -> f32 {
+    /// The terrain's noise at chunk-local column `(x, z)`, 0..1. The ground
+    /// is a height field: the density of a voxel depends on its column's
+    /// noise and its height only (see `density`).
+    fn column_noise(&self, x: usize, z: usize) -> f32 {
         let offset: f64 = 16777216.0;
         let sample_point = (
             (self.position.0 * CHUNK_SIZE_FLOAT) as f64 + x as f64 + offset,
-            (self.position.1 * CHUNK_SIZE_FLOAT) as f64 + y as f64 + offset,
             (self.position.2 * CHUNK_SIZE_FLOAT) as f64 + z as f64 + offset,
         );
+        ((1.0 + self.noise.sample([sample_point.0, sample_point.1])) / 2.0) as f32
+    }
 
-        let noise = ((1.0 + self.noise.sample([sample_point.0, sample_point.2])) / 2.0) as f32;
-        let _iso = ((1.0
-            + self
-                .cave
-                .sample([sample_point.0, sample_point.1, sample_point.2]))
-            / 2.0) as f32;
-        let height_iso = 1.0 - ((noise) / ((1.0 + y as f32) / CHUNK_SIZE_FLOAT));
-        height_iso
+    /// Density at chunk-local height `y` of a column whose noise is `noise`.
+    fn density(noise: f32, y: usize) -> f32 {
+        1.0 - (noise / ((1.0 + y as f32) / CHUNK_SIZE_FLOAT))
     }
 
     fn generate_mesh(&self) -> ChunkMesh<Vertex> {
@@ -93,14 +89,20 @@ impl DualContouringChunk {
         let size = (self.chunk_size + 2) as u32;
         let scale_factor = CHUNK_SIZE / self.chunk_size;
         let shape = RuntimeShape::<u32, 3>::new([size, size, size]);
+        // The noise once per column instead of once per voxel: the field is
+        // the same, at a fraction of the cost.
+        let mut columns = vec![0.0; (size * size) as usize];
+        for z in 0..size {
+            for x in 0..size {
+                columns[(z * size + x) as usize] =
+                    self.column_noise(x as usize * scale_factor, z as usize * scale_factor);
+            }
+        }
         let mut sdf = vec![0.0; (size * size * size) as usize];
         for i in 0..sdf.len() {
             let [x, y, z] = shape.delinearize(i as u32);
-            sdf[i as usize] = self.get_density_at((
-                x as usize * scale_factor,
-                y as usize * scale_factor,
-                z as usize * scale_factor,
-            ));
+            sdf[i as usize] =
+                Self::density(columns[(z * size + x) as usize], y as usize * scale_factor);
         }
         let mut buffer = SurfaceNetsBuffer::default();
         surface_nets(&sdf, &shape, [0; 3], [size as u32 - 1; 3], &mut buffer);
@@ -123,7 +125,7 @@ impl DualContouringChunk {
     }
 
     /// World height of the ground at world `(x, z)`: where the density
-    /// field crosses zero (see `get_density_at`).
+    /// field crosses zero (see `density`).
     pub(super) fn ground_height(&self, x: f32, z: f32) -> f32 {
         let offset: f64 = 16777216.0;
         let n = self.noise.sample([x as f64 + offset, z as f64 + offset]);
@@ -210,10 +212,8 @@ impl DualContouringChunk {
 impl Chunk for DualContouringChunk {
     fn new(seed: u64, position: (f32, f32, f32), lod: usize) -> Self {
         let noise = Source::perlin(seed).scale([0.003; 2]).fbm(6, 1.0, 2.0, 0.5);
-        let cave = Source::perlin(seed).scale([0.1; 3]);
         let mut chunk = Self {
             position,
-            cave,
             noise,
             chunk_size: DualContouringChunk::calculate_chunk_size(lod),
             mesh: None,
@@ -287,6 +287,21 @@ impl Chunk for DualContouringChunk {
 
     fn scatter_points(&self, salt: u64, attempts: u32) -> Vec<(f32, f32, f32, f32)> {
         self.scatter(salt, attempts)
+    }
+
+    fn draw(&self, shader: &Shader, transform: &Matrix4<f32>) {
+        if let Some(mesh) = &self.mesh {
+            mesh.render(
+                shader,
+                &(transform
+                    * Matrix4::from_translation(Vector3::new(
+                        self.position.0 * CHUNK_SIZE_FLOAT,
+                        self.position.1 * CHUNK_SIZE_FLOAT,
+                        self.position.2 * CHUNK_SIZE_FLOAT,
+                    ))),
+                None,
+            );
+        }
     }
 
     fn get_vertices(&self) -> Vec<[f32; 3]> {
@@ -409,44 +424,8 @@ impl Chunk for DualContouringChunk {
 impl Component for DualContouringChunk {
     fn update(&mut self, _: &mut Scene, _: &mut Entity, _: f64) {}
 
-    fn render(
-        &self,
-        scene: &Scene,
-        _: &Entity,
-        view_projection: &Matrix4<f32>,
-        parent_transform: &Matrix4<f32>,
-    ) {
-        if !ViewFrustum::is_bounds_in_frustum_matrix(view_projection, self.get_bounds()) {
-            return;
-        }
-        if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
-            let shader = terrain.get_shader();
-            if let Some(mesh) = &self.mesh {
-                if !mesh.is_buffered() {
-                    panic!("Mesh is not buffered");
-                }
-                terrain.bind_textures();
-                shader.bind();
-                shader.set_uniform_mat4("viewProjection", &view_projection);
-                unsafe {
-                    gl::Enable(gl::CULL_FACE);
-                }
-                mesh.render(
-                    &shader,
-                    &(parent_transform
-                        * Matrix4::from_translation(Vector3::new(
-                            self.position.0 * CHUNK_SIZE_FLOAT,
-                            self.position.1 * CHUNK_SIZE_FLOAT,
-                            self.position.2 * CHUNK_SIZE_FLOAT,
-                        ))),
-                    None,
-                );
-                unsafe {
-                    gl::Disable(gl::CULL_FACE);
-                }
-            }
-        }
-
+    fn render(&self, _: &Scene, _: &Entity, _: &Matrix4<f32>, _: &Matrix4<f32>) {
+        // Drawn by the terrain, with the other chunks (see `Chunk::draw`).
     }
 
     fn handle_event(&mut self, _: &mut Glfw, _: &mut glfw::Window, _: &WindowEvent) {}
