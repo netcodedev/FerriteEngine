@@ -61,7 +61,7 @@ const SCENE_DEPTH_UNIT: u32 = 12;
 use super::{
     density::{add_skirt, DensityField},
     water::{self, WaterVertex},
-    ChunkMesh, DualContouringChunk, Vertex, LODS, LOD_DISTANCES, SKIRT_DEPTH, SKIRT_DEPTH_PER_STEP,
+    ChunkMesh, DualContouringChunk, Vertex, LODS, WATER_LEVEL, LOD_DISTANCES, SKIRT_DEPTH, SKIRT_DEPTH_PER_STEP,
 };
 
 impl DualContouringChunk {
@@ -137,10 +137,10 @@ impl DualContouringChunk {
         self.generator.surface_height(x as f64, z as f64)
     }
 
-    /// The water surface over this chunk (see `water`). Only the bottom
-    /// row of chunks holds the ground, and with it the water.
+    /// The water surface over this chunk (see `water`), in the chunk the
+    /// water level lies in.
     fn generate_water_mesh(&self) -> Option<ChunkMesh<WaterVertex>> {
-        if self.position.1 != 0.0 {
+        if self.coord.y != (WATER_LEVEL / CHUNK_SIZE_FLOAT).floor() as i32 {
             return None;
         }
         let (vertices, indices) = water::generate(
@@ -155,10 +155,11 @@ impl DualContouringChunk {
     /// Scatter spots across this chunk's XZ footprint using the same noise
     /// that drives the chunk's terrain — so the height filter sees the exact
     /// surface a model would land on. Returns world-space `(x, y, z, yaw)`
-    /// tuples. Only chunks at `y_chunk == 0` (where terrain actually exists)
-    /// contribute spots.
+    /// tuples. A chunk only gives the spots whose ground lies in it.
     fn scatter(&self, salt: u64, attempts: u32) -> Vec<(f32, f32, f32, f32)> {
-        if self.position.1 != 0.0 {
+        let floor = self.coord.y as f32 * CHUNK_SIZE_FLOAT;
+        let ceiling = floor + CHUNK_SIZE_FLOAT;
+        if self.meshes.is_empty() {
             return Vec::new();
         }
         let x0 = self.position.0 * CHUNK_SIZE_FLOAT;
@@ -187,7 +188,7 @@ impl DualContouringChunk {
 
             let y = self.ground_height(x, z);
 
-            if y < SCATTER_MIN_Y || y > SCATTER_MAX_Y {
+            if y < SCATTER_MIN_Y || y > SCATTER_MAX_Y || y < floor || y >= ceiling {
                 let _ = next(); // burn an RNG sample so accepted yaw is stable
                 continue;
             }
@@ -221,6 +222,22 @@ impl Chunk for DualContouringChunk {
         chunk.drawn_bounds = chunk.measure_drawn_bounds();
         chunk.water_mesh = chunk.generate_water_mesh();
         chunk
+    }
+
+    fn vertical_range(generator: &WorldGenerator, column: (i32, i32)) -> std::ops::RangeInclusive<i32> {
+        // A chunk meshes the ground up to a coarse step (and its skirt)
+        // beyond its floor and ceiling.
+        let column = generator.column(column.0, column.1);
+        let reach = 2.0 * (1 << (LODS - 1)) as f32;
+        let chunk = |h: f32| (h / CHUNK_SIZE_FLOAT).floor() as i32;
+        // The water lies over ground below it, so in this range too.
+        let low = chunk(column.min_height - reach);
+        let high = chunk(column.max_height + reach);
+        low..=high
+    }
+
+    fn is_empty(&self) -> bool {
+        self.meshes.is_empty() && self.water_mesh.is_none()
     }
 
     fn buffer_data(&mut self) {

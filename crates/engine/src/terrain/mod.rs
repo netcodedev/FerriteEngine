@@ -1,5 +1,3 @@
-use std::sync::mpsc;
-
 use cgmath::{Matrix4, Point3};
 use glfw::MouseButton;
 
@@ -13,7 +11,6 @@ use crate::core::{
     scene::Scene,
 };
 
-pub const CHUNK_RADIUS: usize = 5;
 pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 
@@ -22,6 +19,7 @@ pub mod generator;
 pub mod marching_cubes;
 pub mod materials;
 pub mod scatter;
+pub mod streaming;
 mod terrain;
 pub mod voxel;
 
@@ -35,7 +33,8 @@ pub struct Terrain<T: Chunk> {
     scatter: scatter::Scatter,
     /// Editor toggle: draw chunk and scatter colliders as wireframes.
     show_colliders: bool,
-    chunk_receiver: mpsc::Receiver<terrain::LoadedChunk<T>>,
+    /// Loads the chunks around the camera (see `streaming`).
+    streamer: streaming::Streamer<Vec<terrain::LoadedChunk<T>>>,
     shader: Shader,
     /// Draws the chunks in depth-only passes (see `depth_pass`), if the
     /// chunk type has such a program.
@@ -57,6 +56,25 @@ pub trait Chunk {
         Self: Sized,
     {
         Self::new(generator.seed(), position, lod)
+    }
+
+    /// The chunks (by their `y`) of the column over chunk square
+    /// `column` that may hold anything; the others are not made. Backends
+    /// whose ground lies in the bottom row keep the default.
+    fn vertical_range(
+        _generator: &generator::WorldGenerator,
+        _column: (i32, i32),
+    ) -> std::ops::RangeInclusive<i32>
+    where
+        Self: Sized,
+    {
+        0..=0
+    }
+
+    /// Whether the chunk turned out to hold nothing to draw or collide
+    /// with; such chunks are dropped right away.
+    fn is_empty(&self) -> bool {
+        false
     }
     fn buffer_data(&mut self);
     fn get_bounds(&self) -> ChunkBounds;

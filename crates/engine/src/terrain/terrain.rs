@@ -1,9 +1,7 @@
 use std::{
-    cmp::max,
+    collections::HashSet,
     sync::Arc,
-    sync::mpsc::{self, Receiver, Sender},
-    thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use cgmath::{EuclideanSpace, Matrix4, Point3};
@@ -27,7 +25,7 @@ use crate::core::{
         light::skylight::SkyLight,
         line::Line,
         pbr::Lighting,
-        shader::{DynamicVertexArray, Shader, VertexAttributes},
+        shader::{self, DynamicVertexArray, Shader, VertexAttributes},
         weather::exposure,
         depth_pass,
     },
@@ -38,9 +36,15 @@ use crate::core::{
 
 use super::{
     generator::WorldGenerator,
+    streaming::{ColumnKey, StreamRadius, Streamer},
     scatter::{Scatter, ScatterInstances, ScatterLayerData, TakenInstance},
-    Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
+    Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
 };
+
+/// Main-thread time per frame for adding the chunks the workers made
+/// (uploading their meshes, inserting their colliders); the rest waits for
+/// the next frame. At least one column is added per frame.
+const UPLOAD_BUDGET: Duration = Duration::from_millis(2);
 
 /// How many layer-on-chunk plantings happen per frame. Spreads the collider
 /// work out when a scatter layer is added to (or changed on) an already
@@ -160,7 +164,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         let generator = WorldGenerator::new(seed);
         Self {
             seed,
-            chunk_receiver: Self::start_chunkloaders(&generator),
+            streamer: Self::start_streaming(&generator),
             generator,
             reseed_in: None,
             scatter: Scatter::new(Vec::new()),
@@ -179,6 +183,16 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         self
     }
 
+    /// What shapes the ground (the same for every chunk of this terrain).
+    pub fn generator(&self) -> &Arc<WorldGenerator> {
+        &self.generator
+    }
+
+    /// Columns of chunks loaded, and columns queued or being made.
+    pub fn streaming_status(&self) -> (usize, usize) {
+        (self.streamer.loaded_count(), self.streamer.in_flight())
+    }
+
     pub fn scatter(&self) -> &Scatter {
         &self.scatter
     }
@@ -189,20 +203,18 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         &mut self.scatter
     }
 
-    /// Generate the origin chunk and start the worker threads for the rest.
-    /// They stop on their own once the returned receiver is dropped.
-    fn start_chunkloaders(generator: &Arc<WorldGenerator>) -> Receiver<LoadedChunk<T>> {
-        let (tx, rx) = mpsc::channel();
-        tx.send(LoadedChunk::new(T::generate(generator, (0.0, 0.0, 0.0), 0)))
-            .unwrap();
-
-        for (x_dir, z_dir) in [(1, 1), (-1, 1), (1, -1), (-1, -1)] {
-            let (generator, tx) = (generator.clone(), tx.clone());
-            let _ = thread::spawn(move || {
-                Terrain::chunkloader(&generator, CHUNK_RADIUS as i32, x_dir, z_dir, tx)
-            });
-        }
-        rx
+    /// Start the worker threads that make the columns of chunks around
+    /// the camera (see `streaming`). They stop when the streamer is dropped.
+    fn start_streaming(generator: &Arc<WorldGenerator>) -> Streamer<Vec<LoadedChunk<T>>> {
+        let generator = generator.clone();
+        Streamer::new(Streamer::<()>::default_workers(), StreamRadius::DEFAULT, move |(x, z)| {
+            T::vertical_range(&generator, (x, z))
+                .filter_map(|y| {
+                    let chunk = T::generate(&generator, (x as f32, y as f32, z as f32), 0);
+                    (!chunk.is_empty()).then(|| LoadedChunk::new(chunk))
+                })
+                .collect()
+        })
     }
 
     /// Throw away every chunk (with its colliders and scattered models) and
@@ -219,7 +231,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
             }
         }
         self.generator = WorldGenerator::new(self.seed);
-        self.chunk_receiver = Self::start_chunkloaders(&self.generator);
+        self.streamer = Self::start_streaming(&self.generator);
         exposure::world_changed();
     }
 
@@ -372,37 +384,52 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         }
     }
 
-    fn chunkloader(
-        generator: &Arc<WorldGenerator>,
-        radius: i32,
-        x_dir: i32,
-        z_dir: i32,
-        tx: Sender<LoadedChunk<T>>,
-    ) {
-        let mut x: i32 = 1;
-        let mut z: i32 = 0;
-
-        loop {
-            if x > radius {
-                break;
+    /// Follow the camera: let go of the columns it has left behind and add
+    /// the chunks of those the workers have made since the last frame (for
+    /// up to `UPLOAD_BUDGET`).
+    fn stream(&mut self, scene: &mut Scene, entity: &mut Entity) {
+        // Without a camera, the terrain loads around the origin.
+        let eye = scene
+            .get_active_camera()
+            .map(|camera| camera.get_camera().get_eye_position())
+            .unwrap_or(Point3::new(0.0, 0.0, 0.0));
+        let unload = self.streamer.update(eye.x as f64, eye.z as f64);
+        if !unload.is_empty() {
+            let unload: HashSet<ColumnKey> = unload.into_iter().collect();
+            let children = entity.get_children_mut();
+            let mut index = 0;
+            while index < children.len() {
+                let column = children[index]
+                    .get_own_component::<T>()
+                    .map(|chunk| chunk.get_bounds())
+                    .map(|b| (b.min.0.div_euclid(CHUNK_SIZE as i32), b.min.2.div_euclid(CHUNK_SIZE as i32)));
+                if column.is_some_and(|column| unload.contains(&column)) {
+                    let mut chunk_entity = children.remove(index);
+                    chunk_entity.release_resources(&mut scene.physics_engine);
+                } else {
+                    index += 1;
+                }
             }
-            let position = if z_dir > 0 {
-                ((x * x_dir) as f32, 0.0, z as f32)
-            } else {
-                ((z * z_dir) as f32, 0.0, (x * x_dir) as f32)
-            };
-            let new_chunk = T::generate(generator, position, max(x.abs(), z.abs()) as usize);
-            let result = tx.send(LoadedChunk::new(new_chunk));
-            if result.is_err() {
-                break;
-            }
-
-            z = -z;
-            if z == -x * z_dir {
-                x += 1;
-                z = 0;
-            } else if z >= 0 {
-                z += 1;
+            exposure::world_changed();
+        }
+        for (_, chunks) in self.streamer.receive(UPLOAD_BUDGET) {
+            for LoadedChunk { mut chunk, collider } in chunks {
+                chunk.buffer_data();
+                let mut chunk_entity = Entity::new(&format!("chunk@{:?}", chunk.get_position()));
+                // The chunk entity sits at the origin, so its fixed body does
+                // too; colliders keep their world placement while becoming
+                // removable together with the chunk.
+                let chunk_body = RigidBody::new(RigidBodyType::Fixed, scene, &chunk_entity, None);
+                scene
+                    .physics_engine
+                    .add_collider(collider, Some(chunk_body.rigid_body_handle));
+                // Scattered models are not part of the chunk itself:
+                // `sync_scatter` plants them afterwards.
+                chunk_entity.add_component(chunk);
+                chunk_entity.add_component(chunk_body);
+                chunk_entity.set_transient(true);
+                entity.add_child(chunk_entity);
+                exposure::world_changed();
             }
         }
     }
@@ -535,40 +562,8 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             }
         }
         self.scatter.tick(delta_time);
-        if let Ok(LoadedChunk { mut chunk, collider }) = self.chunk_receiver.try_recv() {
-            chunk.buffer_data();
-            let mut chunk_exists = false;
-            for existing_chunk in entity.get_with_own_component::<T>() {
-                let existing_chunk = existing_chunk.get_component::<T>().unwrap();
-                if existing_chunk.get_position() == chunk.get_position() {
-                    chunk_exists = true;
-                    break;
-                }
-            }
-            if !chunk_exists {
-                let mut chunk_entity = Entity::new(&format!(
-                    "chunk-{}@{:?}",
-                    entity.child_count(),
-                    chunk.get_position()
-                ));
-                // The chunk entity sits at the origin, so its fixed body does
-                // too; colliders keep their world placement while becoming
-                // removable together with the chunk.
-                let chunk_body =
-                    RigidBody::new(RigidBodyType::Fixed, scene, &chunk_entity, None);
-                scene
-                    .physics_engine
-                    .add_collider(collider, Some(chunk_body.rigid_body_handle));
-
-                // Scattered models are not part of the chunk itself:
-                // `sync_scatter` plants them afterwards.
-                chunk_entity.add_component(chunk);
-                chunk_entity.add_component(chunk_body);
-                chunk_entity.set_transient(true);
-                entity.add_child(chunk_entity);
-                exposure::world_changed();
-            }
-        }
+        self.stream(scene, entity);
+        shader::delete_released_vertex_arrays();
         self.sync_scatter(scene, entity);
         if let Some(camera_component) = scene.get_active_camera() {
             let camera = camera_component.get_camera();
