@@ -9,6 +9,32 @@
 in vec2 ndcPos;
 out vec4 FragColor;
 
+// The opaque scene's depth at full size, when it is drawn before the sky
+// (`useSceneDepth`): where geometry covers every pixel this cloud texel
+// can blend into, the clouds are hidden and not marched.
+uniform sampler2D sceneDepth;
+uniform int useSceneDepth;
+
+// Full-size pixels per cloud texel, along x and y.
+uniform vec2 sceneDepthScale;
+
+// Whether opaque geometry covers every full-size pixel whose sky samples
+// this texel: the sky filters the cloud texture bilinearly, so the pixels
+// of the texels around it count too.
+bool hiddenByScene() {
+    ivec2 last = textureSize(sceneDepth, 0) - 1;
+    ivec2 lo = clamp(ivec2(floor((gl_FragCoord.xy - 1.5) * sceneDepthScale)), ivec2(0), last);
+    ivec2 hi = clamp(ivec2(ceil((gl_FragCoord.xy + 1.5) * sceneDepthScale)), ivec2(0), last);
+    for (int y = lo.y; y <= hi.y; ++y) {
+        for (int x = lo.x; x <= hi.x; ++x) {
+            if (texelFetch(sceneDepth, ivec2(x, y), 0).r >= 1.0) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // Raymarch steps through the low layer: more for a tall storm layer, so
 // its steps stay short enough not to turn edges into grain.
 const int   MARCH_STEPS_MIN = 56;
@@ -274,6 +300,10 @@ vec4 cirrusClouds(vec3 dir, float dayFactor) {
 }
 
 void main() {
+    if (useSceneDepth == 1 && hiddenByScene()) {
+        FragColor = vec4(0.0);
+        return;
+    }
     vec3 dir = viewRay(ndcPos);
     float dayFactor = dayFactorOf(sunDirection);
 

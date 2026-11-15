@@ -6,6 +6,7 @@ use super::{
     renderer::{
         framebuffer::{CascadedShadowMap, ShadowFrameBuffer},
         hdr::Hdr,
+        light::skylight::{ShadowCascade, SHADOW_CASCADES},
         pbr::Lighting,
         light::{
             light::{LightBuffer, LightSource},
@@ -68,6 +69,13 @@ pub struct Scene {
     /// looked up once per frame instead of on every draw (see
     /// `Lighting::from_scene`).
     frame_lighting: Cell<Option<Lighting>>,
+    /// The sun's shadow cascades as their layers were last drawn (the far
+    /// ones are not drawn every frame), `None` to draw them all.
+    drawn_cascades: Cell<Option<[ShadowCascade; SHADOW_CASCADES]>>,
+    /// Frames drawn with the sun's shadows, to stagger the far cascades.
+    shadow_frame: Cell<u64>,
+    /// Where the camera was at the last shadow pass.
+    shadow_eye: Cell<Option<cgmath::Point3<f32>>>,
     /// Work queued with `Scene::defer`, run once every entity is updated.
     deferred: Vec<Box<dyn FnOnce(&mut Scene)>>,
 }

@@ -173,6 +173,7 @@ impl SkyRenderer {
         cloud_type: f32,
         cloud_settings: &CloudSettings,
         precipitation: f32,
+        scene_depth: Option<GLuint>,
     ) {
         let mut r = RENDERER.lock().unwrap();
         let set_uniforms = |shader: &Shader| {
@@ -217,6 +218,18 @@ impl SkyRenderer {
             gl::BindFramebuffer(gl::FRAMEBUFFER, clouds.framebuffer);
             gl::Viewport(0, 0, width, height);
             set_uniforms(&r.cloud_shader);
+            r.cloud_shader.set_uniform_1i("useSceneDepth", scene_depth.is_some() as i32);
+            if let Some(depth) = scene_depth {
+                // Bound where the clouds go later, for the sky pass.
+                gl::ActiveTexture(gl::TEXTURE0 + CLOUD_UNIT);
+                gl::BindTexture(gl::TEXTURE_2D, depth);
+                r.cloud_shader.set_uniform_1i("sceneDepth", CLOUD_UNIT as i32);
+                r.cloud_shader.set_uniform_2f(
+                    "sceneDepthScale",
+                    viewport[2] as f32 / width as f32,
+                    viewport[3] as f32 / height as f32,
+                );
+            }
             gl::BindVertexArray(r.vao);
             gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
 
@@ -224,6 +237,13 @@ impl SkyRenderer {
             gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer as GLuint);
             gl::Viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
             set_uniforms(&r.shader);
+            if scene_depth.is_some() {
+                // The scene's depth is in the target already: the sky is
+                // drawn only where nothing covers it (it lies at the far
+                // plane).
+                gl::Enable(gl::DEPTH_TEST);
+                gl::DepthFunc(gl::LEQUAL);
+            }
             gl::ActiveTexture(gl::TEXTURE0 + CLOUD_UNIT);
             gl::BindTexture(gl::TEXTURE_2D, clouds.texture);
             r.shader.set_uniform_1i("cloudTexture", CLOUD_UNIT as i32);
@@ -234,6 +254,7 @@ impl SkyRenderer {
             gl::BindVertexArray(0);
             gl::UseProgram(0);
 
+            gl::DepthFunc(gl::LESS);
             gl::DepthMask(gl::TRUE);
             gl::Enable(gl::DEPTH_TEST);
         }

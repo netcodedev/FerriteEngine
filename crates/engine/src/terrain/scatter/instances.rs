@@ -375,6 +375,15 @@ fn build_instances_gpu(
     ScatterGpu { variants: kinds }
 }
 
+/// The tier a shadow map draws at `distance`: one coarser than the view's,
+/// but not the last of more than two (typically a billboard, whose shadow
+/// would not look like the tree's) unless the view uses it too.
+pub(super) fn shadow_lod_index(distance: f32, lod_count: usize) -> usize {
+    let view = pick_lod_index(distance, lod_count);
+    let coarsest = if lod_count > 2 { lod_count - 2 } else { lod_count.saturating_sub(1) };
+    view.max((view + 1).min(coarsest))
+}
+
 fn pick_lod_index(distance: f32, lod_count: usize) -> usize {
     if lod_count == 0 {
         return 0;
@@ -414,12 +423,16 @@ impl Component for ScatterInstances {
         };
         let d = self.center - lighting.camera_position;
         let distance = (d.x * d.x + d.y * d.y + d.z * d.z).sqrt();
-        self.draw(
-            view_projection,
-            parent_transform,
-            &lighting,
-            LodChoice::Distance(distance),
-        );
+        // Shadow maps and other depth passes away from the camera's view
+        // take a coarser tier: their texels are bigger than the detail.
+        let in_view = crate::core::renderer::hdr::draws_to_view()
+            || crate::core::renderer::ssao::in_depth_pass();
+        let lod = if in_view {
+            LodChoice::Distance(distance)
+        } else {
+            LodChoice::Shadow(distance)
+        };
+        self.draw(view_projection, parent_transform, &lighting, lod);
     }
 
     fn handle_event(&mut self, _: &mut glfw::Glfw, _: &mut glfw::Window, _: &WindowEvent) {}
@@ -455,7 +468,8 @@ impl ScatterInstances {
             unsafe {
                 gl::Enable(gl::DEPTH_TEST);
                 gl::DepthMask(gl::TRUE);
-                gl::DepthFunc(gl::LESS);
+                // LEQUAL: the scene's depth may already be drawn.
+                gl::DepthFunc(gl::LEQUAL);
                 gl::Disable(gl::CULL_FACE);
                 for (variant_idx, variant_gpu_opt) in gpu.variants.iter().enumerate() {
                     let Some(variant_gpu) = variant_gpu_opt else { continue };
@@ -463,6 +477,9 @@ impl ScatterInstances {
                     let lod_idx = match lod {
                         LodChoice::Distance(distance) => pick_lod_index(distance, kind.lods.len()),
                         LodChoice::Fixed(tier) => tier.min(kind.lods.len().saturating_sub(1)),
+                        LodChoice::Shadow(distance) => {
+                            shadow_lod_index(distance, kind.lods.len())
+                        }
                     };
                     let lod = &kind.lods[lod_idx];
                     let vaos = &variant_gpu.vaos[lod_idx];

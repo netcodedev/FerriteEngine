@@ -46,6 +46,9 @@ pub enum LodChoice {
     Distance(f32),
     /// This tier (clamped to what the variant has), whatever the distance.
     Fixed(usize),
+    /// The tier for a shadow map at this distance from the camera (see
+    /// `shadow_lod_index`).
+    Shadow(f32),
 }
 
 /// How a model file is turned into scatter variants.

@@ -91,6 +91,10 @@ pub fn opaque_scene() -> Option<OpaqueScene> {
 /// that draw straight to the window). Shadow maps, depth captures and the
 /// editor's selection mask are their own framebuffers and return false.
 pub fn draws_to_view() -> bool {
+    // The depth pass draws into the view's target, but only its depth.
+    if super::ssao::in_depth_pass() {
+        return false;
+    }
     let bound = bound_draw_framebuffer();
     bound == 0 || bound == VIEW_FRAMEBUFFER.load(Ordering::Relaxed)
 }
@@ -558,6 +562,23 @@ impl Hdr {
         VIEW_FRAMEBUFFER.store(view.framebuffer, Ordering::Relaxed);
         OPAQUE_COLOR.store(0, Ordering::Relaxed);
         OPAQUE_DEPTH.store(0, Ordering::Relaxed);
+    }
+
+    /// The target the scene is drawn into, with its size, while it is.
+    pub fn view_framebuffer(&self) -> Option<(GLuint, i32, i32)> {
+        self.destination.as_ref()?;
+        self.view.as_ref().map(|v| (v.framebuffer, v.width, v.height))
+    }
+
+    /// Bind the target the scene is drawn into again, with its viewport,
+    /// after a pass drew elsewhere.
+    pub fn rebind(&self) {
+        if let Some((framebuffer, width, height)) = self.view_framebuffer() {
+            unsafe {
+                gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+                gl::Viewport(0, 0, width, height);
+            }
+        }
     }
 
     /// Copy what was drawn since `begin` (the opaque scene) where

@@ -76,7 +76,7 @@ uniform samplerCubeArrayShadow lightShadowMaps;
 // Cascaded shadow map: one depth layer per cascade, nearest first. Must
 // match `SHADOW_CASCADES` in `light/skylight.rs`.
 const int SHADOW_CASCADES = 4;
-uniform sampler2DArray shadowMap;
+uniform sampler2DArrayShadow shadowMap;
 uniform mat4 lightProjections[SHADOW_CASCADES];
 // World size of one texel of each cascade.
 uniform float cascadeTexel[SHADOW_CASCADES];
@@ -109,20 +109,16 @@ float cascadeShadow(int cascade, vec3 worldPos, vec3 geometryNormal, vec3 L) {
     vec3 p = cascadeCoord(cascade, worldPos + geometryNormal * cascadeTexel[cascade] * 1.5);
     float bias = 0.0002 + 0.0004 * (1.0 - max(dot(geometryNormal, L), 0.0));
     float reference = p.z - bias;
-    // Bilinear 3x3 PCF: 4x4 texel tests weighted by where the point falls
-    // between texels, so shadow edges are smooth instead of texel steps.
-    ivec2 size = textureSize(shadowMap, 0).xy;
-    vec2 texel = p.xy * vec2(size) - 0.5;
-    ivec2 base = ivec2(floor(texel));
-    vec2 f = texel - floor(texel);
-    vec4 wx = vec4(1.0 - f.x, 1.0, 1.0, f.x);
-    vec4 wy = vec4(1.0 - f.y, 1.0, 1.0, f.y);
+    // Bilinear 3x3 PCF: 3x3 taps a texel apart, each comparing the 2x2
+    // texels around it in hardware and weighting them by where the point
+    // falls between them, so shadow edges are smooth instead of texel
+    // steps. (The same as 4x4 texel tests weighted 1-f, 1, 1, f per axis.)
+    vec2 texel = 1.0 / vec2(textureSize(shadowMap, 0).xy);
     float lit = 0.0;
-    for (int j = 0; j < 4; ++j) {
-        for (int i = 0; i < 4; ++i) {
-            ivec2 at = clamp(base + ivec2(i - 1, j - 1), ivec2(0), size - 1);
-            float depth = texelFetch(shadowMap, ivec3(at, cascade), 0).r;
-            lit += wx[i] * wy[j] * (reference > depth ? 0.0 : 1.0);
+    for (int j = -1; j <= 1; ++j) {
+        for (int i = -1; i <= 1; ++i) {
+            vec2 at = p.xy + vec2(i, j) * texel;
+            lit += texture(shadowMap, vec4(at, float(cascade), reference));
         }
     }
     return lit / 9.0;

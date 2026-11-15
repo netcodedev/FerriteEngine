@@ -4,6 +4,20 @@ use super::*;
 use crate::core::assets::AssetId;
 
 #[test]
+fn shadows_take_a_coarser_tier_but_not_the_billboard() {
+    use super::instances::shadow_lod_index;
+    // Four tiers: the view goes 0, 1, 2, 3 with distance.
+    assert_eq!(shadow_lod_index(10.0, 4), 1);
+    assert_eq!(shadow_lod_index(100.0, 4), 2);
+    assert_eq!(shadow_lod_index(200.0, 4), 2);
+    // Where the view already draws the billboard, so does the shadow.
+    assert_eq!(shadow_lod_index(280.0, 4), 3);
+    // Two tiers: the coarser one is a mesh.
+    assert_eq!(shadow_lod_index(10.0, 2), 1);
+    assert_eq!(shadow_lod_index(10.0, 1), 0);
+}
+
+#[test]
 fn layers_from_before_assets_still_load() {
     let layer: ScatterLayerData =
         ron::from_str("(model: \"Trees/Trees.gltf\", density: 21.0)").unwrap();
