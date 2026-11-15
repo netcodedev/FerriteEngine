@@ -15,6 +15,11 @@ use crate::core::renderer::shader::Shader;
 const SIZE: i32 = 1024;
 /// Metres the map spans per side (about 5 cm per texel).
 const EXTENT: f32 = 48.0;
+/// The map moves in steps of this many texels: a power of two, so the
+/// texels of its mipmaps (which the snow layer reads, `snowDentBlurred`)
+/// stay where they were in the world as it moves, up to that level, and
+/// what is read from them does not jump.
+const STEP: i32 = 32;
 /// Seconds of full snowfall that fill a footprint again.
 const REFILL_SECONDS: f32 = 90.0;
 
@@ -75,7 +80,13 @@ impl SnowTrails {
                 gl::FLOAT,
                 std::ptr::null(),
             );
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as GLint);
+            // Mipmapped: the snow layer's coarser rings read the trails
+            // blurred to their spacing (`snowDentLod`).
+            gl::TexParameteri(
+                gl::TEXTURE_2D,
+                gl::TEXTURE_MIN_FILTER,
+                gl::LINEAR_MIPMAP_LINEAR as GLint,
+            );
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as GLint);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as GLint);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as GLint);
@@ -93,6 +104,9 @@ impl SnowTrails {
             gl::ClearColor(0.0, 0.0, 0.0, 0.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            gl::BindTexture(gl::TEXTURE_2D, texture);
+            gl::GenerateMipmap(gl::TEXTURE_2D);
+            gl::BindTexture(gl::TEXTURE_2D, 0);
         }
         Target { framebuffer, texture }
     }
@@ -102,7 +116,9 @@ impl SnowTrails {
     /// `footprints`. Leaves the default framebuffer bound.
     pub fn update(&mut self, eye: Point3<f32>, snowfall: f32, footprints: &[Footprint]) {
         let texel = EXTENT / SIZE as f32;
-        let corner = |v: f32| ((v - EXTENT * 0.5) / texel).floor() as i32;
+        let corner = |v: f32| {
+            (((v - EXTENT * 0.5) / texel).floor() as i32).div_euclid(STEP) * STEP
+        };
         let origin = [corner(eye.x), corner(eye.z)];
         // Nothing carries over from a map far away (or none at all).
         let shift = match self.origin {
@@ -148,6 +164,8 @@ impl SnowTrails {
             gl::BindVertexArray(self.vao);
             gl::DrawArrays(gl::TRIANGLES, 0, 3);
             gl::BindVertexArray(0);
+            gl::BindTexture(gl::TEXTURE_2D, self.targets[to].texture);
+            gl::GenerateMipmap(gl::TEXTURE_2D);
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::Enable(gl::DEPTH_TEST);
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);

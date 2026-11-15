@@ -909,6 +909,10 @@ impl Component for ScatterInstances {
         view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
     ) {
+        // The ground map holds the terrain alone.
+        if crate::core::renderer::weather::exposure::in_ground_pass() {
+            return;
+        }
         if !ViewFrustum::is_bounds_in_frustum_matrix(view_projection, self.bounds) {
             return;
         }

@@ -8,16 +8,23 @@
 //! What the shaders see:
 //! - `exposure`: a depth map from straight above (`SkyExposure`), so only
 //!   surfaces under open sky get wet or snowed on and no rain falls under a
-//!   roof or a tree.
+//!   roof or a tree; and one of the terrain alone, so snow buries what lies
+//!   on the ground.
+//! - `shelter`: from those two, how open the sky is over the ground,
+//!   smoothed, for the snow layer's depth under trees.
 //! - `snow`: trails pressed into the snow (`SnowTrails`), from footprints
 //!   any component hands to `press_snow`.
+//! - `snow_layer`: a real layer of snow on the ground near the camera, with
+//!   the trails pressed into it.
 //! - `precipitation`: the falling drops and flakes around the camera.
 //! - `weather.glsl`: wet surfaces, puddles with rain ripples and snow cover,
 //!   used by every lit shader.
 
 pub mod exposure;
 pub mod precipitation;
+pub mod shelter;
 pub mod snow;
+pub mod snow_layer;
 
 use std::sync::Mutex;
 use std::time::Instant;
@@ -26,15 +33,32 @@ use cgmath::{Matrix4, Vector2, Vector3};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 
-use super::shader::Shader;
+use super::{shader::Shader, texture::Texture};
 use exposure::SkyExposure;
 use precipitation::PrecipitationRenderer;
+use shelter::ShelterMap;
 use snow::SnowTrails;
+use snow_layer::SnowLayer;
+
+/// The weather's maps and what is read from them (`skyExposure`,
+/// `groundHeight`, `snowTrail`, ...), shared by every lit shader and the
+/// snow layer's vertex shader. Declare `isShadowPass` before it.
+pub const WEATHER_MAPS_GLSL: &str = include_str!("weather_maps.glsl");
 
 /// Texture unit the sky exposure map is bound to while the scene is shaded.
 pub const EXPOSURE_UNIT: u32 = 9;
 /// Texture unit the snow trail map is bound to while the scene is shaded.
 pub const SNOW_TRAIL_UNIT: u32 = 10;
+/// Texture unit the ground map (the exposure map's view of the terrain
+/// alone) is bound to while the scene is shaded.
+pub const GROUND_UNIT: u32 = 8;
+/// Texture unit the smoothed open sky (`ShelterMap`) is bound to while the
+/// scene is shaded.
+pub const SHELTER_UNIT: u32 = 7;
+/// Texture units the snow's scan is bound to while the scene is shaded:
+/// colour with roughness, and normal with occlusion.
+pub const SNOW_COLOUR_UNIT: u32 = 5;
+pub const SNOW_SURFACE_UNIT: u32 = 6;
 
 lazy_static! {
     static ref START: Instant = Instant::now();
@@ -168,16 +192,34 @@ pub struct Weather {
 /// The GPU side of the weather, kept by the scene.
 pub struct WeatherTargets {
     pub exposure: SkyExposure,
+    pub shelter: ShelterMap,
     pub trails: SnowTrails,
     pub precipitation: PrecipitationRenderer,
+    pub layer: SnowLayer,
+    /// The snow's scan from the project's `assets/textures/terrain/snow/`.
+    pub snow_textures: Option<[Texture; 2]>,
 }
 
 impl WeatherTargets {
     pub fn new() -> Self {
         Self {
             exposure: SkyExposure::new(),
+            shelter: ShelterMap::new(),
             trails: SnowTrails::new(),
             precipitation: PrecipitationRenderer::new(),
+            layer: SnowLayer::new(),
+            snow_textures: crate::terrain::materials::load_snow(),
+        }
+    }
+
+    /// Bind the snow's scan, if there is one, to its units.
+    pub fn bind_snow_textures(&self) {
+        if let Some([colour, surface]) = &self.snow_textures {
+            unsafe { gl::ActiveTexture(gl::TEXTURE0 + SNOW_COLOUR_UNIT) };
+            colour.bind();
+            unsafe { gl::ActiveTexture(gl::TEXTURE0 + SNOW_SURFACE_UNIT) };
+            surface.bind();
+            unsafe { gl::ActiveTexture(gl::TEXTURE0) };
         }
     }
 }
@@ -248,6 +290,9 @@ pub struct WeatherMaps {
     pub exposure: Option<(Matrix4<f32>, f32)>,
     /// World x, z of the trail map's corner and the metres it spans.
     pub trails: Option<[f32; 3]>,
+    /// Whether the snow's scan (`SNOW_COLOUR_UNIT`, `SNOW_SURFACE_UNIT`) is
+    /// bound; without it snow is a plain colour with a fine grain.
+    pub snow_textures: bool,
 }
 
 fn approach(value: f32, target: f32, step: f32) -> f32 {
@@ -478,6 +523,19 @@ impl WeatherShading {
         shader.set_uniform_1f("weatherTime", seconds());
         shader.set_uniform_1i("exposureMap", EXPOSURE_UNIT as i32);
         shader.set_uniform_1i("snowTrailMap", SNOW_TRAIL_UNIT as i32);
+        shader.set_uniform_1i("groundMap", GROUND_UNIT as i32);
+        shader.set_uniform_1i("shelterMap", SHELTER_UNIT as i32);
+        shader.set_uniform_1i("snowColourMap", SNOW_COLOUR_UNIT as i32);
+        shader.set_uniform_1i("snowSurfaceMap", SNOW_SURFACE_UNIT as i32);
+        shader.set_uniform_1i(
+            "hasSnowTextures",
+            maps.is_some_and(|maps| maps.snow_textures) as i32,
+        );
+        let layer = maps.is_some_and(|maps| maps.exposure.is_some());
+        shader.set_uniform_1f(
+            "snowLayerReach",
+            if layer { snow_layer::full_reach(self.snow_depth, self.snow_cover) } else { 0.0 },
+        );
         match maps.and_then(|maps| maps.exposure) {
             Some((matrix, range)) => {
                 shader.set_uniform_1i("useExposure", 1);

@@ -24,6 +24,7 @@ use crate::core::{
 pub const LIGHTING_GLSL: &str = concat!(
     include_str!("../hdr/tonemap.glsl"),
     include_str!("lighting.glsl"),
+    include_str!("../weather/weather_maps.glsl"),
     include_str!("../weather/weather.glsl")
 );
 const MATERIAL_GLSL: &str = include_str!("material.glsl");
@@ -34,7 +35,7 @@ const SHADOW_MAP_UNIT: i32 = 15;
 /// A model fragment shader: the shared lighting and material code
 /// (`shadePbr`) put in front of `body`.
 pub fn fragment_source(body: &str) -> String {
-    format!("#version 330 core\n{LIGHTING_GLSL}\n{MATERIAL_GLSL}\n{body}")
+    format!("#version 460 core\n{LIGHTING_GLSL}\n{MATERIAL_GLSL}\n{body}")
 }
 
 /// The light a PBR shader is drawn with.

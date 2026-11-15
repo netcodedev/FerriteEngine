@@ -42,6 +42,8 @@ vec3 perturbNormal(vec3 N, vec3 worldPos, vec2 uv) {
 // Shade one fragment. Discards texels the colour map's alpha cuts out
 // (foliage cards); in the shadow pass only that cut-out matters.
 vec4 shadePbr(vec3 worldPos, vec3 vertexNormal, vec2 uv) {
+    // Before the discard below, while every pixel still runs.
+    snowGradients(worldPos);
     vec4 base = hasBaseColorMap == 1 ? texture(baseColorMap, uv) : vec4(1.0);
     if (base.a < 0.5) {
         discard;

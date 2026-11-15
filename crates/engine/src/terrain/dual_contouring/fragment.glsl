@@ -35,39 +35,6 @@ const float PARALLAX_STRENGTH = 2.0;
 const float PARALLAX_FADE_START = 6.0;
 const float PARALLAX_FADE_END = 20.0;
 
-// ── Cloud shadow ─────────────────────────────────────────────────────
-// Samples the sky's own cloud field (`sky/cloud_field.glsl`, included
-// before this) along the sun ray, so the shadow on the ground matches
-// whatever cloud sits between this point and the sun.
-float cloudShadow() {
-    // Sun below the horizon — no point sampling.
-    if (sunDirection.y < 0.05) return 1.0;
-
-    // March from cloud base to cloud top along the sun direction starting
-    // above this terrain point. Few steps, large jumps — we just need an
-    // optical-depth estimate, not detailed scattering.
-    float tEnter = (CLOUD_BOTTOM  - WorldPos.y) / sunDirection.y;
-    float tExit  = (cloudLayerTop() - WorldPos.y) / sunDirection.y;
-    if (tExit <= 0.0) return 1.0;
-    tEnter = max(tEnter, 0.0);
-
-    const int   STEPS = 4;
-    float stepLen = (tExit - tEnter) / float(STEPS);
-    vec3  pos = WorldPos + sunDirection * (tEnter + 0.5 * stepLen);
-
-    float optical = 0.0;
-    for (int i = 0; i < STEPS; i++) {
-        optical += cloudDensity(pos, true, 0.0) * stepLen;
-        pos += sunDirection * stepLen;
-    }
-
-    // Beer–Lambert through the cloud column toward the sun. Coefficient
-    // is gentler than the sky's self-shadow (0.85) so terrain stays
-    // readable under thick cover.
-    float sunT = exp(-optical * 0.35);
-    return mix(0.20, 1.0, sunT);
-}
-
 float hash12(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * 0.1031);
     p3 += dot(p3, p3.yzx + 33.33);
@@ -191,9 +158,10 @@ const float WATER_LINE = 44.0;
 // Footprints show their depth this close; further away the flat cover.
 const float TRAIL_DISTANCE = 30.0;
 
-// Snow on the ground: a layer `snowDepth` deep with the trails pressed into
-// it. The ground is not raised; the view ray is followed down through the
-// layer instead (parallax), so prints look as deep as the snow.
+// Snow on the ground: a layer `snowDepth` deep whose untouched top is
+// the drawn surface (where everything stands), with the trails pressed
+// into it. The view ray is followed on down into the snow (parallax), so
+// prints look as deep as the snow.
 void terrainSnow(float exposure, inout vec3 albedo, inout vec3 N, vec3 Ng,
                  inout float roughness, inout float ao) {
     float share = snowShare(WorldPos, N, Ng, exposure);
@@ -203,29 +171,58 @@ void terrainSnow(float exposure, inout vec3 albedo, inout vec3 N, vec3 Ng,
     vec2 at = WorldPos.xz;
     vec3 toEye = cameraPosition - WorldPos;
     float near = 1.0 - smoothstep(TRAIL_DISTANCE * 0.6, TRAIL_DISTANCE, length(toEye));
+    // Where the snow layer lies, it shows the trails: here the snow stays
+    // untouched, so nothing of the ground shows through the layer.
+    vec2 fromEye = abs(toEye.xz);
+    if (max(fromEye.x, fromEye.y) < snowLayerReach) {
+        near = 0.0;
+    }
     vec2 trail = vec2(0.0);
     vec3 snowN = Ng;
     if (useSnowTrails == 1 && near > 0.0 && snowDepth > 0.005) {
-        // From where the ray enters the layer down to where it meets the
-        // snow's surface.
+        // Down into the snow is away from the eye. March down to where the
+        // ray meets the pressed surface, then narrow that step down, so
+        // the walls of a print are smooth instead of terraced.
         vec3 V = normalize(toEye);
-        vec2 drift = V.xz / max(V.y, 0.25);
-        const int STEPS = 12;
-        float top = snowDepth * 1.35;
-        float height = top;
-        for (int i = 0; i <= STEPS; ++i) {
-            height = top * (1.0 - float(i) / float(STEPS));
-            if (height <= snowHeight(WorldPos.xz + drift * height)) {
-                break;
+        vec2 drift = -V.xz / max(V.y, 0.2);
+        float deepest = snowDepth * 0.9;
+        int steps = int(mix(8.0, 32.0, 1.0 - clamp(V.y, 0.0, 1.0)));
+        float above = 0.0;
+        float below = 0.0;
+        bool hit = snowDent(WorldPos.xz) <= 0.0;
+        for (int i = 1; i <= steps && !hit; ++i) {
+            float t = deepest * float(i) / float(steps);
+            if (snowDent(WorldPos.xz + drift * t) <= t) {
+                below = t;
+                hit = true;
+            } else {
+                above = t;
             }
         }
-        at = WorldPos.xz + drift * height * near;
+        float t = 0.0;
+        if (hit && below > 0.0) {
+            for (int i = 0; i < 5; ++i) {
+                float mid = 0.5 * (above + below);
+                if (snowDent(WorldPos.xz + drift * mid) <= mid) {
+                    below = mid;
+                } else {
+                    above = mid;
+                }
+            }
+            // Between the last two: where the ray crosses the surface.
+            float da = snowDent(WorldPos.xz + drift * above) - above;
+            float db = snowDent(WorldPos.xz + drift * below) - below;
+            t = mix(above, below, clamp(da / max(da - db, 1e-6), 0.0, 1.0));
+        } else if (!hit) {
+            t = deepest;
+        }
+        at = WorldPos.xz + drift * t * near;
         trail = snowTrail(at) * near;
         // Slope of the snow's surface where the ray meets it.
-        const float e = 0.04;
-        float dx = snowHeight(at + vec2(e, 0.0)) - snowHeight(at - vec2(e, 0.0));
-        float dz = snowHeight(at + vec2(0.0, e)) - snowHeight(at - vec2(0.0, e));
-        snowN = normalize(Ng + vec3(-dx, 0.0, -dz) / (2.0 * e) * near);
+        const float e = 0.05;
+        float dx = snowDent(at + vec2(e, 0.0)) - snowDent(at - vec2(e, 0.0));
+        float dz = snowDent(at + vec2(0.0, e)) - snowDent(at - vec2(0.0, e));
+        snowN = normalize(Ng + vec3(dx, 0.0, dz) / (2.0 * e) * near);
     }
     // Shallow snow pressed through shows the ground under it.
     float left = snowDepth * (1.0 - 0.9 * trail.r);
@@ -241,6 +238,7 @@ void terrainSnow(float exposure, inout vec3 albedo, inout vec3 N, vec3 Ng,
 }
 
 void main() {
+    snowGradients(WorldPos);
     if (isShadowPass == 1) {
         FragColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
@@ -319,6 +317,6 @@ void main() {
         terrainSnow(exposure, albedo, N, Ng, roughness, ao);
     }
 
-    vec3 color = shadeSurface(WorldPos, N, Ng, albedo, roughness, metallic, ao, cloudShadow());
+    vec3 color = shadeSurface(WorldPos, N, Ng, albedo, roughness, metallic, ao, cloudShadow(WorldPos));
     FragColor = vec4(toDisplay(color), 1.0);
 }

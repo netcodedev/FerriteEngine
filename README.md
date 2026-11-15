@@ -99,3 +99,7 @@ WASD moves the player, Shift sprints, Space jumps and Escape toggles a free came
 - Infinite world generation
 - Water
 - Particles
+
+## License
+
+Ferrite is licensed under the [MIT License](LICENSE).

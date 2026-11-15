@@ -94,6 +94,10 @@ impl Component for HeldItem {
         view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
     ) {
+        // The ground map holds the terrain alone.
+        if crate::core::renderer::weather::exposure::in_ground_pass() {
+            return;
+        }
         let Some(model) = entity.get_component::<ModelComponent>() else {
             return;
         };

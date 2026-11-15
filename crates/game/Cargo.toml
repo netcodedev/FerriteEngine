@@ -2,6 +2,7 @@
 name = "ferrite-game"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 # The scripts of the project, as for `ferrite_scripts` (FERRITE_SCRIPTS).
 build = "../scripts/build.rs"
 

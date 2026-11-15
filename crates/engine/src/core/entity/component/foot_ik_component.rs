@@ -58,6 +58,14 @@ const MAX_LOOKAHEAD: f32 = 0.15;
 const TOE_STEP: f32 = 0.06;
 /// A foot at most this far above its planted height leaves a print in snow.
 const PRINT_LIFT: f32 = 0.04;
+/// A foot this low or lower also leaves one while it stays put in the
+/// world (a running animation seldom brings its feet all the way down):
+/// it moves at most `PRINT_SLIDE` times as fast as the body plus
+/// `PRINT_DRIFT` metres a second. A swinging foot moves about twice as
+/// fast as the body.
+const PRINT_LOW_LIFT: f32 = 0.15;
+const PRINT_SLIDE: f32 = 0.3;
+const PRINT_DRIFT: f32 = 0.3;
 /// Length of a footprint relative to the ankle-to-toe distance, and the
 /// shortest and longest print (metres).
 const PRINT_SCALE: f32 = 1.7;
@@ -116,6 +124,8 @@ struct Foot {
     offset: f32,
     /// Smoothed ground normal under the foot.
     normal: Vector3<f32>,
+    /// Where the animated ankle was in the world the frame before.
+    last_ankle: Option<Point3<f32>>,
 }
 
 pub struct FootIk {
@@ -193,6 +203,7 @@ impl FootIk {
                 chain,
                 offset: 0.0,
                 normal: Vector3::unit_y(),
+                last_ankle: None,
             })
             .collect();
     }
@@ -317,8 +328,20 @@ impl FootIk {
                     ground = Some(ahead);
                 }
             }
-            // A planted foot presses into the snow, heel to toe.
-            if let (Some((point, _)), true) = (ground, grounded && lift < PRINT_LIFT) {
+            // A planted foot presses into the snow, heel to toe: one at the
+            // animation's floor, or one a little above it that stays put
+            // while the body moves on (running).
+            let foot_speed = match foot.last_ankle {
+                Some(last) if dt > 1e-4 => {
+                    Vector3::new(at.x - last.x, 0.0, at.z - last.z).magnitude() / dt
+                }
+                _ => f32::INFINITY,
+            };
+            foot.last_ankle = Some(at);
+            let planted = lift < PRINT_LIFT
+                || (lift < PRINT_LOW_LIFT
+                    && foot_speed < velocity.magnitude() * PRINT_SLIDE + PRINT_DRIFT);
+            if let (Some((point, _)), true) = (ground, grounded && planted) {
                 let toe = foot.toe.map(|toe| animated[toe]);
                 let forward = toe.map_or(Vector3::new(velocity.x, 0.0, velocity.z), |toe| {
                     Vector3::new(toe.x - at.x, 0.0, toe.z - at.z)

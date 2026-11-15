@@ -2,6 +2,7 @@
 name = "ferrite_scripts"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 build = "build.rs"
 
 # The scripts of the project that is open: the editor builds this crate with

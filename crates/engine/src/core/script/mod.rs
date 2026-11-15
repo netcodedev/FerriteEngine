@@ -126,6 +126,10 @@ impl<S: Script> Component for ScriptComponent<S> {
         view_projection: &Matrix4<f32>,
         parent_transform: &Matrix4<f32>,
     ) {
+        // The ground map holds the terrain alone.
+        if crate::core::renderer::weather::exposure::in_ground_pass() {
+            return;
+        }
         self.script.render(scene, entity, view_projection, parent_transform);
     }
 
