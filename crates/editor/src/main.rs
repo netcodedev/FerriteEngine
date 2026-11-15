@@ -5,6 +5,7 @@ use ferrite_dylib;
 mod editor;
 mod launcher;
 mod loading;
+mod project_lock;
 
 use std::{
     path::{Path, PathBuf},
@@ -123,17 +124,29 @@ impl EditorApp {
             return EditorApp::Launcher(Launcher::new(None));
         };
         match Project::load(&path) {
-            Ok(project) => EditorApp::Loading(Loading::new(project)),
+            Ok(project) => Self::open(project),
             Err(e) => EditorApp::Launcher(Launcher::new(Some(e))),
+        }
+    }
+
+    /// Start opening `project`, if no other editor has it open.
+    fn open(project: Project) -> Self {
+        match project_lock::hold(project.name(), project.dir()) {
+            Ok(()) => EditorApp::Loading(Loading::new(project)),
+            Err(e) => {
+                log::warn!("{e}");
+                EditorApp::Launcher(Launcher::new(Some(e)))
+            }
         }
     }
 }
 
 impl Layer for EditorApp {
     fn on_update(&mut self, window: &Window, delta_time: f64) {
+        project_lock::heartbeat();
         match self {
             EditorApp::Launcher(launcher) => match launcher.update(window) {
-                Some(project) => *self = EditorApp::Loading(Loading::new(project)),
+                Some(project) => *self = EditorApp::open(project),
                 None => launcher.render(),
             },
             EditorApp::Loading(loading) => match loading.update(window) {
@@ -141,7 +154,10 @@ impl Layer for EditorApp {
                 Progress::Ready(project, prepared) => {
                     *self = EditorApp::Editor(Box::new(EditorLayer::new(project, prepared)));
                 }
-                Progress::Failed(e) => *self = EditorApp::Launcher(Launcher::new(Some(e))),
+                Progress::Failed(e) => {
+                    project_lock::release();
+                    *self = EditorApp::Launcher(Launcher::new(Some(e)));
+                }
             },
             EditorApp::Editor(editor) => editor.on_update(window, delta_time),
         }
@@ -1239,9 +1255,10 @@ impl EditorLayer {
 
 impl Drop for EditorLayer {
     /// Take the bridge's lockfile away, so tools do not look for an editor
-    /// that is gone.
+    /// that is gone, and unlock the project for other editors.
     fn drop(&mut self) {
         mcp_bridge::stop();
+        project_lock::release();
     }
 }
 

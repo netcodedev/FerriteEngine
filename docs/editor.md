@@ -10,6 +10,16 @@ starter scene (a free-flying camera, a sky light and a terrain) as its
 startup scene, and the player prefab's model and animations copied from the
 engine's `assets` folder.
 
+A project is open in one editor at a time. The editor that has it open
+keeps `.ferrite-editor.lock` in the project folder (its process id); a
+second editor asked to open it stays at the launcher and says which
+process has it. Two editors on one project would overwrite each other's
+saves and build the scripts into the library the other has loaded. The
+lock goes when the editor closes; one left behind by an editor that
+crashed is taken over (on Linux at once, elsewhere once it is two minutes
+old). Keep the lock files out of version control (`.ferrite-editor.lock`,
+`.ferrite-mcp.lock`).
+
 ## Layout
 
 Panels are docked and resizable; the arrangement and the window size are
