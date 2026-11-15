@@ -612,7 +612,11 @@ impl Layer for EditorLayer {
 
         // Scene into the docked viewport, then gizmos on top of it.
         let render_start = Instant::now();
-        let gpu_timer = self.gpu_timer.get_or_insert_with(GpuTimer::new);
+        let gpu_timer = self.gpu_timer.get_or_insert_with(|| {
+            // Time each of the scene's passes for the statistics, too.
+            ferrite::core::renderer::profiler::set_enabled(true);
+            GpuTimer::new()
+        });
         gpu_timer.begin();
         let scene_visible = workspace == Workspace::Scene;
         if scene_visible {

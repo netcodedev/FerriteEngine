@@ -5,6 +5,7 @@ pub mod line;
 pub mod particles;
 pub mod pbr;
 pub mod plane;
+pub mod profiler;
 pub mod shader;
 pub mod sky;
 pub mod ssao;
