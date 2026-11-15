@@ -1,22 +1,27 @@
 //! Editor camera, click selection and translate/rotate/scale gizmos.
 
 use cgmath::{
-    Deg, EuclideanSpace, InnerSpace, Matrix3, Matrix4, Point3, Quaternion, Rad, Rotation,
-    Rotation3, SquareMatrix, Vector3, Vector4,
+    Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3, Vector4,
 };
 use ferrite::core::{
     camera::{Camera, CameraController, Projection},
     entity::{component::camera_component::CameraComponent, Entity, EntityHandle},
     renderer::{
         light::light::{srgb_to_linear, Light, LightKind},
+        line::Line,
         particles::{EmitterShape, ParticleEmitter},
-        line::{Line, LineRenderer},
     },
     scene::Scene,
 };
 use glfw::{Action, CursorMode, Key, MouseButton, WindowEvent};
 
 use super::{layout::Rect, GizmoMode};
+
+mod gizmo;
+mod shapes;
+
+use gizmo::*;
+use shapes::*;
 
 const AXES: [Vector3<f32>; 3] = [
     Vector3::new(1.0, 0.0, 0.0),
@@ -44,58 +49,6 @@ const GIZMO_LINE_WIDTH: i32 = 3;
 const LIGHT_MARKER_SCALE: f32 = 0.12;
 /// How close (in pixels) a click must be to a marker to select its entity.
 const MARKER_PICK_RADIUS: f32 = 8.0;
-
-struct Ray {
-    origin: Point3<f32>,
-    dir: Vector3<f32>,
-}
-
-enum Drag {
-    Translate {
-        id: EntityHandle,
-        axis: Vector3<f32>,
-        start_world: Point3<f32>,
-        start_param: f32,
-        parent_inverse: Matrix4<f32>,
-    },
-    Rotate {
-        id: EntityHandle,
-        axis: Vector3<f32>,
-        center: Point3<f32>,
-        start_angle: f32,
-        start_local: Quaternion<f32>,
-        parent_rotation: Quaternion<f32>,
-    },
-    Scale {
-        id: EntityHandle,
-        /// 0..3: a local axis, `UNIFORM_HANDLE`: all of them.
-        handle: usize,
-        /// World direction the drag is measured along.
-        axis: Vector3<f32>,
-        center: Point3<f32>,
-        /// Where the drag started: the parameter along `axis` for an axis
-        /// handle, the hit on the view plane for the uniform one.
-        start_param: f32,
-        start_hit: Point3<f32>,
-        /// Normal of the plane the uniform handle is dragged on.
-        plane_normal: Vector3<f32>,
-        start_scale: Vector3<f32>,
-        /// Dragging this far doubles the scale.
-        length: f32,
-    },
-}
-
-impl Drag {
-    /// Index of the handle being dragged, for highlighting.
-    fn handle(&self) -> Option<usize> {
-        match self {
-            Drag::Translate { axis, .. } | Drag::Rotate { axis, .. } => {
-                AXES.iter().position(|a| a == axis)
-            }
-            Drag::Scale { handle, .. } => Some(*handle),
-        }
-    }
-}
 
 /// Result of a viewport event, applied by the editor layer.
 pub enum ViewportAction {
@@ -636,44 +589,6 @@ fn collect_components<T: ferrite::core::entity::component::Component>(
     out
 }
 
-/// A diamond (an octahedron's edges) around `center`.
-fn diamond_lines(center: Point3<f32>, size: f32) -> Vec<Line> {
-    let tips: Vec<Point3<f32>> = AXES
-        .iter()
-        .flat_map(|a| [center + a * size, center - a * size])
-        .collect();
-    let mut lines = Vec::new();
-    for i in 0..6 {
-        for j in i + 1..6 {
-            // Every pair of tips but the opposite ones.
-            if j == i + 1 && i % 2 == 0 {
-                continue;
-            }
-            let d = tips[j] - tips[i];
-            lines.push(Line::new(tips[i], d.normalize(), d.magnitude()));
-        }
-    }
-    lines
-}
-
-/// The 12 edges of a box around `center` with half sizes along `axes`
-/// (each scaled to its half size).
-fn box_lines(center: Point3<f32>, axes: [Vector3<f32>; 3]) -> Vec<Line> {
-    let mut lines = Vec::new();
-    for i in 0..3 {
-        let (a, b) = (axes[(i + 1) % 3], axes[(i + 2) % 3]);
-        let along = axes[i] * 2.0;
-        if along.magnitude2() < 1e-12 {
-            continue;
-        }
-        for (sa, sb) in [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
-            let start = center + a * sa + b * sb - axes[i];
-            lines.push(Line::new(start, along.normalize(), along.magnitude()));
-        }
-    }
-    lines
-}
-
 /// Every light in the scene with its entity and world transform.
 fn collect_lights(scene: &Scene) -> Vec<(EntityHandle, Matrix4<f32>, &Light)> {
     fn visit<'a>(
@@ -696,322 +611,6 @@ fn collect_lights(scene: &Scene) -> Vec<(EntityHandle, Matrix4<f32>, &Light)> {
         visit(entity, Matrix4::identity(), &mut out);
     }
     out
-}
-
-/// Three crossed lines and four diagonals around `center`.
-fn star_lines(center: Point3<f32>, size: f32) -> Vec<Line> {
-    let diagonal = 1.0 / 3f32.sqrt();
-    let mut dirs: Vec<Vector3<f32>> = AXES.to_vec();
-    for (x, z) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
-        dirs.push(Vector3::new(x * diagonal, diagonal, z * diagonal));
-    }
-    dirs.into_iter()
-        .map(|d| Line::new(center - d * size, d, size * 2.0))
-        .collect()
-}
-
-/// The outline of a spot light's cone: its rim at `range` and four lines
-/// from the light to it.
-fn cone_lines(apex: Point3<f32>, dir: Vector3<f32>, range: f32, angle_deg: f32) -> Vec<Line> {
-    let angle = angle_deg.to_radians();
-    let (height, radius) = (range * angle.cos(), range * angle.sin());
-    let rim = apex + dir * height;
-    let (u, v) = perpendicular_basis(dir);
-    let mut lines = circle_lines(rim, dir, radius);
-    for side in [u, -u, v, -v] {
-        let edge = rim + side * radius - apex;
-        lines.push(Line::new(apex, edge.normalize(), edge.magnitude()));
-    }
-    lines
-}
-
-/// Draw `lines` `width` pixels thick by repeating them shifted by whole
-/// pixels in screen space. Core-profile GL only guarantees 1 px wide lines,
-/// so `glLineWidth` is not reliable.
-fn render_thick_lines(
-    vp: &Matrix4<f32>,
-    lines: &Vec<Line>,
-    color: Vector3<f32>,
-    rect: Rect,
-    width: i32,
-) {
-    let half = width / 2;
-    for dy in -half..=half {
-        for dx in -half..=half {
-            // A translation applied after the projection adds `t * w` to
-            // clip space, i.e. shifts NDC by exactly `t`.
-            let shift = Matrix4::from_translation(Vector3::new(
-                dx as f32 * 2.0 / rect.w.max(1.0),
-                dy as f32 * 2.0 / rect.h.max(1.0),
-                0.0,
-            ));
-            LineRenderer::render_lines(&(shift * vp), lines, color, true);
-        }
-    }
-}
-
-fn arrow_lines(center: Point3<f32>, axis: Vector3<f32>, size: f32) -> Vec<Line> {
-    let tip = center + axis * size;
-    let (u, v) = perpendicular_basis(axis);
-    let head = size * 0.15;
-    let mut lines = vec![Line::new(center, axis, size)];
-    for side in [u, -u, v, -v] {
-        let start = tip - axis * head + side * head * 0.4;
-        let dir = tip - start;
-        lines.push(Line::new(start, dir.normalize(), dir.magnitude()));
-    }
-    lines
-}
-
-/// The 12 edges of a cube around `center`, aligned with `axes`.
-fn cube_lines(center: Point3<f32>, axes: [Vector3<f32>; 3], half: f32) -> Vec<Line> {
-    let mut lines = Vec::with_capacity(12);
-    for i in 0..3 {
-        let (a, b) = (axes[(i + 1) % 3], axes[(i + 2) % 3]);
-        for (sa, sb) in [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
-            let start = center + (a * sa + b * sb - axes[i]) * half;
-            lines.push(Line::new(start, axes[i], half * 2.0));
-        }
-    }
-    lines
-}
-
-fn circle_lines(center: Point3<f32>, axis: Vector3<f32>, radius: f32) -> Vec<Line> {
-    let (u, v) = perpendicular_basis(axis);
-    let point = |i: usize| {
-        let a = i as f32 / CIRCLE_SEGMENTS as f32 * std::f32::consts::TAU;
-        center + (u * a.cos() + v * a.sin()) * radius
-    };
-    (0..CIRCLE_SEGMENTS)
-        .map(|i| {
-            let (a, b) = (point(i), point(i + 1));
-            Line::new(a, (b - a).normalize(), (b - a).magnitude())
-        })
-        .collect()
-}
-
-/// Orthonormal `(u, v)` with `u × v = axis`.
-fn perpendicular_basis(axis: Vector3<f32>) -> (Vector3<f32>, Vector3<f32>) {
-    let helper = if axis.x.abs() < 0.9 {
-        Vector3::unit_x()
-    } else {
-        Vector3::unit_y()
-    };
-    let u = axis.cross(helper).normalize();
-    let v = axis.cross(u).normalize();
-    (u, v)
-}
-
-/// Closest-point parameters `(t on ray, s on axis line)`; `None` when the
-/// ray is (nearly) parallel to the axis.
-fn closest_params(ray: &Ray, origin: Point3<f32>, axis: Vector3<f32>) -> Option<(f32, f32)> {
-    let w0 = ray.origin - origin;
-    let b = ray.dir.dot(axis);
-    let d = ray.dir.dot(w0);
-    let e = axis.dot(w0);
-    let denom: f32 = 1.0 - b * b;
-    if denom.abs() < 1e-5 {
-        return None;
-    }
-    Some(((b * e - d) / denom, (e - b * d) / denom))
-}
-
-fn distance_to_ray(ray: &Ray, point: Point3<f32>) -> f32 {
-    let t = (point - ray.origin).dot(ray.dir).max(0.0);
-    (ray.origin + ray.dir * t - point).magnitude()
-}
-
-/// Directions of the gizmo's axes: the world axes for moving and rotating,
-/// the entity's own (rotated) axes for scaling, which acts on those.
-fn gizmo_axes(scene: &Scene, id: &EntityHandle, mode: GizmoMode) -> Option<[Vector3<f32>; 3]> {
-    if mode != GizmoMode::Scale {
-        return Some(AXES);
-    }
-    let rotation = rotation_of(&scene.get_world_transform(id)?);
-    Some(AXES.map(|axis| rotation.rotate_vector(axis)))
-}
-
-fn ray_plane(ray: &Ray, center: Point3<f32>, normal: Vector3<f32>) -> Option<Point3<f32>> {
-    let denom = ray.dir.dot(normal);
-    if denom.abs() < 1e-4 {
-        return None;
-    }
-    let t = (center - ray.origin).dot(normal) / denom;
-    (t > 0.0).then(|| ray.origin + ray.dir * t)
-}
-
-fn angle_around(axis: Vector3<f32>, center: Point3<f32>, point: Point3<f32>) -> f32 {
-    let (u, v) = perpendicular_basis(axis);
-    let d = point - center;
-    d.dot(v).atan2(d.dot(u))
-}
-
-fn rotation_of(matrix: &Matrix4<f32>) -> Quaternion<f32> {
-    let m = Matrix3::from_cols(
-        matrix.x.truncate().normalize(),
-        matrix.y.truncate().normalize(),
-        matrix.z.truncate().normalize(),
-    );
-    Quaternion::from(m)
-}
-
-fn begin_drag(
-    scene: &Scene,
-    id: EntityHandle,
-    handle: usize,
-    gizmo: GizmoMode,
-    ray: &Ray,
-    size: f32,
-) -> Option<Drag> {
-    if gizmo == GizmoMode::Scale {
-        return begin_scale(scene, id, handle, ray, size);
-    }
-    let axis = AXES[handle];
-    let world = scene.get_world_transform(&id)?;
-    let parent = scene.get_parent_world_transform(&id)?;
-    let center = Point3::from_vec(world.w.truncate());
-    match gizmo {
-        GizmoMode::Translate => {
-            let (_, s) = closest_params(ray, center, axis)?;
-            Some(Drag::Translate {
-                id,
-                axis,
-                start_world: center,
-                start_param: s,
-                parent_inverse: parent.invert()?,
-            })
-        }
-        GizmoMode::Rotate => {
-            let hit = ray_plane(ray, center, axis)?;
-            Some(Drag::Rotate {
-                id,
-                axis,
-                center,
-                start_angle: angle_around(axis, center, hit),
-                start_local: scene.get_entity(&id)?.get_rotation(),
-                parent_rotation: rotation_of(&parent),
-            })
-        }
-        GizmoMode::Scale => None,
-    }
-}
-
-fn begin_scale(
-    scene: &Scene,
-    id: EntityHandle,
-    handle: usize,
-    ray: &Ray,
-    size: f32,
-) -> Option<Drag> {
-    let center = world_position(scene, &id)?;
-    let start_scale = scene.get_entity(&id)?.get_scale();
-    let length = size * ARROW_SCALE;
-    if handle == UNIFORM_HANDLE {
-        // Measured on the plane facing the camera, along its up-right
-        // diagonal: dragging up or right grows, down or left shrinks.
-        let normal = -ray.dir;
-        let start_hit = ray_plane(ray, center, normal)?;
-        let right = Vector3::unit_y().cross(normal);
-        let right = if right.magnitude2() > 1e-6 {
-            right.normalize()
-        } else {
-            Vector3::unit_x()
-        };
-        let up = normal.cross(right).normalize();
-        return Some(Drag::Scale {
-            id,
-            handle,
-            axis: (right + up).normalize(),
-            center,
-            start_param: 0.0,
-            start_hit,
-            plane_normal: normal,
-            start_scale,
-            length,
-        });
-    }
-    let axis = gizmo_axes(scene, &id, GizmoMode::Scale)?[handle];
-    let (_, s) = closest_params(ray, center, axis)?;
-    Some(Drag::Scale {
-        id,
-        handle,
-        axis,
-        center,
-        start_param: s,
-        start_hit: center,
-        plane_normal: axis,
-        start_scale,
-        length,
-    })
-}
-
-fn apply_drag(scene: &mut Scene, drag: &Drag, ray: &Ray) {
-    match drag {
-        Drag::Translate {
-            id,
-            axis,
-            start_world,
-            start_param,
-            parent_inverse,
-        } => {
-            let Some((_, s)) = closest_params(ray, *start_world, *axis) else {
-                return;
-            };
-            // `s` is measured from the start position along the axis; the
-            // difference to where the axis was grabbed is the movement.
-            let world = start_world + axis * (s - start_param);
-            let local = parent_inverse * world.to_homogeneous();
-            scene.set_entity_position(id, Point3::from_homogeneous(local));
-        }
-        Drag::Rotate {
-            id,
-            axis,
-            center,
-            start_angle,
-            start_local,
-            parent_rotation,
-        } => {
-            let Some(hit) = ray_plane(ray, *center, *axis) else {
-                return;
-            };
-            let delta = angle_around(*axis, *center, hit) - start_angle;
-            let world_delta = Quaternion::from_axis_angle(*axis, Rad(delta));
-            let local = parent_rotation.invert() * world_delta * parent_rotation * start_local;
-            scene.set_entity_rotation(id, local.normalize());
-        }
-        Drag::Scale {
-            id,
-            handle,
-            axis,
-            center,
-            start_param,
-            start_hit,
-            plane_normal,
-            start_scale,
-            length,
-        } => {
-            let moved = if *handle == UNIFORM_HANDLE {
-                let Some(hit) = ray_plane(ray, *center, *plane_normal) else {
-                    return;
-                };
-                (hit - start_hit).dot(*axis)
-            } else {
-                let Some((_, s)) = closest_params(ray, *center, *axis) else {
-                    return;
-                };
-                s - start_param
-            };
-            let factor = ((length + moved) / length).max(MIN_SCALE);
-            let mut scale = *start_scale;
-            if *handle == UNIFORM_HANDLE {
-                scale *= factor;
-            } else {
-                scale[*handle] *= factor;
-            }
-            scale = scale.map(|c| c.max(MIN_SCALE));
-            scene.set_entity_scale(id, scale);
-        }
-    }
 }
 
 /// Window-pixel position of a world point inside the viewport rect, or
@@ -1050,50 +649,4 @@ fn collect_world_positions(scene: &Scene) -> Vec<(EntityHandle, Point3<f32>)> {
         visit(entity, Matrix4::identity(), &mut out);
     }
     out
-}
-
-#[cfg(test)]
-mod light_marker_tests {
-    use super::*;
-
-    #[test]
-    fn a_spot_lights_cone_reaches_its_range_at_its_angle() {
-        let apex = Point3::new(1.0, 5.0, 2.0);
-        let dir = -Vector3::unit_y();
-        let lines = cone_lines(apex, dir, 10.0, 30.0);
-        let sides = &lines[lines.len() - 4..];
-        for side in sides {
-            assert_eq!(side.position, apex);
-            assert!((side.length - 10.0).abs() < 1e-4);
-            let cos = side.direction.dot(dir);
-            assert!((cos - 30f32.to_radians().cos()).abs() < 1e-4);
-        }
-    }
-
-    #[test]
-    fn an_emitter_marker_is_a_diamond_and_a_box_has_twelve_edges() {
-        let lines = diamond_lines(Point3::new(0.0, 0.0, 0.0), 1.0);
-        assert_eq!(lines.len(), 12);
-        for line in &lines {
-            assert!((line.length - 2f32.sqrt()).abs() < 1e-5);
-        }
-        let edges = box_lines(
-            Point3::new(0.0, 0.0, 0.0),
-            [Vector3::unit_x(), Vector3::unit_y() * 2.0, Vector3::unit_z()],
-        );
-        assert_eq!(edges.len(), 12);
-        assert!(edges.iter().any(|l| (l.length - 4.0).abs() < 1e-5));
-    }
-
-    #[test]
-    fn a_light_marker_is_a_star_around_the_light() {
-        let center = Point3::new(0.0, 2.0, 0.0);
-        let lines = star_lines(center, 0.5);
-        assert_eq!(lines.len(), 7);
-        for line in &lines {
-            let middle = line.position + line.direction * (line.length / 2.0);
-            assert!((middle - center).magnitude() < 1e-5);
-            assert!((line.length - 1.0).abs() < 1e-5);
-        }
-    }
 }
