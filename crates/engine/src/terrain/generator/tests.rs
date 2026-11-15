@@ -1,25 +1,81 @@
 use std::{sync::Arc, thread, time::Instant};
 
-use libnoise::prelude::*;
-
 use super::*;
 
 #[test]
-fn the_ground_is_the_height_field_it_always_was() {
-    // The terrain before the generator existed, written out: a chunk
-    // looks the same after the move.
-    let seed = 2;
-    let noise = Source::perlin(seed).scale([0.003; 2]).fbm(6, 1.0, 2.0, 0.5);
-    let old = |x: f64, z: f64| {
-        let offset = 16777216.0;
-        ((1.0 + noise.sample([x + offset, z + offset])) / 2.0) as f32 * CHUNK_SIZE_FLOAT - 1.0
-    };
-    let generator = WorldGenerator::new(seed);
-    let column = generator.column(-3, 2);
-    for (x, z) in [(-9, -9), (0, 0), (17, 100), (137, 137), (64, -5)] {
-        let expected = old(-3.0 * 128.0 + x as f64, 2.0 * 128.0 + z as f64);
-        assert_eq!(column.height(x, z).to_bits(), expected.to_bits(), "({x}, {z})");
+fn a_column_holds_the_surface_height_at_every_metre() {
+    let generator = WorldGenerator::new(2);
+    for (cx, cz) in [(0, 0), (-3, 2), (40, -17)] {
+        let column = generator.column(cx, cz);
+        for (x, z) in [(-9, -9), (0, 0), (17, 100), (137, 137), (64, -5)] {
+            let h = generator.surface_height(cx as f64 * 128.0 + x as f64, cz as f64 * 128.0 + z as f64);
+            assert_eq!(column.height(x, z).to_bits(), h.to_bits(), "({cx}, {cz}): ({x}, {z})");
+        }
     }
+}
+
+#[test]
+fn the_ground_has_no_steps_where_tiles_meet() {
+    let generator = WorldGenerator::new(5);
+    // Across every tile border on a long line, the ground neither jumps
+    // nor bends.
+    let h = |x: f64| generator.surface_height(x, 1234.5) as f64;
+    for i in -16..16 {
+        let x = i as f64 * 128.0;
+        let jump = h(x + 1e-3) - h(x - 1e-3);
+        assert!(jump.abs() < 0.02, "jump of {jump} m at x = {x}");
+        let (left, right) = ((h(x) - h(x - 0.05)) / 0.05, (h(x + 0.05) - h(x)) / 0.05);
+        assert!((right - left).abs() < 0.1, "slope {left} | {right} at x = {x}");
+    }
+}
+
+#[test]
+fn the_spawn_is_on_low_land_and_the_world_ends_in_deep_sea() {
+    for seed in [1, 2, 3, 99] {
+        let generator = WorldGenerator::new(seed);
+        for (x, z) in [(0.0, 0.0), (150.0, -200.0), (-300.0, 50.0)] {
+            let h = generator.surface_height(x, z);
+            assert!(h > SEA_LEVEL + 3.0 && h < 50.0, "seed {seed}: {h} m at ({x}, {z})");
+        }
+        let edge = generator.settings().size / 2.0;
+        for (x, z) in [(edge, 0.0), (0.0, -edge - 500.0), (edge + 2000.0, edge)] {
+            let h = generator.surface_height(x, z);
+            assert!(h < -150.0, "seed {seed}: {h} m at ({x}, {z})");
+        }
+    }
+}
+
+#[test]
+fn the_world_has_sea_plains_and_high_mountains() {
+    let generator = WorldGenerator::new(2);
+    let half = generator.settings().size / 2.0;
+    let (mut sea, mut low, mut high, mut highest, mut deepest) = (0, 0, 0, f32::MIN, f32::MAX);
+    let n = 120;
+    for j in 0..n {
+        for i in 0..n {
+            let x = -half + (i as f64 + 0.5) * 2.0 * half / n as f64;
+            let z = -half + (j as f64 + 0.5) * 2.0 * half / n as f64;
+            // The large shape alone: making the fine one for so many
+            // far-apart points would take long.
+            let h = generator.coarse_height(x, z);
+            highest = highest.max(h);
+            deepest = deepest.min(h);
+            if h < SEA_LEVEL {
+                sea += 1;
+            } else if h < 150.0 {
+                low += 1;
+            } else if h > 600.0 {
+                high += 1;
+            }
+        }
+    }
+    let total = (n * n) as f32;
+    println!("sea {:.0}%, low land {:.0}%, above 600 m {:.0}%, {deepest:.0}..{highest:.0} m",
+        sea as f32 / total * 100.0, low as f32 / total * 100.0, high as f32 / total * 100.0);
+    assert!(sea as f32 / total > 0.2 && (sea as f32 / total) < 0.75);
+    assert!(low as f32 / total > 0.1);
+    assert!(high > 0 && highest > 900.0 && highest < 2100.0);
+    assert!(deepest > -450.0 && deepest < -300.0);
 }
 
 #[test]
@@ -47,7 +103,7 @@ fn a_column_comes_out_the_same_on_any_thread_and_from_the_cache() {
             .zip(&reference.heights)
             .all(|(a, b)| a.to_bits() == b.to_bits()));
     }
-    assert!(generator.columns.lock().unwrap().columns.len() <= COLUMN_CACHE);
+    assert!(generator.columns.lock().unwrap().len() <= COLUMN_CACHE);
 }
 
 #[test]

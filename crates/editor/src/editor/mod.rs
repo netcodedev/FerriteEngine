@@ -36,6 +36,7 @@ pub mod titlebar;
 pub mod toolbar;
 pub mod toggle_window;
 pub mod viewport;
+pub mod world_map;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {

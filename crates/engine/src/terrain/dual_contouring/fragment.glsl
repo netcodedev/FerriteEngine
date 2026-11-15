@@ -53,9 +53,9 @@ float valueNoise(vec2 p) {
 // sand on the shore and under water, rock on cliffs and high up, grass
 // elsewhere. `n` (-1..1) wobbles the borders.
 vec3 layerWeights(float h, float slope, float n) {
-    float sand = 1.0 - smoothstep(49.0, 52.5, h + n * 1.5);
-    float cliff = smoothstep(0.50, 0.72, slope + n * 0.05) * smoothstep(44.0, 52.0, h);
-    float rock = max(cliff, smoothstep(80.0, 92.0, h + n * 4.0));
+    float sand = 1.0 - smoothstep(5.0, 8.5, h + n * 1.5);
+    float cliff = smoothstep(0.50, 0.72, slope + n * 0.05) * smoothstep(0.0, 8.0, h);
+    float rock = max(cliff, smoothstep(650.0, 800.0, h + n * 20.0));
     sand *= 1.0 - rock;
     return vec3(max(1.0 - sand - rock, 0.0), sand, rock);
 }
@@ -140,21 +140,21 @@ vec3 paletteColor(float h, float slope) {
     vec3 darkRock   = vec3(0.36, 0.34, 0.32);
     vec3 alpine     = vec3(0.50, 0.48, 0.46);
     vec3 color;
-    if (h < 44.0) {
-        color = mix(seabedDeep, sand, smoothstep(15.0, 44.0, h));
-    } else if (h < 52.0) {
-        color = mix(sand, grassLow, smoothstep(48.0, 52.0, h));
-    } else if (h < 78.0) {
-        color = mix(grassLow, grassHigh, smoothstep(52.0, 78.0, h));
+    if (h < 0.0) {
+        color = mix(seabedDeep, sand, smoothstep(-30.0, 0.0, h));
+    } else if (h < 8.0) {
+        color = mix(sand, grassLow, smoothstep(4.0, 8.0, h));
+    } else if (h < 600.0) {
+        color = mix(grassLow, grassHigh, smoothstep(8.0, 300.0, h));
     } else {
-        color = mix(grassHigh, alpine, smoothstep(78.0, 90.0, h));
+        color = mix(grassHigh, alpine, smoothstep(600.0, 850.0, h));
     }
-    float rockBlend = smoothstep(0.57, 0.80, slope) * smoothstep(44.0, 52.0, h);
-    return mix(color, mix(rock, darkRock, smoothstep(55.0, 90.0, h)), rockBlend);
+    float rockBlend = smoothstep(0.57, 0.80, slope) * smoothstep(0.0, 8.0, h);
+    return mix(color, mix(rock, darkRock, smoothstep(50.0, 800.0, h)), rockBlend);
 }
 
 // Height of the water's surface (`dual_contouring::WATER_LEVEL`).
-const float WATER_LINE = 44.0;
+const float WATER_LINE = 0.0;
 // Footprints show their depth this close; further away the flat cover.
 const float TRAIL_DISTANCE = 30.0;
 
@@ -302,9 +302,9 @@ void main() {
         albedo = pow(paletteColor(h, slope), vec3(2.2));
     }
     // Darker toward the deep sea floor.
-    albedo *= mix(0.45, 1.0, smoothstep(15.0, 44.0, h));
+    albedo *= mix(0.45, 1.0, smoothstep(-30.0, 0.0, h));
 
-    float snow = smoothstep(90.0, 100.0, h + n * 3.0);
+    float snow = smoothstep(1150.0, 1300.0, h + n * 30.0);
     albedo = mix(albedo, pow(SNOW, vec3(2.2)), snow);
     roughness = mix(roughness, 0.6, snow);
     N = normalize(mix(N, Ng, snow));

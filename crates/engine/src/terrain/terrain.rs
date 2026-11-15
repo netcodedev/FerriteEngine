@@ -1,11 +1,15 @@
 use std::{
     collections::HashSet,
-    sync::Arc,
+    sync::{
+        mpsc::{self, Receiver},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
 use cgmath::{EuclideanSpace, Matrix4, Point3};
 use glfw::MouseButton;
+use image::RgbaImage;
 use lazy_static::lazy_static;
 use rapier3d::prelude::*;
 
@@ -35,11 +39,63 @@ use crate::core::{
 };
 
 use super::{
-    generator::WorldGenerator,
+    generator::{map::MapLayer, WorldGenerator, WorldSettings},
     streaming::{ColumnKey, StreamRadius, Streamer},
     scatter::{Scatter, ScatterInstances, ScatterLayerData, TakenInstance},
     Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
 };
+
+/// Pixels per side of the world map (see `WorldMap`).
+const MAP_PIXELS: u32 = 256;
+
+/// A picture of the whole world from above (see `generator::map`), made on
+/// a thread of its own whenever the world or the layer shown changes.
+pub(super) struct WorldMap {
+    layer: MapLayer,
+    /// The picture, and a number that changes with every new one.
+    image: Option<(u64, Arc<RgbaImage>)>,
+    version: u64,
+    /// Being made: for which version.
+    pending: Option<(u64, Receiver<RgbaImage>)>,
+    /// Whether anyone asked for it (the editor does); none is made before.
+    wanted: bool,
+}
+
+impl WorldMap {
+    fn new() -> Self {
+        Self {
+            layer: MapLayer::Height,
+            image: None,
+            version: 0,
+            pending: None,
+            wanted: false,
+        }
+    }
+
+    /// Start over for a changed world or layer.
+    fn invalidate(&mut self) {
+        self.version += 1;
+        self.pending = None;
+    }
+
+    fn update(&mut self, generator: &Arc<WorldGenerator>) {
+        if let Some((version, rx)) = &self.pending {
+            if let Ok(image) = rx.try_recv() {
+                self.image = Some((*version, Arc::new(image)));
+                self.pending = None;
+            }
+        }
+        let current = self.image.as_ref().is_some_and(|(v, _)| *v == self.version);
+        if self.wanted && !current && self.pending.is_none() {
+            let (tx, rx) = mpsc::channel();
+            let (generator, layer) = (generator.clone(), self.layer);
+            std::thread::spawn(move || {
+                let _ = tx.send(generator.map_image(MAP_PIXELS, layer));
+            });
+            self.pending = Some((self.version, rx));
+        }
+    }
+}
 
 /// Main-thread time per frame for adding the chunks the workers made
 /// (uploading their meshes, inserting their colliders); the rest waits for
@@ -60,7 +116,8 @@ const RESEED_DELAY: f64 = 0.6;
 /// adding a chunk), so the main thread only has to insert them.
 pub(super) struct LoadedChunk<T> {
     chunk: T,
-    collider: Collider,
+    /// `None` for a chunk without ground (only water).
+    collider: Option<Collider>,
 }
 
 impl<T: Chunk> LoadedChunk<T> {
@@ -71,17 +128,29 @@ impl<T: Chunk> LoadedChunk<T> {
             .map(|v| Vector::new(v[0], v[1], v[2]))
             .collect();
         let position = chunk.get_position();
+        let indices = chunk.get_indices();
+        if vertices.is_empty() || indices.is_empty() {
+            return Self { chunk, collider: None };
+        }
         let collider = ColliderBuilder::trimesh_with_flags(
             vertices,
-            chunk.get_indices(),
+            indices,
             // FIX_INTERNAL_EDGES computes pseudo-normals on shared triangle edges,
             // preventing ghost-collision impulses that launch the player into the air.
             TriMeshFlags::FIX_INTERNAL_EDGES,
-        )
-        .expect("Failed to create collider")
-        .translation(Vector::new(position.x, position.y, position.z))
-        .user_data(collider_tag::TERRAIN)
-        .build();
+        );
+        let collider = match collider {
+            Ok(builder) => Some(
+                builder
+                    .translation(Vector::new(position.x, position.y, position.z))
+                    .user_data(collider_tag::TERRAIN)
+                    .build(),
+            ),
+            Err(e) => {
+                log::warn!("terrain chunk at {position:?} has no collider: {e:?}");
+                None
+            }
+        };
         Self { chunk, collider }
     }
 }
@@ -155,15 +224,22 @@ impl ChunkBounds {
 
 impl<T: Chunk + Component + Send + 'static> Terrain<T> {
     pub fn new(seed: u64) -> Self {
+        Self::with_world(seed, WorldSettings::default())
+    }
+
+    /// A terrain shaped by `world` (see `generator::world`).
+    pub fn with_world(seed: u64, world: WorldSettings) -> Self {
         let shader_source = T::get_shader_source();
         let shader = Shader::new(&shader_source.0, &shader_source.1);
         let textures = T::get_textures(&shader);
         let depth_shader = T::get_depth_shader_source()
             .map(|(vertex, fragment)| Shader::new(&vertex, &fragment));
 
-        let generator = WorldGenerator::new(seed);
+        let generator = WorldGenerator::with_settings(seed, world.clone());
         Self {
             seed,
+            world,
+            map: WorldMap::new(),
             streamer: Self::start_streaming(&generator),
             generator,
             reseed_in: None,
@@ -186,6 +262,15 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
     /// What shapes the ground (the same for every chunk of this terrain).
     pub fn generator(&self) -> &Arc<WorldGenerator> {
         &self.generator
+    }
+
+    /// The latest picture of the world from above (see `generator::map`)
+    /// and its version, which changes with every new picture. Asking
+    /// starts making it (and remaking it whenever the world changes); the
+    /// first call usually returns `None`.
+    pub fn world_map(&mut self) -> Option<(u64, Arc<RgbaImage>)> {
+        self.map.wanted = true;
+        self.map.image.clone()
     }
 
     /// Columns of chunks loaded, and columns queued or being made.
@@ -230,8 +315,9 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
                 index += 1;
             }
         }
-        self.generator = WorldGenerator::new(self.seed);
+        self.generator = WorldGenerator::with_settings(self.seed, self.world.clone());
         self.streamer = Self::start_streaming(&self.generator);
+        self.map.invalidate();
         exposure::world_changed();
     }
 
@@ -420,9 +506,11 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
                 // too; colliders keep their world placement while becoming
                 // removable together with the chunk.
                 let chunk_body = RigidBody::new(RigidBodyType::Fixed, scene, &chunk_entity, None);
-                scene
-                    .physics_engine
-                    .add_collider(collider, Some(chunk_body.rigid_body_handle));
+                if let Some(collider) = collider {
+                    scene
+                        .physics_engine
+                        .add_collider(collider, Some(chunk_body.rigid_body_handle));
+                }
                 // Scattered models are not part of the chunk itself:
                 // `sync_scatter` plants them afterwards.
                 chunk_entity.add_component(chunk);
@@ -564,6 +652,7 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         self.scatter.tick(delta_time);
         self.stream(scene, entity);
         shader::delete_released_vertex_arrays();
+        self.map.update(&self.generator);
         self.sync_scatter(scene, entity);
         if let Some(camera_component) = scene.get_active_camera() {
             let camera = camera_component.get_camera();
@@ -582,12 +671,21 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         Some(ComponentData::Terrain {
             seed: self.seed,
             scatter: self.scatter.to_data(),
+            world: self.generator.settings().clone(),
         })
     }
 
     fn properties(&self) -> Vec<Property> {
         let mut properties = vec![
             Property::int("seed", self.seed as i64),
+            Property::ranged("world size (km)", (self.world.size / 1000.0) as f32, 4.0, 64.0),
+            Property::ranged("mountain height", self.world.mountain_scale, 0.0, 2.0),
+            Property::ranged("hill height", self.world.hill_scale, 0.0, 3.0),
+            Property::choice(
+                "map",
+                self.map.layer.name().into(),
+                MapLayer::ALL.iter().map(|l| l.name().to_string()).collect(),
+            ),
             Property::bool("show colliders", self.show_colliders),
         ];
         properties.extend(self.scatter.properties());
@@ -606,6 +704,33 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 if seed != self.seed {
                     self.seed = seed;
                     self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("world size (km)", PropertyValue::Float(v)) => {
+                let size = (v.clamp(1.0, 256.0) as f64 * 1000.0).round();
+                if size != self.world.size {
+                    self.world.size = size;
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("mountain height", PropertyValue::Float(v)) => {
+                if v.max(0.0) != self.world.mountain_scale {
+                    self.world.mountain_scale = v.max(0.0);
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("hill height", PropertyValue::Float(v)) => {
+                if v.max(0.0) != self.world.hill_scale {
+                    self.world.hill_scale = v.max(0.0);
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("map", PropertyValue::Text(v)) => {
+                if let Some(layer) = MapLayer::from_name(&v) {
+                    if layer != self.map.layer {
+                        self.map.layer = layer;
+                        self.map.invalidate();
+                    }
                 }
             }
             ("show colliders", PropertyValue::Bool(v)) => self.show_colliders = v,

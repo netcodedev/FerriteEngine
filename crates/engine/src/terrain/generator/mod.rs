@@ -14,9 +14,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use libnoise::prelude::*;
+use super::CHUNK_SIZE;
 
-use super::{CHUNK_SIZE, CHUNK_SIZE_FLOAT};
+pub mod map;
+mod noise;
+pub mod spline;
+pub mod world;
+
+pub use world::{Climate, WorldSettings, SEA_LEVEL};
+use world::{Macro, WorldShape};
 
 /// A chunk's place in the grid of chunks: chunk `(x, y, z)` covers world
 /// metres `x * CHUNK_SIZE .. (x + 1) * CHUNK_SIZE`, and so on.
@@ -90,32 +96,104 @@ impl Column {
 /// again at another level of detail find theirs here.
 const COLUMN_CACHE: usize = 512;
 
+/// Metres between the points of the large shape's grid (see `MacroTile`).
+pub const MACRO_STEP: f64 = 4.0;
+/// Grid points per tile side, without the border.
+const TILE_POINTS: i32 = CHUNK_SIZE as i32 / MACRO_STEP as i32;
+/// How many tiles of the large shape the generator keeps.
+const TILE_CACHE: usize = 2048;
+
+/// The large shape (see `world`) over one chunk square, on the 4 m grid,
+/// with one point more before and two more after each side: what smooth
+/// (bicubic) interpolation needs anywhere in the square.
+struct MacroTile {
+    /// `(i, z)` row by row, from `-1` to `TILE_POINTS + 1`.
+    points: Vec<Macro>,
+}
+
+impl MacroTile {
+    const SPAN: i32 = TILE_POINTS + 3;
+
+    fn at(&self, i: i32, j: i32) -> Macro {
+        self.points[((j + 1) * Self::SPAN + (i + 1)) as usize]
+    }
+}
+
+/// A small least-recently-made cache.
+struct Cache<V> {
+    entries: HashMap<(i32, i32), Arc<V>>,
+    /// Oldest first, for eviction.
+    order: VecDeque<(i32, i32)>,
+    capacity: usize,
+}
+
+impl<V> Cache<V> {
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            capacity,
+        }
+    }
+
+    fn get(&self, key: (i32, i32)) -> Option<Arc<V>> {
+        self.entries.get(&key).cloned()
+    }
+
+    /// Keep `value` (unless another thread was faster) and return what is
+    /// kept.
+    fn insert(&mut self, key: (i32, i32), value: Arc<V>) -> Arc<V> {
+        if let Some(existing) = self.entries.get(&key) {
+            return existing.clone();
+        }
+        self.entries.insert(key, value.clone());
+        self.order.push_back(key);
+        while self.order.len() > self.capacity {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            }
+        }
+        value
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
 /// The world's generator: shared (in an `Arc`) by the terrain, its loader
 /// threads and its chunks.
 pub struct WorldGenerator {
     seed: u64,
-    /// The ground's height field, `-1..1`.
-    height_noise: Fbm<2, Scale<2, Perlin<2>>>,
-    columns: Mutex<ColumnCache>,
+    shape: WorldShape,
+    tiles: Mutex<Cache<MacroTile>>,
+    columns: Mutex<Cache<Column>>,
 }
 
-#[derive(Default)]
-struct ColumnCache {
-    columns: HashMap<(i32, i32), Arc<Column>>,
-    /// Oldest first, for eviction.
-    order: VecDeque<(i32, i32)>,
+/// Catmull-Rom weights for the four points around `t` (0..1 between the
+/// second and third).
+fn cubic_weights(t: f64) -> [f64; 4] {
+    let (t2, t3) = (t * t, t * t * t);
+    [
+        0.5 * (-t3 + 2.0 * t2 - t),
+        0.5 * (3.0 * t3 - 5.0 * t2 + 2.0),
+        0.5 * (-3.0 * t3 + 4.0 * t2 + t),
+        0.5 * (t3 - t2),
+    ]
 }
-
-/// Added to every sample point, as the terrain always did: Perlin noise
-/// repeats itself around the origin.
-const NOISE_OFFSET: f64 = 16777216.0;
 
 impl WorldGenerator {
     pub fn new(seed: u64) -> Arc<Self> {
+        Self::with_settings(seed, WorldSettings::default())
+    }
+
+    pub fn with_settings(seed: u64, settings: WorldSettings) -> Arc<Self> {
         Arc::new(Self {
             seed,
-            height_noise: Source::perlin(seed).scale([0.003; 2]).fbm(6, 1.0, 2.0, 0.5),
-            columns: Mutex::new(ColumnCache::default()),
+            shape: WorldShape::new(seed, settings),
+            tiles: Mutex::new(Cache::new(TILE_CACHE)),
+            columns: Mutex::new(Cache::new(COLUMN_CACHE)),
         })
     }
 
@@ -123,42 +201,100 @@ impl WorldGenerator {
         self.seed
     }
 
+    pub fn settings(&self) -> &WorldSettings {
+        &self.shape.settings
+    }
+
+    /// The climate maps at world `(x, z)`, straight from the noise.
+    pub fn climate(&self, x: f64, z: f64) -> Climate {
+        self.shape.climate(x, z)
+    }
+
+    /// The large shape at `(x, z)`, without the hills, straight from the
+    /// noise (not interpolated): for maps and far views.
+    pub fn coarse_height(&self, x: f64, z: f64) -> f32 {
+        self.shape.macro_at(x, z).height
+    }
+
+    fn tile(&self, tx: i32, tz: i32) -> Arc<MacroTile> {
+        if let Some(tile) = self.tiles.lock().unwrap().get((tx, tz)) {
+            return tile;
+        }
+        // Made outside the lock: two threads may both make it, the same.
+        let (x0, z0) = (tx as f64 * CHUNK_SIZE as f64, tz as f64 * CHUNK_SIZE as f64);
+        let span = MacroTile::SPAN;
+        let mut points = Vec::with_capacity((span * span) as usize);
+        for j in -1..span - 1 {
+            for i in -1..span - 1 {
+                points.push(
+                    self.shape
+                        .macro_at(x0 + i as f64 * MACRO_STEP, z0 + j as f64 * MACRO_STEP),
+                );
+            }
+        }
+        let tile = Arc::new(MacroTile { points });
+        self.tiles.lock().unwrap().insert((tx, tz), tile)
+    }
+
+    /// The large shape at world `(x, z)`, interpolated from the 4 m grid.
+    /// `tile` finds the tile of a chunk square.
+    fn interpolated(&self, x: f64, z: f64, tile: &mut impl FnMut(i32, i32) -> Arc<MacroTile>) -> Macro {
+        let (gx, gz) = (x / MACRO_STEP, z / MACRO_STEP);
+        let (fx, fz) = (gx.floor(), gz.floor());
+        let (ix, iz) = (fx as i64, fz as i64);
+        let (tx, tz) = (ix.div_euclid(TILE_POINTS as i64), iz.div_euclid(TILE_POINTS as i64));
+        let (i, j) = (
+            ix.rem_euclid(TILE_POINTS as i64) as i32,
+            iz.rem_euclid(TILE_POINTS as i64) as i32,
+        );
+        let tile = tile(tx as i32, tz as i32);
+        let (wx, wz) = (cubic_weights(gx - fx), cubic_weights(gz - fz));
+        let (mut height, mut hills) = (0.0f64, 0.0f64);
+        for (b, wz) in wz.iter().enumerate() {
+            for (a, wx) in wx.iter().enumerate() {
+                let m = tile.at(i + a as i32 - 1, j + b as i32 - 1);
+                let w = wx * wz;
+                height += w * m.height as f64;
+                hills += w * m.hills as f64;
+            }
+        }
+        Macro {
+            height: height as f32,
+            hills: hills.max(0.0) as f32,
+        }
+    }
+
     /// Height of the ground at world `(x, z)`, in metres: where the
     /// density field crosses zero over that point.
     pub fn surface_height(&self, x: f64, z: f64) -> f32 {
-        let n = self.height_noise.sample([x + NOISE_OFFSET, z + NOISE_OFFSET]);
-        ((1.0 + n) / 2.0) as f32 * CHUNK_SIZE_FLOAT - 1.0
+        let m = self.interpolated(x, z, &mut |tx, tz| self.tile(tx, tz));
+        m.height + m.hills * self.shape.detail(x, z)
     }
 
     /// The column of chunk square `(cx, cz)`, from the cache or made now.
     pub fn column(&self, cx: i32, cz: i32) -> Arc<Column> {
-        if let Some(column) = self.columns.lock().unwrap().columns.get(&(cx, cz)) {
-            return column.clone();
+        if let Some(column) = self.columns.lock().unwrap().get((cx, cz)) {
+            return column;
         }
         // Made outside the lock: two threads may both make it, the same.
         let column = Arc::new(self.make_column(cx, cz));
-        let mut cache = self.columns.lock().unwrap();
-        if !cache.columns.contains_key(&(cx, cz)) {
-            cache.columns.insert((cx, cz), column.clone());
-            cache.order.push_back((cx, cz));
-            while cache.order.len() > COLUMN_CACHE {
-                if let Some(oldest) = cache.order.pop_front() {
-                    cache.columns.remove(&oldest);
-                }
-            }
-        }
-        column
+        self.columns.lock().unwrap().insert((cx, cz), column)
     }
 
     fn make_column(&self, cx: i32, cz: i32) -> Column {
         let x0 = cx as f64 * CHUNK_SIZE as f64;
         let z0 = cz as f64 * CHUNK_SIZE as f64;
+        // The tiles around this square, fetched once.
+        let mut near: HashMap<(i32, i32), Arc<MacroTile>> = HashMap::new();
+        let mut tile = |tx: i32, tz: i32| near.entry((tx, tz)).or_insert_with(|| self.tile(tx, tz)).clone();
         let span = Column::SPAN;
         let mut heights = Vec::with_capacity((span * span) as usize);
         let (mut min_height, mut max_height) = (f32::MAX, f32::MIN);
         for z in -COLUMN_MARGIN..span - COLUMN_MARGIN {
             for x in -COLUMN_MARGIN..span - COLUMN_MARGIN {
-                let h = self.surface_height(x0 + x as f64, z0 + z as f64);
+                let (wx, wz) = (x0 + x as f64, z0 + z as f64);
+                let m = self.interpolated(wx, wz, &mut tile);
+                let h = m.height + m.hills * self.shape.detail(wx, wz);
                 min_height = min_height.min(h);
                 max_height = max_height.max(h);
                 heights.push(h);

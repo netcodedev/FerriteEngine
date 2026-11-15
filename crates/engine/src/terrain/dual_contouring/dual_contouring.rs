@@ -230,9 +230,13 @@ impl Chunk for DualContouringChunk {
         let column = generator.column(column.0, column.1);
         let reach = 2.0 * (1 << (LODS - 1)) as f32;
         let chunk = |h: f32| (h / CHUNK_SIZE_FLOAT).floor() as i32;
-        // The water lies over ground below it, so in this range too.
         let low = chunk(column.min_height - reach);
-        let high = chunk(column.max_height + reach);
+        let mut high = chunk(column.max_height + reach);
+        // Over ground below the water, the chunk holding its surface too
+        // (in the open sea far above the sea floor).
+        if column.min_height < WATER_LEVEL + 3.0 {
+            high = high.max(chunk(WATER_LEVEL));
+        }
         low..=high
     }
 

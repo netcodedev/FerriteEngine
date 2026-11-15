@@ -830,6 +830,7 @@ dependencies = [
  "ferrite",
  "gl",
  "glfw",
+ "image",
  "log",
  "rand 0.10.3",
 ]

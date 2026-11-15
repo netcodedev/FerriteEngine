@@ -9,9 +9,9 @@ use crate::terrain::{
     ChunkMesh,
 };
 
-/// Y-coordinate (in local chunk space) below which terrain is considered underwater.
-/// Must match the water threshold in the terrain vertex shader.
-pub const WATER_LEVEL: f32 = 44.0;
+/// Height of the water's surface, in world metres: the sea level. Must
+/// match `WATER_LINE` in the terrain's fragment shader.
+pub const WATER_LEVEL: f32 = crate::terrain::generator::SEA_LEVEL;
 
 /// Levels of detail of the ground: the density field meshed from samples
 /// 1, 2, 4 and 8 metres apart.

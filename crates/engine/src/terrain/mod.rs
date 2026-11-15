@@ -25,6 +25,8 @@ pub mod voxel;
 
 pub struct Terrain<T: Chunk> {
     seed: u64,
+    /// What shapes the world; the generator is made from it and the seed.
+    world: generator::WorldSettings,
     /// Shapes the ground; shared with the loader threads and the chunks.
     generator: std::sync::Arc<generator::WorldGenerator>,
     /// Countdown until the chunks are rebuilt for an edited seed.
@@ -33,6 +35,8 @@ pub struct Terrain<T: Chunk> {
     scatter: scatter::Scatter,
     /// Editor toggle: draw chunk and scatter colliders as wireframes.
     show_colliders: bool,
+    /// The picture of the world the editor shows (see `WorldMap`).
+    map: terrain::WorldMap,
     /// Loads the chunks around the camera (see `streaming`).
     streamer: streaming::Streamer<Vec<terrain::LoadedChunk<T>>>,
     shader: Shader,

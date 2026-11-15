@@ -35,7 +35,7 @@ pub use model::*;
 /// Height band scattered models may stand in: clear of the water and below
 /// the bare peaks.
 pub const SCATTER_MIN_Y: f32 = WATER_LEVEL + 4.0;
-pub const SCATTER_MAX_Y: f32 = 78.0;
+pub const SCATTER_MAX_Y: f32 = WATER_LEVEL + 900.0;
 
 const MODEL_SCALE: f32 = 1.0;
 
