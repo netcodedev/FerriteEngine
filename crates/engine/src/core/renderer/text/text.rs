@@ -8,7 +8,13 @@ use crate::core::renderer::text::Fonts;
 use super::{Font, Shader, Text, TextMesh, TextRenderer, TextVertex, Texture};
 
 use lazy_static::lazy_static;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex, OnceLock,
+};
+
+/// See `TextRenderer::set_wireframe`.
+static WIREFRAME: AtomicBool = AtomicBool::new(false);
 
 lazy_static! {
     static ref RENDERER: Mutex<TextRenderer> = Mutex::new(TextRenderer::new(1280, 720));
@@ -284,6 +290,7 @@ impl TextRenderer {
             cache,
             shader,
             texture_buffer: Texture::new(2048, 2048),
+            projection_for: None,
             width,
             height,
         }
@@ -292,19 +299,25 @@ impl TextRenderer {
     /// Renders text to the screen
     ///
     /// Returns the width and height of the text
+    /// Tell the text renderer the scene is drawn as a wireframe
+    /// (`glPolygonMode(GL_LINE)`), so it fills its glyphs anyway and puts
+    /// the mode back after. Saves asking GL for the mode per text.
+    pub fn set_wireframe(wireframe: bool) {
+        WIREFRAME.store(wireframe, Ordering::Relaxed);
+    }
+
     pub fn render(text: &Text) -> (i32, i32) {
         if crate::core::headless::is_headless() {
             return (0, 0);
         }
-        let renderer = RENDERER.lock().unwrap();
-        let mut polygon_mode = 0;
+        let mut renderer = RENDERER.lock().unwrap();
+        // Text is filled in the wireframe view too.
+        let wireframe = WIREFRAME.load(Ordering::Relaxed);
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             renderer.texture_buffer.bind();
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-
-            gl::GetIntegerv(gl::POLYGON_MODE, &mut polygon_mode);
-            if polygon_mode != gl::FILL as i32 {
+            if wireframe {
                 gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
             }
         }
@@ -313,15 +326,14 @@ impl TextRenderer {
 
         // set shader uniforms
         renderer.shader.bind();
-        let projection = cgmath::ortho(
-            0.0,
-            renderer.width as f32,
-            renderer.height as f32,
-            0.0,
-            -100.0,
-            100.0,
-        );
-        renderer.shader.set_uniform_mat4("projection", &projection);
+        let size = (renderer.width, renderer.height);
+        if renderer.projection_for != Some(size) {
+            let projection =
+                cgmath::ortho(0.0, size.0 as f32, size.1 as f32, 0.0, -100.0, 100.0);
+            renderer.shader.set_uniform_mat4("projection", &projection);
+            renderer.projection_for = Some(size);
+            renderer.shader.set_uniform_1i("texture0", 0);
+        }
         let (r, g, b, a) = text.color;
         renderer.shader.set_uniform_4f("color", r, g, b, a);
 
@@ -331,7 +343,6 @@ impl TextRenderer {
             gl::Disable(gl::CULL_FACE);
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            renderer.shader.set_uniform_1i("texture0", 0);
             gl::DrawArrays(
                 gl::TRIANGLES,
                 0,
@@ -345,8 +356,8 @@ impl TextRenderer {
             gl::Disable(gl::BLEND);
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
 
-            if polygon_mode != gl::FILL as i32 {
-                gl::PolygonMode(gl::FRONT_AND_BACK, polygon_mode as u32);
+            if wireframe {
+                gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
             }
         }
         (text.max_x, text.max_y)

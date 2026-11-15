@@ -201,6 +201,7 @@ impl Component for DebugController {
         match event {
             glfw::WindowEvent::Key(Key::F1, _, Action::Press, _) => {
                 self.wireframe = !self.wireframe;
+                crate::core::renderer::text::TextRenderer::set_wireframe(self.wireframe);
                 unsafe {
                     if self.wireframe {
                         gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);

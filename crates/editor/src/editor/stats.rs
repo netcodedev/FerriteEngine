@@ -504,11 +504,12 @@ impl UIElement for FrameGraph {
         }
     }
     fn render(&self) {
-        self.background.render();
-        for bar in &self.bars {
-            bar.render();
-        }
-        self.target_line.render();
+        // One draw call for the graph.
+        Plane::render_all(
+            std::iter::once(&self.background)
+                .chain(&self.bars)
+                .chain(std::iter::once(&self.target_line)),
+        );
     }
     fn handle_events(
         &mut self,
