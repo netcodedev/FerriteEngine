@@ -107,6 +107,15 @@ impl ChunkBounds {
             && position.z < self.max.2 as f32
     }
 
+    /// Distance from `point` to the nearest point of the bounds, across
+    /// the ground (x and z).
+    pub fn distance_xz(&self, point: Point3<f32>) -> f32 {
+        let gap = |p: f32, min: i32, max: i32| (min as f32 - p).max(p - max as f32).max(0.0);
+        let dx = gap(point.x, self.min.0, self.max.0);
+        let dz = gap(point.z, self.min.2, self.max.2);
+        (dx * dx + dz * dz).sqrt()
+    }
+
     pub fn center(&self) -> Point3<f32> {
         Point3::new(
             (self.min.0 + self.max.0) as f32 / 2.0,
@@ -630,12 +639,18 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         unsafe {
             gl::Enable(gl::CULL_FACE);
         }
+        // Every pass picks the same level of detail for a chunk, by its
+        // distance from the camera: the shadows fall from the ground that
+        // is drawn, and the depth prepass matches the shading pass.
+        let eye = Lighting::from_scene(scene).map(|lighting| lighting.camera_position);
         for child in entity.get_children() {
             let Some(chunk) = child.get_own_component::<T>() else {
                 continue;
             };
-            if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_bounds()) {
-                chunk.draw(&self.shader, &(transform * child.local_transform()));
+            let bounds = chunk.get_bounds();
+            if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, bounds) {
+                let distance = eye.map_or(0.0, |eye| bounds.distance_xz(eye));
+                chunk.draw(&self.shader, &(transform * child.local_transform()), distance);
             }
         }
         unsafe {

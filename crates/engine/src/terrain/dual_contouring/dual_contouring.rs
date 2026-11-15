@@ -22,7 +22,7 @@ use crate::{
     terrain::{
         materials,
         scatter::{SCATTER_MAX_Y, SCATTER_MIN_Y},
-        Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT, USE_LOD,
+        Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
     },
 };
 
@@ -55,21 +55,16 @@ const CLOUD_UNIFORMS: &str = "uniform float uTime;\nuniform float cloudType;";
 const SCENE_COLOR_UNIT: u32 = 11;
 const SCENE_DEPTH_UNIT: u32 = 12;
 
-use fast_surface_nets::{
-    ndshape::{AbstractShape, RuntimeShape},
-    {surface_nets, SurfaceNetsBuffer},
-};
 
 use super::{
     water::{self, WaterVertex},
-    ChunkMesh, DualContouringChunk, Vertex,
+    ChunkMesh, DualContouringChunk, Vertex, LODS, LOD_DISTANCES, SKIRT_DEPTH, SKIRT_DEPTH_PER_STEP,
 };
 
 impl DualContouringChunk {
     /// The terrain's noise at chunk-local column `(x, z)`, 0..1. The ground
-    /// is a height field: the density of a voxel depends on its column's
-    /// noise and its height only (see `density`).
-    fn column_noise(&self, x: usize, z: usize) -> f32 {
+    /// is a height field (see `ground_height`).
+    fn column_noise(&self, x: i32, z: i32) -> f32 {
         let offset: f64 = 16777216.0;
         let sample_point = (
             (self.position.0 * CHUNK_SIZE_FLOAT) as f64 + x as f64 + offset,
@@ -78,50 +73,97 @@ impl DualContouringChunk {
         ((1.0 + self.noise.sample([sample_point.0, sample_point.1])) / 2.0) as f32
     }
 
-    /// Density at chunk-local height `y` of a column whose noise is `noise`.
-    fn density(noise: f32, y: usize) -> f32 {
-        1.0 - (noise / ((1.0 + y as f32) / CHUNK_SIZE_FLOAT))
-    }
-
-    fn generate_mesh(&self) -> ChunkMesh<Vertex> {
-        let mut vertices = Vec::<Vertex>::new();
-        let mut indices = Vec::<u32>::new();
-        let size = (self.chunk_size + 2) as u32;
-        let scale_factor = CHUNK_SIZE / self.chunk_size;
-        let shape = RuntimeShape::<u32, 3>::new([size, size, size]);
-        // The noise once per column instead of once per voxel: the field is
-        // the same, at a fraction of the cost.
-        let mut columns = vec![0.0; (size * size) as usize];
-        for z in 0..size {
-            for x in 0..size {
-                columns[(z * size + x) as usize] =
-                    self.column_noise(x as usize * scale_factor, z as usize * scale_factor);
+    /// The ground's meshes, finest first: `LODS` grids over the height
+    /// field, a metre apart and then 2, 4 and 8. Their normals all come
+    /// from the full-detail heights, so the light on the ground does not
+    /// change when a chunk switches between them. Each has a skirt hanging
+    /// down from its edges, deeper the coarser it is, which hides the gaps
+    /// where a neighbour with another level meets it.
+    fn generate_meshes(&self) -> Vec<ChunkMesh<Vertex>> {
+        if self.position.1 != 0.0 {
+            return Vec::new();
+        }
+        // The heights one point beyond the chunk on every side, for the
+        // normals at its edges.
+        let span = CHUNK_SIZE as i32 + 3;
+        let mut heights = Vec::with_capacity((span * span) as usize);
+        for z in -1..=CHUNK_SIZE as i32 + 1 {
+            for x in -1..=CHUNK_SIZE as i32 + 1 {
+                heights.push(self.column_noise(x, z) * CHUNK_SIZE_FLOAT - 1.0);
             }
         }
-        let mut sdf = vec![0.0; (size * size * size) as usize];
-        for i in 0..sdf.len() {
-            let [x, y, z] = shape.delinearize(i as u32);
-            sdf[i as usize] =
-                Self::density(columns[(z * size + x) as usize], y as usize * scale_factor);
-        }
-        let mut buffer = SurfaceNetsBuffer::default();
-        surface_nets(&sdf, &shape, [0; 3], [size as u32 - 1; 3], &mut buffer);
-        for (i, vertex) in buffer.positions.into_iter().enumerate() {
-            let normal = buffer.normals[i];
-            vertices.push(Vertex {
-                position: [
-                    vertex[0] * scale_factor as f32,
-                    vertex[1] * scale_factor as f32,
-                    vertex[2] * scale_factor as f32,
-                ],
-                normal,
-                color: [0.0, 0.5, 0.1],
-            });
-        }
-        for index in buffer.indices {
-            indices.push(index);
-        }
-        ChunkMesh::new(vertices, Some(indices))
+        let height = |x: i32, z: i32| heights[((z + 1) * span + (x + 1)) as usize];
+        let normal = |x: i32, z: i32| {
+            let n = [height(x - 1, z) - height(x + 1, z), 2.0, height(x, z - 1) - height(x, z + 1)];
+            let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            [n[0] / length, n[1] / length, n[2] / length]
+        };
+        (0..LODS)
+            .map(|lod| {
+                let step = 1 << lod;
+                let cells = CHUNK_SIZE as i32 / step;
+                let side = cells + 1;
+                let mut vertices = Vec::with_capacity((side * side + 4 * side) as usize);
+                for j in 0..side {
+                    for i in 0..side {
+                        let (x, z) = (i * step, j * step);
+                        vertices.push(Vertex {
+                            position: [x as f32, height(x, z), z as f32],
+                            normal: normal(x, z),
+                            color: [0.0, 0.5, 0.1],
+                        });
+                    }
+                }
+                let at = |i: i32, j: i32| (j * side + i) as u32;
+                let mut indices = Vec::with_capacity((cells * cells * 6 + 4 * cells * 12) as usize);
+                for j in 0..cells {
+                    for i in 0..cells {
+                        indices.extend_from_slice(&[
+                            at(i, j),
+                            at(i, j + 1),
+                            at(i + 1, j),
+                            at(i + 1, j),
+                            at(i, j + 1),
+                            at(i + 1, j + 1),
+                        ]);
+                    }
+                }
+                // The skirt: each edge again, lowered, joined to the edge by
+                // quads facing both ways.
+                let depth = SKIRT_DEPTH + SKIRT_DEPTH_PER_STEP * step as f32;
+                let edges: [Vec<(i32, i32)>; 4] = [
+                    (0..side).map(|i| (i, 0)).collect(),
+                    (0..side).map(|i| (i, cells)).collect(),
+                    (0..side).map(|j| (0, j)).collect(),
+                    (0..side).map(|j| (cells, j)).collect(),
+                ];
+                for edge in edges {
+                    let first = vertices.len() as u32;
+                    for &(i, j) in &edge {
+                        let mut lowered = vertices[at(i, j) as usize];
+                        lowered.position[1] -= depth;
+                        vertices.push(lowered);
+                    }
+                    for k in 0..edge.len() - 1 {
+                        let (top0, top1) = (at(edge[k].0, edge[k].1), at(edge[k + 1].0, edge[k + 1].1));
+                        let (low0, low1) = (first + k as u32, first + k as u32 + 1);
+                        indices.extend_from_slice(&[
+                            top0, low0, top1, top1, low0, low1, // one side
+                            top0, top1, low0, top1, low1, low0, // the other
+                        ]);
+                    }
+                }
+                ChunkMesh::new(vertices, Some(indices))
+            })
+            .collect()
+    }
+
+    /// The level of detail to draw at `distance` metres from the camera.
+    fn lod_at(distance: f32) -> usize {
+        LOD_DISTANCES
+            .iter()
+            .position(|&limit| distance < limit)
+            .unwrap_or(LODS - 1)
     }
 
     /// World height of the ground at world `(x, z)`: where the density
@@ -192,40 +234,24 @@ impl DualContouringChunk {
         }
         out
     }
-
-    fn calculate_chunk_size(lod: usize) -> usize {
-        let lod = std::cmp::max(
-            8,
-            std::cmp::min(
-                CHUNK_SIZE,
-                CHUNK_SIZE / 2usize.pow(if lod > 0 { (lod - 1) as u32 } else { 0 }),
-            ),
-        );
-        if USE_LOD {
-            lod
-        } else {
-            CHUNK_SIZE
-        }
-    }
 }
 
 impl Chunk for DualContouringChunk {
-    fn new(seed: u64, position: (f32, f32, f32), lod: usize) -> Self {
+    fn new(seed: u64, position: (f32, f32, f32), _lod: usize) -> Self {
         let noise = Source::perlin(seed).scale([0.003; 2]).fbm(6, 1.0, 2.0, 0.5);
         let mut chunk = Self {
             position,
             noise,
-            chunk_size: DualContouringChunk::calculate_chunk_size(lod),
-            mesh: None,
+            meshes: Vec::new(),
             water_mesh: None,
         };
-        chunk.mesh = Some(chunk.generate_mesh());
+        chunk.meshes = chunk.generate_meshes();
         chunk.water_mesh = chunk.generate_water_mesh();
         chunk
     }
 
     fn buffer_data(&mut self) {
-        if let Some(mesh) = &mut self.mesh {
+        for mesh in &mut self.meshes {
             mesh.buffer_data();
         }
         if let Some(water_mesh) = &mut self.water_mesh {
@@ -278,19 +304,15 @@ impl Chunk for DualContouringChunk {
     }
 
     fn get_triangle_count(&self) -> usize {
-        if let Some(mesh) = &self.mesh {
-            mesh.get_triangle_count()
-        } else {
-            0
-        }
+        self.meshes.first().map_or(0, ChunkMesh::get_triangle_count)
     }
 
     fn scatter_points(&self, salt: u64, attempts: u32) -> Vec<(f32, f32, f32, f32)> {
         self.scatter(salt, attempts)
     }
 
-    fn draw(&self, shader: &Shader, transform: &Matrix4<f32>) {
-        if let Some(mesh) = &self.mesh {
+    fn draw(&self, shader: &Shader, transform: &Matrix4<f32>, distance: f32) {
+        if let Some(mesh) = self.meshes.get(Self::lod_at(distance)).or(self.meshes.last()) {
             mesh.render(
                 shader,
                 &(transform
@@ -305,7 +327,8 @@ impl Chunk for DualContouringChunk {
     }
 
     fn get_vertices(&self) -> Vec<[f32; 3]> {
-        if let Some(mesh) = &self.mesh {
+        // The finest level: the colliders follow the ground closely.
+        if let Some(mesh) = self.meshes.first() {
             mesh.vertices
                 .iter()
                 .map(|v| [v.position[0], v.position[1], v.position[2]])
@@ -316,7 +339,7 @@ impl Chunk for DualContouringChunk {
     }
 
     fn get_indices(&self) -> Vec<[u32; 3]> {
-        if let Some(mesh) = &self.mesh {
+        if let Some(mesh) = self.meshes.first() {
             if let Some(indices) = &mesh.indices {
                 return indices.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
             }
@@ -434,5 +457,38 @@ impl Component for DualContouringChunk {
 impl VertexAttributes for Vertex {
     fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
         vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT)]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn levels_get_coarser_with_distance() {
+        assert_eq!(DualContouringChunk::lod_at(0.0), 0);
+        assert_eq!(DualContouringChunk::lod_at(200.0), 1);
+        assert_eq!(DualContouringChunk::lod_at(400.0), 2);
+        assert_eq!(DualContouringChunk::lod_at(5000.0), LODS - 1);
+    }
+
+    #[test]
+    fn neighbours_meet_at_their_edge_on_every_level() {
+        let left = DualContouringChunk::new(2, (0.0, 0.0, 0.0), 0);
+        let right = DualContouringChunk::new(2, (1.0, 0.0, 0.0), 0);
+        assert_eq!(left.meshes.len(), LODS);
+        for lod in 0..LODS {
+            let side = CHUNK_SIZE / (1 << lod) + 1;
+            for j in 0..side {
+                let a = left.meshes[lod].vertices[j * side + side - 1];
+                let b = right.meshes[lod].vertices[j * side];
+                assert_eq!(a.position[1], b.position[1]);
+                assert_eq!(a.position[2], b.position[2]);
+                assert_eq!(a.normal, b.normal);
+            }
+        }
+        // The finest level follows the ground the scatter and water use.
+        let v = left.meshes[0].vertices[5 * (CHUNK_SIZE + 1) + 7];
+        assert!((v.position[1] - left.ground_height(7.0, 5.0)).abs() < 1e-3);
     }
 }
