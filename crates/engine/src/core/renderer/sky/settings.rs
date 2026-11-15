@@ -119,7 +119,7 @@ mod tests {
     fn scenes_without_cloud_settings_get_the_defaults() {
         let settings: CloudSettings = ron::from_str("()").unwrap();
         assert_eq!(settings, CloudSettings::default());
-        let clamped = CloudSettings { cloud_type: CloudType::Stratus, altocumulus: 3.0, cirrus: -1.0 }.sanitized();
+        let clamped = CloudSettings { cloud_type: CloudType::Stratus, altocumulus: 3.0, cirrus: -1.0, reprojection: false }.sanitized();
         assert_eq!((clamped.altocumulus, clamped.cirrus), (1.0, 0.0));
     }
 }
