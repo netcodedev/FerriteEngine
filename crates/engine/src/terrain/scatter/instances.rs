@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 
-use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, Vector3, Zero};
+use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, Vector3, Zero};
 use gl::types::{GLsizei, GLsizeiptr, GLuint, GLvoid};
 use glfw::WindowEvent;
 use rapier3d::prelude::{ColliderBuilder, ColliderHandle, Pose, Rotation, Vector};
@@ -34,6 +34,10 @@ pub struct ScatterInstances {
     /// `instances_by_variant[k]` — placements assigned to variant `k`. Empty slots
     /// are preserved so indices align with `ScatterModel::variants`.
     instances_by_variant: Vec<Vec<Matrix4<f32>>>,
+    /// `cells_by_variant[k]` — runs of `instances_by_variant[k]` (sorted
+    /// by cell) standing in the same `CELL_SIZE` square, culled and given
+    /// a detail tier together. Empty for `single`, which draws everything.
+    cells_by_variant: Vec<Vec<InstanceCell>>,
     center: Point3<f32>,
     /// Box around every instance, for frustum culling.
     bounds: ChunkBounds,
@@ -43,6 +47,62 @@ pub struct ScatterInstances {
     /// without removing the chunk they stand on.
     colliders: Vec<ColliderHandle>,
     gpu: RefCell<Option<ScatterGpu>>,
+}
+
+/// Edge of the squares instances are culled and tiered by, in metres.
+const CELL_SIZE: f32 = 16.0;
+
+/// A run of instances in the same square (see `cells_by_variant`).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct InstanceCell {
+    pub(super) start: u32,
+    pub(super) count: u32,
+    /// Sphere around everything the instances draw.
+    pub(super) center: Point3<f32>,
+    pub(super) radius: f32,
+}
+
+/// Sort `instances` by the `CELL_SIZE` square they stand in and return the
+/// runs. `reach`, `low`, `high`: how far a variant extends sideways, down
+/// and up from where it stands.
+pub(super) fn group_into_cells(
+    instances: &mut [Matrix4<f32>],
+    reach: f32,
+    low: f32,
+    high: f32,
+) -> Vec<InstanceCell> {
+    let cell_of = |m: &Matrix4<f32>| {
+        (
+            (m.w.x / CELL_SIZE).floor() as i32,
+            (m.w.z / CELL_SIZE).floor() as i32,
+        )
+    };
+    instances.sort_by_key(cell_of);
+    let mut cells = Vec::new();
+    let mut start = 0;
+    while start < instances.len() {
+        let key = cell_of(&instances[start]);
+        let mut end = start + 1;
+        while end < instances.len() && cell_of(&instances[end]) == key {
+            end += 1;
+        }
+        let mut min = [f32::MAX; 3];
+        let mut max = [f32::MIN; 3];
+        for m in &instances[start..end] {
+            let (x, y, z) = (m.w.x, m.w.y, m.w.z);
+            min = [min[0].min(x - reach), min[1].min(y + low), min[2].min(z - reach)];
+            max = [max[0].max(x + reach), max[1].max(y + high), max[2].max(z + reach)];
+        }
+        let half = Vector3::new(max[0] - min[0], max[1] - min[1], max[2] - min[2]) * 0.5;
+        cells.push(InstanceCell {
+            start: start as u32,
+            count: (end - start) as u32,
+            center: Point3::new(min[0] + half.x, min[1] + half.y, min[2] + half.z),
+            radius: (half.x * half.x + half.y * half.y + half.z * half.z).sqrt(),
+        });
+        start = end;
+    }
+    cells
 }
 
 struct ScatterGpu {
@@ -82,6 +142,7 @@ impl ScatterInstances {
             return Self {
                 spec,
                 instances_by_variant: Vec::new(),
+                cells_by_variant: Vec::new(),
                 center: Point3::new(0.0, 0.0, 0.0),
                 bounds: ChunkBounds {
                     min: (0, 0, 0),
@@ -128,10 +189,15 @@ impl ScatterInstances {
             min: (min[0].floor() as i32, min[1].floor() as i32, min[2].floor() as i32),
             max: (max[0].ceil() as i32, max[1].ceil() as i32, max[2].ceil() as i32),
         };
+        let cells_by_variant = instances_by_variant
+            .iter_mut()
+            .map(|instances| group_into_cells(instances, reach, low, high))
+            .collect();
 
         Self {
             spec,
             instances_by_variant,
+            cells_by_variant,
             center,
             bounds,
             placements: placements.to_vec(),
@@ -155,6 +221,7 @@ impl ScatterInstances {
         Self {
             spec: spec.clone(),
             instances_by_variant,
+            cells_by_variant: Vec::new(),
             center: Point3::new(0.0, 0.0, 0.0),
             bounds: ChunkBounds {
                 min: (0, 0, 0),
@@ -182,6 +249,7 @@ impl ScatterInstances {
         // Rebuilt from what is left; the GPU buffers follow on the next draw.
         let rest = Self::new(&self.spec, &self.placements);
         self.instances_by_variant = rest.instances_by_variant;
+        self.cells_by_variant = rest.cells_by_variant;
         *self.gpu.borrow_mut() = None;
         Some(TakenInstance {
             spec: self.spec.clone(),
@@ -421,16 +489,13 @@ impl Component for ScatterInstances {
         let Some(lighting) = Lighting::from_scene(scene) else {
             return;
         };
-        let d = self.center - lighting.camera_position;
-        let distance = (d.x * d.x + d.y * d.y + d.z * d.z).sqrt();
         // Shadow maps and other depth passes away from the camera's view
         // take a coarser tier: their texels are bigger than the detail.
         let in_view = crate::core::renderer::hdr::draws_to_view()
             || crate::core::renderer::ssao::in_depth_pass();
-        let lod = if in_view {
-            LodChoice::Distance(distance)
-        } else {
-            LodChoice::Shadow(distance)
+        let lod = LodChoice::PerCell {
+            eye: lighting.camera_position,
+            shadow: !in_view,
         };
         self.draw(view_projection, parent_transform, &lighting, lod);
     }
@@ -471,31 +536,82 @@ impl ScatterInstances {
                 // LEQUAL: the scene's depth may already be drawn.
                 gl::DepthFunc(gl::LEQUAL);
                 gl::Disable(gl::CULL_FACE);
+                let planes = matches!(lod, LodChoice::PerCell { .. })
+                    .then(|| ViewFrustum::planes(view_projection));
+                // (tier, first instance, instances) of what is drawn.
+                let mut runs: Vec<(usize, u32, u32)> = Vec::new();
                 for (variant_idx, variant_gpu_opt) in gpu.variants.iter().enumerate() {
                     let Some(variant_gpu) = variant_gpu_opt else { continue };
                     let kind = &r.variants[variant_idx];
-                    let lod_idx = match lod {
-                        LodChoice::Distance(distance) => pick_lod_index(distance, kind.lods.len()),
-                        LodChoice::Fixed(tier) => tier.min(kind.lods.len().saturating_sub(1)),
-                        LodChoice::Shadow(distance) => {
-                            shadow_lod_index(distance, kind.lods.len())
+                    let tiers = kind.lods.len();
+                    runs.clear();
+                    let cells = self.cells_by_variant.get(variant_idx);
+                    match (lod, &planes, cells) {
+                        (LodChoice::PerCell { eye, shadow }, Some(planes), Some(cells))
+                            if !cells.is_empty() =>
+                        {
+                            for cell in cells {
+                                if !ViewFrustum::is_sphere_visible(planes, cell.center, cell.radius)
+                                {
+                                    continue;
+                                }
+                                let distance = (cell.center - eye).magnitude();
+                                let tier = if shadow {
+                                    shadow_lod_index(distance, tiers)
+                                } else {
+                                    pick_lod_index(distance, tiers)
+                                };
+                                // Neighbouring cells of a tier: one draw.
+                                match runs.last_mut() {
+                                    Some((last, start, count))
+                                        if *last == tier && *start + *count == cell.start =>
+                                    {
+                                        *count += cell.count;
+                                    }
+                                    _ => runs.push((tier, cell.start, cell.count)),
+                                }
+                            }
                         }
-                    };
-                    let lod = &kind.lods[lod_idx];
-                    let vaos = &variant_gpu.vaos[lod_idx];
-                    for (sub_idx, sub) in lod.submeshes.iter().enumerate() {
-                        pbr::bind_material(
-                            &r.shader,
-                            kind.model.material_textures(sub.material_index),
-                        );
-                        gl::BindVertexArray(vaos[sub_idx]);
-                        gl::DrawElementsInstanced(
-                            gl::TRIANGLES,
-                            sub.index_count,
-                            gl::UNSIGNED_INT,
-                            std::ptr::null(),
-                            variant_gpu.instance_count,
-                        );
+                        _ => {
+                            let tier = match lod {
+                                LodChoice::Distance(distance) => pick_lod_index(distance, tiers),
+                                LodChoice::Fixed(tier) => tier.min(tiers.saturating_sub(1)),
+                                LodChoice::Shadow(distance) => shadow_lod_index(distance, tiers),
+                                LodChoice::PerCell { eye, shadow } => {
+                                    let distance = (self.center - eye).magnitude();
+                                    if shadow {
+                                        shadow_lod_index(distance, tiers)
+                                    } else {
+                                        pick_lod_index(distance, tiers)
+                                    }
+                                }
+                            };
+                            runs.push((tier, 0, variant_gpu.instance_count as u32));
+                        }
+                    }
+                    for lod_idx in 0..tiers {
+                        if !runs.iter().any(|run| run.0 == lod_idx) {
+                            continue;
+                        }
+                        let lod = &kind.lods[lod_idx];
+                        let vaos = &variant_gpu.vaos[lod_idx];
+                        for (sub_idx, sub) in lod.submeshes.iter().enumerate() {
+                            pbr::bind_material(
+                                &r.shader,
+                                kind.model.material_textures(sub.material_index),
+                            );
+                            gl::BindVertexArray(vaos[sub_idx]);
+                            for &(_, start, count) in runs.iter().filter(|run| run.0 == lod_idx) {
+                                gl::DrawElementsInstancedBaseInstance(
+                                    gl::TRIANGLES,
+                                    sub.index_count,
+                                    gl::UNSIGNED_INT,
+                                    std::ptr::null(),
+                                    count as GLsizei,
+                                    start,
+                                );
+                            }
+                        }
                     }
                 }
                 gl::BindVertexArray(0);
