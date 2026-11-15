@@ -211,43 +211,7 @@ impl Model {
         model_dir: &str,
         slot: &TextureType,
     ) -> Option<Texture> {
-        let trimmed = raw_path.trim_end_matches('\0').trim();
-        let file_name = super::outline::texture_file_name(raw_path)?;
-        // Some FBX exporters write spaces in texture names while the on-disk
-        // file uses underscores (or vice versa), so try both spellings.
-        let space_underscore = file_name.replace(' ', "_");
-        let underscore_space = file_name.replace('_', " ");
-
-        let mut name_variants = vec![file_name.to_string()];
-        if space_underscore != file_name {
-            name_variants.push(space_underscore);
-        }
-        if underscore_space != file_name {
-            name_variants.push(underscore_space);
-        }
-
-        // Search the model's own directory first (most assets ship their
-        // textures alongside the model file), then fall back to the project's
-        // standard texture/model directories.
-        let model_dir_string = model_dir.to_string();
-        let model_dir_textures = format!("{model_dir}/textures");
-        let dirs: [&str; 5] = [
-            model_dir_string.as_str(),
-            model_dir_textures.as_str(),
-            "assets/models",
-            "assets/models/textures",
-            "assets/textures",
-        ];
-
-        let mut candidates: Vec<String> = Vec::new();
-        for dir in &dirs {
-            for name in &name_variants {
-                candidates.push(format!("{dir}/{name}"));
-            }
-        }
-        candidates.push(trimmed.to_string());
-
-        candidates
+        texture_candidates(raw_path, model_dir)
             .iter()
             .find_map(|candidate| read_image(std::path::Path::new(candidate)))
             .map(|image| upload_map(image, slot))
@@ -1039,9 +1003,62 @@ fn ray_triangle(
     (t >= 0.0).then_some(t)
 }
 
+/// Where a texture a material names (`raw_path`) may be, best first: as a
+/// path relative to the model (as OBJ materials write them, e.g.
+/// `../shared/textures/wood.jpg`), then by its file name (spaces and
+/// underscores either way) next to the model, in its `textures` folder and
+/// the project's model and texture folders, and last as written.
+fn texture_candidates(raw_path: &str, model_dir: &str) -> Vec<String> {
+    let trimmed = raw_path.trim_end_matches('\0').trim();
+    let Some(file_name) = super::outline::texture_file_name(raw_path) else {
+        return Vec::new();
+    };
+    // Some FBX exporters write spaces in texture names while the on-disk
+    // file uses underscores (or vice versa), so try both spellings.
+    let mut name_variants = vec![file_name.to_string()];
+    for variant in [file_name.replace(' ', "_"), file_name.replace('_', " ")] {
+        if !name_variants.contains(&variant) {
+            name_variants.push(variant);
+        }
+    }
+    let dirs = [
+        model_dir.to_string(),
+        format!("{model_dir}/textures"),
+        "assets/models".to_string(),
+        "assets/models/textures".to_string(),
+        "assets/textures".to_string(),
+    ];
+    let mut candidates: Vec<String> = Vec::new();
+    // Absolute here or on Windows (`C:\...`): from another machine.
+    let absolute = std::path::Path::new(trimmed).is_absolute()
+        || trimmed.starts_with('\\')
+        || trimmed.as_bytes().get(1) == Some(&b':');
+    if !trimmed.is_empty() && !absolute {
+        candidates.push(format!("{model_dir}/{}", trimmed.replace('\\', "/")));
+    }
+    for dir in &dirs {
+        for name in &name_variants {
+            candidates.push(format!("{dir}/{name}"));
+        }
+    }
+    candidates.push(trimmed.to_string());
+    candidates
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn textures_are_looked_for_relative_to_the_model_first() {
+        let c = texture_candidates("../building/textures/wood_BaseColor.jpg", "assets/models/props");
+        assert_eq!(c[0], "assets/models/props/../building/textures/wood_BaseColor.jpg");
+        assert!(c.contains(&"assets/models/props/wood_BaseColor.jpg".to_string()));
+        assert!(c.contains(&"assets/models/props/wood BaseColor.jpg".to_string()));
+        // An artist's absolute path only by its file name.
+        let c = texture_candidates("C:\\Users\\me\\bark.png", "m");
+        assert_eq!(c[0], "m/bark.png");
+    }
 
     #[test]
     fn a_ray_hits_a_triangle_from_either_side() {
