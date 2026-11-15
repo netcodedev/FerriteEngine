@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
 use cgmath::{Matrix4, Point3, Quaternion, Vector3};
 use russimp_ng::{material::TextureType, scene::Scene};
@@ -52,6 +55,15 @@ pub struct Model {
     /// Drawn as a see-through silhouette of this colour; see
     /// `Model::set_tint`.
     tint: Option<[f32; 4]>,
+    /// Skinning matrices per mesh name, as last uploaded: without (0) and
+    /// with (1) the hidden bones collapsed. A frame draws the model in up
+    /// to about nine passes with the same pose; emptied when the pose,
+    /// the meshes or the hidden bones change.
+    bone_cache: [RefCell<HashMap<String, Vec<Matrix4<f32>>>>; 2],
+    /// Box around every mesh in model space, for frustum culling. `None`
+    /// for skinned models, whose bones can move vertices anywhere, and
+    /// before `init`.
+    cull_bounds: Option<(Point3<f32>, Point3<f32>)>,
 }
 
 /// Raw per-submesh geometry extracted from a `Model` for callers that need
