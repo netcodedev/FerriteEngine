@@ -156,7 +156,11 @@ impl Project {
 /// engine's own `assets` folder into the project at `dir`, keeping files
 /// that are already there. Returns how many files were copied.
 pub fn copy_player_assets(dir: &Path) -> Result<usize, String> {
-    let engine_assets = engine_workspace().join("assets");
+    copy_player_assets_from(&engine_workspace().join("assets"), dir)
+}
+
+/// [`copy_player_assets`] from the assets folder `engine_assets`.
+fn copy_player_assets_from(engine_assets: &Path, dir: &Path) -> Result<usize, String> {
     if !engine_assets.is_dir() {
         return Err(format!("no engine assets at {}", engine_assets.display()));
     }
@@ -203,12 +207,9 @@ mod tests {
         for folder in FOLDERS {
             assert!(project.dir().join(folder).is_dir(), "{folder}");
         }
-        // It opens with a scene to look at, and the player prefab works.
+        // It opens with a scene to look at.
         assert_eq!(project.file.startup_scene.as_deref(), Some(STARTER_SCENE_PATH));
         assert!(project.dir().join(STARTER_SCENE_PATH).is_file());
-        let model = format!("assets/models/{}", crate::player::PLAYER_MODEL_FILE);
-        assert!(project.dir().join(model).is_file());
-        assert!(project.dir().join("assets/animations/Idle.fbx").is_file());
 
         let mut changed = project.clone();
         changed.file.startup_scene = Some("scenes/main.ron".into());
@@ -218,6 +219,43 @@ mod tests {
         assert_eq!(loaded.file, changed.file);
         // Creating it again opens what is there.
         assert_eq!(Project::create(project.dir()).unwrap().file, changed.file);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The engine's `assets` folder is not in the repository (CI has none),
+    /// so this copies from a stand-in for it.
+    #[test]
+    fn the_player_model_and_animations_are_copied_and_kept() {
+        let dir = std::env::temp_dir().join(format!("ferrite-player-assets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let engine_assets = dir.join("engine-assets");
+        let project = dir.join("project");
+        let model = crate::player::PLAYER_MODEL_FILE;
+        let meta = format!("{model}{}", assets::META_SUFFIX);
+        std::fs::create_dir_all(engine_assets.join("models")).unwrap();
+        std::fs::create_dir_all(engine_assets.join("animations")).unwrap();
+        std::fs::write(engine_assets.join("models").join(model), "model").unwrap();
+        std::fs::write(engine_assets.join("models").join(&meta), "meta").unwrap();
+        std::fs::write(engine_assets.join("models/Other.fbx"), "other").unwrap();
+        std::fs::write(engine_assets.join("animations/Idle.fbx"), "idle").unwrap();
+        std::fs::write(engine_assets.join("animations/Walk.fbx"), "walk").unwrap();
+
+        assert_eq!(copy_player_assets_from(&engine_assets, &project), Ok(4));
+        let copied = |path: &str| std::fs::read_to_string(project.join("assets").join(path)).ok();
+        assert_eq!(copied(&format!("models/{model}")).as_deref(), Some("model"));
+        assert_eq!(copied(&format!("models/{meta}")).as_deref(), Some("meta"));
+        assert_eq!(copied("animations/Idle.fbx").as_deref(), Some("idle"));
+        assert_eq!(copied("animations/Walk.fbx").as_deref(), Some("walk"));
+        // Only what the player needs.
+        assert_eq!(copied("models/Other.fbx"), None);
+
+        // Files already in the project are kept.
+        std::fs::write(project.join("assets/animations/Idle.fbx"), "mine").unwrap();
+        assert_eq!(copy_player_assets_from(&engine_assets, &project), Ok(0));
+        assert_eq!(copied("animations/Idle.fbx").as_deref(), Some("mine"));
+
+        // Without engine assets it says so instead of copying nothing.
+        assert!(copy_player_assets_from(&dir.join("nowhere"), &project).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
