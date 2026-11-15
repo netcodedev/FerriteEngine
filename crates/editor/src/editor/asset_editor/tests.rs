@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use ferrite::core::assets::{AssetId, AssetKind, AssetMeta, ModelSettings};
+use ferrite::core::assets::{MaterialSettings, ASSET_META_VERSION};
 
 use super::*;
-use ferrite::core::assets::{MaterialSettings, ASSET_META_VERSION};
 
 fn edit() -> AssetEdit {
     AssetEdit {
