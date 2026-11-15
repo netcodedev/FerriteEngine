@@ -224,8 +224,10 @@ pub fn catalog() -> Vec<Tool> {
              Shape(kind: Cube, color: (1.0, 0.6, 0.2)) or a light: Light(kind: Point, \
              color: (1.0, 0.7, 0.4), intensity: 8.0, range: 12.0) (kind Point, Spot or \
              Directional; spot and directional lights shine along the entity's -Y axis; \
-             every field may be left out). editor_component_catalog lists every kind with \
-             its RON.",
+             every field may be left out), or particles: Particles(effect: (rate: 20.0, \
+             look: Smoke)) (every field may be left out; editor_component_catalog has \
+             presets: fire, smoke, embers, sparks, dust, ...). editor_component_catalog \
+             lists every kind with its RON.",
             json!({"scene": scene_arg(), "id": {"type": "integer"}, "ron": {"type": "string"}}),
             &["scene", "id", "ron"],
         ),

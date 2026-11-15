@@ -47,8 +47,8 @@ There is no undo yet.
 ## Components
 
 "Add component" in the inspector offers Camera, Sky light, Point light,
-Spot light, Directional light, Terrain, Debug controller, Shape, and every
-loaded script. Removing a component calls its
+Spot light, Directional light, each particle preset (Particles: Fire,
+Smoke, ...), Terrain, Debug controller, Shape, and every loaded script. Removing a component calls its
 `on_remove`, so physics bodies leave the world with it.
 
 - **Camera**: with "free fly" on it flies in play mode with WASD or the
@@ -61,6 +61,9 @@ loaded script. Removing a component calls its
 - **Lights**: a point, spot or directional light in any colour. Each shows
   as a small star in its colour in the viewport; the selected one also its
   range, cone or direction. See [lighting.md](lighting.md).
+- **Particles**: an effect, shown as a diamond in its colour; the selected
+  one also shows its shape and direction. The `preset` field switches it
+  to another preset. See [particles.md](particles.md).
 - **Sky light**: the sun, moon, clouds, weather, exposure, and the night
   and bounce light (`moonlight`, `night sky light`, `light bounce`).
 

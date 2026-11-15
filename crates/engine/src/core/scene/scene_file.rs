@@ -26,6 +26,7 @@ use crate::{
                 light::{Light, LightKind, LightSettings},
                 skylight::SkyLight,
             },
+            particles::{ParticleEffect, ParticleEmitter, ParticlePreset},
             sky::CloudSettings,
             ssao::AmbientOcclusionSettings, weather::Weather,
         },
@@ -137,6 +138,14 @@ pub enum ComponentData {
         enabled: bool,
         #[serde(default = "light_default::shadows")]
         shadows: bool,
+        #[serde(default)]
+        flicker: f32,
+    },
+    /// Particles (fire, smoke, dust, ...); every field of the effect may be
+    /// left out (see `ParticleEffect`).
+    Particles {
+        #[serde(default)]
+        effect: ParticleEffect,
     },
     Terrain {
         seed: u64,
@@ -215,6 +224,7 @@ impl ComponentData {
             ComponentData::Camera { .. } => "Camera",
             ComponentData::SkyLight { .. } => "Sky light",
             ComponentData::Light { .. } => "Light",
+            ComponentData::Particles { .. } => "Particles",
             ComponentData::Terrain { .. } => "Terrain",
             ComponentData::DebugController => "Debug controller",
             ComponentData::Player => "Player",
@@ -261,10 +271,22 @@ impl ComponentData {
                     ..LightSettings::default()
                 }),
             ),
+        ]
+        .into_iter()
+        .chain(ParticlePreset::ALL.iter().map(|preset| {
+            (
+                format!("Particles: {}", preset.name()),
+                ComponentData::Particles {
+                    effect: preset.effect(),
+                },
+            )
+        }))
+        .chain(vec![
             ("Terrain".into(), ComponentData::bare_terrain(2)),
             ("Debug controller".into(), ComponentData::DebugController),
             ("Shape".into(), ComponentData::default_shape()),
-        ]
+        ])
+        .collect()
     }
 
     pub fn default_camera() -> Self {
@@ -321,6 +343,7 @@ impl ComponentData {
             bounce,
             enabled,
             shadows,
+            flicker,
         } = settings;
         ComponentData::Light {
             kind,
@@ -332,6 +355,7 @@ impl ComponentData {
             bounce,
             enabled,
             shadows,
+            flicker,
         }
     }
 
@@ -348,6 +372,7 @@ impl ComponentData {
                 bounce,
                 enabled,
                 shadows,
+                flicker,
             } => Some(LightSettings {
                 kind,
                 color,
@@ -358,6 +383,7 @@ impl ComponentData {
                 bounce,
                 enabled,
                 shadows,
+                flicker,
             }),
             _ => None,
         }
@@ -411,6 +437,9 @@ impl ComponentData {
             ComponentData::Light { .. } => {
                 let settings = self.light_settings().expect("a light");
                 entity.add_component(Light::new(settings));
+            }
+            ComponentData::Particles { effect } => {
+                entity.add_component(ParticleEmitter::new(*effect));
             }
             ComponentData::Terrain { seed, scatter } => {
                 entity.add_component(
@@ -838,6 +867,7 @@ mod tests {
             bounce: 0.5,
             enabled: false,
             shadows: false,
+            flicker: 0.25,
         });
         let text = ron::to_string(&data).unwrap();
         assert!(text.starts_with("Light("), "{text}");

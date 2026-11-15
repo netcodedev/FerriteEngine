@@ -71,6 +71,7 @@ crates/engine/src/
 │   │                  ├── hdr (ACES / filmic tone mapping, bloom, exposure)
 │   │                  ├── light (sky light, cascaded shadow maps, scene
 │   │                  │         lights, moon and bounce light)
+│   │                  ├── particles (emitters, presets, simulation, drawing)
 │   │                  ├── pbr (shading)
 │   │                  ├── shader (compile / link, VAOs, attributes)
 │   │                  ├── sky (cumulus, altocumulus, cumulonimbus)
@@ -135,7 +136,8 @@ The tests cover what runs without a GPU: scene and project files, the
 starter scene, the camera and projection math, the view frustum, terrain
 chunk bounds, entity trees, finding scripts in a scene, the shapes' meshes,
 the network protocol, the UI's text input and sliders, lights (settings,
-placement, choosing the frame's lights, the moon, which lights get
+placement, choosing the frame's lights, flicker), particles (emission,
+forces, shapes, presets, packing), the moon, which lights get
 shadows and which cube faces are drawn), the animation
 graphs, scatter seeding, the weather, the editor's bridge handling
 (property conversion, screenshots) and the whole MCP server, including the

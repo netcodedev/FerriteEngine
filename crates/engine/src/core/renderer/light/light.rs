@@ -92,6 +92,8 @@ pub struct LightSettings {
     /// Point and spot lights: whether things block it (see `shadow`). Only
     /// the few lights nearest the camera get shadows each frame.
     pub shadows: bool,
+    /// How much its brightness wavers, like a flame: 0 steady, 1 a lot.
+    pub flicker: f32,
 }
 
 impl Default for LightSettings {
@@ -107,6 +109,7 @@ impl Default for LightSettings {
             bounce: 1.0,
             enabled: true,
             shadows: true,
+            flicker: 0.0,
         }
     }
 }
@@ -163,6 +166,7 @@ impl LightSettings {
         s.set_outer_angle(self.outer_angle);
         s.set_inner_angle(self.inner_angle.min(s.outer_angle));
         s.set_bounce(self.bounce);
+        s.flicker = clamp_finite(self.flicker, (0.0, 1.0), 0.0);
         s
     }
 
@@ -196,12 +200,29 @@ pub fn srgb_to_linear(c: f32) -> f32 {
 #[derive(Clone, Debug, Default)]
 pub struct Light {
     settings: LightSettings,
+    /// Seconds it has been running, for the flicker.
+    time: f32,
+    /// Where the flicker starts, so lights do not flicker in step.
+    phase: f32,
+}
+
+/// How bright a flickering light is at `time`, 0..1 of its intensity for
+/// `flicker` 0..1: a few waves of different speeds, like a flame.
+pub fn flicker_at(flicker: f32, time: f32) -> f32 {
+    let t = time;
+    let wave = (t * 7.3).sin() * 0.45 + (t * 13.1 + 1.7).sin() * 0.3 + (t * 23.7 + 4.1).sin() * 0.25;
+    // wave is -1..1; at most `flicker` of the light goes.
+    1.0 - flicker * 0.5 * (1.0 + wave)
 }
 
 impl Light {
     pub fn new(settings: LightSettings) -> Self {
+        static PHASE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = PHASE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Self {
             settings: settings.sanitized(),
+            time: 0.0,
+            phase: n as f32 * 3.17,
         }
     }
 
@@ -241,7 +262,9 @@ impl Light {
             kind: s.kind,
             position,
             direction,
-            radiance: s.radiance(),
+            radiance: s
+                .radiance()
+                .map(|c| c * flicker_at(s.flicker, self.time + self.phase)),
             range: s.range,
             cos_inner: s.inner_angle.to_radians().cos(),
             cos_outer: s.outer_angle.to_radians().cos(),
@@ -253,7 +276,13 @@ impl Light {
 }
 
 impl Component for Light {
-    fn update(&mut self, _: &mut Scene, _: &mut Entity, _: f64) {}
+    fn update(&mut self, _: &mut Scene, _: &mut Entity, delta_time: f64) {
+        self.time += delta_time as f32;
+    }
+
+    fn update_in_editor(&mut self, _: &mut Scene, _: &mut Entity, delta_time: f64) {
+        self.time += delta_time as f32;
+    }
 
     fn handle_event(&mut self, _: &mut Glfw, _: &mut glfw::Window, _: &WindowEvent) {}
 
@@ -276,6 +305,7 @@ impl Component for Light {
             ),
             Property::bool("enabled", s.enabled),
             Property::bool("shadows", s.shadows),
+            Property::ranged("flicker", s.flicker, 0.0, 1.0),
             Property::ranged("color r", r, 0.0, 1.0),
             Property::ranged("color g", g, 0.0, 1.0),
             Property::ranged("color b", b, 0.0, 1.0),
@@ -348,6 +378,7 @@ impl Component for Light {
             "inner angle" => float.into_iter().for_each(|v| s.set_inner_angle(v)),
             "outer angle" => float.into_iter().for_each(|v| s.set_outer_angle(v)),
             "bounce" => float.into_iter().for_each(|v| s.set_bounce(v)),
+            "flicker" => float.into_iter().for_each(|v| s.flicker = v.clamp(0.0, 1.0)),
             _ => {}
         }
     }
@@ -609,6 +640,7 @@ mod tests {
             bounce: 0.5,
             enabled: true,
             shadows: true,
+            flicker: 0.0,
         });
         let p = light.source(&at(1.0, 2.0, 3.0)).unwrap().packed();
         assert_eq!(p[0], [1.0, 2.0, 3.0, 9.0]);
@@ -651,6 +683,18 @@ mod tests {
         let a = Light::point([1.0; 3], 1.0, 5.0).source(&at(50.0, 0.0, 0.0)).unwrap();
         let b = Light::point([1.0; 3], 1.0, 5.0).source(&at(1.0, 0.0, 0.0)).unwrap();
         assert_eq!(select(vec![a, b], Point3::origin()), vec![a, b]);
+    }
+
+    #[test]
+    fn a_flickering_light_wavers_within_its_flicker() {
+        let mut lowest: f32 = 1.0;
+        for i in 0..1000 {
+            let f = flicker_at(0.6, i as f32 * 0.013);
+            assert!((0.4 - 1e-4..=1.0 + 1e-4).contains(&f), "{f}");
+            lowest = lowest.min(f);
+        }
+        assert!(lowest < 0.6);
+        assert_eq!(flicker_at(0.0, 3.0), 1.0);
     }
 
     #[test]

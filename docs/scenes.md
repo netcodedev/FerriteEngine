@@ -68,9 +68,10 @@ This is the starter scene a new project gets (plus a crate), in
 | --- | --- |
 | `Camera(position, yaw_deg, pitch_deg, fov_deg, near, far, speed, free)` | `free` (default false): flies with WASD and the mouse in play mode |
 | `SkyLight(time_of_day, day_length_seconds, paused, cloud_coverage, …)` | `clouds`, `ambient_occlusion`, `hdr`, `weather`, `global_illumination` are optional |
-| `Light(kind: Point \| Spot \| Directional, color, intensity, range, inner_angle, outer_angle, bounce, enabled, shadows)` | Every field optional; see [lighting.md](lighting.md) |
+| `Light(kind: Point \| Spot \| Directional, color, intensity, range, inner_angle, outer_angle, bounce, enabled, shadows, flicker)` | Every field optional; see [lighting.md](lighting.md) |
 | `Terrain(seed, scatter: [(asset: …, density: …)])` | `density`: placements tried per 100 m × 100 m |
 | `Shape(kind: Cube \| Sphere \| Cylinder, color: (r, g, b))` | sRGB, 0 to 1; one metre across |
+| `Particles(effect: (...))` | Fire, smoke, dust, ...; every field optional, see [particles.md](particles.md) |
 | `Model(asset: …)` | A model asset (its id from the `.asset.ron` file) |
 | `Script(name: "Lantern", data: {"radius": 5.0})` | A project script and its parameters; `data: ()` for its defaults |
 | `Player` | Prefab: model, animation graph, physics capsule, bone colliders |

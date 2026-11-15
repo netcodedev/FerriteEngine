@@ -23,6 +23,7 @@ A personal project to get a better understanding of Rust and OpenGL: a 3D engine
 - [Editor](docs/editor.md) — panels, gizmos, play mode, animation graphs
 - [Scenes](docs/scenes.md) — the scene file format
 - [Lighting](docs/lighting.md) — point, spot and directional lights, the moon, bounce light
+- [Particles](docs/particles.md) — fire, smoke, embers, dust and more, presets and effects
 - [Scripting](docs/scripting.md) — writing `#[derive(Script)]` components
 - [Multiplayer](docs/multiplayer.md) — players, world events, the server
 - [MCP server](docs/mcp-server.md) — driving the editor side from an AI

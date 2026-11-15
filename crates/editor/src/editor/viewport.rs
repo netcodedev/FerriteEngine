@@ -9,6 +9,7 @@ use ferrite::core::{
     entity::{component::camera_component::CameraComponent, Entity, EntityHandle},
     renderer::{
         light::light::{srgb_to_linear, Light, LightKind},
+        particles::{EmitterShape, ParticleEmitter},
         line::{Line, LineRenderer},
     },
     scene::Scene,
@@ -456,6 +457,7 @@ impl Viewport {
         };
         let vp = camera.get_view_projection();
         self.render_lights(scene, &vp, rect, selected);
+        self.render_emitters(scene, &vp, rect, selected);
 
         let Some(id) = selected else {
             return;
@@ -547,6 +549,129 @@ impl Viewport {
             render_thick_lines(vp, &lines, color, rect, width);
         }
     }
+}
+
+impl Viewport {
+    /// A small diamond for every particle emitter, in the colour of its
+    /// particles; for the selected one also its shape and direction.
+    fn render_emitters(
+        &self,
+        scene: &Scene,
+        vp: &Matrix4<f32>,
+        rect: Rect,
+        selected: Option<EntityHandle>,
+    ) {
+        for (id, transform, emitter) in collect_components::<ParticleEmitter>(scene) {
+            let e = emitter.effect();
+            let center = Point3::from_vec(transform.w.truncate());
+            let [r, g, b, _] = e.color_middle;
+            let c = Vector3::new(srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b));
+            let color = c / c.x.max(c.y).max(c.z).max(1e-3);
+            let size = self.gizmo_size(center) * LIGHT_MARKER_SCALE;
+            let mut lines = diamond_lines(center, size);
+            let is_selected = selected == Some(id);
+            if is_selected {
+                let axis = |v: Vector4<f32>| (transform * v).truncate();
+                let (x, y, z) = (
+                    axis(Vector4::unit_x()),
+                    axis(Vector4::unit_y()),
+                    axis(Vector4::unit_z()),
+                );
+                match e.shape {
+                    EmitterShape::Point => {}
+                    EmitterShape::Sphere(radius) => {
+                        for a in [x, y, z] {
+                            if a.magnitude2() > 1e-12 {
+                                lines.extend(circle_lines(center, a.normalize(), radius * a.magnitude()));
+                            }
+                        }
+                    }
+                    EmitterShape::Disc(radius) => {
+                        if y.magnitude2() > 1e-12 {
+                            lines.extend(circle_lines(center, y.normalize(), radius * x.magnitude()));
+                        }
+                    }
+                    EmitterShape::Box([hx, hy, hz]) => {
+                        lines.extend(box_lines(center, [x * hx, y * hy, z * hz]));
+                    }
+                }
+                let d = axis(Vector3::from(e.direction).extend(0.0));
+                if d.magnitude2() > 1e-12 {
+                    lines.extend(arrow_lines(center, d.normalize(), self.gizmo_size(center) * 1.5));
+                }
+            }
+            let width = if is_selected { 2 } else { 1 };
+            render_thick_lines(vp, &lines, color, rect, width);
+        }
+    }
+}
+
+/// Every component of type `T` in the scene with its entity and world
+/// transform.
+fn collect_components<T: ferrite::core::entity::component::Component>(
+    scene: &Scene,
+) -> Vec<(EntityHandle, Matrix4<f32>, &T)> {
+    fn visit<'a, T: ferrite::core::entity::component::Component>(
+        entity: &'a Entity,
+        parent: Matrix4<f32>,
+        out: &mut Vec<(EntityHandle, Matrix4<f32>, &'a T)>,
+    ) {
+        if entity.is_transient() {
+            return;
+        }
+        let world = parent * entity.local_transform();
+        for component in entity.components() {
+            if let Some(found) = component.as_any().downcast_ref::<T>() {
+                out.push((entity.id, world, found));
+            }
+        }
+        for child in entity.get_children() {
+            visit(child, world, out);
+        }
+    }
+    let mut out = Vec::new();
+    for entity in scene.get_entities() {
+        visit(entity, Matrix4::identity(), &mut out);
+    }
+    out
+}
+
+/// A diamond (an octahedron's edges) around `center`.
+fn diamond_lines(center: Point3<f32>, size: f32) -> Vec<Line> {
+    let tips: Vec<Point3<f32>> = AXES
+        .iter()
+        .flat_map(|a| [center + a * size, center - a * size])
+        .collect();
+    let mut lines = Vec::new();
+    for i in 0..6 {
+        for j in i + 1..6 {
+            // Every pair of tips but the opposite ones.
+            if j == i + 1 && i % 2 == 0 {
+                continue;
+            }
+            let d = tips[j] - tips[i];
+            lines.push(Line::new(tips[i], d.normalize(), d.magnitude()));
+        }
+    }
+    lines
+}
+
+/// The 12 edges of a box around `center` with half sizes along `axes`
+/// (each scaled to its half size).
+fn box_lines(center: Point3<f32>, axes: [Vector3<f32>; 3]) -> Vec<Line> {
+    let mut lines = Vec::new();
+    for i in 0..3 {
+        let (a, b) = (axes[(i + 1) % 3], axes[(i + 2) % 3]);
+        let along = axes[i] * 2.0;
+        if along.magnitude2() < 1e-12 {
+            continue;
+        }
+        for (sa, sb) in [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
+            let start = center + a * sa + b * sb - axes[i];
+            lines.push(Line::new(start, along.normalize(), along.magnitude()));
+        }
+    }
+    lines
 }
 
 /// Every light in the scene with its entity and world transform.
@@ -943,6 +1068,21 @@ mod light_marker_tests {
             let cos = side.direction.dot(dir);
             assert!((cos - 30f32.to_radians().cos()).abs() < 1e-4);
         }
+    }
+
+    #[test]
+    fn an_emitter_marker_is_a_diamond_and_a_box_has_twelve_edges() {
+        let lines = diamond_lines(Point3::new(0.0, 0.0, 0.0), 1.0);
+        assert_eq!(lines.len(), 12);
+        for line in &lines {
+            assert!((line.length - 2f32.sqrt()).abs() < 1e-5);
+        }
+        let edges = box_lines(
+            Point3::new(0.0, 0.0, 0.0),
+            [Vector3::unit_x(), Vector3::unit_y() * 2.0, Vector3::unit_z()],
+        );
+        assert_eq!(edges.len(), 12);
+        assert!(edges.iter().any(|l| (l.length - 4.0).abs() < 1e-5));
     }
 
     #[test]

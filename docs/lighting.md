@@ -25,6 +25,7 @@ along the entity's **−Y axis**, straight down until the entity is rotated.
 | `range` | Metres at which a point or spot light has faded to nothing (it falls off with the square of the distance before that) |
 | `inner angle` / `outer angle` | Spot lights: half angles of the fully lit core and of the edge, in degrees |
 | `bounce` | How much of its light bounces onto the surroundings (see below); 0 lights only what it shines on |
+| `flicker` | How much its brightness wavers like a flame, 0 to 1 (a campfire: about 0.5) |
 
 In the editor every light shows as a small star in its colour (grey when
 switched off) and can be clicked there. The selected one also shows where

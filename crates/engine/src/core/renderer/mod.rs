@@ -2,6 +2,7 @@ pub mod framebuffer;
 pub mod hdr;
 pub mod light;
 pub mod line;
+pub mod particles;
 pub mod pbr;
 pub mod plane;
 pub mod shader;
