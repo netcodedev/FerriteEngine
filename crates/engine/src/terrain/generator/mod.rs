@@ -20,6 +20,7 @@ pub mod biome;
 pub mod caves;
 pub mod hydrology;
 pub mod map;
+pub mod roads;
 mod noise;
 pub mod spline;
 pub mod world;
@@ -28,6 +29,7 @@ pub use biome::{Biome, BiomeBlend};
 pub use caves::{Underground3, CAVE_DEPTH};
 use caves::Underground;
 use hydrology::Hydrology;
+use roads::Roads;
 pub use world::{Climate, WorldSettings, SEA_LEVEL};
 use world::{smoothstep, Macro, WorldShape};
 
@@ -85,6 +87,9 @@ pub struct Column {
     /// Temperature at sea level (°C) and humidity on a coarser grid,
     /// `CLIMATE_STEP` metres apart from `CLIMATE_ORIGIN`, row by row.
     climate: Vec<[f32; 2]>,
+    /// How much of the ground is road and settlement at each height
+    /// sample (0..255 each); `None` where neither comes near.
+    paint: Option<Vec<[u8; 2]>>,
     /// Lowest and highest height in the column (margin included).
     pub min_height: f32,
     pub max_height: f32,
@@ -117,6 +122,28 @@ impl Column {
         let (ix, iz) = (gx.floor().min(last), gz.floor().min(last));
         let (tx, tz) = (gx - ix, gz - iz);
         let at = |i: f32, j: f32| self.climate[(j as i32 * CLIMATE_SPAN + i as i32) as usize];
+        let (a, b, c, d) = (at(ix, iz), at(ix + 1.0, iz), at(ix, iz + 1.0), at(ix + 1.0, iz + 1.0));
+        std::array::from_fn(|k| {
+            let top = a[k] + (b[k] - a[k]) * tx;
+            let bottom = c[k] + (d[k] - c[k]) * tx;
+            top + (bottom - top) * tz
+        })
+    }
+
+    /// How much of the ground at chunk-local `(x, z)` (within the
+    /// margins) is road and how much settlement, 0..1 each, blended
+    /// between whole metres.
+    pub fn paint(&self, x: f32, z: f32) -> [f32; 2] {
+        let Some(paint) = &self.paint else {
+            return [0.0; 2];
+        };
+        let limit = (CHUNK_SIZE as i32 + COLUMN_MARGIN - 1) as f32;
+        let (x, z) = (x.clamp(-COLUMN_MARGIN as f32, limit), z.clamp(-COLUMN_MARGIN as f32, limit));
+        let (ix, iz) = (x.floor(), z.floor());
+        let (tx, tz) = (x - ix, z - iz);
+        let at = |i: f32, j: f32| {
+            paint[((j as i32 + COLUMN_MARGIN) * Self::SPAN + (i as i32 + COLUMN_MARGIN)) as usize].map(|v| v as f32 / 255.0)
+        };
         let (a, b, c, d) = (at(ix, iz), at(ix + 1.0, iz), at(ix, iz + 1.0), at(ix + 1.0, iz + 1.0));
         std::array::from_fn(|k| {
             let top = a[k] + (b[k] - a[k]) * tx;
@@ -202,6 +229,15 @@ impl<V> Cache<V> {
     }
 }
 
+/// What may reshape the ground around a place: river pieces, settlements
+/// and roads.
+#[derive(Clone, Copy)]
+struct Near<'a> {
+    rivers: &'a [hydrology::Segment],
+    /// Settlements and road pieces, `None` where neither comes near.
+    works: Option<(&'a [roads::Settlement], &'a [roads::RoadSegment])>,
+}
+
 /// The world's generator: shared (in an `Arc`) by the terrain, its loader
 /// threads and its chunks.
 pub struct WorldGenerator {
@@ -213,6 +249,8 @@ pub struct WorldGenerator {
     /// Rivers and lakes, planned when first needed (see `hydrology`);
     /// `None` inside when the world has none.
     hydrology: OnceLock<Option<Arc<Hydrology>>>,
+    /// Settlements and roads, planned when first needed (see `roads`).
+    roads: OnceLock<Option<Arc<Roads>>>,
 }
 
 /// Catmull-Rom weights for the four points around `t` (0..1 between the
@@ -240,6 +278,7 @@ impl WorldGenerator {
             tiles: Mutex::new(Cache::new(TILE_CACHE)),
             columns: Mutex::new(Cache::new(COLUMN_CACHE)),
             hydrology: OnceLock::new(),
+            roads: OnceLock::new(),
         })
     }
 
@@ -269,35 +308,96 @@ impl WorldGenerator {
             .as_deref()
     }
 
-    /// The river pieces that may reshape the ground of chunk square
-    /// `(cx, cz)` (and its column's margins).
-    fn rivers_near(&self, cx: i32, cz: i32) -> &[hydrology::Segment] {
-        self.hydrology().map_or(&[], |h| h.segments_near(cx, cz))
+    /// The plan of the world's settlements and roads, if it has them.
+    pub fn roads(&self) -> Option<&Roads> {
+        self.roads
+            .get_or_init(|| {
+                self.settings()
+                    .roads
+                    .then(|| Roads::shared(self.seed, &self.shape, self.hydrology()))
+            })
+            .as_deref()
+    }
+
+    /// What may reshape the ground of chunk square `(cx, cz)` (and its
+    /// column's margins).
+    fn near(&self, cx: i32, cz: i32) -> Near<'_> {
+        Near {
+            rivers: self.hydrology().map_or(&[], |h| h.segments_near(cx, cz)),
+            works: self
+                .roads()
+                .and_then(|r| r.near(cx, cz))
+                .map(|l| (l.settlements.as_slice(), l.roads.as_slice())),
+        }
+    }
+
+    /// What may reshape the ground at world `(x, z)`.
+    fn near_point(&self, x: f64, z: f64) -> Near<'_> {
+        let c = |v: f64| (v / CHUNK_SIZE as f64).floor() as i32;
+        self.near(c(x), c(z))
     }
 
     /// The river pieces that may reshape the ground at world `(x, z)`.
     fn rivers_at(&self, x: f64, z: f64) -> &[hydrology::Segment] {
-        let c = |v: f64| (v / CHUNK_SIZE as f64).floor() as i32;
-        self.rivers_near(c(x), c(z))
+        self.near_point(x, z).rivers
+    }
+
+    /// The ground `h` at world `(x, z)` with what is `near` worked in.
+    fn shaped(&self, near: Near, x: f64, z: f64, h: f32) -> f32 {
+        self.shaped_and_paint(near, x, z, h).0
+    }
+
+    /// The ground `h` at world `(x, z)` with the rivers' beds, the lakes'
+    /// basins, the settlements' level grounds and the roads' beds worked
+    /// in, and how much of it is road and settlement (see `Column::paint`).
+    fn shaped_and_paint(&self, near: Near, x: f64, z: f64, h: f32) -> (f32, [f32; 2]) {
+        let (h, river) = self.shaped_by_water(near.rivers, x, z, h);
+        let Some((settlements, roads)) = near.works else {
+            return (h, [0.0; 2]);
+        };
+        // Not across a river: the road fords it, the river keeps its bed.
+        let dry = river.map_or(1.0, |r| {
+            let half = r.width * 0.5;
+            smoothstep((half + 1.0) as f64, (half + 10.0) as f64, r.distance as f64) as f32
+        });
+        let before = h;
+        let (levelled, settlement) = Roads::level_settlements(settlements, x, z, h);
+        let h = h + (levelled - h) * dry;
+        let road = Roads::nearest(roads, x, z);
+        let mut h = h + (Roads::bed(h, road) - h) * dry;
+        // Nor into a lake: dry ground beside one stays above its water.
+        if let Some((level, _)) = self.hydrology().and_then(|plan| plan.lake_at(x, z)) {
+            if before >= level {
+                h = h.max(level + 0.3);
+            }
+        }
+        (h, [Roads::surface(road) * dry, settlement * dry])
     }
 
     /// The ground `h` at world `(x, z)` with the rivers' beds and the
-    /// lakes' basins worked in; `rivers` the pieces near it.
-    fn shaped(&self, rivers: &[hydrology::Segment], x: f64, z: f64, h: f32) -> f32 {
+    /// lakes' basins worked in; `rivers` the pieces near it. Also the
+    /// nearest river.
+    fn shaped_by_water(
+        &self,
+        rivers: &[hydrology::Segment],
+        x: f64,
+        z: f64,
+        h: f32,
+    ) -> (f32, Option<hydrology::NearestRiver>) {
         let Some(plan) = self.hydrology() else {
-            return h;
+            return (h, None);
         };
         let lake = plan.lake_at(x, z);
         let h = lake.map_or(h, |(level, inside)| Hydrology::shape_lake(h, level, inside));
         let river = plan.nearest(rivers, x, z);
         let carved = Hydrology::carve(h, river);
         let Some((level, inside)) = lake else {
-            return carved;
+            return (carved, river);
         };
         let keep = Hydrology::lake_keeps_floor(inside);
         if carved > h {
             // In a lake the river's banks do not raise its floor.
-            return carved + (h - carved) * keep;
+            return (carved + (h - carved) * keep, river);
         }
         // A river leaving the lake lower than its water does not cut its
         // shore: the lake would spill down the river's bed. The river
@@ -305,9 +405,9 @@ impl WorldGenerator {
         let outflow = river.is_some_and(|r| r.level < level - 0.3);
         if outflow {
             let shore = smoothstep(0.0, hydrology::LAKE_WATER as f64, inside as f64) as f32 * (1.0 - keep);
-            return carved + (h - carved) * shore;
+            return (carved + (h - carved) * shore, river);
         }
-        carved
+        (carved, river)
     }
 
     /// Height of the water's surface at world `(x, z)`: the sea's, or a
@@ -390,13 +490,13 @@ impl WorldGenerator {
     /// density field crosses zero over that point.
     pub fn surface_height(&self, x: f64, z: f64) -> f32 {
         let m = self.interpolated(x, z, &mut |tx, tz| self.tile(tx, tz));
-        self.shaped(self.rivers_at(x, z), x, z, m.height + m.hills * self.shape.detail(x, z))
+        self.shaped(self.near_point(x, z), x, z, m.height + m.hills * self.shape.detail(x, z))
     }
 
     /// The biomes at world `(x, z)`, on the ground there.
     pub fn surface_biome(&self, x: f64, z: f64) -> BiomeBlend {
         let m = self.interpolated(x, z, &mut |tx, tz| self.tile(tx, tz));
-        let h = self.shaped(self.rivers_at(x, z), x, z, m.height + m.hills * self.shape.detail(x, z));
+        let h = self.shaped(self.near_point(x, z), x, z, m.height + m.hills * self.shape.detail(x, z));
         biome::biome_at(m.temperature, m.humidity, h)
     }
 
@@ -414,10 +514,18 @@ impl WorldGenerator {
     }
 
     /// Whether the ground at world `(x, z)` is the plain height field
-    /// there: no overhang pushes it and no cave opens under it. What
+    /// there: no overhang pushes it, no cave opens under it and no road or
+    /// settlement covers it. What
     /// stands on `surface_height` stands on the ground there.
     pub fn is_plain_ground(&self, x: f64, z: f64) -> bool {
         let h = self.surface_height(x, z);
+        // Kept clear: roads and settlements.
+        let m = self.interpolated(x, z, &mut |tx, tz| self.tile(tx, tz));
+        let (_, [road, settlement]) =
+            self.shaped_and_paint(self.near_point(x, z), x, z, m.height + m.hills * self.shape.detail(x, z));
+        if road > 0.0 || settlement > 0.3 {
+            return false;
+        }
         if self.underground.has_overhangs() && self.underground.overhang_amplitude(self.slope(x, z)) > 0.25 {
             return false;
         }
@@ -504,7 +612,7 @@ impl WorldGenerator {
     /// samples spread far apart (the horizon).
     pub fn grid_sample(&self, x: f64, z: f64) -> (f32, BiomeBlend, f32) {
         let m = self.shape.macro_at(x, z);
-        let h = self.shaped(self.rivers_at(x, z), x, z, m.height + m.hills * self.shape.detail(x, z));
+        let h = self.shaped(self.near_point(x, z), x, z, m.height + m.hills * self.shape.detail(x, z));
         (h, biome::biome_at(m.temperature, m.humidity, h), self.still_water_level(x, z))
     }
 
@@ -525,14 +633,27 @@ impl WorldGenerator {
         let mut near: HashMap<(i32, i32), Arc<MacroTile>> = HashMap::new();
         let mut tile = |tx: i32, tz: i32| near.entry((tx, tz)).or_insert_with(|| self.tile(tx, tz)).clone();
         let span = Column::SPAN;
-        let rivers = self.rivers_near(cx, cz);
+        let near = self.near(cx, cz);
         let mut heights = Vec::with_capacity((span * span) as usize);
+        let mut paint = Vec::new();
         let (mut min_height, mut max_height) = (f32::MAX, f32::MIN);
+        let mut row_roads = Vec::new();
         for z in -COLUMN_MARGIN..span - COLUMN_MARGIN {
+            // Only the road pieces that reach this row.
+            let mut near = near;
+            if let Some((settlements, roads)) = near.works {
+                let wz = z0 + z as f64;
+                row_roads.clear();
+                row_roads.extend(roads.iter().filter(|r| r.reaches_row(wz)).copied());
+                near.works = Some((settlements, row_roads.as_slice()));
+            }
             for x in -COLUMN_MARGIN..span - COLUMN_MARGIN {
                 let (wx, wz) = (x0 + x as f64, z0 + z as f64);
                 let m = self.interpolated(wx, wz, &mut tile);
-                let h = self.shaped(rivers, wx, wz, m.height + m.hills * self.shape.detail(wx, wz));
+                let (h, p) = self.shaped_and_paint(near, wx, wz, m.height + m.hills * self.shape.detail(wx, wz));
+                if near.works.is_some() {
+                    paint.push(p.map(|v| (v * 255.0).round() as u8));
+                }
                 min_height = min_height.min(h);
                 max_height = max_height.max(h);
                 heights.push(h);
@@ -547,9 +668,12 @@ impl WorldGenerator {
                 climate.push([m.temperature, m.humidity]);
             }
         }
+        // Only where a road or settlement comes near.
+        let paint = paint.iter().any(|p| p[0] > 0 || p[1] > 0).then_some(paint);
         Column {
             heights,
             climate,
+            paint,
             min_height,
             max_height,
         }

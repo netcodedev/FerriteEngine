@@ -53,6 +53,9 @@ pub struct WorldSettings {
     pub overhangs: f32,
     /// Whether rivers and lakes are planned (see `hydrology`).
     pub rivers: bool,
+    /// Whether settlements and the roads between them are planned (see
+    /// `roads`).
+    pub roads: bool,
 }
 
 impl Default for WorldSettings {
@@ -102,6 +105,7 @@ impl Default for WorldSettings {
             caves: 1.0,
             overhangs: 1.0,
             rivers: true,
+            roads: true,
         }
     }
 }

@@ -714,6 +714,7 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             Property::ranged("caves", self.world.caves, 0.0, 2.0),
             Property::ranged("overhangs", self.world.overhangs, 0.0, 2.0),
             Property::bool("rivers and lakes", self.world.rivers),
+            Property::bool("roads and settlements", self.world.roads),
             Property::choice(
                 "map",
                 self.map.layer.name().into(),
@@ -773,6 +774,12 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             ("rivers and lakes", PropertyValue::Bool(v)) => {
                 if v != self.world.rivers {
                     self.world.rivers = v;
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("roads and settlements", PropertyValue::Bool(v)) => {
+                if v != self.world.roads {
+                    self.world.roads = v;
                     self.reseed_in = Some(RESEED_DELAY);
                 }
             }

@@ -135,7 +135,7 @@ fn chunk_coords_round_down_to_the_chunk_that_holds_a_point() {
 fn generation_timings() {
     use crate::terrain::{dual_contouring::DualContouringChunk, Chunk};
     let generator = WorldGenerator::new(2);
-    generator.hydrology();
+    generator.roads();
     let n = 16;
     let start = Instant::now();
     for i in 0..n {
@@ -144,12 +144,25 @@ fn generation_timings() {
     let column = start.elapsed() / n as u32;
     // Inland, by rivers (seed 1).
     let inland = WorldGenerator::new(1);
-    inland.hydrology();
+    inland.roads();
     let start = Instant::now();
     for i in 0..n {
         inland.make_column(20 + i, 14);
     }
     println!("inland column: {:?}", start.elapsed() / n as u32);
+    // Along a road.
+    let way = &inland.roads().unwrap().ways()[0];
+    let start = Instant::now();
+    for k in 0..n as usize {
+        let ([x, z], _) = way[k * way.len() / n as usize];
+        let c = ChunkCoord::containing(x, 0.0, z);
+        let near = inland.near(c.x, c.z).works.map_or(0, |w| w.1.len());
+        inland.make_column(c.x, c.z);
+        if k == 0 {
+            println!("{near} road pieces near");
+        }
+    }
+    println!("road column: {:?}", start.elapsed() / n as u32);
     let start = Instant::now();
     for i in 0..n {
         DualContouringChunk::generate(&generator, (i as f32, 0.0, 2000.0), 0);
@@ -370,6 +383,65 @@ fn river_stats() {
             }
             let lake = plan.lake_cells().min_by(|a, b| a.0[0].hypot(a.0[1]).total_cmp(&b.0[0].hypot(b.0[1])));
             println!("lake {lake:?}");
+            let start = Instant::now();
+            let roads = generator.roads().unwrap();
+            println!("roads planned in {:?}", start.elapsed());
+            println!("{} settlements, {} roads", roads.settlements().len(), roads.ways().len());
+            for s in roads.settlements().iter().take(4) {
+                println!("settlement {s:?}");
+            }
+            let way = &roads.ways()[0];
+            println!("road {:?} .. {:?}, mid {:?}", way[0], way.last().unwrap(), way[way.len() / 2]);
         }
     }
+}
+
+#[test]
+fn settlements_stand_apart_on_land_and_one_at_the_spawn() {
+    let generator = WorldGenerator::new(1);
+    let roads = generator.roads().unwrap();
+    let settlements = roads.settlements();
+    assert!(settlements.len() > 15, "{} settlements", settlements.len());
+    assert_eq!(settlements[0].centre, [0.0, 0.0]);
+    for (i, a) in settlements.iter().enumerate() {
+        assert!(a.level > SEA_LEVEL + 1.0, "{a:?}");
+        let h = generator.surface_height(a.centre[0], a.centre[1]);
+        assert!((h - a.level).abs() < 0.05, "{a:?}: ground {h}");
+        for b in &settlements[i + 1..] {
+            assert!((a.centre[0] - b.centre[0]).hypot(a.centre[1] - b.centre[1]) > 2000.0);
+        }
+    }
+}
+
+#[test]
+fn roads_join_settlements_and_lie_on_the_ground() {
+    let generator = WorldGenerator::new(1);
+    let roads = generator.roads().unwrap();
+    let ways = roads.ways();
+    // Some stand on islands of their own.
+    assert!(ways.len() * 4 >= roads.settlements().len() * 3, "{} roads", ways.len());
+    let is_settlement = |p: [f64; 2]| roads.settlements().iter().any(|s| s.centre == p);
+    let (mut on, mut checked) = (0, 0);
+    for way in ways {
+        assert!(is_settlement(way[0].0) && is_settlement(way.last().unwrap().0));
+        for pair in way.windows(2) {
+            let ((a, la), (b, lb)) = (pair[0], pair[1]);
+            let run = (a[0] - b[0]).hypot(a[1] - b[1]) as f32;
+            assert!((la - lb).abs() <= 0.121 * run + 1e-3, "steep: {pair:?}");
+        }
+        for &([x, z], level) in way.iter().step_by(23) {
+            // Where no river crosses (the road fords it).
+            if generator.hydrology().unwrap().river_near(x, z, 40.0) {
+                continue;
+            }
+            checked += 1;
+            let h = generator.surface_height(x, z);
+            on += ((h - level).abs() < 0.5) as i32;
+            let c = ChunkCoord::containing(x, 0.0, z);
+            let [ox, _, oz] = c.origin();
+            let [road, _] = generator.column(c.x, c.z).paint((x - ox) as f32, (z - oz) as f32);
+            assert!(road > 0.9, "{road} road at {x}, {z}");
+        }
+    }
+    assert!(checked > 50 && on as f32 > 0.95 * checked as f32, "{on} of {checked}");
 }

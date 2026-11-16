@@ -483,6 +483,32 @@ impl Hydrology {
         })
     }
 
+    /// Whether a river cell of the plan lies within `radius` metres of
+    /// world `(x, z)` (coarse: by the plan's cells).
+    pub fn river_within(&self, x: f64, z: f64, radius: f64) -> bool {
+        let Some(i) = self.cell(x, z) else {
+            return false;
+        };
+        let (cx, cz) = ((i % self.n) as i64, (i / self.n) as i64);
+        let r = (radius / CELL).ceil() as i64;
+        for dz in -r..=r {
+            for dx in -r..=r {
+                let (px, pz) = (cx + dx, cz + dz);
+                if px < 0 || pz < 0 || px >= self.n as i64 || pz >= self.n as i64 {
+                    continue;
+                }
+                if ((dx * dx + dz * dz) as f64).sqrt() * CELL > radius + CELL * 0.5 {
+                    continue;
+                }
+                let j = pz as usize * self.n + px as usize;
+                if self.flow[j] >= RIVER_FLOW && self.ground[j] >= SEA_LEVEL && self.lake[j].is_none() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Water gathered at world `(x, z)` (for maps).
     pub fn flow(&self, x: f64, z: f64) -> f32 {
         self.cell(x, z).map_or(0.0, |i| self.flow[i])

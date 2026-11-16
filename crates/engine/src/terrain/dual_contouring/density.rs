@@ -211,10 +211,18 @@ impl DensityField {
                 let below = self.column.height(cx, cz) - y;
                 let inside = ((below - 1.5) / 4.0).clamp(0.0, 1.0);
                 let rock = [0.40, 0.37, 0.33];
+                // Roads (packed earth) and settlements (trodden ground)
+                // on the surface.
+                let [road, settlement] = self.column.paint(position[0], position[2]);
+                let (road, settlement) = (road * (1.0 - inside), settlement * (1.0 - inside));
+                let ground: [f32; 3] = std::array::from_fn(|k| {
+                    let c = biome.color[k] + (TRODDEN[k] - biome.color[k]) * settlement * 0.55;
+                    c + (ROAD[k] - c) * road
+                });
                 Vertex {
                     position,
                     normal: g.map(|c| c / length),
-                    color: std::array::from_fn(|k| biome.color[k] + (rock[k] - biome.color[k]) * inside),
+                    color: std::array::from_fn(|k| ground[k] + (rock[k] - ground[k]) * inside),
                     climate: [
                         biome.temperature + (biome.temperature.max(4.0) - biome.temperature) * inside,
                         biome.humidity,
@@ -225,6 +233,10 @@ impl DensityField {
         Some((vertices, buffer.indices))
     }
 }
+
+/// Colour of a road's surface and of a settlement's ground (display space).
+const ROAD: [f32; 3] = [0.50, 0.41, 0.26];
+const TRODDEN: [f32; 3] = [0.56, 0.50, 0.38];
 
 /// Hang a skirt from the open edges of a mesh (edges of one triangle only,
 /// which surface nets leaves at the sides of the cube it meshed): each edge

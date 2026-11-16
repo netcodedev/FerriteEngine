@@ -127,8 +127,25 @@ impl WorldGenerator {
                                 1.0
                             }
                         };
-                        // Rivers and lakes over the ground, on the maps of it.
+                        // Rivers, lakes, roads and settlements over the ground, on the
+                        // maps of it.
                         let water = |ground: [f32; 3]| -> [f32; 3] {
+                            // Settlements and roads over everything.
+                            if let Some(works) = self.roads().and_then(|r| {
+                                let c = |v: f64| (v / crate::terrain::CHUNK_SIZE as f64).floor() as i32;
+                                r.near(c(x), c(z))
+                            }) {
+                                let near = |s: &super::roads::Settlement| {
+                                    (x - s.centre[0]).hypot(z - s.centre[1]) < (s.radius as f64).max(step * 1.2)
+                                };
+                                if works.settlements.iter().any(near) {
+                                    return [0.78, 0.22, 0.14];
+                                }
+                                let road = super::roads::Roads::nearest(&works.roads, x, z);
+                                if road.is_some_and(|r| (r.distance as f64) < step * 0.5) {
+                                    return [0.30, 0.18, 0.10];
+                                }
+                            }
                             let Some(plan) = self.hydrology() else {
                                 return ground;
                             };
