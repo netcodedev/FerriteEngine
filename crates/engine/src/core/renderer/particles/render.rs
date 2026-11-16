@@ -37,6 +37,14 @@ thread_local! {
     static RENDERER: RefCell<Option<ParticleRenderer>> = const { RefCell::new(None) };
 }
 
+/// Free the particle renderer's GL objects. Must run on the GL thread while
+/// the context is still alive: dropped with the thread-local at process
+/// exit, it would call into a GL driver that is already unloaded (a crash
+/// on closing the window).
+pub fn release_gl_resources() {
+    let _ = RENDERER.try_with(|renderer| renderer.borrow_mut().take());
+}
+
 impl ParticleRenderer {
     fn new() -> Self {
         let shader = Shader::new(

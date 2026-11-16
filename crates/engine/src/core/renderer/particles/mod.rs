@@ -27,5 +27,5 @@ mod tests;
 pub use effect::*;
 pub use emitter::*;
 pub use preset::*;
-pub use render::ParticleRenderer;
+pub use render::{release_gl_resources, ParticleRenderer};
 pub use system::*;

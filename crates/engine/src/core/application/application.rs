@@ -85,5 +85,6 @@ impl Drop for Application {
         }
         // Thread-local GL caches would otherwise outlive the context too.
         crate::terrain::scatter::release_gl_resources();
+        crate::core::renderer::particles::release_gl_resources();
     }
 }
