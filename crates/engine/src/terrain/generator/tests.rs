@@ -448,7 +448,7 @@ fn roads_join_settlements_and_lie_on_the_ground() {
         for (k, &([x, z], level)) in way.iter().enumerate().step_by(23) {
             // Where no river crosses (the road fords it), and not in a
             // tunnel.
-            if generator.hydrology().unwrap().river_near(x, z, 40.0) || roads.in_tunnel(w, k) {
+            if generator.hydrology().unwrap().river_near(x, z, 40.0) || roads.in_tunnel(w, k) || roads.on_bridge(w, k) {
                 continue;
             }
             checked += 1;
@@ -473,8 +473,9 @@ fn roads_keep_near_the_ground() {
     let mut off = Vec::new();
     for (w, way) in roads.ways().iter().enumerate() {
         for (k, &(p, level)) in way.iter().enumerate().step_by(5) {
-            // (In a tunnel the road is under the ground, of course.)
-            if roads.in_tunnel(w, k) {
+            // (In a tunnel the road is under the ground, of course, and on
+            // a bridge over it.)
+            if roads.in_tunnel(w, k) || roads.on_bridge(w, k) {
                 continue;
             }
             let m = generator.interpolated(p[0], p[1], &mut |tx, tz| generator.tile(tx, tz));
@@ -551,7 +552,7 @@ fn tunnels_are_tubes_through_the_rock() {
     assert!(tunnels.len() >= 3, "{} tunnels", tunnels.len());
     for tube in tunnels {
         let length: f64 = tube.iter().map(|s| (s.a[0] - s.b[0]).hypot(s.a[1] - s.b[1])).sum();
-        assert!(length > 100.0, "a tube {length} m long");
+        assert!(length > 40.0, "a tube {length} m long");
         for s in tube {
             for t in [0.0, 0.5, 1.0] {
                 let (x, z) = (s.a[0] + (s.b[0] - s.a[0]) * t, s.a[1] + (s.b[1] - s.a[1]) * t);
@@ -560,7 +561,10 @@ fn tunnels_are_tubes_through_the_rock() {
                     let d = generator.density(x, (floor + up) as f64, z);
                     assert!(d > 0.0, "no air {up} m over the floor at {x}, {z}: {d}");
                 }
-                assert!(generator.density(x, (floor - 0.5) as f64, z) < 0.0, "no floor at {x}, {z}");
+                // (Where a river runs past a portal, its bank is left as
+                // it is, a little under the road.)
+                let by_river = generator.hydrology().unwrap().river_near(x, z, 12.0);
+                assert!(by_river || generator.density(x, (floor - 0.5) as f64, z) < 0.0, "no floor at {x}, {z}");
             }
         }
         // Inside (away from the portals, as far as the cutting's slopes
@@ -803,4 +807,89 @@ fn lake_shores_are_mostly_gentle() {
     }
     assert!(samples > 500, "{samples}");
     assert!(steep * 10 < samples, "{steep} of {samples} shore samples steeper than 45 degrees");
+}
+
+#[test]
+fn rivers_are_crossed_on_bridges() {
+    // Where a road crosses a river it runs on a bridge: stone under the
+    // road and air over it, the water flowing under its arches, and its
+    // piers out of a river a span can reach over.
+    let generator = WorldGenerator::new(2);
+    let roads = generator.roads().unwrap();
+    let plan = generator.hydrology().unwrap();
+    let bridges = roads.bridges();
+    assert!(bridges.len() >= 10, "{} bridges", bridges.len());
+    let (mut over_water, mut pieces, mut covered) = (0, 0, Vec::new());
+    for bridge in bridges {
+        for s in &bridge.pieces {
+            let (x, z) = ((s.a[0] + s.b[0]) * 0.5, (s.a[1] + s.b[1]) * 0.5);
+            let level = 0.5 * (s.level[0] + s.level[1]);
+            assert!(generator.density(x, (level - 0.5) as f64, z) < 0.0, "no deck at {x}, {z}");
+            // (Where two roads that merged run side by side, the other
+            // one's bed may lie over a bridge's ends.)
+            pieces += 1;
+            if [0.3, 1.5, 4.0].iter().any(|&up| generator.density(x, (level + up) as f64, z) <= 0.0) {
+                covered.push([x, z]);
+            }
+            let square = |v: f64| (v / CHUNK_SIZE as f64).floor() as i32;
+            let river = plan.nearest(plan.segments_near(square(x), square(z)), x, z);
+            if let Some(r) = river.filter(|r| r.distance < r.width * 0.5 - 1.0) {
+                over_water += 1;
+                // Air between the water and the deck, unless a pier stands
+                // there.
+                let pier = bridge.pier_points().iter().any(|p| (p[0] - x).hypot(p[1] - z) < 4.0);
+                if !pier {
+                    assert!(generator.density(x, (r.level + 0.3) as f64, z) > 0.0, "a dam at {x}, {z}");
+                }
+            }
+        }
+        // (Unless the water under it is longer along it than a span.)
+        let square = |v: f64| (v / CHUNK_SIZE as f64).floor() as i32;
+        let wet = |p: [f64; 2]| {
+            plan.nearest(plan.segments_near(square(p[0]), square(p[1])), p[0], p[1])
+                .is_some_and(|r| r.distance < r.width * 0.5 + 0.5)
+        };
+        let (mut longest, mut run) = (0.0f64, 0.0f64);
+        for s in &bridge.pieces {
+            let length = (s.a[0] - s.b[0]).hypot(s.a[1] - s.b[1]);
+            for m in 0..length.ceil() as usize {
+                let t = m as f64 / length;
+                run = if wet([s.a[0] + (s.b[0] - s.a[0]) * t, s.a[1] + (s.b[1] - s.a[1]) * t]) { run + 1.0 } else { 0.0 };
+                longest = longest.max(run);
+            }
+        }
+        if longest < bridges::MAX_SPAN - 12.0 {
+            for p in bridge.pier_points() {
+                assert!(!wet(p), "a pier in the water at {p:?}, {longest} m of it along the bridge");
+            }
+        }
+    }
+    assert!(over_water > 5, "{over_water} pieces over water");
+    assert!(covered.len() * 50 < pieces, "no air over the deck at {covered:.0?} of {pieces}");
+}
+
+#[test]
+#[ignore]
+fn shortcut_stats() {
+    for seed in [1, 2, 3] {
+        let start = std::time::Instant::now();
+        let generator = WorldGenerator::new(seed);
+        let roads = generator.roads().unwrap();
+        let tubes: Vec<f64> = roads
+            .tunnels()
+            .iter()
+            .map(|t| t.iter().map(|s| (s.a[0] - s.b[0]).hypot(s.a[1] - s.b[1])).sum())
+            .collect();
+        let bridges: Vec<(f64, usize, [f64; 2], f32)> = roads
+            .bridges()
+            .iter()
+            .map(|b| (b.length(), b.pier_points().len(), b.pieces[0].a, b.top - b.pieces.iter().map(|s| generator.surface_height(s.a[0], s.a[1])).fold(f32::MAX, f32::min)))
+            .collect();
+        println!("seed {seed}: {:?}", start.elapsed());
+        println!("  {} tunnels {:?}", tubes.len(), tubes.iter().map(|l| l.round()).collect::<Vec<_>>());
+        println!("  {} bridges", bridges.len());
+        for b in &bridges {
+            println!("    {:.0} m, {:.0} high, {} piers at {:.0?}", b.0, b.3, b.1, b.2);
+        }
+    }
 }

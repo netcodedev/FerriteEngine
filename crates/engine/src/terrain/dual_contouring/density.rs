@@ -14,6 +14,7 @@ use fast_surface_nets::{
 use super::Vertex;
 use crate::terrain::{
     generator::{
+        bridges::Bridge,
         roads::{RoadSegment, Roads, TUNNEL_HALF_WIDTH, TUNNEL_WALL},
         ChunkCoord, Column, Underground3, WorldGenerator, COLUMN_MARGIN,
     },
@@ -35,6 +36,8 @@ pub(super) struct DensityField {
     /// The tunnel tubes that reach into the chunk (see
     /// `Roads::tunnel_air`), and the chunk's corner in world metres.
     tunnels: Vec<RoadSegment>,
+    /// The bridges that reach into the chunk (see `Bridge::solid`).
+    bridges: Vec<Arc<Bridge>>,
     origin: [f64; 3],
     /// Where it has: the whole field at every whole metre the meshing
     /// reads (`span` per side from `-margin`, x fastest, then y), made
@@ -75,6 +78,21 @@ impl DensityField {
         } else {
             Vec::new()
         };
+        // Bridges at every level: they stand out over the land.
+        let size = CHUNK_SIZE as f64;
+        let bridges: Vec<Arc<Bridge>> = generator
+            .bridges_near(coord.x, coord.z)
+            .iter()
+            .filter(|b| {
+                let (lo, hi) = (b.lo(), b.hi());
+                b.top + 1.0 >= floor - reach as f32
+                    && hi[0] >= origin[0] - reach
+                    && lo[0] <= origin[0] + size + reach
+                    && hi[1] >= origin[2] - reach
+                    && lo[1] <= origin[2] + size + reach
+            })
+            .cloned()
+            .collect();
         let mut field = Self {
             column: generator.column(coord.x, coord.z),
             span: Column::SPAN,
@@ -82,10 +100,11 @@ impl DensityField {
             floor,
             underground: generator.underground(coord, detail),
             tunnels,
+            bridges,
             origin,
             dense: Vec::new(),
         };
-        if field.underground.is_some() || !field.tunnels.is_empty() {
+        if field.underground.is_some() || !field.tunnels.is_empty() || !field.bridges.is_empty() {
             let (span, margin) = (field.span, field.margin);
             let mut dense = Vec::with_capacity((span * span * span) as usize);
             for z in -margin..span - margin {
@@ -115,7 +134,13 @@ impl DensityField {
                 (ground - push).max(Roads::cave_beside_tunnel(cave, tunnel))
             }
         };
-        ground.max(tunnel)
+        let ground = ground.max(tunnel);
+        if self.bridges.is_empty() {
+            return ground;
+        }
+        let (wx, wz) = (self.origin[0] + x as f64, self.origin[2] + z as f64);
+        let y = self.floor + y as f32;
+        self.bridges.iter().map(|b| b.solid(wx, y, wz)).fold(ground, f32::min)
     }
 
     /// Density at chunk-local `(x, y, z)`, in metres from the surface
@@ -135,6 +160,7 @@ impl DensityField {
     pub(super) fn is_solid(&self) -> bool {
         self.underground.is_none()
             && self.tunnels.is_empty()
+            && self.bridges.is_empty()
             && self.floor + CHUNK_SIZE_FLOAT + 12.0 < self.column.min_height
     }
 
@@ -154,6 +180,18 @@ impl DensityField {
             }
         }
         sum
+    }
+
+    /// Whether chunk-local `p` (on the surface) is a bridge's stone, and
+    /// whether (its normal `up` high) on the road over it.
+    fn on_bridge(&self, p: [f32; 3], up: f32) -> (bool, bool) {
+        if self.bridges.is_empty() {
+            return (false, false);
+        }
+        let (x, y, z) = (self.origin[0] + p[0] as f64, self.floor + p[1], self.origin[2] + p[2] as f64);
+        let stone = self.bridges.iter().any(|b| b.covers(x, z, 0.8) && b.solid(x, y, z) < 0.6);
+        let deck = stone && up > 0.7 && self.bridges.iter().any(|b| b.on_deck(x, y, z));
+        (stone, deck)
     }
 
     /// Whether chunk-local `p` (on the surface, its normal `up` high) is
@@ -285,8 +323,11 @@ impl DensityField {
                 let below = self.column.height(cx, cz) - y;
                 let inside = ((below - 1.5) / 4.0).clamp(0.0, 1.0);
                 let rock = [0.40, 0.37, 0.33];
-                // A tunnel's floor is road (its walls and arch are rock).
-                let floor = self.on_tunnel_floor(position, g[1] / length);
+                // A tunnel's floor is road (its walls and arch are rock), and
+                // so is a bridge's deck (the rest of it stone).
+                let (stone, deck) = self.on_bridge(position, g[1] / length);
+                let inside = if stone && !deck { 1.0 } else { inside };
+                let floor = deck || self.on_tunnel_floor(position, g[1] / length);
                 // Roads, settlements and gravel lie on the surface only.
                 let surface = if floor { 1.0 } else { 1.0 - inside };
                 let [road, settlement, gravel] = self.column.paint(position[0], position[2]);

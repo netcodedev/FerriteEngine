@@ -32,6 +32,7 @@ use std::{
 };
 
 use super::{
+    bridges::{Bridge, DECK_HALF_WIDTH},
     hydrology::Hydrology,
     noise::field_seed,
     world::{smoothstep, WorldShape},
@@ -157,43 +158,91 @@ pub struct Local {
     pub settlements: Vec<Settlement>,
     /// Pieces of tunnel tubes (see `tunnel_air`).
     pub tunnels: Vec<RoadSegment>,
+    /// The bridges (see `Bridge::solid`).
+    pub bridges: Vec<Arc<Bridge>>,
 }
 
 pub struct Roads {
     settlements: Vec<Settlement>,
     /// Every road's way, as points with the road's height (in tunnels too).
     ways: Vec<Vec<([f64; 2], f32)>>,
-    /// Which points of each way lie on a tunnel's line (in its tube or the
-    /// cuttings to it).
-    in_tunnels: Vec<Vec<bool>>,
+    /// What each point of each way lies on: a tunnel's line (in its tube or
+    /// the cuttings to it), a bridge's shortcut, or neither.
+    in_tunnels: Vec<Vec<Line>>,
     /// Every tunnel's tube: the pieces of road it holds, end to end.
     tunnels: Vec<Vec<RoadSegment>>,
+    /// Every bridge, and which points of each way lie on one.
+    bridges: Vec<Arc<Bridge>>,
+    on_bridges: Vec<Vec<bool>>,
     /// Where the lamps hang in the tunnels (see `LAMP_SPACING`).
     lamps: Vec<[f32; 3]>,
     /// What lies near each chunk square.
     local: HashMap<(i32, i32), Local>,
 }
 
-/// Tunnels: how long at most and at least (straight, metres), how steep at
-/// most, how much rock lies over the road at least where the plan's coarse
-/// ground is looked at (away from the portals), how far from each end that
-/// need not hold yet (the cutting into the hillside), what a metre of
-/// tunnel costs in metres of road, and how much shorter a way must become
-/// for a tunnel to be worth it (counting what the way climbs over its
-/// ends, see `CLIMB_COST`).
+/// Tunnels: how long at most (metres), how steep at most, how far from
+/// each end at most the road may run in a cutting into the hillside
+/// before the tube (a quarter of a short tunnel), and what a metre of
+/// tunnel (or bridge) costs in metres of road.
 const TUNNEL_MAX_LENGTH: f64 = 1500.0;
-const TUNNEL_MIN_LENGTH: f64 = 250.0;
 const TUNNEL_GRADE: f32 = 0.08;
-const TUNNEL_PLAN_COVER: f32 = 20.0;
 const PORTAL_APPROACH: f64 = 100.0;
 const TUNNEL_COST: f64 = 2.0;
-/// What a tunnel the way finding takes costs besides its length, in metres
-/// of road (see `find_way`'s jumps).
+/// The shortest tube a tunnel has (between the cuttings at its ends).
+const TUNNEL_MIN_LENGTH: f64 = 40.0;
+/// The tunnels the way finding takes, through what roads cannot cross:
+/// how long at least, how much rock lies over them (on the plan's coarse
+/// ground, away from the portals), and what one costs besides its length,
+/// in metres of road (see `find_way`'s jumps).
+const JUMP_MIN_LENGTH: f64 = 250.0;
+const JUMP_PLAN_COVER: f32 = 20.0;
 const PORTAL_COST: f32 = 300.0;
-const TUNNEL_SAVING: f64 = 300.0;
-/// What climbing a metre over a tunnel's ends costs the way round, in
-/// metres of road (and coming down again).
+/// Shortcuts (tunnels and bridges where the way winds round a spur or a
+/// bay, along a hillside or over what it climbs or dips into): how much
+/// cheaper the way must become for one to be worth it, in metres of road;
+/// how short one is at least (straight, end to end); how far along the way
+/// its ends may lie apart at most.
+const SHORTCUT_SAVING: f64 = 100.0;
+/// And besides, for each metre it is long.
+const SHORTCUT_SAVING_PER_METRE: f64 = 0.2;
+const SHORTCUT_MIN_LENGTH: f64 = 60.0;
+const SHORTCUT_SEARCH: f64 = 6.0 * TUNNEL_MAX_LENGTH;
+/// What climbing a metre over a shortcut's ends (or dipping a metre under
+/// them) costs the way round, in metres of road (and coming back again).
 const CLIMB_COST: f64 = 10.0;
+/// What a metre of road along a hillside costs besides, in metres of road:
+/// none where the ground across it is gentler than `HILLSIDE_FROM` (rise
+/// per metre, over `HILLSIDE_REACH` either side), all from `HILLSIDE_TO`.
+const HILLSIDE_COST: f64 = 1.5;
+const HILLSIDE_FROM: f64 = 0.35;
+const HILLSIDE_TO: f64 = 1.0;
+const HILLSIDE_REACH: f64 = 12.0;
+/// How a shortcut may bend: the share of its length its ends run on in the
+/// way's direction (0: straight, then with at most `MAX_KINK` radians of a
+/// kink where it leaves the way), and how tight it may turn at most.
+const SHORTCUT_BENDS: [f64; 3] = [0.0, 0.2, 0.35];
+const MAX_KINK: f64 = 0.26;
+const MIN_RADIUS: f64 = 90.0;
+/// Metres between a shortcut's points.
+const SHORTCUT_STEP: f64 = 8.0;
+/// Bridges: how high over the ground a bridge shortcut runs at least in its
+/// middle and at most anywhere, and how long one is at most; how high over
+/// the ground the road must run elsewhere for a bridge instead of an
+/// embankment, at which height a bridge lands on the ground, and how long
+/// one over dry ground is at least.
+const BRIDGE_MIN_HEIGHT: f32 = 6.0;
+const BRIDGE_MAX_HEIGHT: f32 = 50.0;
+const BRIDGE_MAX_LENGTH: f64 = 500.0;
+const BRIDGE_HEIGHT: f32 = 6.0;
+const BRIDGE_LANDS: f32 = 2.0;
+const BRIDGE_MIN_LENGTH: f64 = 12.0;
+/// How far before and after a point the ground is looked at for how deep
+/// a dip the road crosses there (see `BRIDGE_HEIGHT`).
+const DIP_REACH: f64 = 80.0;
+/// Near a river the road keeps this high over its water (to cross on a
+/// bridge rather than down the banks), within this of the water's edge.
+const BRIDGE_OVER_WATER: f32 = 4.5;
+const RIVER_APPROACH: f32 = 25.0;
 /// Where at least this much ground lies over the road, it runs in the tube;
 /// less, and it runs in a cutting.
 pub const TUNNEL_COVER: f32 = 10.0;
@@ -387,10 +436,15 @@ impl Roads {
         let mut ways = Vec::new();
         // The evened-out ground along each way, and which of its points are
         // pinned to a settlement's level.
-        let mut grounds: Vec<(Vec<f32>, Vec<Option<f32>>)> = Vec::new();
+        let mut grounds: Vec<(Vec<f32>, Vec<Option<f32>>, Vec<f32>)> = Vec::new();
         // Which points of each way lie in a tunnel (left alone when roads
         // that come close are reconciled: one may cross over it).
-        let mut in_tunnels: Vec<Vec<bool>> = Vec::new();
+        let mut in_tunnels: Vec<Vec<Line>> = Vec::new();
+        // The shortcuts taken so far, for the roads after to share.
+        let mut known_shortcuts: Vec<Shortcut> = Vec::new();
+        // The ground under each point of each way (without the road), and
+        // whether a river's water is there.
+        let mut unders: Vec<Vec<(f32, bool)>> = Vec::new();
         // Tunnels from cell `i` the plan's coarse ground allows, as steps for
         // `find_way`: straight in each of its directions, as `with_tunnels`
         // would take them, at what they cost.
@@ -420,7 +474,7 @@ impl Roads {
                     }
                     cells.push(j);
                     let gj = ground(j);
-                    if length < TUNNEL_MIN_LENGTH
+                    if length < JUMP_MIN_LENGTH
                         || kind[j] != Ground::Land
                         || ((gj - gi).abs() as f64) > TUNNEL_GRADE as f64 * length
                     {
@@ -429,7 +483,7 @@ impl Roads {
                     let covered = cells[..cells.len() - 1].iter().enumerate().all(|(m, &c)| {
                         let t = (m + 1) as f64 / k as f64;
                         let from_end = (t * length).min((1.0 - t) * length);
-                        let needed = if from_end < PORTAL_APPROACH { -1.0 } else { TUNNEL_PLAN_COVER };
+                        let needed = if from_end < PORTAL_APPROACH { -1.0 } else { JUMP_PLAN_COVER };
                         ground(c) - (gi + (gj - gi) * t as f32) >= needed
                     });
                     // And over the ground between the cells' middles (where
@@ -463,16 +517,32 @@ impl Roads {
                 Hydrology::carve(h, plan.nearest(near, p[0], p[1]))
             })
         };
-        // The plan's ground between its samples (bilinear).
-        let ground_at = |p: [f64; 2]| {
-            let gx = ((p[0] - origin) / CELL - 0.5).clamp(0.0, (n - 1) as f64);
-            let gz = ((p[1] - origin) / CELL - 0.5).clamp(0.0, (n - 1) as f64);
-            let (i, j) = ((gx.floor() as usize).min(n - 2), (gz.floor() as usize).min(n - 2));
-            let (tx, tz) = ((gx - i as f64) as f32, (gz - j as f64) as f32);
-            let at = |i: usize, j: usize| ground(j * n + i);
-            let top = at(i, j) + (at(i + 1, j) - at(i, j)) * tx;
-            let bottom = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * tx;
-            top + (bottom - top) * tz
+        let square = |v: f64| (v / CHUNK_SIZE as f64).floor() as i32;
+        let river_at = |p: [f64; 2]| rivers.and_then(|plan| plan.nearest(plan.segments_near(square(p[0]), square(p[1])), p[0], p[1]));
+        // The level of a river's water at a point, where it is.
+        let water_at = |p: [f64; 2]| river_at(p).filter(|r| r.distance < r.width * 0.5 + 0.5).map(|r| r.level);
+        // The ground a road keeps to: near a river, over its water, to
+        // cross it on a bridge rather than down its banks (over a gorge at
+        // its rim, or near it).
+        // (Only where the road crosses the river, not along it: `direction`
+        // is the road's.)
+        let over_rivers = |p: &[f64; 2], direction: [f64; 2]| {
+            let h = carved(p);
+            let Some(r) = river_at(*p) else {
+                return h;
+            };
+            let along = (direction[0] * r.direction[0] as f64 + direction[1] * r.direction[1] as f64).abs();
+            let edge = (r.distance - r.width * 0.5) as f64;
+            let near = (1.0 - smoothstep(10.0, RIVER_APPROACH as f64, edge) as f32)
+                * (1.0 - smoothstep(0.6, 0.85, along) as f32);
+            if near <= 0.0 {
+                return h;
+            }
+            let natural = natural(p[0], p[1]).0;
+            let depth = natural - r.level;
+            let gorge = smoothstep(GORGE_DEPTH as f64 * 0.5, GORGE_DEPTH as f64, depth as f64) as f32;
+            let keep = natural - (depth - BRIDGE_OVER_WATER).max(0.0) * (1.0 - gorge);
+            h + (keep - h).max(0.0) * near
         };
         // Every link once; then, for settlements left without a road, their
         // links again with tunnels through what the roads could not cross.
@@ -575,10 +645,10 @@ impl Roads {
             // A way that crosses itself goes round a loop for nothing: cut
             // out, before and after the smoothing (which can make some).
             points = without_loops(points);
-            // 5. Tunnels where the way winds round or over what a straight
-            // one could cross: the way between their ends replaced by the
-            // straight line, its height going evenly from one end's ground
-            // to the other's.
+            // 5. Tunnels and bridges where the way winds round or over what
+            // a shorter one could cross: the way between their ends
+            // replaced by a straight or gently curved line, its height
+            // going evenly from one end's ground to the other's.
             let in_settlement = |p: [f64; 2]| {
                 settlements
                     .iter()
@@ -597,18 +667,13 @@ impl Roads {
                 })
                 .collect();
             let lines: Vec<([f64; 2], [f64; 2], f32, f32)>;
-            (points, lines) = with_tunnels(
-                points,
-                &jumps,
-                |p| ground_at(p),
-                |p| kind[cell_of(p)] == Ground::Water || in_settlement(p),
-                |p| natural(p[0], p[1]).0,
-            );
+            (points, lines) = with_jumps(points, &jumps, |p| natural(p[0], p[1]).0);
             for _ in 0..3 {
                 points = chaikin(&points);
             }
             points = without_loops(points);
-            // Which points lie in a tunnel, and its height there.
+            // Which points lie in a tunnel the way finding took, and its
+            // height there.
             let tunnel_level = |p: [f64; 2]| {
                 lines.iter().find_map(|&(a, b, la, lb)| {
                     let line = RoadSegment { a, b, level: [la, lb] };
@@ -616,10 +681,38 @@ impl Roads {
                     (d < 0.5 && t > 1e-3 && t < 1.0 - 1e-3).then(|| la + (lb - la) * t as f32)
                 })
             };
-            let in_tunnel: Vec<Option<f32>> = points.iter().map(|&p| tunnel_level(p)).collect();
-            // The road's height: the ground's, evened out over about
-            // 25 m, and the settlements' level in and near them.
-            let raw: Vec<f32> = points.iter().map(carved).collect();
+            let jumped: Vec<Option<(f32, Line)>> =
+                points.iter().map(|&p| tunnel_level(p).map(|l| (l, Line::Tunnel))).collect();
+            // Then the shortcuts, between the smoothed way's points (no
+            // smoothing after: they leave the way in its own direction).
+            let on_line: Vec<Option<(f32, Line)>>;
+            (points, on_line) = shortcuts(
+                points,
+                jumped,
+                &mut known_shortcuts,
+                |p| kind[cell_of(p)] == Ground::Water || in_settlement(p),
+                |p| carved(&p),
+            );
+            let in_tunnel: Vec<Option<f32>> = on_line.iter().map(|l| l.map(|(level, _)| level)).collect();
+            // The road's height: the ground's (near a river, over its
+            // water), evened out over about 25 m, and the settlements'
+            // level in and near them.
+            // Over a river's water at least `BRIDGE_OVER_WATER` over it.
+            let lowest: Vec<f32> = points
+                .iter()
+                .map(|&p| {
+                    river_at(p)
+                        .filter(|r| r.distance < r.width * 0.5 + 4.0)
+                        .map_or(f32::MIN, |r| r.level + BRIDGE_OVER_WATER)
+                })
+                .collect();
+            let raw: Vec<f32> = (0..points.len())
+                .map(|k| {
+                    let (a, b) = (points[k.saturating_sub(1)], points[(k + 1).min(points.len() - 1)]);
+                    let length = (b[0] - a[0]).hypot(b[1] - a[1]).max(1e-9);
+                    over_rivers(&points[k], [(b[0] - a[0]) / length, (b[1] - a[1]) / length])
+                })
+                .collect();
             let mut level = raw.clone();
             for _ in 0..2 {
                 level = (0..level.len())
@@ -681,7 +774,7 @@ impl Roads {
                 limit_grade(&points, &mut level, MAX_GRADE, &pinned);
                 for (k, l) in level.iter_mut().enumerate() {
                     let g = ground_along[k];
-                    *l = l.clamp(g - MAX_EMBANKMENT, g + MAX_EMBANKMENT);
+                    *l = l.clamp(g - MAX_EMBANKMENT, g + MAX_EMBANKMENT).max(lowest[k]);
                     if let Some(p) = pinned[k] {
                         *l = p;
                     }
@@ -699,39 +792,48 @@ impl Roads {
                     })
                     .collect();
             }
-            let way = points.into_iter().zip(level).collect::<Vec<_>>();
+            let way = points.iter().copied().zip(level).collect::<Vec<_>>();
             ways.push(way);
-            grounds.push((ground_along, pinned));
-            in_tunnels.push(in_tunnel.iter().map(Option::is_some).collect::<Vec<_>>());
+            grounds.push((ground_along, pinned, lowest));
+            in_tunnels.push(on_line.iter().map(|l| l.map_or(Line::Road, |(_, line)| line)).collect::<Vec<_>>());
+            unders.push(
+                points
+                    .iter()
+                    .map(|p| (Self::level_settlements(&settlements, p[0], p[1], carved(p)).0, water_at(*p).is_some()))
+                    .collect::<Vec<_>>(),
+            );
         }
 
         // Where the ground forces both, nearness to it wins over the grade.
         // Then where roads come close to each other (two roads, or two legs
         // of a hairpin) their heights are made to agree, last: there the
         // road may be further off the ground, on a wall as it were.
-        for (way, (ground_along, pinned)) in ways.iter_mut().zip(&grounds) {
+        for (way, (ground_along, pinned, lowest)) in ways.iter_mut().zip(&grounds) {
             let points: Vec<[f64; 2]> = way.iter().map(|p| p.0).collect();
             let mut level: Vec<f32> = way.iter().map(|p| p.1).collect();
             let reach = MAX_EMBANKMENT + RECONCILED_EMBANKMENT;
             for _ in 0..4 {
-                limit_grade(&points, &mut level, MAX_STEEP_GRADE, pinned);
                 for (k, l) in level.iter_mut().enumerate() {
-                    *l = l.clamp(ground_along[k] - reach, ground_along[k] + reach);
+                    *l = l.clamp(ground_along[k] - reach, ground_along[k] + reach).max(lowest[k]);
                     if let Some(p) = pinned[k] {
                         *l = p;
                     }
                 }
+                limit_grade(&points, &mut level, MAX_STEEP_GRADE, pinned);
             }
             for (p, l) in way.iter_mut().zip(level) {
                 p.1 = l;
             }
         }
+        let fixed: Vec<Vec<bool>> = in_tunnels.iter().map(|l| l.iter().map(|&l| l != Line::Road).collect()).collect();
         for _ in 0..3 {
-            reconcile(&mut ways, &in_tunnels);
+            reconcile(&mut ways, &fixed);
             // Its moves may leave steps along a way: evened out.
-            for (way, (_, pinned)) in ways.iter_mut().zip(&grounds) {
+            for (way, (_, pinned, lowest)) in ways.iter_mut().zip(&grounds) {
                 let points: Vec<[f64; 2]> = way.iter().map(|p| p.0).collect();
-                let mut level: Vec<f32> = way.iter().map(|p| p.1).collect();
+                // (Over a river's water as high as it should be, unless that
+                // is steeper than the grade.)
+                let mut level: Vec<f32> = way.iter().zip(lowest).map(|(p, &low)| p.1.max(low)).collect();
                 limit_grade(&points, &mut level, MAX_STEEP_GRADE, pinned);
                 for ((p, l), pin) in way.iter_mut().zip(level).zip(pinned) {
                     p.1 = pin.unwrap_or(l);
@@ -755,7 +857,10 @@ impl Roads {
         // Pieces of road in a tunnel with enough ground over them are in
         // its tube; the others shape the ground.
         let mut tunnels = Vec::new();
-        for (way, in_tunnel) in ways.iter().zip(&in_tunnels) {
+        let mut bridges: Vec<Arc<Bridge>> = Vec::new();
+        let mut on_bridges = Vec::new();
+        for ((way, lines), under) in ways.iter().zip(&in_tunnels).zip(&unders) {
+            let in_tunnel: Vec<bool> = lines.iter().map(|&l| l == Line::Tunnel).collect();
             let piece = |k: usize| {
                 let ((a, la), (b, lb)) = (way[k], way[k + 1]);
                 RoadSegment { a, b, level: [la, lb] }
@@ -798,7 +903,140 @@ impl Roads {
                     k += 1;
                 }
             }
+            // Pieces high over the ground (or over a river's water, or on a
+            // bridge's shortcut) are on a bridge, as far as it is off the
+            // ground.
+            let lifted = |k: usize| (way[k].1 - under[k].0).min(way[k + 1].1 - under[k + 1].0);
+            let wet = |k: usize| under[k].1 || under[k + 1].1;
+            let shortcut = |k: usize| lines[k] == Line::Bridge || lines[k + 1] == Line::Bridge;
+            // How deep the ground under each point lies under the ground
+            // the road passes before and after it (a gully or a valley it
+            // crosses, not a hillside it climbs).
+            let mut run = vec![0.0f64; way.len()];
+            for k in 1..way.len() {
+                run[k] = run[k - 1] + (way[k].0[0] - way[k - 1].0[0]).hypot(way[k].0[1] - way[k - 1].0[1]);
+            }
+            let dip = |k: usize| {
+                let highest = |range: &mut dyn Iterator<Item = usize>| {
+                    range
+                        .take_while(|&j| (run[j] - run[k]).abs() <= DIP_REACH)
+                        .map(|j| under[j].0)
+                        .fold(f32::MIN, f32::max)
+                };
+                highest(&mut (0..k).rev()).min(highest(&mut (k + 1..way.len()))) - under[k].0
+            };
+            let mut bridged: Vec<bool> = (0..covered.len())
+                .map(|k| {
+                    !covered[k]
+                        && ((lifted(k) >= BRIDGE_HEIGHT && dip(k).max(dip(k + 1)) >= BRIDGE_HEIGHT)
+                            || (wet(k) && lifted(k) > 0.0)
+                            || (shortcut(k) && lifted(k) >= BRIDGE_LANDS))
+                })
+                .collect();
+            // Short gaps between two bridges bridged too, and each out to
+            // where it lands.
+            let mut k = 0;
+            while k < bridged.len() {
+                if bridged[k] {
+                    k += 1;
+                    continue;
+                }
+                let start = k;
+                while k < bridged.len() && !bridged[k] {
+                    k += 1;
+                }
+                if start > 0 && k < bridged.len() && k - start <= 2 && !covered[start..k].iter().any(|&c| c) {
+                    bridged[start..k].iter_mut().for_each(|b| *b = true);
+                }
+            }
+            // (An embankment takes over beyond, up to where the road runs
+            // on the ground.)
+            for _ in 0..3 {
+                let grown: Vec<bool> = (0..bridged.len())
+                    .map(|k| {
+                        bridged[k]
+                            || (!covered[k]
+                                && lifted(k) >= BRIDGE_LANDS
+                                && ((k > 0 && bridged[k - 1]) || (k + 1 < bridged.len() && bridged[k + 1])))
+                    })
+                    .collect();
+                if grown == bridged {
+                    break;
+                }
+                bridged = grown;
+            }
+            // Runs of bridge: too short ones over dry ground are left an
+            // embankment.
+            let mut runs: Vec<(usize, usize)> = Vec::new();
+            let mut k = 0;
+            while k < bridged.len() {
+                if !bridged[k] {
+                    k += 1;
+                    continue;
+                }
+                let (mut start, end) = (k, {
+                    while k < bridged.len() && bridged[k] {
+                        k += 1;
+                    }
+                    k
+                });
+                // Its ends where the road runs on the ground (or in a
+                // cutting) left to the ground.
+                let mut end = end;
+                while start < end && !wet(start) && lifted(start) < BRIDGE_LANDS * 0.5 {
+                    bridged[start] = false;
+                    start += 1;
+                }
+                while end > start && !wet(end - 1) && lifted(end - 1) < BRIDGE_LANDS * 0.5 {
+                    bridged[end - 1] = false;
+                    end -= 1;
+                }
+                if start == end {
+                    continue;
+                }
+                let k = end;
+                let length: f64 = (start..k).map(|k| {
+                    let s = piece(k);
+                    (s.a[0] - s.b[0]).hypot(s.a[1] - s.b[1])
+                }).sum();
+                if length >= BRIDGE_MIN_LENGTH || (start..k).any(wet) {
+                    runs.push((start, k));
+                } else {
+                    bridged[start..k].iter_mut().for_each(|b| *b = false);
+                }
+            }
+            for &(start, end) in &runs {
+                let carried: Vec<RoadSegment> = (start..end).map(piece).collect();
+                // Roads that merged share a bridge: the first road's.
+                let middle = carried[carried.len() / 2];
+                let built = bridges.iter().any(|b| {
+                    b.pieces.iter().any(|s| s.distance(middle.a[0], middle.a[1]).0 < 6.0)
+                });
+                if built {
+                    continue;
+                }
+                let bridge = Arc::new(Bridge::new(
+                    carried,
+                    |p| Self::level_settlements(&settlements, p[0], p[1], carved(&p)).0,
+                    water_at,
+                ));
+                let reach = DECK_HALF_WIDTH as f64 + COLUMN_REACH + 2.0;
+                for key in squares(bridge.lo(), bridge.hi(), reach) {
+                    local.entry(key).or_default().bridges.push(bridge.clone());
+                }
+                bridges.push(bridge);
+            }
+            on_bridges.push(
+                (0..way.len())
+                    .map(|k| (k > 0 && bridged[k - 1]) || (k < bridged.len() && bridged[k]))
+                    .collect::<Vec<_>>(),
+            );
+            // The first and last piece of a bridge shape the ground under
+            // them too: its abutments, the ground there at the road's
+            // height.
+            let abutment = |k: usize| runs.iter().any(|&(start, end)| end - start >= 3 && (k == start || k + 1 == end));
             for (k, &covered) in covered.iter().enumerate() {
+                let covered = covered || (bridged[k] && !abutment(k));
                 let segment = piece(k);
                 let (lo, hi) = (
                     [segment.a[0].min(segment.b[0]), segment.a[1].min(segment.b[1])],
@@ -832,7 +1070,7 @@ impl Roads {
                 let built = tunnels
                     .iter()
                     .flatten()
-                    .any(|s: &RoadSegment| s.distance(mid[0], mid[1]).0 < 2.0);
+                    .any(|s: &RoadSegment| s.distance(mid[0], mid[1]).0 < 6.0);
                 if built {
                     continue;
                 }
@@ -853,6 +1091,8 @@ impl Roads {
             in_tunnels,
             tunnels,
             lamps,
+            bridges,
+            on_bridges,
             local,
         }
     }
@@ -890,7 +1130,16 @@ impl Roads {
     /// Whether point `k` of way `way` (see `ways`) lies on a tunnel's
     /// line: in its tube, or in the cutting to it.
     pub fn in_tunnel(&self, way: usize, k: usize) -> bool {
-        self.in_tunnels[way][k]
+        self.in_tunnels[way][k] == Line::Tunnel
+    }
+
+    /// Whether point `k` of way `way` (see `ways`) lies on a bridge.
+    pub fn on_bridge(&self, way: usize, k: usize) -> bool {
+        self.on_bridges[way][k]
+    }
+
+    pub fn bridges(&self) -> &[Arc<Bridge>] {
+        &self.bridges
     }
 
     /// Every tunnel's tube: the pieces of road in it, end to end.
@@ -1373,125 +1622,320 @@ fn lamps_along(tube: &[RoadSegment]) -> Vec<[f32; 3]> {
     lamps
 }
 
-/// `points` with tunnels where they shorten the way much: two points of it
-/// at most `TUNNEL_MAX_LENGTH` apart, between which the way runs at least
-/// `TUNNEL_COST` times as far plus `TUNNEL_SAVING`, joined by a straight
-/// line no steeper than `TUNNEL_GRADE` from one's ground to the other's,
-/// with `TUNNEL_PLAN_COVER` of ground over it except near its ends (and
-/// `TUNNEL_COVER` of the ground as it lies, `exact`), and
-/// never under the ground there (no valley in between) or under water
-/// (`excluded`, which also keeps the ends out of settlements). The best
-/// first, then the next that does not overlap it. `ground` is the coarse
-/// ground the plan looks at, `exact` the ground at a point (for the
-/// tunnels' heights). `forced`: tunnels the way finding took already, from
-/// one point to the next, kept whatever they save. Returns the new points and each tunnel's line with
-/// its height at either end.
+/// `points` with the tunnels the way finding took (`forced`: from one
+/// point to the next, straight through what the roads could not cross):
+/// points along each as close as the rest of the way's, so it is smoothed
+/// and cut into pieces like the rest. `exact` is the ground at a point (the
+/// tunnels' heights at their ends). Returns the new points and each
+/// tunnel's line with its height at either end.
 #[allow(clippy::type_complexity)]
-fn with_tunnels(
+fn with_jumps(
     points: Vec<[f64; 2]>,
     forced: &[([f64; 2], [f64; 2])],
-    ground: impl Fn([f64; 2]) -> f32,
-    excluded: impl Fn([f64; 2]) -> bool,
     exact: impl Fn([f64; 2]) -> f32,
 ) -> (Vec<[f64; 2]>, Vec<([f64; 2], [f64; 2], f32, f32)>) {
+    let mut out = Vec::with_capacity(points.len());
+    let mut lines = Vec::new();
+    for (k, &p) in points.iter().enumerate() {
+        if k > 0 && forced.contains(&(points[k - 1], p)) {
+            let a = points[k - 1];
+            lines.push((a, p, exact(a), exact(p)));
+            let length = (a[0] - p[0]).hypot(a[1] - p[1]);
+            let steps = (length / CELL).ceil() as usize;
+            for step in 1..steps {
+                let t = step as f64 / steps as f64;
+                out.push([a[0] + (p[0] - a[0]) * t, a[1] + (p[1] - a[1]) * t]);
+            }
+        }
+        out.push(p);
+    }
+    (out, lines)
+}
+
+/// A shortcut taken (see `shortcuts`): its line, both ends included, the
+/// road's height along it, and what it is.
+#[derive(Clone, Debug)]
+struct Shortcut {
+    points: Vec<[f64; 2]>,
+    levels: Vec<f32>,
+    line: Line,
+}
+
+/// How near a road's way must come to both ends of an earlier road's
+/// shortcut to take it too, metres.
+const REUSE_REACH: f64 = 8.0;
+
+/// What a point of a way lies on, besides the ground.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Line {
+    Road,
+    Tunnel,
+    Bridge,
+}
+
+/// `points` (`lines`: what each lies on already) with shortcuts where they
+/// make the way much cheaper: two points of it, between which the way runs
+/// much further (see `SHORTCUT_SAVING`), climbs over or dips under its ends
+/// (`CLIMB_COST`) or runs along a steep hillside (`HILLSIDE_COST`), joined
+/// by a line straight or bent a little (see `SHORTCUT_BENDS`), no steeper
+/// than `TUNNEL_GRADE` from one end's ground to the other's: a tunnel where
+/// it runs under the ground with enough rock over it (but for the cuttings
+/// toward its ends), a bridge where it runs high over the ground, neither
+/// over `excluded` ground. `ground` is the ground at a point. The best
+/// first, then the next that does not overlap one taken. Returns the new
+/// points and what each lies on, with the road's height there.
+#[allow(clippy::type_complexity)]
+fn shortcuts(
+    points: Vec<[f64; 2]>,
+    mut lines: Vec<Option<(f32, Line)>>,
+    known: &mut Vec<Shortcut>,
+    excluded: impl Fn([f64; 2]) -> bool,
+    ground: impl Fn([f64; 2]) -> f32,
+) -> (Vec<[f64; 2]>, Vec<Option<(f32, Line)>>) {
     let n = points.len();
+    if n < 6 {
+        return (points, lines);
+    }
+    // Shortcuts of the roads before where this one runs the same way
+    // round (the roads merged): the same, so they share one tunnel or
+    // bridge.
+    let mut taken: Vec<(usize, usize, Shortcut)> = Vec::new();
+    for shortcut in known.iter() {
+        let near = |p: [f64; 2]| {
+            (0..n)
+                .filter(|&k| lines[k].is_none() && (points[k][0] - p[0]).hypot(points[k][1] - p[1]) < REUSE_REACH)
+                .min_by(|&a, &b| {
+                    let d = |k: usize| (points[k][0] - p[0]).hypot(points[k][1] - p[1]);
+                    d(a).total_cmp(&d(b))
+                })
+        };
+        let (Some(i), Some(j)) = (near(shortcut.points[0]), near(*shortcut.points.last().unwrap())) else {
+            continue;
+        };
+        let mut reused = shortcut.clone();
+        let (i, j) = if i < j {
+            (i, j)
+        } else {
+            reused.points.reverse();
+            reused.levels.reverse();
+            (j, i)
+        };
+        if j > i + 1 && taken.iter().all(|t| j <= t.0 || i >= t.1) {
+            for line in &mut lines[i + 1..j] {
+                *line = Some((0.0, reused.line));
+            }
+            taken.push((i, j, reused));
+        }
+    }
+    let distance = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
     let mut along = vec![0.0f64; n];
     for k in 1..n {
-        along[k] = along[k - 1] + (points[k][0] - points[k - 1][0]).hypot(points[k][1] - points[k - 1][1]);
+        along[k] = along[k - 1] + distance(points[k - 1], points[k]);
     }
-    let works = |i: usize, j: usize| -> Option<f64> {
-        let (a, b) = (points[i], points[j]);
-        let length = (a[0] - b[0]).hypot(a[1] - b[1]);
-        if !(TUNNEL_MIN_LENGTH..=TUNNEL_MAX_LENGTH).contains(&length) {
-            return None;
-        }
-        let (ga, gb) = (ground(a), ground(b));
-        let climb = (i..=j).map(|k| ground(points[k])).fold(f32::MIN, f32::max) - ga.max(gb);
-        let saving = along[j] - along[i] + CLIMB_COST * climb.max(0.0) as f64 - TUNNEL_COST * length;
-        if saving < TUNNEL_SAVING || excluded(a) || excluded(b) {
-            return None;
-        }
-        if ((gb - ga).abs() as f64) > TUNNEL_GRADE as f64 * length || ga.min(gb) < SEA_LEVEL + 3.0 {
-            return None;
-        }
-        let samples = (length / 16.0).ceil() as usize;
-        for s in 1..samples {
-            let t = s as f64 / samples as f64;
-            let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-            let level = ga + (gb - ga) * t as f32;
-            let cover = ground(p) - level;
-            let from_end = (t * length).min((1.0 - t) * length);
-            let needed = if from_end < PORTAL_APPROACH { -1.0 } else { TUNNEL_PLAN_COVER };
-            if cover < needed || excluded(p) {
-                return None;
-            }
-        }
-        // And over the ground as it lies (the coarse ground misses gullies
-        // between its points, which the tunnel would open into): looked at
-        // only for tunnels that pass so far, as it costs more.
-        for s in 1..samples {
-            let t = s as f64 / samples as f64;
-            let from_end = (t * length).min((1.0 - t) * length);
-            if from_end < PORTAL_APPROACH {
-                continue;
-            }
-            let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-            if exact(p) - (ga + (gb - ga) * t as f32) < TUNNEL_COVER {
-                return None;
-            }
-        }
-        Some(saving)
+    let heights: Vec<f32> = points.iter().map(|&p| ground(p)).collect();
+    // (The ones reused above are left alone.)
+    let reused = |k: usize| taken.iter().any(|t| k >= t.0 && k <= t.1);
+    let tangent = |k: usize| {
+        let (a, b) = (points[k.saturating_sub(1)], points[(k + 1).min(n - 1)]);
+        let length = distance(a, b).max(1e-9);
+        [(b[0] - a[0]) / length, (b[1] - a[1]) / length]
     };
-    // The best tunnel from each point, then the best of all that do not
-    // overlap one taken.
-    let mut candidates: Vec<(f64, usize, usize)> = Vec::new();
-    for i in 0..n {
-        let mut best: Option<(f64, usize)> = None;
-        for j in i + 2..n {
-            if along[j] - along[i] > TUNNEL_MAX_LENGTH * 6.0 {
+    // What the way costs along hillsides, summed up to each point.
+    let mut hillside = vec![0.0f64; n];
+    for k in 1..n {
+        let ([tx, tz], p) = (tangent(k), points[k]);
+        let (sx, sz) = (-tz * HILLSIDE_REACH, tx * HILLSIDE_REACH);
+        let across = (ground([p[0] + sx, p[1] + sz]) - ground([p[0] - sx, p[1] - sz])).abs() as f64 / (2.0 * HILLSIDE_REACH);
+        hillside[k] = hillside[k - 1]
+            + HILLSIDE_COST * smoothstep(HILLSIDE_FROM, HILLSIDE_TO, across) * (along[k] - along[k - 1]);
+    }
+    // The best shortcut from every other point.
+    let mut candidates: Vec<(f64, usize, usize, Vec<[f64; 2]>, Line)> = Vec::new();
+    for i in (1..n - 1).step_by(2) {
+        if lines[i].is_some() || reused(i) {
+            continue;
+        }
+        let (mut high, mut low) = (heights[i], heights[i]);
+        let mut best: Option<(f64, usize, Vec<[f64; 2]>, Line)> = None;
+        for j in i + 1..n - 1 {
+            high = high.max(heights[j]);
+            low = low.min(heights[j]);
+            if lines[j].is_some() || reused(j) || along[j] - along[i] > SHORTCUT_SEARCH {
                 break;
             }
-            if let Some(saving) = works(i, j) {
-                if best.is_none_or(|b| saving > b.0) {
-                    best = Some((saving, j));
+            // Every other point, further away fewer.
+            let stride = if along[j] - along[i] < 400.0 { 2 } else { 6 };
+            if (j - i) % stride != 0 {
+                continue;
+            }
+            let (a, b) = (points[i], points[j]);
+            let chord = distance(a, b);
+            if !(SHORTCUT_MIN_LENGTH..=TUNNEL_MAX_LENGTH).contains(&chord) {
+                continue;
+            }
+            let (gi, gj) = (heights[i], heights[j]);
+            if ((gj - gi).abs() as f64) > TUNNEL_GRADE as f64 * chord {
+                continue;
+            }
+            let over = (high - gi.max(gj)).max(0.0) + (gi.min(gj) - low).max(0.0);
+            let gain = along[j] - along[i] + CLIMB_COST * over as f64 + hillside[j] - hillside[i];
+            // (A bent line is longer than the straight one.)
+            let needed = |length: f64| SHORTCUT_SAVING + SHORTCUT_SAVING_PER_METRE * length;
+            if gain - TUNNEL_COST * chord < needed(chord) || excluded(a) || excluded(b) {
+                continue;
+            }
+            for bend in SHORTCUT_BENDS {
+                let Some(curve) = shortcut_curve(a, tangent(i), b, tangent(j), bend) else {
+                    continue;
+                };
+                let length: f64 = curve.windows(2).map(|p| distance(p[0], p[1])).sum();
+                let saving = gain - TUNNEL_COST * length;
+                if saving < needed(length) || best.as_ref().is_some_and(|b| b.0 >= saving) {
+                    continue;
+                }
+                if let Some(line) = shortcut_kind(&curve, length, gi, gj, &excluded, &ground) {
+                    best = Some((saving, j, curve, line));
                 }
             }
         }
-        if let Some((saving, j)) = best {
-            candidates.push((saving, i, j));
+        if let Some((saving, j, curve, line)) = best {
+            candidates.push((saving, i, j, curve, line));
         }
     }
     candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
-    // The tunnels the way finding took (`forced`) first of all.
-    let mut taken: Vec<(usize, usize)> = (1..n)
-        .filter(|&k| forced.contains(&(points[k - 1], points[k])))
-        .map(|k| (k - 1, k))
-        .collect();
-    for (_, i, j) in candidates {
-        if taken.iter().all(|&(a, b)| j <= a || i >= b) {
-            taken.push((i, j));
+    for (_, i, j, curve, line) in candidates {
+        if taken.iter().all(|t| j <= t.0 || i >= t.1) {
+            // Its road going evenly from one end's ground to the other's.
+            let length: f64 = curve.windows(2).map(|p| distance(p[0], p[1])).sum();
+            let (gi, gj) = (heights[i], heights[j]);
+            let mut run = 0.0;
+            let levels = (0..curve.len())
+                .map(|m| {
+                    if m > 0 {
+                        run += distance(curve[m - 1], curve[m]);
+                    }
+                    gi + (gj - gi) * (run / length) as f32
+                })
+                .collect();
+            let shortcut = Shortcut { points: curve, levels, line };
+            known.push(shortcut.clone());
+            taken.push((i, j, shortcut));
         }
     }
-    taken.sort();
+    taken.sort_by_key(|t| t.0);
     let mut out = Vec::with_capacity(n);
-    let mut lines = Vec::new();
+    let mut on = Vec::with_capacity(n);
     let mut k = 0;
-    for (i, j) in taken {
+    for (i, j, shortcut) in taken {
         out.extend_from_slice(&points[k..=i]);
-        let (a, b) = (points[i], points[j]);
-        lines.push((a, b, exact(a), exact(b)));
-        // Points along it as close as the rest of the way's, so it is
-        // smoothed, levelled and cut into pieces like the rest.
-        let length = (a[0] - b[0]).hypot(a[1] - b[1]);
-        let steps = (length / CELL).ceil() as usize;
-        for step in 1..steps {
-            let t = step as f64 / steps as f64;
-            out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+        on.extend_from_slice(&lines[k..=i]);
+        for m in 1..shortcut.points.len() - 1 {
+            out.push(shortcut.points[m]);
+            on.push(Some((shortcut.levels[m], shortcut.line)));
         }
         k = j;
     }
     out.extend_from_slice(&points[k..]);
-    (out, lines)
+    on.extend_from_slice(&lines[k..]);
+    (out, on)
+}
+
+/// A shortcut's line from `a` to `b`, leaving `a` in direction `ta` and
+/// coming into `b` in direction `tb` for `bend` of its length (a cubic
+/// Bézier curve; straight for 0, then with a kink of at most `MAX_KINK` at
+/// either end), as points about `SHORTCUT_STEP` apart, both ends included.
+/// `None` where it would turn tighter than `MIN_RADIUS`.
+fn shortcut_curve(a: [f64; 2], ta: [f64; 2], b: [f64; 2], tb: [f64; 2], bend: f64) -> Option<Vec<[f64; 2]>> {
+    let chord = (b[0] - a[0]).hypot(b[1] - a[1]);
+    let direction = [(b[0] - a[0]) / chord, (b[1] - a[1]) / chord];
+    if bend == 0.0 {
+        let kink = |t: [f64; 2]| (t[0] * direction[0] + t[1] * direction[1]).clamp(-1.0, 1.0).acos();
+        if kink(ta) > MAX_KINK || kink(tb) > MAX_KINK {
+            return None;
+        }
+    }
+    let (c1, c2) = (
+        [a[0] + ta[0] * chord * bend, a[1] + ta[1] * chord * bend],
+        [b[0] - tb[0] * chord * bend, b[1] - tb[1] * chord * bend],
+    );
+    let at = |t: f64| {
+        let u = 1.0 - t;
+        let (w0, w1, w2, w3) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+        [
+            w0 * a[0] + w1 * c1[0] + w2 * c2[0] + w3 * b[0],
+            w0 * a[1] + w1 * c1[1] + w2 * c2[1] + w3 * b[1],
+        ]
+    };
+    // Finely, then evenly spaced by the distance along it.
+    const FINE: usize = 96;
+    let fine: Vec<[f64; 2]> = (0..=FINE).map(|k| at(k as f64 / FINE as f64)).collect();
+    let mut run = vec![0.0];
+    for p in fine.windows(2) {
+        run.push(run.last().unwrap() + (p[1][0] - p[0][0]).hypot(p[1][1] - p[0][1]));
+    }
+    let length = *run.last().unwrap();
+    let count = (length / SHORTCUT_STEP).ceil().max(2.0) as usize;
+    let step = length / count as f64;
+    let mut out = Vec::with_capacity(count + 1);
+    let mut f = 0;
+    for m in 0..=count {
+        let s = m as f64 * step;
+        while f + 1 < FINE && run[f + 1] < s {
+            f += 1;
+        }
+        let t = ((s - run[f]) / (run[f + 1] - run[f]).max(1e-9)).clamp(0.0, 1.0);
+        out.push([fine[f][0] + (fine[f + 1][0] - fine[f][0]) * t, fine[f][1] + (fine[f + 1][1] - fine[f][1]) * t]);
+    }
+    // No tighter than `MIN_RADIUS`: the turn between neighbouring steps.
+    for p in out.windows(3) {
+        let (u, v) = ([p[1][0] - p[0][0], p[1][1] - p[0][1]], [p[2][0] - p[1][0], p[2][1] - p[1][1]]);
+        let turn = (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1]).abs();
+        if turn * MIN_RADIUS > step {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+/// What a shortcut along `curve` (`length` metres, its road going evenly
+/// from `from` to `to`) would be: a tunnel where the ground lies over it
+/// with `TUNNEL_COVER` but toward its ends (a quarter of it, at most
+/// `PORTAL_APPROACH`, never over the ground), with a tube at least
+/// `TUNNEL_MIN_LENGTH` long; a bridge where it runs over the ground, in its
+/// middle at least `BRIDGE_MIN_HEIGHT` over it and nowhere higher than
+/// `BRIDGE_MAX_HEIGHT`. Neither over `excluded` ground.
+fn shortcut_kind(
+    curve: &[[f64; 2]],
+    length: f64,
+    from: f32,
+    to: f32,
+    excluded: &impl Fn([f64; 2]) -> bool,
+    ground: &impl Fn([f64; 2]) -> f32,
+) -> Option<Line> {
+    let steps = curve.len() - 1;
+    let level = |m: usize| from + (to - from) * (m as f32 / steps as f32);
+    let over = |m: usize| ground(curve[m]) - level(m);
+    let middle = over(steps / 2);
+    let approach = (0.25 * length).clamp(20.0, PORTAL_APPROACH);
+    if middle >= TUNNEL_COVER {
+        if length - 2.0 * approach < TUNNEL_MIN_LENGTH {
+            return None;
+        }
+        let covered = (1..steps).all(|m| {
+            let s = length * m as f64 / steps as f64;
+            let needed = if s.min(length - s) < approach { -1.0 } else { TUNNEL_COVER };
+            over(m) >= needed && !excluded(curve[m])
+        });
+        return covered.then_some(Line::Tunnel);
+    }
+    if middle <= -BRIDGE_MIN_HEIGHT && length <= BRIDGE_MAX_LENGTH {
+        let borne = (1..steps).all(|m| {
+            let o = over(m);
+            o <= BRIDGE_LANDS && o >= -BRIDGE_MAX_HEIGHT && !excluded(curve[m])
+        });
+        return borne.then_some(Line::Bridge);
+    }
+    None
 }
 
 /// `points` with every loop cut out: where the way crosses itself, it goes

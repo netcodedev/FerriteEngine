@@ -17,6 +17,7 @@ use std::{
 use super::CHUNK_SIZE;
 
 pub mod biome;
+pub mod bridges;
 pub mod caves;
 pub mod hydrology;
 pub mod map;
@@ -585,6 +586,11 @@ impl WorldGenerator {
         if road > 0.0 || settlement > 0.3 {
             return false;
         }
+        // Nor under a bridge.
+        let square = |v: f64| (v / CHUNK_SIZE as f64).floor() as i32;
+        if self.bridges_near(square(x), square(z)).iter().any(|b| b.covers(x, z, 3.0)) {
+            return false;
+        }
         if self.underground.has_overhangs() && self.underground.overhang_amplitude(self.slope(x, z)) > 0.25 {
             return false;
         }
@@ -614,7 +620,26 @@ impl WorldGenerator {
             Roads::tunnel_air(tunnels, x, y as f32, z)
         };
         let cave = Roads::cave_beside_tunnel(u.cave(x, y, z, h, slope), tunnel);
-        (y as f32 - h - push).max(cave).max(tunnel)
+        let bridge = self
+            .bridges_near(square(x), square(z))
+            .iter()
+            .map(|b| b.solid(x, y as f32, z))
+            .fold(f32::INFINITY, f32::min);
+        (y as f32 - h - push).max(cave).max(tunnel).min(bridge)
+    }
+
+    /// The bridges that may reach into chunk square `(cx, cz)` or its
+    /// column's margins (see `Bridge::solid`).
+    pub fn bridges_near(&self, cx: i32, cz: i32) -> &[Arc<bridges::Bridge>] {
+        self.roads()
+            .and_then(|r| r.near(cx, cz))
+            .map_or(&[], |l| l.bridges.as_slice())
+    }
+
+    /// The highest top of a bridge over chunk square `(cx, cz)`, if one
+    /// stands there.
+    pub fn bridge_top(&self, cx: i32, cz: i32) -> Option<f32> {
+        self.bridges_near(cx, cz).iter().map(|b| b.top).reduce(f32::max)
     }
 
     /// The pieces of tunnel tubes that may reach into chunk square

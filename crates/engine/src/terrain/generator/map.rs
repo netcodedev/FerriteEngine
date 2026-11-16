@@ -145,6 +145,10 @@ impl WorldGenerator {
                                 if road.is_some_and(|r| (r.distance as f64) < step * 0.5) {
                                     return [0.30, 0.18, 0.10];
                                 }
+                                // Bridges paler.
+                                if works.bridges.iter().any(|b| b.covers(x, z, (step * 0.5) as f32 - 4.5)) {
+                                    return [0.62, 0.56, 0.48];
+                                }
                                 // Tunnels dashed, lighter: under the ground.
                                 let tunnel = super::roads::Roads::nearest(&works.tunnels, x, z);
                                 let dash = ((x / step).floor() + (z / step).floor()).rem_euclid(3.0) < 2.0;

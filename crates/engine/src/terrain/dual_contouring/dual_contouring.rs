@@ -282,7 +282,9 @@ impl Chunk for DualContouringChunk {
         }
         // The water over the ground is drawn by the lowest chunk (see
         // `generate_water_mesh`).
-        let high = chunk(column.max_height + reach);
+        // And bridges, over it.
+        let top = generator.bridge_top(column_coord.0, column_coord.1).map_or(column.max_height, |t| t.max(column.max_height));
+        let high = chunk(top + reach);
         low..=high
     }
 
