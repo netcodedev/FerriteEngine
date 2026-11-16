@@ -713,6 +713,7 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             Property::ranged("hill height", self.world.hill_scale, 0.0, 3.0),
             Property::ranged("caves", self.world.caves, 0.0, 2.0),
             Property::ranged("overhangs", self.world.overhangs, 0.0, 2.0),
+            Property::bool("rivers and lakes", self.world.rivers),
             Property::choice(
                 "map",
                 self.map.layer.name().into(),
@@ -766,6 +767,12 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             ("overhangs", PropertyValue::Float(v)) => {
                 if v.clamp(0.0, 2.0) != self.world.overhangs {
                     self.world.overhangs = v.clamp(0.0, 2.0);
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("rivers and lakes", PropertyValue::Bool(v)) => {
+                if v != self.world.rivers {
+                    self.world.rivers = v;
                     self.reseed_in = Some(RESEED_DELAY);
                 }
             }
@@ -864,7 +871,9 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         // props), so water correctly depth-tests against all of them.
         for chunk in entity.get_with_own_component::<T>() {
             if let Some(chunk) = chunk.get_component::<T>() {
-                if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_bounds()) {
+                // The drawn bounds hold the water, which may lie above
+                // the chunk's own box (see `Chunk::get_drawn_bounds`).
+                if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_drawn_bounds()) {
                     Chunk::render_transparent(chunk, scene, view_projection, parent_transform);
                 }
             }

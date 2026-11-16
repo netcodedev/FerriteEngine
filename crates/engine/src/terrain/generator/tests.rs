@@ -135,12 +135,21 @@ fn chunk_coords_round_down_to_the_chunk_that_holds_a_point() {
 fn generation_timings() {
     use crate::terrain::{dual_contouring::DualContouringChunk, Chunk};
     let generator = WorldGenerator::new(2);
+    generator.hydrology();
     let n = 16;
     let start = Instant::now();
     for i in 0..n {
         generator.make_column(i, 1000);
     }
     let column = start.elapsed() / n as u32;
+    // Inland, by rivers (seed 1).
+    let inland = WorldGenerator::new(1);
+    inland.hydrology();
+    let start = Instant::now();
+    for i in 0..n {
+        inland.make_column(20 + i, 14);
+    }
+    println!("inland column: {:?}", start.elapsed() / n as u32);
     let start = Instant::now();
     for i in 0..n {
         DualContouringChunk::generate(&generator, (i as f32, 0.0, 2000.0), 0);
@@ -224,5 +233,143 @@ fn underground_timings() {
             start.elapsed() / chunks,
             lattice / chunks
         );
+    }
+}
+
+/// A river piece of seed 1 well inside the land, wide enough to see.
+fn a_river(generator: &WorldGenerator) -> hydrology::Segment {
+    generator
+        .hydrology()
+        .unwrap()
+        .pieces()
+        .into_iter()
+        .filter(|s| s.width[0] > 8.0 && s.level[1] > 20.0)
+        .min_by(|a, b| a.a[0].hypot(a.a[1]).total_cmp(&b.a[0].hypot(b.a[1])))
+        .expect("seed 1 has rivers")
+}
+
+#[test]
+fn rivers_run_downhill_into_lakes_or_the_sea() {
+    let generator = WorldGenerator::new(1);
+    let plan = generator.hydrology().unwrap();
+    let pieces = plan.pieces();
+    let (_, lakes) = plan.counts();
+    assert!(pieces.len() > 200, "{} river pieces", pieces.len());
+    assert!(lakes > 100, "{lakes} lake cells");
+    for s in &pieces {
+        assert!(s.level[1] <= s.level[0], "{s:?}");
+        assert!(s.level[1] >= SEA_LEVEL - 1e-3, "{s:?}");
+    }
+    // None near the spawn.
+    for s in &pieces {
+        let near = s.a[0].hypot(s.a[1]).min(s.b[0].hypot(s.b[1]));
+        assert!(near > 300.0 || s.width.iter().all(|&w| w < 1.0), "{s:?}");
+    }
+}
+
+#[test]
+fn a_river_is_carved_into_the_ground_and_holds_water() {
+    let generator = WorldGenerator::new(1);
+    let s = a_river(&generator);
+    // Rivers wind off their pieces' straight lines: the deepest water
+    // near the middle of the piece.
+    let (mx, mz) = ((s.a[0] + s.b[0]) * 0.5, (s.a[1] + s.b[1]) * 0.5);
+    let (mut x, mut z, mut depth) = (mx, mz, f32::MIN);
+    for k in 0..=24 * 24 {
+        let (px, pz) = (mx + (k % 25) as f64 * 2.0 - 24.0, mz + (k / 25) as f64 * 2.0 - 24.0);
+        let d = generator.water_level(px, pz) - generator.surface_height(px, pz);
+        if d > depth {
+            (x, z, depth) = (px, pz, d);
+        }
+    }
+    assert!(depth > 0.5, "{depth} m deep at most, near {mx}, {mz}");
+    // Its column holds the carved ground, to the bit.
+    let c = ChunkCoord::containing(x, 0.0, z);
+    let column = generator.column(c.x, c.z);
+    let [ox, _, oz] = c.origin();
+    for dz in -12..=12 {
+        for dx in -12..=12 {
+            let (wx, wz) = (x.floor() + dx as f64, z.floor() + dz as f64);
+            let (lx, lz) = ((wx - ox) as i32, (wz - oz) as i32);
+            if lx < -COLUMN_MARGIN || lz < -COLUMN_MARGIN || lx > 128 + COLUMN_MARGIN || lz > 128 + COLUMN_MARGIN {
+                continue;
+            }
+            assert_eq!(column.height(lx, lz).to_bits(), generator.surface_height(wx, wz).to_bits());
+        }
+    }
+}
+
+#[test]
+fn lakes_lie_in_basins_with_dry_shores() {
+    let generator = WorldGenerator::new(1);
+    let plan = generator.hydrology().unwrap();
+    let mut checked = 0;
+    for ([x, z], level) in plan.lake_cells().step_by(37) {
+        let inside = plan.lake_at(x, z).unwrap().1;
+        if inside < 0.99 {
+            continue;
+        }
+        checked += 1;
+        assert!(generator.surface_height(x, z) < level - 1.0, "lake floor at {x}, {z}");
+        // The highest of the cells around (their levels differ by
+        // centimetres where the basin drains).
+        assert!((generator.water_level(x, z) - level.max(SEA_LEVEL)).abs() < 0.5);
+    }
+    assert!(checked > 20, "{checked} lake cells checked");
+    // Where the lake's water ends, the ground stands above it.
+    let mut shores = 0;
+    for ([x, z], _) in plan.lake_cells().step_by(11) {
+        for (dx, dz) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+            for k in 0..256 {
+                let (px, pz) = (x + dx * k as f64, z + dz * k as f64);
+                let Some((level, inside)) = plan.lake_at(px, pz) else { break };
+                // The lake's outer edge, where its water ends.
+                if inside < hydrology::LAKE_WATER + 0.05 {
+                    if inside < hydrology::LAKE_WATER {
+                        break;
+                    }
+                    shores += 1;
+                    let ground = generator.surface_height(px, pz);
+                    let river = generator.water_level(px, pz) > generator.still_water_level(px, pz);
+                    // Dry, but where a river runs in or out.
+                    assert!(ground >= level || river, "spill at {px}, {pz}: ground {ground}, lake {level}");
+                    break;
+                }
+            }
+        }
+    }
+    assert!(shores > 20, "{shores} shores");
+}
+
+#[test]
+fn a_world_without_rivers_has_none() {
+    let settings = WorldSettings { rivers: false, ..WorldSettings::default() };
+    let generator = WorldGenerator::with_settings(1, settings);
+    assert!(generator.hydrology().is_none());
+    let with = WorldGenerator::new(1);
+    let s = a_river(&with);
+    let (x, z) = (s.a[0], s.a[1]);
+    assert_eq!(generator.water_level(x, z), SEA_LEVEL);
+}
+
+#[test]
+#[ignore]
+fn river_stats() {
+    for seed in [1, 2, 3] {
+        let generator = WorldGenerator::new(seed);
+        let start = Instant::now();
+        let plan = generator.hydrology().unwrap();
+        println!("seed {seed}: {:?} in {:?}, max flow {}", plan.counts(), start.elapsed(), plan.max_flow());
+        if seed == 1 {
+            let s = a_river(&generator);
+            println!("river {s:?}");
+            let mut wide: Vec<_> = plan.pieces().into_iter().filter(|s| s.width[0] > 20.0).collect();
+            wide.sort_by(|a, b| a.a[0].hypot(a.a[1]).total_cmp(&b.a[0].hypot(b.a[1])));
+            for s in wide.iter().take(3) {
+                println!("wide {s:?}");
+            }
+            let lake = plan.lake_cells().min_by(|a, b| a.0[0].hypot(a.0[1]).total_cmp(&b.0[0].hypot(b.0[1])));
+            println!("lake {lake:?}");
+        }
     }
 }

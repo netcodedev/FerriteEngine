@@ -127,10 +127,23 @@ impl WorldGenerator {
                                 1.0
                             }
                         };
+                        // Rivers and lakes over the ground, on the maps of it.
+                        let water = |ground: [f32; 3]| -> [f32; 3] {
+                            let Some(plan) = self.hydrology() else {
+                                return ground;
+                            };
+                            if plan.lake_at(x, z).is_some_and(|(_, inside)| inside > 0.45) {
+                                [0.16, 0.36, 0.62]
+                            } else if plan.river_near(x, z, step * 0.5) {
+                                [0.18, 0.42, 0.72]
+                            } else {
+                                ground
+                            }
+                        };
                         *v = match layer {
                             MapLayer::Height => {
                                 let h = self.coarse_height(x, z);
-                                height_color(h).map(|c| c * shaded(h))
+                                water(height_color(h).map(|c| c * shaded(h)))
                             }
                             MapLayer::Biomes => {
                                 let h = self.coarse_height(x, z);
@@ -143,7 +156,7 @@ impl WorldGenerator {
                                     let snow = 1.0 - smoothstep(-6.0, -3.5, biome.temperature);
                                     mix(biome.color, [0.86, 0.88, 0.92], snow)
                                 };
-                                ground.map(|c| c * shaded(h))
+                                water(ground.map(|c| c * shaded(h)))
                             }
                             MapLayer::Temperature => {
                                 let h = self.coarse_height(x, z);

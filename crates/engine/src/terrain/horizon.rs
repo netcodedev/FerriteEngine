@@ -16,7 +16,7 @@ use std::sync::{
 use gl::types::GLuint;
 
 use super::{
-    generator::{WorldGenerator, SEA_LEVEL},
+    generator::WorldGenerator,
     ChunkMesh,
 };
 use crate::core::renderer::shader::VertexAttributes;
@@ -74,7 +74,11 @@ pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> (Vec<HorizonVertex
                 samples.push(generator.grid_sample(centre[0] + at(i), centre[1] + at(j)));
             }
         }
-        let height = |i: i32, j: i32| samples[((j + 1) * side + i + 1) as usize].0.max(SEA_LEVEL);
+        // The ground, or the water over it.
+        let height = |i: i32, j: i32| {
+            let (h, _, water) = samples[((j + 1) * side + i + 1) as usize];
+            h.max(water)
+        };
         // On the edge a coarser grid meets, every other vertex lies on the
         // coarse grid's edge between its neighbours: no cracks.
         let outer = level + 1 < LEVELS;
@@ -92,13 +96,14 @@ pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> (Vec<HorizonVertex
         let first = vertices.len() as u32;
         for j in 0..n {
             for i in 0..n {
-                let (h, biome) = samples[((j + 1) * side + i + 1) as usize];
+                let (h, biome, water) = samples[((j + 1) * side + i + 1) as usize];
                 let y = edge_height(i, j);
                 let dx = height(i + 1, j) - height(i - 1, j);
                 let dz = height(i, j + 1) - height(i, j - 1);
                 let normal = [-dx, 2.0 * step as f32, -dz];
                 let length = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
-                let sea = h < SEA_LEVEL;
+                // The sea, or a lake: flat water.
+                let sea = h < water;
                 vertices.push(HorizonVertex {
                     position: [(centre[0] + at(i + 1)) as f32, y, (centre[1] + at(j + 1)) as f32],
                     normal: if sea { [0.0, 1.0, 0.0] } else { normal.map(|c| c / length) },
@@ -215,7 +220,7 @@ mod tests {
     fn the_horizon_samples_the_ground_the_chunks_have() {
         let generator = WorldGenerator::new(3);
         for (x, z) in [(0.0, 0.0), (-4096.0, 1024.0), (9000.0 - 8.0, -3200.0)] {
-            let (h, _) = generator.grid_sample(x, z);
+            let (h, _, _) = generator.grid_sample(x, z);
             assert_eq!(h, generator.surface_height(x, z), "({x}, {z})");
         }
     }

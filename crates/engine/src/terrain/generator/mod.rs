@@ -11,13 +11,14 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use super::CHUNK_SIZE;
 
 pub mod biome;
 pub mod caves;
+pub mod hydrology;
 pub mod map;
 mod noise;
 pub mod spline;
@@ -26,8 +27,9 @@ pub mod world;
 pub use biome::{Biome, BiomeBlend};
 pub use caves::{Underground3, CAVE_DEPTH};
 use caves::Underground;
+use hydrology::Hydrology;
 pub use world::{Climate, WorldSettings, SEA_LEVEL};
-use world::{Macro, WorldShape};
+use world::{smoothstep, Macro, WorldShape};
 
 /// A chunk's place in the grid of chunks: chunk `(x, y, z)` covers world
 /// metres `x * CHUNK_SIZE .. (x + 1) * CHUNK_SIZE`, and so on.
@@ -208,6 +210,9 @@ pub struct WorldGenerator {
     underground: Underground,
     tiles: Mutex<Cache<MacroTile>>,
     columns: Mutex<Cache<Column>>,
+    /// Rivers and lakes, planned when first needed (see `hydrology`);
+    /// `None` inside when the world has none.
+    hydrology: OnceLock<Option<Arc<Hydrology>>>,
 }
 
 /// Catmull-Rom weights for the four points around `t` (0..1 between the
@@ -234,6 +239,7 @@ impl WorldGenerator {
             shape: WorldShape::new(seed, settings),
             tiles: Mutex::new(Cache::new(TILE_CACHE)),
             columns: Mutex::new(Cache::new(COLUMN_CACHE)),
+            hydrology: OnceLock::new(),
         })
     }
 
@@ -254,6 +260,78 @@ impl WorldGenerator {
     /// noise (not interpolated): for maps and far views.
     pub fn coarse_height(&self, x: f64, z: f64) -> f32 {
         self.shape.macro_at(x, z).height
+    }
+
+    /// The plan of the world's rivers and lakes, if it has them.
+    pub fn hydrology(&self) -> Option<&Hydrology> {
+        self.hydrology
+            .get_or_init(|| self.settings().rivers.then(|| Hydrology::shared(self.seed, &self.shape)))
+            .as_deref()
+    }
+
+    /// The river pieces that may reshape the ground of chunk square
+    /// `(cx, cz)` (and its column's margins).
+    fn rivers_near(&self, cx: i32, cz: i32) -> &[hydrology::Segment] {
+        self.hydrology().map_or(&[], |h| h.segments_near(cx, cz))
+    }
+
+    /// The river pieces that may reshape the ground at world `(x, z)`.
+    fn rivers_at(&self, x: f64, z: f64) -> &[hydrology::Segment] {
+        let c = |v: f64| (v / CHUNK_SIZE as f64).floor() as i32;
+        self.rivers_near(c(x), c(z))
+    }
+
+    /// The ground `h` at world `(x, z)` with the rivers' beds and the
+    /// lakes' basins worked in; `rivers` the pieces near it.
+    fn shaped(&self, rivers: &[hydrology::Segment], x: f64, z: f64, h: f32) -> f32 {
+        let Some(plan) = self.hydrology() else {
+            return h;
+        };
+        let lake = plan.lake_at(x, z);
+        let h = lake.map_or(h, |(level, inside)| Hydrology::shape_lake(h, level, inside));
+        let river = plan.nearest(rivers, x, z);
+        let carved = Hydrology::carve(h, river);
+        let Some((level, inside)) = lake else {
+            return carved;
+        };
+        let keep = Hydrology::lake_keeps_floor(inside);
+        if carved > h {
+            // In a lake the river's banks do not raise its floor.
+            return carved + (h - carved) * keep;
+        }
+        // A river leaving the lake lower than its water does not cut its
+        // shore: the lake would spill down the river's bed. The river
+        // starts below the shore instead.
+        let outflow = river.is_some_and(|r| r.level < level - 0.3);
+        if outflow {
+            let shore = smoothstep(0.0, hydrology::LAKE_WATER as f64, inside as f64) as f32 * (1.0 - keep);
+            return carved + (h - carved) * shore;
+        }
+        carved
+    }
+
+    /// Height of the water's surface at world `(x, z)`: the sea's, or a
+    /// lake's or river's where one is. Where it lies under the ground
+    /// there is no water.
+    pub fn water_level(&self, x: f64, z: f64) -> f32 {
+        let mut level = self.still_water_level(x, z);
+        let river = self.hydrology().and_then(|plan| plan.nearest(self.rivers_at(x, z), x, z));
+        if let Some(river) = river {
+            if river.distance < river.width * 0.5 + 2.0 {
+                level = level.max(river.level);
+            }
+        }
+        level
+    }
+
+    /// The level of the sea or a lake at world `(x, z)`, without the
+    /// rivers (too narrow for the horizon's coarse grid).
+    pub fn still_water_level(&self, x: f64, z: f64) -> f32 {
+        let lake = self
+            .hydrology()
+            .and_then(|plan| plan.lake_at(x, z))
+            .filter(|&(_, inside)| inside >= hydrology::LAKE_WATER);
+        lake.map_or(SEA_LEVEL, |(level, _)| level.max(SEA_LEVEL))
     }
 
     fn tile(&self, tx: i32, tz: i32) -> Arc<MacroTile> {
@@ -312,20 +390,26 @@ impl WorldGenerator {
     /// density field crosses zero over that point.
     pub fn surface_height(&self, x: f64, z: f64) -> f32 {
         let m = self.interpolated(x, z, &mut |tx, tz| self.tile(tx, tz));
-        m.height + m.hills * self.shape.detail(x, z)
+        self.shaped(self.rivers_at(x, z), x, z, m.height + m.hills * self.shape.detail(x, z))
     }
 
     /// The biomes at world `(x, z)`, on the ground there.
     pub fn surface_biome(&self, x: f64, z: f64) -> BiomeBlend {
         let m = self.interpolated(x, z, &mut |tx, tz| self.tile(tx, tz));
-        let h = m.height + m.hills * self.shape.detail(x, z);
+        let h = self.shaped(self.rivers_at(x, z), x, z, m.height + m.hills * self.shape.detail(x, z));
         biome::biome_at(m.temperature, m.humidity, h)
     }
 
-    /// How steep the ground is at world `(x, z)`: rise per metre.
+    /// How steep the ground is at world `(x, z)`: rise per metre. The
+    /// ground as the hills shape it, before rivers and lakes are worked in:
+    /// their banks are steep, but should not overhang or open into caves.
     fn slope(&self, x: f64, z: f64) -> f32 {
-        let dx = self.surface_height(x + 1.0, z) - self.surface_height(x - 1.0, z);
-        let dz = self.surface_height(x, z + 1.0) - self.surface_height(x, z - 1.0);
+        let natural = |x: f64, z: f64| {
+            let m = self.interpolated(x, z, &mut |tx, tz| self.tile(tx, tz));
+            m.height + m.hills * self.shape.detail(x, z)
+        };
+        let dx = natural(x + 1.0, z) - natural(x - 1.0, z);
+        let dz = natural(x, z + 1.0) - natural(x, z - 1.0);
         0.5 * dx.hypot(dz)
     }
 
@@ -415,12 +499,13 @@ impl WorldGenerator {
 
     /// The ground at world `(x, z)` on the 4 m grid of the large shape
     /// (both multiples of `MACRO_STEP`): its height, exactly as
-    /// `surface_height` gives it there, and its biomes. Needs no cached
-    /// tiles, so it suits samples spread far apart (the horizon).
-    pub fn grid_sample(&self, x: f64, z: f64) -> (f32, BiomeBlend) {
+    /// `surface_height` gives it there, its biomes and the level of the
+    /// sea or a lake there (see `still_water_level`). Needs no cached tiles, so it suits
+    /// samples spread far apart (the horizon).
+    pub fn grid_sample(&self, x: f64, z: f64) -> (f32, BiomeBlend, f32) {
         let m = self.shape.macro_at(x, z);
-        let h = m.height + m.hills * self.shape.detail(x, z);
-        (h, biome::biome_at(m.temperature, m.humidity, h))
+        let h = self.shaped(self.rivers_at(x, z), x, z, m.height + m.hills * self.shape.detail(x, z));
+        (h, biome::biome_at(m.temperature, m.humidity, h), self.still_water_level(x, z))
     }
 
     /// The column of chunk square `(cx, cz)`, from the cache or made now.
@@ -440,13 +525,14 @@ impl WorldGenerator {
         let mut near: HashMap<(i32, i32), Arc<MacroTile>> = HashMap::new();
         let mut tile = |tx: i32, tz: i32| near.entry((tx, tz)).or_insert_with(|| self.tile(tx, tz)).clone();
         let span = Column::SPAN;
+        let rivers = self.rivers_near(cx, cz);
         let mut heights = Vec::with_capacity((span * span) as usize);
         let (mut min_height, mut max_height) = (f32::MAX, f32::MIN);
         for z in -COLUMN_MARGIN..span - COLUMN_MARGIN {
             for x in -COLUMN_MARGIN..span - COLUMN_MARGIN {
                 let (wx, wz) = (x0 + x as f64, z0 + z as f64);
                 let m = self.interpolated(wx, wz, &mut tile);
-                let h = m.height + m.hills * self.shape.detail(wx, wz);
+                let h = self.shaped(rivers, wx, wz, m.height + m.hills * self.shape.detail(wx, wz));
                 min_height = min_height.min(h);
                 max_height = max_height.max(h);
                 heights.push(h);

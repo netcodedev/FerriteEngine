@@ -61,7 +61,7 @@ const SCENE_DEPTH_UNIT: u32 = 12;
 use super::{
     density::{add_skirt, DensityField},
     water::{self, WaterVertex},
-    ChunkMesh, DualContouringChunk, Vertex, LODS, WATER_LEVEL, LOD_DISTANCES, SKIRT_DEPTH, SKIRT_DEPTH_PER_STEP,
+    ChunkMesh, DualContouringChunk, Vertex, LODS, LOD_DISTANCES, SKIRT_DEPTH, SKIRT_DEPTH_PER_STEP,
 };
 
 impl DualContouringChunk {
@@ -109,12 +109,20 @@ impl DualContouringChunk {
     fn measure_drawn_bounds(&self) -> ChunkBounds {
         let mut min = [f32::MAX; 3];
         let mut max = [f32::MIN; 3];
+        let mut add = |p: &[f32; 3]| {
+            for i in 0..3 {
+                min[i] = min[i].min(p[i]);
+                max[i] = max[i].max(p[i]);
+            }
+        };
         for mesh in &self.meshes {
-            for v in &mesh.vertices {
-                for i in 0..3 {
-                    min[i] = min[i].min(v.position[i]);
-                    max[i] = max[i].max(v.position[i]);
-                }
+            mesh.vertices.iter().for_each(|v| add(&v.position));
+        }
+        if let Some(water) = &self.water_mesh {
+            // Waves rise and fall a little around the surface.
+            for v in &water.vertices {
+                add(&[v.position[0], v.position[1] - 2.0, v.position[2]]);
+                add(&[v.position[0], v.position[1] + 2.0, v.position[2]]);
             }
         }
         if min[0] > max[0] {
@@ -143,17 +151,22 @@ impl DualContouringChunk {
         self.generator.surface_height(x as f64, z as f64)
     }
 
-    /// The water surface over this chunk (see `water`), in the chunk the
-    /// water level lies in.
+    /// The water surface over this chunk's square (see `water`): the sea's,
+    /// a lake's or a river's. Made by the lowest chunk of the column (the
+    /// one holding its lowest ground), whatever the water's height, so
+    /// exactly one chunk of a column has it.
     fn generate_water_mesh(&self) -> Option<ChunkMesh<WaterVertex>> {
-        if self.coord.y != (WATER_LEVEL / CHUNK_SIZE_FLOAT).floor() as i32 {
+        let column = self.generator.column(self.coord.x, self.coord.z);
+        if self.coord.y != (column.min_height / CHUNK_SIZE_FLOAT).floor() as i32 {
             return None;
         }
         let (vertices, indices) = water::generate(
             |x, z| self.ground_height(x, z),
+            |x, z| self.generator.water_level(x as f64, z as f64),
             self.position.0 * CHUNK_SIZE_FLOAT,
             self.position.2 * CHUNK_SIZE_FLOAT,
             CHUNK_SIZE_FLOAT,
+            self.position.1 * CHUNK_SIZE_FLOAT,
         )?;
         Some(ChunkMesh::new(vertices, Some(indices)))
     }
@@ -201,6 +214,10 @@ impl DualContouringChunk {
             if y < SCATTER_MIN_Y || y < floor || y >= ceiling {
                 continue;
             }
+            // Nothing grows in rivers and lakes.
+            if y < self.generator.water_level(x as f64, z as f64) + 1.0 {
+                continue;
+            }
             // As much grows as the biomes here let grow, and only on the
             // plain ground (not over a cave mouth or on an overhang).
             let biome = self.generator.surface_biome(x as f64, z as f64);
@@ -234,8 +251,8 @@ impl Chunk for DualContouringChunk {
             water_mesh: None,
         };
         (chunk.meshes, chunk.ground_indices) = chunk.generate_meshes();
-        chunk.drawn_bounds = chunk.measure_drawn_bounds();
         chunk.water_mesh = chunk.generate_water_mesh();
+        chunk.drawn_bounds = chunk.measure_drawn_bounds();
         chunk
     }
 
@@ -254,12 +271,9 @@ impl Chunk for DualContouringChunk {
         if let Some((bottom, _)) = generator.cave_band(column.min_height, column.max_height).filter(|_| detail) {
             low = low.min(chunk(bottom - reach));
         }
-        let mut high = chunk(column.max_height + reach);
-        // Over ground below the water, the chunk holding its surface too
-        // (in the open sea far above the sea floor).
-        if column.min_height < WATER_LEVEL + 3.0 {
-            high = high.max(chunk(WATER_LEVEL));
-        }
+        // The water over the ground is drawn by the lowest chunk (see
+        // `generate_water_mesh`).
+        let high = chunk(column.max_height + reach);
         low..=high
     }
 

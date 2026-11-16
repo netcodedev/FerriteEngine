@@ -1,6 +1,7 @@
 //! The water surface of a terrain chunk.
 //!
-//! The surface is a regular grid at `WATER_LEVEL`, aligned to world
+//! The surface is a regular grid at the water's level (the sea's, or a
+//! lake's or river's where one is: see `generator::hydrology`), aligned to world
 //! coordinates so neighbouring chunks share their border vertices exactly.
 //! It does not stop at the shoreline: every cell whose ground comes near the
 //! water is kept, plus a ring of cells around them, so the grid's edge always
@@ -17,8 +18,6 @@
 use gl::types::GLuint;
 
 use crate::core::renderer::shader::VertexAttributes;
-
-use super::WATER_LEVEL;
 
 /// Spacing of the surface grid. Small enough for the shortest waves that
 /// displace the surface (see `water_vertex.glsl`); shorter ones only bend
@@ -53,30 +52,56 @@ impl VertexAttributes for WaterVertex {
 
 /// Build the water surface of the chunk whose corner is at world `(x0, z0)`
 /// and which is `size` wide, over the ground given by `ground(x, z)` (world
-/// height). Positions are relative to the chunk's corner. `None` when no
+/// height), where the water would stand at `level(x, z)`. Positions are
+/// relative to the chunk's corner and to `floor` (height). `None` when no
 /// water comes near the chunk.
 pub fn generate(
     ground: impl Fn(f32, f32) -> f32,
+    level: impl Fn(f32, f32) -> f32,
     x0: f32,
     z0: f32,
     size: f32,
+    floor: f32,
 ) -> Option<(Vec<WaterVertex>, Vec<u32>)> {
     let cells = (size / GRID_STEP).round() as i32;
-    // Heights one vertex beyond the chunk on every side, so the ring of
-    // extra cells is decided the same way by the chunks on both sides.
-    let span = cells + 3;
-    let height_at = |heights: &[f32], i: i32, j: i32| heights[((j + 1) * span + (i + 1)) as usize];
+    // Heights two vertices beyond the chunk on every side, so the ring of
+    // extra cells and the levels along the border are decided the same way
+    // by the chunks on both sides.
+    let span = cells + 5;
+    let height_at = |heights: &[f32], i: i32, j: i32| heights[((j + 2) * span + (i + 2)) as usize];
     let mut heights = Vec::with_capacity((span * span) as usize);
-    for j in -1..=cells + 1 {
-        for i in -1..=cells + 1 {
-            heights.push(ground(x0 + i as f32 * GRID_STEP, z0 + j as f32 * GRID_STEP));
+    let mut levels = Vec::with_capacity((span * span) as usize);
+    for j in -2..=cells + 2 {
+        for i in -2..=cells + 2 {
+            let (x, z) = (x0 + i as f32 * GRID_STEP, z0 + j as f32 * GRID_STEP);
+            heights.push(ground(x, z));
+            levels.push(level(x, z));
         }
     }
+    let vertex_wet = |i: i32, j: i32| height_at(&heights, i, j) < height_at(&levels, i, j) + SHORE_MARGIN;
     // A cell is wet when any of its corners is (nearly) under water.
-    let wet = |i: i32, j: i32| -> bool {
-        (0..2).any(|dj| {
-            (0..2).any(|di| height_at(&heights, i + di, j + dj) < WATER_LEVEL + SHORE_MARGIN)
-        })
+    let wet = |i: i32, j: i32| -> bool { (0..2).any(|dj| (0..2).any(|di| vertex_wet(i + di, j + dj))) };
+    // Where the level changes (a river beside the sea's level, say), a dry
+    // vertex of a kept cell takes the highest level of the wet ones next to
+    // it, so the surface stays level instead of diving into the bank.
+    let surface_at = |i: i32, j: i32| -> f32 {
+        let own = height_at(&levels, i, j);
+        if vertex_wet(i, j) {
+            return own;
+        }
+        // Two vertices out: a kept cell's corners lie that close to a wet
+        // vertex (its ring reaches one cell beyond the wet ones).
+        let mut best: Option<f32> = None;
+        for dj in -2..=2 {
+            for di in -2..=2 {
+                let (a, b) = (i + di, j + dj);
+                if (-2..=cells + 2).contains(&a) && (-2..=cells + 2).contains(&b) && vertex_wet(a, b) {
+                    let l = height_at(&levels, a, b);
+                    best = Some(best.map_or(l, |m: f32| m.max(l)));
+                }
+            }
+        }
+        best.unwrap_or(own)
     };
     // Kept: wet, or next to a wet cell (the ring that tucks the edge under
     // the shore).
@@ -98,7 +123,7 @@ pub fn generate(
         return None;
     }
 
-    let body_size = BodySize::measure(&ground, x0, z0, size);
+    let body_size = BodySize::measure(&ground, &level, x0, z0, size);
     let corners = cells + 1;
     let mut index_of = vec![u32::MAX; (corners * corners) as usize];
     let mut vertices = Vec::new();
@@ -108,9 +133,10 @@ pub fn generate(
         if *slot == u32::MAX {
             let (x, z) = (i as f32 * GRID_STEP, j as f32 * GRID_STEP);
             *slot = vertices.len() as u32;
+            let surface = surface_at(i, j);
             vertices.push(WaterVertex {
-                position: [x, WATER_LEVEL, z],
-                depth: WATER_LEVEL - height_at(&heights, i, j),
+                position: [x, surface - floor, z],
+                depth: surface - height_at(&heights, i, j),
                 body_size: body_size.at(x, z),
             });
         }
@@ -144,7 +170,7 @@ struct BodySize {
 }
 
 impl BodySize {
-    fn measure(ground: &impl Fn(f32, f32) -> f32, x0: f32, z0: f32, size: f32) -> Self {
+    fn measure(ground: &impl Fn(f32, f32) -> f32, level: &impl Fn(f32, f32) -> f32, x0: f32, z0: f32, size: f32) -> Self {
         let steps = (size / SIZE_STEP).round() as i32;
         // One extra point on every side, for the dilation below.
         let span = steps + 3;
@@ -152,7 +178,7 @@ impl BodySize {
         for j in -1..=steps + 1 {
             for i in -1..=steps + 1 {
                 let (x, z) = (x0 + i as f32 * SIZE_STEP, z0 + j as f32 * SIZE_STEP);
-                raw.push(measure_body(ground, x, z));
+                raw.push(measure_body(ground, level(x, z), x, z));
             }
         }
         // Points on land take the largest size of the water next to them,
@@ -199,14 +225,14 @@ impl BodySize {
 /// its width along four directions. A long narrow river comes out close to
 /// its width rather than its length, which is what limits its waves.
 /// 0 on dry land.
-fn measure_body(ground: &impl Fn(f32, f32) -> f32, x: f32, z: f32) -> f32 {
-    if ground(x, z) >= WATER_LEVEL {
+fn measure_body(ground: &impl Fn(f32, f32) -> f32, level: f32, x: f32, z: f32) -> f32 {
+    if ground(x, z) >= level {
         return 0.0;
     }
     let reach = |dx: f32, dz: f32| -> f32 {
         let mut t = SIZE_RAY_STEP;
         while t < SIZE_RAY_REACH {
-            if ground(x + dx * t, z + dz * t) >= WATER_LEVEL {
+            if ground(x + dx * t, z + dz * t) >= level {
                 return t;
             }
             t += SIZE_RAY_STEP;
@@ -225,8 +251,13 @@ fn measure_body(ground: &impl Fn(f32, f32) -> f32, x: f32, z: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terrain::dual_contouring::WATER_LEVEL;
 
     const SIZE: f32 = 128.0;
+
+    fn sea(_: f32, _: f32) -> f32 {
+        WATER_LEVEL
+    }
 
     /// A round lake of `radius` around the origin, with a beach rising
     /// `slope` per unit beyond it.
@@ -239,22 +270,22 @@ mod tests {
 
     #[test]
     fn dry_chunks_have_no_water() {
-        assert!(generate(|_, _| WATER_LEVEL + 20.0, 0.0, 0.0, SIZE).is_none());
+        assert!(generate(|_, _| WATER_LEVEL + 20.0, sea, 0.0, 0.0, SIZE, 0.0).is_none());
     }
 
     #[test]
     fn larger_lakes_measure_larger() {
-        let pond = measure_body(&lake(15.0, 0.5), 0.0, 0.0);
-        let big = measure_body(&lake(200.0, 0.5), 0.0, 0.0);
+        let pond = measure_body(&lake(15.0, 0.5), WATER_LEVEL, 0.0, 0.0);
+        let big = measure_body(&lake(200.0, 0.5), WATER_LEVEL, 0.0, 0.0);
         assert!(pond > 20.0 && pond < 40.0, "pond {pond}");
         assert!(big > 350.0, "lake {big}");
-        assert_eq!(measure_body(&lake(15.0, 0.5), 40.0, 0.0), 0.0);
+        assert_eq!(measure_body(&lake(15.0, 0.5), WATER_LEVEL, 40.0, 0.0), 0.0);
     }
 
     #[test]
     fn narrow_rivers_measure_close_to_their_width() {
         let river = |_x: f32, z: f32| WATER_LEVEL + (z.abs() - 10.0) * 0.5;
-        let width = measure_body(&river, 0.0, 0.0);
+        let width = measure_body(&river, WATER_LEVEL, 0.0, 0.0);
         assert!(width < 80.0, "river {width}");
     }
 
@@ -264,7 +295,7 @@ mod tests {
     fn surface_edges_end_under_land() {
         let ground = lake(50.0, 0.3);
         let (x0, z0) = (-64.0, -64.0);
-        let (vertices, indices) = generate(&ground, x0, z0, SIZE).expect("lake has water");
+        let (vertices, indices) = generate(&ground, sea, x0, z0, SIZE, 0.0).expect("lake has water");
         let mut edges = std::collections::HashMap::new();
         for tri in indices.chunks(3) {
             for k in 0..3 {
@@ -295,8 +326,8 @@ mod tests {
     #[test]
     fn neighbours_agree_on_their_border() {
         let ground = lake(150.0, 0.2);
-        let (left, _) = generate(&ground, -128.0, 0.0, SIZE).unwrap();
-        let (right, _) = generate(&ground, 0.0, 0.0, SIZE).unwrap();
+        let (left, _) = generate(&ground, sea, -128.0, 0.0, SIZE, 0.0).unwrap();
+        let (right, _) = generate(&ground, sea, 0.0, 0.0, SIZE, 0.0).unwrap();
         let border = |vertices: &[WaterVertex], x: f32| {
             let mut found: Vec<(i32, f32, f32)> = vertices
                 .iter()
@@ -314,6 +345,19 @@ mod tests {
             assert_eq!(p.0, q.0);
             assert!((p.1 - q.1).abs() < 1e-4);
             assert!((p.2 - q.2).abs() < 1e-2, "{p:?} vs {q:?}");
+        }
+    }
+
+    /// A river high above the sea: its surface lies at its own level, and
+    /// the cells beside it stay level with it.
+    #[test]
+    fn a_river_stands_at_its_own_level() {
+        let river_level = 140.0;
+        let ground = |_x: f32, z: f32| river_level - 2.0 + (z - 64.0).abs().max(6.0) - 6.0 + 2.0 * ((z - 64.0).abs() / 6.0).min(1.0);
+        let level = |_x: f32, z: f32| if (z - 64.0).abs() < 10.0 { river_level } else { WATER_LEVEL };
+        let (vertices, _) = generate(ground, level, 0.0, 0.0, SIZE, 128.0).expect("river has water");
+        for v in &vertices {
+            assert!((v.position[1] - (river_level - 128.0)).abs() < 1e-4, "{:?}", v.position);
         }
     }
 }

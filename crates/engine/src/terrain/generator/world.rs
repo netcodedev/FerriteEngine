@@ -51,6 +51,8 @@ pub struct WorldSettings {
     pub caves: f32,
     /// How far cliffs overhang (0: not at all, 1: as designed).
     pub overhangs: f32,
+    /// Whether rivers and lakes are planned (see `hydrology`).
+    pub rivers: bool,
 }
 
 impl Default for WorldSettings {
@@ -99,6 +101,7 @@ impl Default for WorldSettings {
             spawn_radius: 700.0,
             caves: 1.0,
             overhangs: 1.0,
+            rivers: true,
         }
     }
 }
