@@ -402,8 +402,9 @@ impl Random {
     }
 }
 
-/// Some direction square to `v`.
+/// Some direction square to `v` (of any length).
 fn perpendicular(v: Vector3<f32>) -> Vector3<f32> {
+    let v = v.normalize();
     let other = if v.y.abs() < 0.9 { Vector3::unit_y() } else { Vector3::unit_x() };
     v.cross(other).normalize()
 }
@@ -744,6 +745,19 @@ mod tests {
                 outward += (face.dot(normal) > 0.0) as usize;
             }
             assert!(outward * 100 >= total * 99, "{name}: {outward} of {total} face out");
+        }
+    }
+
+    #[test]
+    fn a_straight_trunk_is_a_trunk() {
+        // No wandering: the trunk runs straight up, which once left it
+        // without a direction square to it (and its vertices not numbers).
+        for name in TreeParams::PRESETS {
+            let params = TreeParams { bend: 0.0, lean: 0.0, ..TreeParams::preset(name).unwrap() };
+            let mesh = grow(&params);
+            for part in [&mesh.bark, &mesh.leaves] {
+                assert!(part.positions.iter().chain(&part.normals).flatten().all(|c| c.is_finite()), "{name}");
+            }
         }
     }
 
