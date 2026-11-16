@@ -4,55 +4,96 @@
 //! minus the ground's height), but nothing here assumes that: overhangs and
 //! caves only need `DensityField::at` to say so.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use fast_surface_nets::{
     ndshape::{RuntimeShape, Shape},
     surface_nets, SurfaceNetsBuffer,
 };
 
-use super::{DualContouringChunk, Vertex};
-use crate::terrain::{CHUNK_SIZE, CHUNK_SIZE_FLOAT};
+use super::Vertex;
+use crate::terrain::{
+    generator::{ChunkCoord, Column, Underground3, WorldGenerator, COLUMN_MARGIN},
+    CHUNK_SIZE, CHUNK_SIZE_FLOAT,
+};
 
 /// The density around one chunk at whole metres, from one metre before
 /// to one metre past where the coarsest level samples (a step beyond the
 /// chunk on every side).
 pub(super) struct DensityField {
-    /// Ground height per column, `(x, z)` from `margin` before the corner.
-    heights: Vec<f32>,
+    /// The ground's height over the chunk's square (see `Column`).
+    column: Arc<Column>,
     span: i32,
     margin: i32,
     /// The chunk's floor, in world metres.
     floor: f32,
+    /// Caves and overhangs, where the chunk has any.
+    underground: Option<Underground3>,
+    /// Where it has: the whole field at every whole metre the meshing
+    /// reads (`span` per side from `-margin`, x fastest, then y), made
+    /// once, since each vertex reads it a few hundred times.
+    dense: Vec<f32>,
 }
 
 impl DensityField {
-    /// The field for `chunk`, far enough for levels up to `coarsest`
-    /// metres between samples.
-    pub(super) fn new(chunk: &DualContouringChunk, coarsest: i32) -> Self {
+    /// The field of the chunk at `coord`, far enough for levels up to
+    /// `coarsest` metres between samples.
+    /// Without `detail`, the height field alone: no caves, no overhangs
+    /// (what is drawn from afar).
+    pub(super) fn new(generator: &WorldGenerator, coord: ChunkCoord, coarsest: i32, detail: bool) -> Self {
         // A level samples from one step before the chunk to one step past
         // it, and the normals look one metre further.
-        let margin = coarsest + 1;
-        let span = CHUNK_SIZE as i32 + 2 * margin + 1;
-        let mut heights = Vec::with_capacity((span * span) as usize);
-        for z in -margin..span - margin {
-            for x in -margin..span - margin {
-                heights.push(chunk.column_noise(x, z) * CHUNK_SIZE_FLOAT - 1.0);
+        assert!(coarsest < COLUMN_MARGIN, "the column is too narrow for steps of {coarsest} m");
+        let mut field = Self {
+            column: generator.column(coord.x, coord.z),
+            span: Column::SPAN,
+            margin: COLUMN_MARGIN,
+            floor: coord.y as f32 * CHUNK_SIZE_FLOAT,
+            underground: generator.underground(coord, detail),
+            dense: Vec::new(),
+        };
+        if field.underground.is_some() {
+            let (span, margin) = (field.span, field.margin);
+            let mut dense = Vec::with_capacity((span * span * span) as usize);
+            for z in -margin..span - margin {
+                for y in -margin..span - margin {
+                    for x in -margin..span - margin {
+                        dense.push(field.compute(x, y, z));
+                    }
+                }
             }
+            field.dense = dense;
         }
-        Self {
-            heights,
-            span,
-            margin,
-            floor: chunk.position.1 * CHUNK_SIZE_FLOAT,
+        field
+    }
+
+    fn compute(&self, x: i32, y: i32, z: i32) -> f32 {
+        let ground = self.floor + y as f32 - self.column.height(x, z);
+        match &self.underground {
+            None => ground,
+            Some(u) => {
+                let [push, cave] = u.at(x, y, z);
+                (ground - push).max(cave)
+            }
         }
     }
 
     /// Density at chunk-local `(x, y, z)`, in metres from the surface
     /// (roughly): negative inside the ground.
+    #[inline]
     pub(super) fn at(&self, x: i32, y: i32, z: i32) -> f32 {
-        let column = (z + self.margin) * self.span + (x + self.margin);
-        self.floor + y as f32 - self.heights[column as usize]
+        if self.dense.is_empty() {
+            return self.floor + y as f32 - self.column.height(x, z);
+        }
+        // Newton steps may overshoot the chunk's height a little.
+        let i = |v: i32| (v + self.margin).clamp(0, self.span - 1);
+        self.dense[((i(z) * self.span + i(y)) * self.span + i(x)) as usize]
+    }
+
+    /// Whether the chunk lies wholly in solid ground (under its surface,
+    /// with no cave), so it has nothing to mesh.
+    pub(super) fn is_solid(&self) -> bool {
+        self.underground.is_none() && self.floor + CHUNK_SIZE_FLOAT + 12.0 < self.column.min_height
     }
 
     /// The field at chunk-local `p`, blended from the eight whole-metre
@@ -162,16 +203,40 @@ impl DensityField {
                 let position = self.onto_surface(p.map(|c| (c - 1.0) * step as f32), step as f32);
                 let g = self.gradient(position);
                 let length = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt().max(1e-6);
+                let y = self.floor + position[1];
+                let biome = self.column.biome(position[0], position[2], y);
+                // Under the surface (in caves and under overhangs): bare
+                // rock, out of the snow.
+                let (cx, cz) = (position[0].round() as i32, position[2].round() as i32);
+                let below = self.column.height(cx, cz) - y;
+                let inside = ((below - 1.5) / 4.0).clamp(0.0, 1.0);
+                let rock = [0.40, 0.37, 0.33];
+                // Roads (packed earth) and settlements (trodden ground)
+                // on the surface.
+                let [road, settlement] = self.column.paint(position[0], position[2]);
+                let (road, settlement) = (road * (1.0 - inside), settlement * (1.0 - inside));
+                let ground: [f32; 3] = std::array::from_fn(|k| {
+                    let c = biome.color[k] + (TRODDEN[k] - biome.color[k]) * settlement * 0.55;
+                    c + (ROAD[k] - c) * road
+                });
                 Vertex {
                     position,
                     normal: g.map(|c| c / length),
-                    color: [0.0, 0.5, 0.1],
+                    color: std::array::from_fn(|k| ground[k] + (rock[k] - ground[k]) * inside),
+                    climate: [
+                        biome.temperature + (biome.temperature.max(4.0) - biome.temperature) * inside,
+                        biome.humidity,
+                    ],
                 }
             })
             .collect();
         Some((vertices, buffer.indices))
     }
 }
+
+/// Colour of a road's surface and of a settlement's ground (display space).
+const ROAD: [f32; 3] = [0.50, 0.41, 0.26];
+const TRODDEN: [f32; 3] = [0.56, 0.50, 0.38];
 
 /// Hang a skirt from the open edges of a mesh (edges of one triangle only,
 /// which surface nets leaves at the sides of the cube it meshed): each edge

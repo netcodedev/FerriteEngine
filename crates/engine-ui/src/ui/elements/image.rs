@@ -46,6 +46,29 @@ impl Image {
         }
     }
 
+    /// An image from pixels in memory (top row first).
+    pub fn from_rgba(position: Position, size: Size, image: &image::RgbaImage) -> Self {
+        let mut this = Self {
+            handle: UIElementHandle::new(),
+            region: Region::new(position, size),
+            texture: Texture::new(),
+            renderer: TextureRenderer::new(),
+            natural_size: None,
+            error: None,
+        };
+        this.set_rgba(image);
+        this
+    }
+
+    /// Show `image` (top row first) instead of what was shown.
+    pub fn set_rgba(&mut self, image: &image::RgbaImage) {
+        let flipped = image::imageops::flip_vertical(image);
+        self.texture
+            .load_from_data(image.width(), image.height(), flipped.into_raw());
+        self.natural_size = Some((image.width(), image.height()));
+        self.error = None;
+    }
+
     /// Size of the image file in pixels, if it could be loaded.
     pub fn natural_size(&self) -> Option<(u32, u32)> {
         self.natural_size

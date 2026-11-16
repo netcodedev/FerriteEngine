@@ -35,6 +35,7 @@ use crate::{
     player::{build_animation_graph, default_animation_graph, load_graph_file, Player},
     terrain::{
         dual_contouring::DualContouringChunk,
+        generator::WorldSettings,
         scatter::{Scatter, ScatterLayerData},
         Terrain,
     },
@@ -156,6 +157,9 @@ pub enum ComponentData {
         /// Models scattered over the terrain, each with its own density.
         #[serde(default)]
         scatter: Vec<ScatterLayerData>,
+        /// What shapes the world; left out while it is the default.
+        #[serde(default, skip_serializing_if = "WorldSettings::is_default")]
+        world: WorldSettings,
     },
     DebugController,
     /// Prefab marker: the entity is rebuilt with `Player::new`, which brings
@@ -300,7 +304,8 @@ impl ComponentData {
             pitch_deg: -20.0,
             fov_deg: 64.0,
             near: 0.1,
-            far: 1000.0,
+            // Far enough for the terrain's horizon (`terrain::horizon`).
+            far: 20000.0,
             speed: 10.0,
             free: true,
         }
@@ -318,6 +323,7 @@ impl ComponentData {
         ComponentData::Terrain {
             seed,
             scatter: Vec::new(),
+            world: WorldSettings::default(),
         }
     }
 
@@ -448,9 +454,10 @@ impl ComponentData {
             ComponentData::Particles { effect } => {
                 entity.add_component(ParticleEmitter::new(*effect));
             }
-            ComponentData::Terrain { seed, scatter } => {
+            ComponentData::Terrain { seed, scatter, world } => {
                 entity.add_component(
-                    Terrain::<DualContouringChunk>::new(*seed).with_scatter(scatter.clone()),
+                    Terrain::<DualContouringChunk>::with_world(*seed, world.clone())
+                        .with_scatter(scatter.clone()),
                 );
             }
             ComponentData::DebugController => entity.add_component(DebugController::new()),
@@ -724,6 +731,7 @@ pub fn default_scene_file() -> SceneFile {
         vec![ComponentData::Terrain {
             seed: 2,
             scatter: Scatter::default_layers(),
+            world: WorldSettings::default(),
         }],
     );
     terrain

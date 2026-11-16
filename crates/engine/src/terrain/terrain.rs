@@ -1,12 +1,15 @@
 use std::{
-    cmp::max,
-    sync::mpsc::{self, Receiver, Sender},
-    thread,
-    time::Instant,
+    collections::HashSet,
+    sync::{
+        mpsc::{self, Receiver},
+        Arc,
+    },
+    time::{Duration, Instant},
 };
 
 use cgmath::{EuclideanSpace, Matrix4, Point3};
 use glfw::MouseButton;
+use image::RgbaImage;
 use lazy_static::lazy_static;
 use rapier3d::prelude::*;
 
@@ -26,7 +29,7 @@ use crate::core::{
         light::skylight::SkyLight,
         line::Line,
         pbr::Lighting,
-        shader::{DynamicVertexArray, Shader, VertexAttributes},
+        shader::{self, DynamicVertexArray, Shader, VertexAttributes},
         weather::exposure,
         depth_pass,
     },
@@ -36,9 +39,68 @@ use crate::core::{
 };
 
 use super::{
+    generator::{map::MapLayer, WorldGenerator, WorldSettings},
+    streaming::{ColumnKey, StreamRadius, Streamer},
     scatter::{Scatter, ScatterInstances, ScatterLayerData, TakenInstance},
-    Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_RADIUS, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
+    Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
 };
+
+/// Pixels per side of the world map (see `WorldMap`).
+const MAP_PIXELS: u32 = 256;
+
+/// A picture of the whole world from above (see `generator::map`), made on
+/// a thread of its own whenever the world or the layer shown changes.
+pub(super) struct WorldMap {
+    layer: MapLayer,
+    /// The picture, and a number that changes with every new one.
+    image: Option<(u64, Arc<RgbaImage>)>,
+    version: u64,
+    /// Being made: for which version.
+    pending: Option<(u64, Receiver<RgbaImage>)>,
+    /// Whether anyone asked for it (the editor does); none is made before.
+    wanted: bool,
+}
+
+impl WorldMap {
+    fn new() -> Self {
+        Self {
+            layer: MapLayer::Height,
+            image: None,
+            version: 0,
+            pending: None,
+            wanted: false,
+        }
+    }
+
+    /// Start over for a changed world or layer.
+    fn invalidate(&mut self) {
+        self.version += 1;
+        self.pending = None;
+    }
+
+    fn update(&mut self, generator: &Arc<WorldGenerator>) {
+        if let Some((version, rx)) = &self.pending {
+            if let Ok(image) = rx.try_recv() {
+                self.image = Some((*version, Arc::new(image)));
+                self.pending = None;
+            }
+        }
+        let current = self.image.as_ref().is_some_and(|(v, _)| *v == self.version);
+        if self.wanted && !current && self.pending.is_none() {
+            let (tx, rx) = mpsc::channel();
+            let (generator, layer) = (generator.clone(), self.layer);
+            std::thread::spawn(move || {
+                let _ = tx.send(generator.map_image(MAP_PIXELS, layer));
+            });
+            self.pending = Some((self.version, rx));
+        }
+    }
+}
+
+/// Main-thread time per frame for adding the chunks the workers made
+/// (uploading their meshes, inserting their colliders); the rest waits for
+/// the next frame. At least one column is added per frame.
+const UPLOAD_BUDGET: Duration = Duration::from_millis(2);
 
 /// How many layer-on-chunk plantings happen per frame. Spreads the collider
 /// work out when a scatter layer is added to (or changed on) an already
@@ -54,7 +116,8 @@ const RESEED_DELAY: f64 = 0.6;
 /// adding a chunk), so the main thread only has to insert them.
 pub(super) struct LoadedChunk<T> {
     chunk: T,
-    collider: Collider,
+    /// `None` for a chunk without ground (only water).
+    collider: Option<Collider>,
 }
 
 impl<T: Chunk> LoadedChunk<T> {
@@ -65,17 +128,29 @@ impl<T: Chunk> LoadedChunk<T> {
             .map(|v| Vector::new(v[0], v[1], v[2]))
             .collect();
         let position = chunk.get_position();
+        let indices = chunk.get_indices();
+        if vertices.is_empty() || indices.is_empty() {
+            return Self { chunk, collider: None };
+        }
         let collider = ColliderBuilder::trimesh_with_flags(
             vertices,
-            chunk.get_indices(),
+            indices,
             // FIX_INTERNAL_EDGES computes pseudo-normals on shared triangle edges,
             // preventing ghost-collision impulses that launch the player into the air.
             TriMeshFlags::FIX_INTERNAL_EDGES,
-        )
-        .expect("Failed to create collider")
-        .translation(Vector::new(position.x, position.y, position.z))
-        .user_data(collider_tag::TERRAIN)
-        .build();
+        );
+        let collider = match collider {
+            Ok(builder) => Some(
+                builder
+                    .translation(Vector::new(position.x, position.y, position.z))
+                    .user_data(collider_tag::TERRAIN)
+                    .build(),
+            ),
+            Err(e) => {
+                log::warn!("terrain chunk at {position:?} has no collider: {e:?}");
+                None
+            }
+        };
         Self { chunk, collider }
     }
 }
@@ -149,18 +224,28 @@ impl ChunkBounds {
 
 impl<T: Chunk + Component + Send + 'static> Terrain<T> {
     pub fn new(seed: u64) -> Self {
+        Self::with_world(seed, WorldSettings::default())
+    }
+
+    /// A terrain shaped by `world` (see `generator::world`).
+    pub fn with_world(seed: u64, world: WorldSettings) -> Self {
         let shader_source = T::get_shader_source();
         let shader = Shader::new(&shader_source.0, &shader_source.1);
         let textures = T::get_textures(&shader);
         let depth_shader = T::get_depth_shader_source()
             .map(|(vertex, fragment)| Shader::new(&vertex, &fragment));
 
+        let generator = WorldGenerator::with_settings(seed, world.clone());
         Self {
             seed,
+            world,
+            map: WorldMap::new(),
+            horizon: super::horizon::Horizon::new(),
+            streamer: Self::start_streaming(&generator),
+            generator,
             reseed_in: None,
             scatter: Scatter::new(Vec::new()),
             show_colliders: false,
-            chunk_receiver: Self::start_chunkloaders(seed),
             shader,
             depth_shader,
             textures,
@@ -175,6 +260,25 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         self
     }
 
+    /// What shapes the ground (the same for every chunk of this terrain).
+    pub fn generator(&self) -> &Arc<WorldGenerator> {
+        &self.generator
+    }
+
+    /// The latest picture of the world from above (see `generator::map`)
+    /// and its version, which changes with every new picture. Asking
+    /// starts making it (and remaking it whenever the world changes); the
+    /// first call usually returns `None`.
+    pub fn world_map(&mut self) -> Option<(u64, Arc<RgbaImage>)> {
+        self.map.wanted = true;
+        self.map.image.clone()
+    }
+
+    /// Columns of chunks loaded, and columns queued or being made.
+    pub fn streaming_status(&self) -> (usize, usize) {
+        (self.streamer.loaded_count(), self.streamer.in_flight())
+    }
+
     pub fn scatter(&self) -> &Scatter {
         &self.scatter
     }
@@ -185,22 +289,19 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         &mut self.scatter
     }
 
-    /// Generate the origin chunk and start the worker threads for the rest.
-    /// They stop on their own once the returned receiver is dropped.
-    fn start_chunkloaders(seed: u64) -> Receiver<LoadedChunk<T>> {
-        let (tx, rx) = mpsc::channel();
-        tx.send(LoadedChunk::new(T::new(seed, (0.0, 0.0, 0.0), 0)))
-            .unwrap();
-
-        let tx1 = tx.clone();
-        let tx2 = tx.clone();
-        let tx3 = tx.clone();
-        let tx4 = tx.clone();
-        let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, 1, 1, tx1));
-        let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, -1, 1, tx2));
-        let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, 1, -1, tx3));
-        let _ = thread::spawn(move || Terrain::chunkloader(seed, CHUNK_RADIUS as i32, -1, -1, tx4));
-        rx
+    /// Start the worker threads that make the columns of chunks around
+    /// the camera (see `streaming`). They stop when the streamer is dropped.
+    fn start_streaming(generator: &Arc<WorldGenerator>) -> Streamer<Vec<LoadedChunk<T>>> {
+        let generator = generator.clone();
+        Streamer::new(Streamer::<()>::default_workers(), StreamRadius::DEFAULT, move |(x, z), detail| {
+            let lod = if detail { 0 } else { 1 };
+            T::vertical_range(&generator, (x, z), detail)
+                .filter_map(|y| {
+                    let chunk = T::generate(&generator, (x as f32, y as f32, z as f32), lod);
+                    (!chunk.is_empty()).then(|| LoadedChunk::new(chunk))
+                })
+                .collect()
+        })
     }
 
     /// Throw away every chunk (with its colliders and scattered models) and
@@ -216,7 +317,10 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
                 index += 1;
             }
         }
-        self.chunk_receiver = Self::start_chunkloaders(self.seed);
+        self.generator = WorldGenerator::with_settings(self.seed, self.world.clone());
+        self.streamer = Self::start_streaming(&self.generator);
+        self.map.invalidate();
+        self.horizon.invalidate();
         exposure::world_changed();
     }
 
@@ -369,37 +473,74 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         }
     }
 
-    fn chunkloader(
-        seed: u64,
-        radius: i32,
-        x_dir: i32,
-        z_dir: i32,
-        tx: Sender<LoadedChunk<T>>,
-    ) {
-        let mut x: i32 = 1;
-        let mut z: i32 = 0;
-
-        loop {
-            if x > radius {
-                break;
+    /// Follow the camera: let go of the columns it has left behind and add
+    /// the chunks of those the workers have made since the last frame (for
+    /// up to `UPLOAD_BUDGET`).
+    fn stream(&mut self, scene: &mut Scene, entity: &mut Entity) {
+        // Without a camera, the terrain loads around the origin.
+        let eye = scene
+            .get_active_camera()
+            .map(|camera| camera.get_camera().get_eye_position())
+            .unwrap_or(Point3::new(0.0, 0.0, 0.0));
+        let unload = self.streamer.update(eye.x as f64, eye.z as f64);
+        if !unload.is_empty() {
+            let unload: HashSet<ColumnKey> = unload.into_iter().collect();
+            let children = entity.get_children_mut();
+            let mut index = 0;
+            while index < children.len() {
+                let column = children[index]
+                    .get_own_component::<T>()
+                    .map(|chunk| chunk.get_bounds())
+                    .map(|b| (b.min.0.div_euclid(CHUNK_SIZE as i32), b.min.2.div_euclid(CHUNK_SIZE as i32)));
+                if column.is_some_and(|column| unload.contains(&column)) {
+                    let mut chunk_entity = children.remove(index);
+                    chunk_entity.release_resources(&mut scene.physics_engine);
+                } else {
+                    index += 1;
+                }
             }
-            let position = if z_dir > 0 {
-                ((x * x_dir) as f32, 0.0, z as f32)
+            exposure::world_changed();
+        }
+        for (column, chunks) in self.streamer.receive(UPLOAD_BUDGET) {
+            // Made again in detail: it replaces the chunks there.
+            self.remove_column(scene, entity, column);
+            for LoadedChunk { mut chunk, collider } in chunks {
+                chunk.buffer_data();
+                let mut chunk_entity = Entity::new(&format!("chunk@{:?}", chunk.get_position()));
+                // The chunk entity sits at the origin, so its fixed body does
+                // too; colliders keep their world placement while becoming
+                // removable together with the chunk.
+                let chunk_body = RigidBody::new(RigidBodyType::Fixed, scene, &chunk_entity, None);
+                if let Some(collider) = collider {
+                    scene
+                        .physics_engine
+                        .add_collider(collider, Some(chunk_body.rigid_body_handle));
+                }
+                // Scattered models are not part of the chunk itself:
+                // `sync_scatter` plants them afterwards.
+                chunk_entity.add_component(chunk);
+                chunk_entity.add_component(chunk_body);
+                chunk_entity.set_transient(true);
+                entity.add_child(chunk_entity);
+                exposure::world_changed();
+            }
+        }
+    }
+
+    /// Take the chunks of `column` out (with their colliders and models).
+    fn remove_column(&self, scene: &mut Scene, entity: &mut Entity, column: ColumnKey) {
+        let children = entity.get_children_mut();
+        let mut index = 0;
+        while index < children.len() {
+            let here = children[index]
+                .get_own_component::<T>()
+                .map(|chunk| chunk.get_bounds())
+                .map(|b| (b.min.0.div_euclid(CHUNK_SIZE as i32), b.min.2.div_euclid(CHUNK_SIZE as i32)));
+            if here == Some(column) {
+                let mut chunk_entity = children.remove(index);
+                chunk_entity.release_resources(&mut scene.physics_engine);
             } else {
-                ((z * z_dir) as f32, 0.0, (x * x_dir) as f32)
-            };
-            let new_chunk = T::new(seed, position, max(x.abs(), z.abs()) as usize);
-            let result = tx.send(LoadedChunk::new(new_chunk));
-            if result.is_err() {
-                break;
-            }
-
-            z = -z;
-            if z == -x * z_dir {
-                x += 1;
-                z = 0;
-            } else if z >= 0 {
-                z += 1;
+                index += 1;
             }
         }
     }
@@ -532,40 +673,16 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             }
         }
         self.scatter.tick(delta_time);
-        if let Ok(LoadedChunk { mut chunk, collider }) = self.chunk_receiver.try_recv() {
-            chunk.buffer_data();
-            let mut chunk_exists = false;
-            for existing_chunk in entity.get_with_own_component::<T>() {
-                let existing_chunk = existing_chunk.get_component::<T>().unwrap();
-                if existing_chunk.get_position() == chunk.get_position() {
-                    chunk_exists = true;
-                    break;
-                }
-            }
-            if !chunk_exists {
-                let mut chunk_entity = Entity::new(&format!(
-                    "chunk-{}@{:?}",
-                    entity.child_count(),
-                    chunk.get_position()
-                ));
-                // The chunk entity sits at the origin, so its fixed body does
-                // too; colliders keep their world placement while becoming
-                // removable together with the chunk.
-                let chunk_body =
-                    RigidBody::new(RigidBodyType::Fixed, scene, &chunk_entity, None);
-                scene
-                    .physics_engine
-                    .add_collider(collider, Some(chunk_body.rigid_body_handle));
-
-                // Scattered models are not part of the chunk itself:
-                // `sync_scatter` plants them afterwards.
-                chunk_entity.add_component(chunk);
-                chunk_entity.add_component(chunk_body);
-                chunk_entity.set_transient(true);
-                entity.add_child(chunk_entity);
-                exposure::world_changed();
-            }
+        self.stream(scene, entity);
+        if T::has_horizon() {
+            let eye = scene
+                .get_active_camera()
+                .map(|camera| camera.get_camera().get_eye_position())
+                .unwrap_or(Point3::new(0.0, 0.0, 0.0));
+            self.horizon.update(&self.generator, eye.x as f64, eye.z as f64);
         }
+        shader::delete_released_vertex_arrays();
+        self.map.update(&self.generator);
         self.sync_scatter(scene, entity);
         if let Some(camera_component) = scene.get_active_camera() {
             let camera = camera_component.get_camera();
@@ -584,12 +701,25 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         Some(ComponentData::Terrain {
             seed: self.seed,
             scatter: self.scatter.to_data(),
+            world: self.generator.settings().clone(),
         })
     }
 
     fn properties(&self) -> Vec<Property> {
         let mut properties = vec![
             Property::int("seed", self.seed as i64),
+            Property::ranged("world size (km)", (self.world.size / 1000.0) as f32, 4.0, 64.0),
+            Property::ranged("mountain height", self.world.mountain_scale, 0.0, 2.0),
+            Property::ranged("hill height", self.world.hill_scale, 0.0, 3.0),
+            Property::ranged("caves", self.world.caves, 0.0, 2.0),
+            Property::ranged("overhangs", self.world.overhangs, 0.0, 2.0),
+            Property::bool("rivers and lakes", self.world.rivers),
+            Property::bool("roads and settlements", self.world.roads),
+            Property::choice(
+                "map",
+                self.map.layer.name().into(),
+                MapLayer::ALL.iter().map(|l| l.name().to_string()).collect(),
+            ),
             Property::bool("show colliders", self.show_colliders),
         ];
         properties.extend(self.scatter.properties());
@@ -608,6 +738,57 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 if seed != self.seed {
                     self.seed = seed;
                     self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("world size (km)", PropertyValue::Float(v)) => {
+                let size = (v.clamp(1.0, 256.0) as f64 * 1000.0).round();
+                if size != self.world.size {
+                    self.world.size = size;
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("mountain height", PropertyValue::Float(v)) => {
+                if v.max(0.0) != self.world.mountain_scale {
+                    self.world.mountain_scale = v.max(0.0);
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("hill height", PropertyValue::Float(v)) => {
+                if v.max(0.0) != self.world.hill_scale {
+                    self.world.hill_scale = v.max(0.0);
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("caves", PropertyValue::Float(v)) => {
+                if v.clamp(0.0, 2.0) != self.world.caves {
+                    self.world.caves = v.clamp(0.0, 2.0);
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("overhangs", PropertyValue::Float(v)) => {
+                if v.clamp(0.0, 2.0) != self.world.overhangs {
+                    self.world.overhangs = v.clamp(0.0, 2.0);
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("rivers and lakes", PropertyValue::Bool(v)) => {
+                if v != self.world.rivers {
+                    self.world.rivers = v;
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("roads and settlements", PropertyValue::Bool(v)) => {
+                if v != self.world.roads {
+                    self.world.roads = v;
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("map", PropertyValue::Text(v)) => {
+                if let Some(layer) = MapLayer::from_name(&v) {
+                    if layer != self.map.layer {
+                        self.map.layer = layer;
+                        self.map.invalidate();
+                    }
                 }
             }
             ("show colliders", PropertyValue::Bool(v)) => self.show_colliders = v,
@@ -671,6 +852,15 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 chunk.draw(shader, &(transform * child.local_transform()), distance);
             }
         }
+        // The horizon beyond them; it casts no shadow worth its cost.
+        if let (Some(mesh), Some(eye), true) = (self.horizon.mesh(), eye, hdr::draws_to_view()) {
+            shader.bind();
+            shader.set_uniform_1i("isHorizon", 1);
+            shader.set_uniform_3f("horizonSink", eye.x, eye.z, StreamRadius::DEFAULT.load as f32);
+            mesh.render(shader, &Matrix4::from_scale(1.0), None);
+            shader.bind();
+            shader.set_uniform_1i("isHorizon", 0);
+        }
         unsafe {
             gl::Disable(gl::CULL_FACE);
         }
@@ -688,7 +878,9 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         // props), so water correctly depth-tests against all of them.
         for chunk in entity.get_with_own_component::<T>() {
             if let Some(chunk) = chunk.get_component::<T>() {
-                if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_bounds()) {
+                // The drawn bounds hold the water, which may lie above
+                // the chunk's own box (see `Chunk::get_drawn_bounds`).
+                if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_drawn_bounds()) {
                     Chunk::render_transparent(chunk, scene, view_projection, parent_transform);
                 }
             }

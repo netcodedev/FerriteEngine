@@ -32,10 +32,9 @@ pub use instances::*;
 pub use layer::*;
 pub use model::*;
 
-/// Height band scattered models may stand in: clear of the water and below
-/// the bare peaks.
+/// Lowest ground scattered models stand on: clear of the water. How many
+/// grow where is up to the biomes (see `generator::biome`).
 pub const SCATTER_MIN_Y: f32 = WATER_LEVEL + 4.0;
-pub const SCATTER_MAX_Y: f32 = 78.0;
 
 const MODEL_SCALE: f32 = 1.0;
 

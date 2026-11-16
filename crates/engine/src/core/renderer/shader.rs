@@ -357,6 +357,42 @@ mod tests {
     }
 }
 
+/// GL objects of vertex arrays dropped since the last
+/// `delete_released_vertex_arrays`: a vertex array may be dropped where no
+/// GL context is current (on a loader thread, or after the window closed),
+/// so it only notes its objects here.
+static RELEASED: std::sync::Mutex<Vec<[GLuint; 3]>> = std::sync::Mutex::new(Vec::new());
+
+impl<T> Drop for DynamicVertexArray<T> {
+    fn drop(&mut self) {
+        if self.id != 0 || self.vbo != 0 || self.ebo != 0 {
+            if let Ok(mut released) = RELEASED.lock() {
+                released.push([self.id, self.vbo, self.ebo]);
+            }
+        }
+    }
+}
+
+/// Delete the GL objects of the vertex arrays dropped so far. Call where
+/// the GL context is current (the terrain does, every frame, as it streams
+/// chunks in and out).
+pub fn delete_released_vertex_arrays() {
+    let released = match RELEASED.lock() {
+        Ok(mut released) if !released.is_empty() => std::mem::take(&mut *released),
+        _ => return,
+    };
+    if crate::core::headless::is_headless() {
+        return;
+    }
+    unsafe {
+        for [vao, vbo, ebo] in released {
+            gl::DeleteVertexArrays(1, &vao);
+            gl::DeleteBuffers(1, &vbo);
+            gl::DeleteBuffers(1, &ebo);
+        }
+    }
+}
+
 impl<T: VertexAttributes + Clone> DynamicVertexArray<T> {
     pub fn new() -> Self {
         let mut vao = 0;

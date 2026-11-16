@@ -2,13 +2,16 @@ mod density;
 pub mod dual_contouring;
 mod water;
 
-use libnoise::{Fbm, Perlin, Scale};
+use std::sync::Arc;
 
-use crate::terrain::ChunkMesh;
+use crate::terrain::{
+    generator::{ChunkCoord, WorldGenerator},
+    ChunkMesh,
+};
 
-/// Y-coordinate (in local chunk space) below which terrain is considered underwater.
-/// Must match the water threshold in the terrain vertex shader.
-pub const WATER_LEVEL: f32 = 44.0;
+/// Height of the water's surface, in world metres: the sea level. Must
+/// match `WATER_LINE` in the terrain's fragment shader.
+pub const WATER_LEVEL: f32 = crate::terrain::generator::SEA_LEVEL;
 
 /// Levels of detail of the ground: the density field meshed from samples
 /// 1, 2, 4 and 8 metres apart.
@@ -23,7 +26,8 @@ const SKIRT_DEPTH_PER_STEP: f32 = 2.0;
 
 pub struct DualContouringChunk {
     position: (f32, f32, f32),
-    noise: Fbm<2, Scale<2, Perlin<2>>>,
+    coord: ChunkCoord,
+    generator: Arc<WorldGenerator>,
     /// The ground at each level of detail, finest first (see
     /// `generate_meshes`); empty for chunks above the ground.
     meshes: Vec<ChunkMesh<Vertex>>,
@@ -34,6 +38,9 @@ pub struct DualContouringChunk {
     /// Water surface grid, present only when some terrain in this chunk
     /// comes near WATER_LEVEL. It reaches under the shore (see `water`).
     water_mesh: Option<ChunkMesh<water::WaterVertex>>,
+    /// Whether it has its caves and overhangs (it is made without them
+    /// far away).
+    caves: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -41,5 +48,8 @@ pub struct DualContouringChunk {
 pub struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],
+    /// Ground colour of the biomes here (display space).
     color: [f32; 3],
+    /// Temperature (°C, at this height) and humidity (0..1).
+    climate: [f32; 2],
 }

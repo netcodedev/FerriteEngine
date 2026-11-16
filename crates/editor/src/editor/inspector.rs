@@ -34,7 +34,9 @@ use super::{
     field_row::{FieldRow, LABEL_COLUMN},
     hierarchy::entity_icon,
     layout::Rect,
-    send, Command, Shared,
+    send,
+    world_map::WorldMapView,
+    Command, Shared,
 };
 
 /// Shape of what the inspector currently shows. When the selected entity's
@@ -307,6 +309,7 @@ impl InspectorPanel {
             }
             if display == "Terrain" {
                 self.terrain_entity = Some(id);
+                section.add_child(Box::new(WorldMapView::new(id, (width - 16.0).min(320.0))));
                 let add_state = self.state.clone();
                 let mut add = Button::new(
                     Position::default(),

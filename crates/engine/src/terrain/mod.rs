@@ -1,5 +1,3 @@
-use std::sync::mpsc;
-
 use cgmath::{Matrix4, Point3};
 use glfw::MouseButton;
 
@@ -13,26 +11,38 @@ use crate::core::{
     scene::Scene,
 };
 
-pub const CHUNK_RADIUS: usize = 5;
 pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 
 pub mod dual_contouring;
+pub mod generator;
 pub mod marching_cubes;
+pub mod horizon;
 pub mod materials;
 pub mod scatter;
+pub mod streaming;
 mod terrain;
 pub mod voxel;
 
 pub struct Terrain<T: Chunk> {
     seed: u64,
+    /// What shapes the world; the generator is made from it and the seed.
+    world: generator::WorldSettings,
+    /// Shapes the ground; shared with the loader threads and the chunks.
+    generator: std::sync::Arc<generator::WorldGenerator>,
     /// Countdown until the chunks are rebuilt for an edited seed.
     reseed_in: Option<f64>,
     /// Models scattered over the chunks. Optional; see `scatter`.
     scatter: scatter::Scatter,
     /// Editor toggle: draw chunk and scatter colliders as wireframes.
     show_colliders: bool,
-    chunk_receiver: mpsc::Receiver<terrain::LoadedChunk<T>>,
+    /// The picture of the world the editor shows (see `WorldMap`).
+    map: terrain::WorldMap,
+    /// The ground beyond the chunks (see `horizon`), for chunk types that
+    /// have one.
+    horizon: horizon::Horizon,
+    /// Loads the chunks around the camera (see `streaming`).
+    streamer: streaming::Streamer<Vec<terrain::LoadedChunk<T>>>,
     shader: Shader,
     /// Draws the chunks in depth-only passes (see `depth_pass`), if the
     /// chunk type has such a program.
@@ -43,6 +53,50 @@ pub struct Terrain<T: Chunk> {
 
 pub trait Chunk {
     fn new(seed: u64, position: (f32, f32, f32), lod: usize) -> Self;
+    /// The chunk at `position` (in chunks) as `generator` shapes the world.
+    /// `lod` 0 is the full detail; above it a backend may leave out what
+    /// only shows close up (the dual contouring chunks leave out caves and overhangs).
+    /// Backends that make their own ground from the seed keep the default.
+    fn generate(
+        generator: &std::sync::Arc<generator::WorldGenerator>,
+        position: (f32, f32, f32),
+        lod: usize,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        Self::new(generator.seed(), position, lod)
+    }
+
+    /// The chunks (by their `y`) of the column over chunk square
+    /// `column` that may hold anything, in full detail or not (see
+    /// `generate`); the others are not made. Backends whose ground lies in
+    /// the bottom row keep the default.
+    fn vertical_range(
+        _generator: &generator::WorldGenerator,
+        _column: (i32, i32),
+        _detail: bool,
+    ) -> std::ops::RangeInclusive<i32>
+    where
+        Self: Sized,
+    {
+        0..=0
+    }
+
+    /// Whether the terrain draws a horizon (see `horizon`) beyond these
+    /// chunks: only for chunk types whose programs take its vertices.
+    fn has_horizon() -> bool
+    where
+        Self: Sized,
+    {
+        false
+    }
+
+    /// Whether the chunk turned out to hold nothing to draw or collide
+    /// with; such chunks are dropped right away.
+    fn is_empty(&self) -> bool {
+        false
+    }
     fn buffer_data(&mut self);
     fn get_bounds(&self) -> ChunkBounds;
     /// A box around everything the chunk draws, for culling; the chunk's

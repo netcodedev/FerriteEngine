@@ -1,10 +1,16 @@
-// Terrain surface: grass, sand and rock textures blended by height, slope
-// and the textures' own height maps, projected triplanar so cliffs do not
+// Terrain surface: the biomes' ground colour (from the vertices), sand on
+// the shore, rock on cliffs and snow where it is cold. With textures:
+// grass, sand and rock blended by height, slope, climate and the textures'
+// own height maps, projected triplanar so cliffs do not
 // stretch, and lit like models (`lighting.glsl` comes before this). Without
 // textures the terrain falls back to plain colours.
 
 in vec3 Normal;
 in vec3 WorldPos;
+// Display space.
+in vec3 GroundColor;
+// Temperature (°C at this height), humidity (0..1).
+in vec2 Climate;
 
 out vec4 FragColor;
 
@@ -49,13 +55,18 @@ float valueNoise(vec2 p) {
                mix(hash12(i + vec2(0.0, 1.0)), hash12(i + vec2(1.0, 1.0)), u.x), u.y);
 }
 
+// How hot and dry a spot is for a desert, 0..1.
+float desertness(vec2 climate) {
+    return (1.0 - smoothstep(0.12, 0.28, climate.y)) * smoothstep(16.0, 22.0, climate.x);
+}
+
 // How much of each layer a spot gets before the height maps refine it:
-// sand on the shore and under water, rock on cliffs and high up, grass
-// elsewhere. `n` (-1..1) wobbles the borders.
-vec3 layerWeights(float h, float slope, float n) {
-    float sand = 1.0 - smoothstep(49.0, 52.5, h + n * 1.5);
-    float cliff = smoothstep(0.50, 0.72, slope + n * 0.05) * smoothstep(44.0, 52.0, h);
-    float rock = max(cliff, smoothstep(80.0, 92.0, h + n * 4.0));
+// sand on the shore, under water and in deserts, rock on cliffs and above
+// the trees, grass elsewhere. `n` (-1..1) wobbles the borders.
+vec3 layerWeights(float h, float slope, float n, vec2 climate) {
+    float sand = max(1.0 - smoothstep(5.0, 8.5, h + n * 1.5), desertness(climate));
+    float cliff = smoothstep(0.50, 0.72, slope + n * 0.05) * smoothstep(0.0, 8.0, h);
+    float rock = max(cliff, 1.0 - smoothstep(-4.0, 0.0, climate.x + n * 1.5));
     sand *= 1.0 - rock;
     return vec3(max(1.0 - sand - rock, 0.0), sand, rock);
 }
@@ -130,31 +141,29 @@ LayerSample sampleLayer(int layer, vec3 p, vec3 Ng, vec3 blend, float s, vec3 V,
     return LayerSample(albedo / total, n, surface / total);
 }
 
-// The colours the terrain had before it was textured (display space).
-vec3 paletteColor(float h, float slope) {
+// The ground without textures (display space): the biomes' colour, the
+// sea floor darkening with depth, rock on cliffs.
+vec3 paletteColor(float h, float slope, float n) {
     vec3 seabedDeep = vec3(0.32, 0.22, 0.12);
-    vec3 sand       = vec3(0.76, 0.70, 0.50);
-    vec3 grassLow   = vec3(0.22, 0.52, 0.12);
-    vec3 grassHigh  = vec3(0.17, 0.40, 0.09);
     vec3 rock       = vec3(0.46, 0.43, 0.39);
     vec3 darkRock   = vec3(0.36, 0.34, 0.32);
-    vec3 alpine     = vec3(0.50, 0.48, 0.46);
-    vec3 color;
-    if (h < 44.0) {
-        color = mix(seabedDeep, sand, smoothstep(15.0, 44.0, h));
-    } else if (h < 52.0) {
-        color = mix(sand, grassLow, smoothstep(48.0, 52.0, h));
-    } else if (h < 78.0) {
-        color = mix(grassLow, grassHigh, smoothstep(52.0, 78.0, h));
-    } else {
-        color = mix(grassHigh, alpine, smoothstep(78.0, 90.0, h));
-    }
-    float rockBlend = smoothstep(0.57, 0.80, slope) * smoothstep(44.0, 52.0, h);
-    return mix(color, mix(rock, darkRock, smoothstep(55.0, 90.0, h)), rockBlend);
+    vec3 color = mix(seabedDeep, GroundColor, smoothstep(-40.0, -3.0, h));
+    // Patches, so a field is not one flat colour.
+    color *= mix(0.9, 1.08, valueNoise(WorldPos.xz * 0.035) * 0.6 + n * 0.2 + 0.2);
+    float rockBlend = smoothstep(0.57, 0.80, slope) * smoothstep(0.0, 8.0, h);
+    // Rock is darker where it is cold (and high).
+    vec3 rockColor = mix(darkRock, rock, smoothstep(-6.0, 12.0, Climate.x));
+    return mix(color, rockColor, rockBlend);
 }
 
+// Haze: none up to `HAZE_START` metres, then thickening over
+// `HAZE_DISTANCE`, toward the sky's light times `HAZE_BRIGHTNESS`.
+const float HAZE_START = 600.0;
+const float HAZE_DISTANCE = 9000.0;
+const float HAZE_BRIGHTNESS = 1.0;
+
 // Height of the water's surface (`dual_contouring::WATER_LEVEL`).
-const float WATER_LINE = 44.0;
+const float WATER_LINE = 0.0;
 // Footprints show their depth this close; further away the flat cover.
 const float TRAIL_DISTANCE = 30.0;
 
@@ -256,7 +265,7 @@ void main() {
     if (hasTerrainTextures == 1) {
         vec3 blend = pow(abs(Ng), vec3(4.0));
         blend /= blend.x + blend.y + blend.z;
-        vec3 weights = layerWeights(h, slope, n);
+        vec3 weights = layerWeights(h, slope, n, Climate);
 
         vec3 V = normalize(cameraPosition - WorldPos);
         float viewDistance = length(cameraPosition - WorldPos);
@@ -281,6 +290,10 @@ void main() {
             }
         }
         weights = heightBlend(weights, heights);
+        // The grass takes on the biomes' colour (relative to a mid green,
+        // so the texture's own detail stays).
+        vec3 tint = clamp(GroundColor / vec3(0.24, 0.50, 0.13), vec3(0.4), vec3(2.5));
+        samples[GRASS].albedo *= pow(mix(vec3(1.0), tint, 0.7), vec3(2.2));
 
         albedo = vec3(0.0);
         vec3 normal = vec3(0.0);
@@ -299,12 +312,24 @@ void main() {
         // Large-scale brightness variation hides the tiling from afar.
         albedo *= mix(0.8, 1.15, valueNoise(WorldPos.xz * 0.025));
     } else {
-        albedo = pow(paletteColor(h, slope), vec3(2.2));
+        albedo = pow(paletteColor(h, slope, n), vec3(2.2));
     }
     // Darker toward the deep sea floor.
-    albedo *= mix(0.45, 1.0, smoothstep(15.0, 44.0, h));
+    albedo *= mix(0.45, 1.0, smoothstep(-30.0, 0.0, h));
+    // Open sea on the horizon (see `terrain::horizon::SEA_MARK`).
+    bool sea = Climate.y > 1.5;
+    if (sea) {
+        // Close to the colour the near water shows from afar.
+        albedo = pow(vec3(0.07, 0.25, 0.45), vec3(2.2));
+        roughness = 0.35;
+        N = Ng;
+        ao = 1.0;
+    }
 
-    float snow = smoothstep(90.0, 100.0, h + n * 3.0);
+    // Lasting snow where the mean temperature is well below freezing; it
+    // slides off steep rock.
+    float snow = sea ? 0.0 : 1.0 - smoothstep(-6.0, -3.5, Climate.x + n * 1.5);
+    snow *= 1.0 - 0.75 * smoothstep(0.62, 0.85, slope);
     albedo = mix(albedo, pow(SNOW, vec3(2.2)), snow);
     roughness = mix(roughness, 0.6, snow);
     N = normalize(mix(N, Ng, snow));
@@ -318,5 +343,11 @@ void main() {
     }
 
     vec3 color = shadeSurface(WorldPos, N, Ng, albedo, roughness, metallic, ao, cloudShadow(WorldPos));
+    // Far away the air between hazes the ground into the sky's colour.
+    vec3 toPoint = WorldPos - cameraPosition;
+    float far = length(toPoint);
+    vec3 along = normalize(vec3(toPoint.x, max(toPoint.y, 0.0) * 0.3, toPoint.z));
+    float haze = 1.0 - exp(-max(far - HAZE_START, 0.0) / HAZE_DISTANCE);
+    color = mix(color, skyLight(along) * HAZE_BRIGHTNESS, haze);
     FragColor = vec4(toDisplay(color), 1.0);
 }
