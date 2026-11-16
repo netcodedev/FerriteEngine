@@ -157,10 +157,12 @@ impl DensityField {
                 let position = self.onto_surface(p.map(|c| (c - 1.0) * step as f32), step as f32);
                 let g = self.gradient(position);
                 let length = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt().max(1e-6);
+                let biome = self.column.biome(position[0], position[2], self.floor + position[1]);
                 Vertex {
                     position,
                     normal: g.map(|c| c / length),
-                    color: [0.0, 0.5, 0.1],
+                    color: biome.color,
+                    climate: [biome.temperature, biome.humidity],
                 }
             })
             .collect();

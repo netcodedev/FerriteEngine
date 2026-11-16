@@ -3,7 +3,10 @@
 
 use image::{Rgba, RgbaImage};
 
-use super::{WorldGenerator, SEA_LEVEL};
+use super::{
+    biome::{biome_at, temperature_at},
+    WorldGenerator, SEA_LEVEL,
+};
 
 /// What a map shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -11,14 +14,23 @@ pub enum MapLayer {
     /// The land in colours by height, sea in blues by depth, lit from the
     /// north-west.
     Height,
+    /// The biomes' ground colours, lit like the height map, snow white.
+    Biomes,
+    /// Mean temperature at the ground: blue cold, red hot.
+    Temperature,
+    /// Brown dry, green, blue wet.
+    Humidity,
     Continentalness,
     Erosion,
     Ridges,
 }
 
 impl MapLayer {
-    pub const ALL: [MapLayer; 4] = [
+    pub const ALL: [MapLayer; 7] = [
         MapLayer::Height,
+        MapLayer::Biomes,
+        MapLayer::Temperature,
+        MapLayer::Humidity,
         MapLayer::Continentalness,
         MapLayer::Erosion,
         MapLayer::Ridges,
@@ -27,6 +39,9 @@ impl MapLayer {
     pub fn name(self) -> &'static str {
         match self {
             MapLayer::Height => "height",
+            MapLayer::Biomes => "biomes",
+            MapLayer::Temperature => "temperature",
+            MapLayer::Humidity => "humidity",
             MapLayer::Continentalness => "continentalness",
             MapLayer::Erosion => "erosion",
             MapLayer::Ridges => "ridges",
@@ -69,6 +84,11 @@ pub fn height_color(h: f32) -> [f32; 3] {
     mix(a.1, b.1, (h - a.0) / (b.0 - a.0))
 }
 
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// A diverging colour for a value in `-1..1`.
 fn signed_color(v: f32) -> [f32; 3] {
     if v < 0.0 {
@@ -96,19 +116,47 @@ impl WorldGenerator {
                         let (row, col) = (t * rows_per + k / n, k % n);
                         let x = -half + (col as f64 + 0.5) * step;
                         let z = -half + (row as f64 + 0.5) * step;
+                        // Lit from the north-west.
+                        let shaded = |h: f32| {
+                            let hx = self.coarse_height(x + step, z) - self.coarse_height(x - step, z);
+                            let hz = self.coarse_height(x, z + step) - self.coarse_height(x, z - step);
+                            if h > SEA_LEVEL {
+                                let slope_light = (-(hx + hz) as f64 / (2.0 * step) * 1.5) as f32;
+                                (0.85 + slope_light * 0.5).clamp(0.45, 1.25)
+                            } else {
+                                1.0
+                            }
+                        };
                         *v = match layer {
                             MapLayer::Height => {
                                 let h = self.coarse_height(x, z);
-                                // Lit from the north-west.
-                                let hx = self.coarse_height(x + step, z) - self.coarse_height(x - step, z);
-                                let hz = self.coarse_height(x, z + step) - self.coarse_height(x, z - step);
-                                let shade = if h > SEA_LEVEL {
-                                    let slope_light = (-(hx + hz) as f64 / (2.0 * step) * 1.5) as f32;
-                                    (0.85 + slope_light * 0.5).clamp(0.45, 1.25)
+                                height_color(h).map(|c| c * shaded(h))
+                            }
+                            MapLayer::Biomes => {
+                                let h = self.coarse_height(x, z);
+                                let c = self.climate(x, z);
+                                let biome = biome_at(c.temperature, c.humidity, h);
+                                let ground = if h < SEA_LEVEL {
+                                    height_color(h)
                                 } else {
-                                    1.0
+                                    // Snow as the terrain's shader lays it.
+                                    let snow = 1.0 - smoothstep(-6.0, -3.5, biome.temperature);
+                                    mix(biome.color, [0.86, 0.88, 0.92], snow)
                                 };
-                                height_color(h).map(|c| c * shade)
+                                ground.map(|c| c * shaded(h))
+                            }
+                            MapLayer::Temperature => {
+                                let h = self.coarse_height(x, z);
+                                let t = temperature_at(self.climate(x, z).temperature, h);
+                                signed_color(((t - 10.0) / 20.0).clamp(-1.0, 1.0))
+                            }
+                            MapLayer::Humidity => {
+                                let u = self.climate(x, z).humidity;
+                                if u < 0.5 {
+                                    mix([0.62, 0.45, 0.25], [0.35, 0.62, 0.25], u * 2.0)
+                                } else {
+                                    mix([0.35, 0.62, 0.25], [0.15, 0.35, 0.75], u * 2.0 - 1.0)
+                                }
                             }
                             MapLayer::Continentalness => signed_color(self.climate(x, z).continentalness),
                             MapLayer::Erosion => signed_color(self.climate(x, z).erosion),

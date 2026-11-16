@@ -22,7 +22,7 @@ use crate::{
     },
     terrain::{
         materials,
-        scatter::{SCATTER_MAX_Y, SCATTER_MIN_Y},
+        scatter::SCATTER_MIN_Y,
         generator::{ChunkCoord, WorldGenerator},
         Chunk, ChunkBounds, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
     },
@@ -155,7 +155,8 @@ impl DualContouringChunk {
     /// Scatter spots across this chunk's XZ footprint using the same noise
     /// that drives the chunk's terrain — so the height filter sees the exact
     /// surface a model would land on. Returns world-space `(x, y, z, yaw)`
-    /// tuples. A chunk only gives the spots whose ground lies in it.
+    /// tuples. A chunk only gives the spots whose ground lies in it, and
+    /// of those as many as the biomes' vegetation lets grow.
     fn scatter(&self, salt: u64, attempts: u32) -> Vec<(f32, f32, f32, f32)> {
         let floor = self.coord.y as f32 * CHUNK_SIZE_FLOAT;
         let ceiling = floor + CHUNK_SIZE_FLOAT;
@@ -187,13 +188,19 @@ impl DualContouringChunk {
             let z = z0 + rz * CHUNK_SIZE_FLOAT;
 
             let y = self.ground_height(x, z);
+            // Drawn for every spot, so a spot's yaw does not depend on
+            // whether the ones before it grew.
+            let (grow, yaw) = (unit(next()), unit(next()) * std::f32::consts::TAU);
 
-            if y < SCATTER_MIN_Y || y > SCATTER_MAX_Y || y < floor || y >= ceiling {
-                let _ = next(); // burn an RNG sample so accepted yaw is stable
+            if y < SCATTER_MIN_Y || y < floor || y >= ceiling {
+                continue;
+            }
+            // As much grows as the biomes here let grow.
+            let biome = self.generator.surface_biome(x as f64, z as f64);
+            if grow >= biome.vegetation {
                 continue;
             }
 
-            let yaw = unit(next()) * std::f32::consts::TAU;
             out.push((x, y, z, yaw));
         }
         out
@@ -466,7 +473,7 @@ impl Component for DualContouringChunk {
 
 impl VertexAttributes for Vertex {
     fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
-        vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT)]
+        vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT), (2, gl::FLOAT)]
     }
 }
 

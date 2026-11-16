@@ -45,5 +45,8 @@ pub struct DualContouringChunk {
 pub struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],
+    /// Ground colour of the biomes here (display space).
     color: [f32; 3],
+    /// Temperature (°C, at this height) and humidity (0..1).
+    climate: [f32; 2],
 }

@@ -114,6 +114,11 @@ pub struct Climate {
     pub ridges: f32,
     /// 0..1: how far into a mountain range a point lies.
     pub range: f32,
+    /// Mean temperature at sea level, °C; it drops with height (see
+    /// `biome::temperature_at`). Colder toward the north (−z).
+    pub temperature: f32,
+    /// 0 (dry) .. 1 (wet); wetter near the coast.
+    pub humidity: f32,
 }
 
 /// The large shape at one point: what the 4 m grid holds.
@@ -123,6 +128,10 @@ pub struct Macro {
     pub height: f32,
     /// How high the hills rise here, in metres.
     pub hills: f32,
+    /// Temperature at sea level, °C (see `Climate`).
+    pub temperature: f32,
+    /// Humidity, 0..1 (see `Climate`).
+    pub humidity: f32,
 }
 
 /// The noise fields of a world (see the module).
@@ -137,6 +146,8 @@ pub struct WorldShape {
     ridges: Fractal,
     /// The hills on top, at every metre.
     detail: Fractal,
+    temperature: Fractal,
+    humidity: Fractal,
 }
 
 impl WorldShape {
@@ -150,6 +161,8 @@ impl WorldShape {
             ranges: Fractal::with_gain(seed, "ranges", 2, 16000.0, 0.3),
             ridges: Fractal::with_gain(seed, "ridges", 4, 5000.0, 0.35),
             detail: Fractal::new(seed, "hills", 6, 340.0),
+            temperature: Fractal::new(seed, "temperature", 3, 10000.0),
+            humidity: Fractal::new(seed, "humidity", 3, 7000.0),
         }
     }
 
@@ -192,7 +205,15 @@ impl WorldShape {
             erosion: erosion.clamp(-1.0, 1.0) as f32,
             ridges: ridges as f32,
             range: range as f32,
+            temperature: 0.0,
+            humidity: 0.0,
         };
+        // Toward the north (−z) colder, by up to 7 °C at the edge.
+        let north = (wz / half).clamp(-1.0, 1.0) * 7.0;
+        climate.temperature = (13.0 + 14.0 * self.temperature.at(wx, wz) * 1.4 + north) as f32;
+        let coast = 1.0 - smoothstep(-0.05, 0.35, climate.continentalness as f64);
+        climate.humidity =
+            (0.5 + 0.5 * self.humidity.at(wx, wz) * 1.5 + 0.18 * coast).clamp(0.0, 1.0) as f32;
         // Around the origin: low, gentle land 10 to 40 m above the sea,
         // where scenes made for the old terrain have their players and
         // cameras (bent like the rest, so it does not show as a disc).
@@ -201,6 +222,8 @@ impl WorldShape {
             climate.continentalness = lerp(0.1, climate.continentalness, away);
             climate.range *= away;
             climate.erosion = lerp(0.35, climate.erosion, away);
+            climate.temperature = lerp(14.0, climate.temperature, away);
+            climate.humidity = lerp(0.55, climate.humidity, away);
         }
         climate
     }
@@ -222,6 +245,8 @@ impl WorldShape {
         Macro {
             height: base + ridge,
             hills: s.hills.at(c.erosion) * s.hill_scale * coast * (1.0 + 0.5 * mountains),
+            temperature: c.temperature,
+            humidity: c.humidity,
         }
     }
 

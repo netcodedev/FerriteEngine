@@ -16,11 +16,13 @@ use std::{
 
 use super::CHUNK_SIZE;
 
+pub mod biome;
 pub mod map;
 mod noise;
 pub mod spline;
 pub mod world;
 
+pub use biome::{Biome, BiomeBlend};
 pub use world::{Climate, WorldSettings, SEA_LEVEL};
 use world::{Macro, WorldShape};
 
@@ -75,10 +77,20 @@ pub const COLUMN_MARGIN: i32 = 9;
 pub struct Column {
     /// Heights, `(x, z)` row by row from `-margin`.
     heights: Vec<f32>,
+    /// Temperature at sea level (°C) and humidity on a coarser grid,
+    /// `CLIMATE_STEP` metres apart from `CLIMATE_ORIGIN`, row by row.
+    climate: Vec<[f32; 2]>,
     /// Lowest and highest height in the column (margin included).
     pub min_height: f32,
     pub max_height: f32,
 }
+
+/// The climate grid of a column: metres between its points, where it
+/// starts (chunk-local) and its points per side, enough to cover the
+/// column's margins.
+const CLIMATE_STEP: i32 = 4;
+const CLIMATE_ORIGIN: i32 = -12;
+const CLIMATE_SPAN: i32 = (CHUNK_SIZE as i32 - 2 * CLIMATE_ORIGIN) / CLIMATE_STEP + 1;
 
 impl Column {
     /// Samples per side.
@@ -89,6 +101,29 @@ impl Column {
     #[inline]
     pub fn height(&self, x: i32, z: i32) -> f32 {
         self.heights[((z + COLUMN_MARGIN) * Self::SPAN + (x + COLUMN_MARGIN)) as usize]
+    }
+
+    /// Temperature at sea level (°C) and humidity at chunk-local `(x, z)`
+    /// (anywhere within the margins), blended from the climate grid.
+    pub fn climate(&self, x: f32, z: f32) -> [f32; 2] {
+        let last = (CLIMATE_SPAN - 2) as f32;
+        let gx = ((x - CLIMATE_ORIGIN as f32) / CLIMATE_STEP as f32).clamp(0.0, last + 1.0);
+        let gz = ((z - CLIMATE_ORIGIN as f32) / CLIMATE_STEP as f32).clamp(0.0, last + 1.0);
+        let (ix, iz) = (gx.floor().min(last), gz.floor().min(last));
+        let (tx, tz) = (gx - ix, gz - iz);
+        let at = |i: f32, j: f32| self.climate[(j as i32 * CLIMATE_SPAN + i as i32) as usize];
+        let (a, b, c, d) = (at(ix, iz), at(ix + 1.0, iz), at(ix, iz + 1.0), at(ix + 1.0, iz + 1.0));
+        std::array::from_fn(|k| {
+            let top = a[k] + (b[k] - a[k]) * tx;
+            let bottom = c[k] + (d[k] - c[k]) * tx;
+            top + (bottom - top) * tz
+        })
+    }
+
+    /// The biomes at chunk-local `(x, z)` on ground of height `h`.
+    pub fn biome(&self, x: f32, z: f32, h: f32) -> BiomeBlend {
+        let [t, humidity] = self.climate(x, z);
+        biome::biome_at(t, humidity, h)
     }
 }
 
@@ -249,18 +284,22 @@ impl WorldGenerator {
         );
         let tile = tile(tx as i32, tz as i32);
         let (wx, wz) = (cubic_weights(gx - fx), cubic_weights(gz - fz));
-        let (mut height, mut hills) = (0.0f64, 0.0f64);
+        let (mut height, mut hills, mut temperature, mut humidity) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
         for (b, wz) in wz.iter().enumerate() {
             for (a, wx) in wx.iter().enumerate() {
                 let m = tile.at(i + a as i32 - 1, j + b as i32 - 1);
                 let w = wx * wz;
                 height += w * m.height as f64;
                 hills += w * m.hills as f64;
+                temperature += w * m.temperature as f64;
+                humidity += w * m.humidity as f64;
             }
         }
         Macro {
             height: height as f32,
             hills: hills.max(0.0) as f32,
+            temperature: temperature as f32,
+            humidity: humidity.clamp(0.0, 1.0) as f32,
         }
     }
 
@@ -269,6 +308,13 @@ impl WorldGenerator {
     pub fn surface_height(&self, x: f64, z: f64) -> f32 {
         let m = self.interpolated(x, z, &mut |tx, tz| self.tile(tx, tz));
         m.height + m.hills * self.shape.detail(x, z)
+    }
+
+    /// The biomes at world `(x, z)`, on the ground there.
+    pub fn surface_biome(&self, x: f64, z: f64) -> BiomeBlend {
+        let m = self.interpolated(x, z, &mut |tx, tz| self.tile(tx, tz));
+        let h = m.height + m.hills * self.shape.detail(x, z);
+        biome::biome_at(m.temperature, m.humidity, h)
     }
 
     /// The column of chunk square `(cx, cz)`, from the cache or made now.
@@ -300,8 +346,18 @@ impl WorldGenerator {
                 heights.push(h);
             }
         }
+        let mut climate = Vec::with_capacity((CLIMATE_SPAN * CLIMATE_SPAN) as usize);
+        for j in 0..CLIMATE_SPAN {
+            for i in 0..CLIMATE_SPAN {
+                let wx = x0 + (CLIMATE_ORIGIN + i * CLIMATE_STEP) as f64;
+                let wz = z0 + (CLIMATE_ORIGIN + j * CLIMATE_STEP) as f64;
+                let m = self.interpolated(wx, wz, &mut tile);
+                climate.push([m.temperature, m.humidity]);
+            }
+        }
         Column {
             heights,
+            climate,
             min_height,
             max_height,
         }
