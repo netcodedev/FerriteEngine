@@ -90,6 +90,13 @@ thread_local! {
     static TEXTURES: RefCell<Option<Rc<Textures>>> = const { RefCell::new(None) };
 }
 
+/// Free the shared bridge textures while the GL context is still current
+/// (see `Application`'s `Drop`): a thread-local's destructor would run after
+/// the GL driver is gone, and crash in it.
+pub fn release_gl_resources() {
+    TEXTURES.with(|cell| cell.borrow_mut().take());
+}
+
 fn textures() -> Rc<Textures> {
     TEXTURES.with(|cell| {
         cell.borrow_mut()
@@ -352,7 +359,8 @@ fn make(scene: &mut Scene, bridge: &Bridge, index: usize) -> Entity {
 /// `eye`: make the near ones that are missing (a few a frame), drop the
 /// far ones.
 pub fn sync(generator: &WorldGenerator, scene: &mut Scene, entity: &mut Entity, eye: Point3<f32>) {
-    let Some(roads) = generator.roads() else {
+    // (Not before the roads are planned: that is not waited for here.)
+    let Some(roads) = generator.planned_roads() else {
         return;
     };
     let distance = |bridge: &Bridge| {

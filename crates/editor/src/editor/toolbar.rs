@@ -1,11 +1,16 @@
-use ferrite::core::{
-    export::Platform,
-    primitives::{Offset, Position, Size},
-    renderer::{
-        plane::{Plane, PlaneBuilder},
-        text::{icons, Text},
+use std::{f32::consts::TAU, time::Instant};
+
+use ferrite::{
+    core::{
+        export::Platform,
+        primitives::{Offset, Position, Size},
+        renderer::{
+            plane::{Plane, PlaneBuilder},
+            text::{icons, Text},
+        },
+        scene::Scene,
     },
-    scene::Scene,
+    terrain::{dual_contouring::DualContouringChunk, Terrain},
 };
 use ferrite_ui::ui::{
     element_handle::UIElementHandle,
@@ -20,6 +25,11 @@ use glfw::{Glfw, WindowEvent};
 use super::{send, Command, GizmoMode, Mode, Shared, Workspace};
 
 const BUTTON_HEIGHT: f32 = 26.0;
+/// The spinner shown while the terrain is still loading: how many dots,
+/// how large, on how large a circle.
+const SPINNER_DOTS: usize = 8;
+const SPINNER_DOT: f32 = 3.5;
+const SPINNER_RADIUS: f32 = 6.5;
 
 /// Top bar: File and Window menus, gizmo tools, play/stop and the latest
 /// status message.
@@ -38,6 +48,11 @@ pub struct Toolbar {
     play_button: Button,
     status_icon: Text,
     status: Text,
+    /// A spinner beside the status while the terrain is busy (planning the
+    /// world, loading chunks), and since when it turns.
+    spinner: Vec<Plane>,
+    spinning: bool,
+    started: Instant,
 }
 
 /// Window menu entries, checked while the panel is shown.
@@ -162,6 +177,17 @@ impl Toolbar {
             play_button,
             status_icon: theme::icon(icons::INFO, 14.0, theme::TEXT_DIM),
             status: theme::text("", theme::FONT_SIZE_SMALL + 0.5, theme::TEXT_MUTED),
+            spinner: (0..SPINNER_DOTS)
+                .map(|_| {
+                    PlaneBuilder::new()
+                        .size(Size::new(SPINNER_DOT, SPINNER_DOT))
+                        .color(theme::ACCENT)
+                        .border_radius_uniform(SPINNER_DOT / 2.0)
+                        .build()
+                })
+                .collect(),
+            spinning: false,
+            started: Instant::now(),
         }
     }
 
@@ -269,7 +295,13 @@ impl UIElement for Toolbar {
         let play_x = (viewport.x + viewport.w * 0.5 - play_w * 0.5).max(x + 16.0);
         self.play_button.set_offset(Offset { x: play_x, y });
 
-        let status = status.unwrap_or_else(|| match mode {
+        // What the terrain is still busy with, unless something else is
+        // being said.
+        let loading = scene
+            .get_component::<Terrain<DualContouringChunk>>()
+            .and_then(|terrain| terrain.loading_status());
+        self.spinning = status.is_none() && loading.is_some();
+        let status = status.or(loading).unwrap_or_else(|| match mode {
             Mode::Play => "Playing  -  Esc frees the mouse, Ctrl+P stops".into(),
             Mode::Edit => String::new(),
         });
@@ -283,7 +315,21 @@ impl UIElement for Toolbar {
         self.status_icon
             .prepare_render_at(Position::new(status_x - 22.0, iy, 2.0));
         self.status_icon
-            .set_content(if status.is_empty() { "" } else { icons::INFO });
+            .set_content(if status.is_empty() || self.spinning { "" } else { icons::INFO });
+        // Dots on a circle where the icon would be, the brightest going round.
+        let centre = (status_x - 15.0, rect.y + rect.h * 0.5);
+        let turn = self.started.elapsed().as_secs_f32() * 1.2;
+        for (i, dot) in self.spinner.iter_mut().enumerate() {
+            let angle = i as f32 / SPINNER_DOTS as f32 * TAU;
+            dot.set_position(Position::new(
+                centre.0 + angle.cos() * SPINNER_RADIUS - SPINNER_DOT / 2.0,
+                centre.1 + angle.sin() * SPINNER_RADIUS - SPINNER_DOT / 2.0,
+                2.0,
+            ));
+            let behind = (turn - i as f32 / SPINNER_DOTS as f32).rem_euclid(1.0);
+            let (r, g, b, _) = theme::ACCENT;
+            dot.set_color((r, g, b, 1.0 - behind * 0.85));
+        }
 
         for widget in self.widgets_mut() {
             widget.update(scene);
@@ -298,6 +344,11 @@ impl UIElement for Toolbar {
         }
         self.status_icon.render();
         self.status.render();
+        if self.spinning {
+            for dot in &self.spinner {
+                dot.render();
+            }
+        }
     }
 
     fn render_overlay(&self) {

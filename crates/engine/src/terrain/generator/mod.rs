@@ -321,6 +321,33 @@ impl WorldGenerator {
             .as_deref()
     }
 
+    /// Make the plans of rivers, lakes, settlements and roads on a thread
+    /// of their own (they take seconds): what needs them waits for them
+    /// there, and the main thread can ask whether they are made
+    /// (`is_planned`) without waiting.
+    pub fn start_planning(self: &Arc<Self>) {
+        let generator = self.clone();
+        let started = std::thread::Builder::new().name("world plan".into()).spawn(move || {
+            generator.hydrology();
+            generator.roads();
+        });
+        if let Err(e) = started {
+            log::warn!("could not start planning the world: {e}");
+        }
+    }
+
+    /// Whether the plans of rivers, lakes, settlements and roads are made
+    /// (see `start_planning`).
+    pub fn is_planned(&self) -> bool {
+        self.hydrology.get().is_some() && self.roads.get().is_some()
+    }
+
+    /// The plan of settlements and roads if it is made, without waiting for
+    /// it (for the main thread).
+    pub fn planned_roads(&self) -> Option<&Roads> {
+        self.roads.get()?.as_deref()
+    }
+
     /// What may reshape the ground of chunk square `(cx, cz)` (and its
     /// column's margins).
     fn near(&self, cx: i32, cz: i32) -> Near<'_> {

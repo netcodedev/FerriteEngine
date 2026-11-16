@@ -452,6 +452,19 @@ impl Roads {
         // Tunnels from cell `i` the plan's coarse ground allows, as steps for
         // `find_way`: straight in each of its directions, as `with_tunnels`
         // would take them, at what they cost.
+        // The ground as it lies, by the nearest point of an 8 m grid, each
+        // looked at once: the way through looks at the same ground from
+        // many cells.
+        let near_ground: Mutex<HashMap<(i64, i64), f32>> = Mutex::default();
+        let ground_near = |x: f64, z: f64| {
+            let key = ((x / 8.0).round() as i64, (z / 8.0).round() as i64);
+            if let Some(&h) = near_ground.lock().unwrap().get(&key) {
+                return h;
+            }
+            let h = natural(key.0 as f64 * 8.0, key.1 as f64 * 8.0).0;
+            near_ground.lock().unwrap().insert(key, h);
+            h
+        };
         let tunnel_jumps = |i: usize| -> Vec<(usize, f32)> {
             let mut out = Vec::new();
             // Only at the foot of what a road cannot climb.
@@ -499,13 +512,17 @@ impl Roads {
                             let t = s as f64 / samples as f64;
                             let from_end = (t * length).min((1.0 - t) * length);
                             from_end < PORTAL_APPROACH
-                                || natural(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t).0
+                                || ground_near(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
                                     - (gi + (gj - gi) * t as f32)
                                     >= TUNNEL_COVER
                         })
                     };
+                    // The shortest each way only: from where it comes out
+                    // the way may tunnel on (and looking at every length
+                    // over the ground as it lies costs much).
                     if covered {
                         out.push((j, (TUNNEL_COST * length) as f32 + PORTAL_COST));
+                        break;
                     }
                 }
             }

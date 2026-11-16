@@ -251,6 +251,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
             .map(|(vertex, fragment)| Shader::new(&vertex, &fragment));
 
         let generator = WorldGenerator::with_settings(seed, world.clone());
+        generator.start_planning();
         Self {
             seed,
             world,
@@ -294,6 +295,17 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         (self.streamer.loaded_count(), self.streamer.in_flight())
     }
 
+    /// What the terrain is still busy with, for a loading indicator:
+    /// planning the world, or loading chunks around the camera. `None`
+    /// once it has caught up.
+    pub fn loading_status(&self) -> Option<String> {
+        if !self.generator.is_planned() {
+            return Some("Planning rivers and roads".into());
+        }
+        let (loaded, in_flight) = self.streaming_status();
+        (in_flight > 0).then(|| format!("Loading terrain ({loaded} of {} columns)", loaded + in_flight))
+    }
+
     pub fn scatter(&self) -> &Scatter {
         &self.scatter
     }
@@ -334,6 +346,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         }
         super::bridge_view::clear(scene, entity);
         self.generator = WorldGenerator::with_settings(self.seed, self.world.clone());
+        self.generator.start_planning();
         self.streamer = Self::start_streaming(&self.generator);
         self.map.invalidate();
         self.horizon.invalidate();
@@ -723,7 +736,7 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
     /// The tunnels' lamps near the camera (the others light nothing it
     /// sees: rock lies between).
     fn lights(&self, transform: &Matrix4<f32>, eye: Point3<f32>, out: &mut Vec<LightSource>) {
-        let Some(roads) = self.generator.roads() else {
+        let Some(roads) = self.generator.planned_roads() else {
             return;
         };
         let lamp = Light::point(TUNNEL_LAMP_COLOR, TUNNEL_LAMP_INTENSITY, TUNNEL_LAMP_RANGE);
