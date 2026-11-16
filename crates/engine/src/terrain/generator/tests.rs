@@ -157,7 +157,7 @@ fn caves_open_under_the_mountains_and_the_lattice_follows_them() {
     let surface = generator.surface_height(x, z) as f64;
     assert!(generator.density(x, surface - 40.0, z) > 0.0, "no cave");
     let coord = ChunkCoord::containing(x, surface - 40.0, z);
-    let lattice = generator.underground(coord).expect("caves in the chunk");
+    let lattice = generator.underground(coord, true).expect("caves in the chunk");
     let column = generator.column(coord.x, coord.z);
     let [x0, y0, z0] = coord.origin();
     // Where the exact field is clearly in rock or air, the blended one
@@ -194,7 +194,7 @@ fn no_cave_opens_near_the_spawn() {
 fn without_caves_and_overhangs_the_ground_is_the_height_field() {
     let settings = WorldSettings { caves: 0.0, overhangs: 0.0, ..Default::default() };
     let generator = WorldGenerator::with_settings(1, settings);
-    assert!(generator.underground(ChunkCoord::new(-19, 1, -46)).is_none());
+    assert!(generator.underground(ChunkCoord::new(-19, 1, -46), true).is_none());
     let h = generator.surface_height(-2345.0, -5892.0) as f64;
     assert_eq!(generator.density(-2345.0, h - 40.0, -5892.0), -40.0);
 }
@@ -211,9 +211,9 @@ fn underground_timings() {
         let start = Instant::now();
         for cx in -18..-14 {
             let cz = -46;
-            for cy in DualContouringChunk::vertical_range(&generator, (cx, cz)) {
+            for cy in DualContouringChunk::vertical_range(&generator, (cx, cz), true) {
                 let t = Instant::now();
-                let _ = generator.underground(ChunkCoord::new(cx, cy, cz));
+                let _ = generator.underground(ChunkCoord::new(cx, cy, cz), true);
                 lattice += t.elapsed();
                 DualContouringChunk::generate(&generator, (cx as f32, cy as f32, cz as f32), 0);
                 chunks += 1;

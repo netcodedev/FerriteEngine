@@ -134,7 +134,8 @@ impl Viewport {
                 rect.h.max(1.0) as u32,
                 self.fov,
                 0.1,
-                2000.0,
+                // Far enough for the terrain's horizon.
+                20000.0,
             );
             scene.set_editor_camera(Some(CameraComponent::new(
                 camera,

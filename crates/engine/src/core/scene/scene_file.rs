@@ -304,7 +304,8 @@ impl ComponentData {
             pitch_deg: -20.0,
             fov_deg: 64.0,
             near: 0.1,
-            far: 1000.0,
+            // Far enough for the terrain's horizon (`terrain::horizon`).
+            far: 20000.0,
             speed: 10.0,
             free: true,
         }

@@ -76,7 +76,7 @@ impl DualContouringChunk {
     /// the finest mesh are ground (before its skirt), for the collider.
     fn generate_meshes(&self) -> (Vec<ChunkMesh<Vertex>>, usize) {
         let coarsest = 1 << (LODS - 1);
-        let field = DensityField::new(&self.generator, self.coord, coarsest);
+        let field = DensityField::new(&self.generator, self.coord, coarsest, self.caves);
         if field.is_solid() {
             return (Vec::new(), 0);
         }
@@ -219,8 +219,9 @@ impl Chunk for DualContouringChunk {
         Self::generate(&WorldGenerator::new(seed), position, lod)
     }
 
-    fn generate(generator: &Arc<WorldGenerator>, position: (f32, f32, f32), _lod: usize) -> Self {
+    fn generate(generator: &Arc<WorldGenerator>, position: (f32, f32, f32), lod: usize) -> Self {
         let mut chunk = Self {
+            caves: lod == 0,
             position,
             coord: ChunkCoord::from_position(position),
             generator: generator.clone(),
@@ -238,7 +239,11 @@ impl Chunk for DualContouringChunk {
         chunk
     }
 
-    fn vertical_range(generator: &WorldGenerator, column: (i32, i32)) -> std::ops::RangeInclusive<i32> {
+    fn has_horizon() -> bool {
+        true
+    }
+
+    fn vertical_range(generator: &WorldGenerator, column: (i32, i32), detail: bool) -> std::ops::RangeInclusive<i32> {
         // A chunk meshes the ground up to a coarse step (and its skirt)
         // beyond its floor and ceiling.
         let column = generator.column(column.0, column.1);
@@ -246,7 +251,7 @@ impl Chunk for DualContouringChunk {
         let chunk = |h: f32| (h / CHUNK_SIZE_FLOAT).floor() as i32;
         let mut low = chunk(column.min_height - reach);
         // Caves reach down under the surface.
-        if let Some((bottom, _)) = generator.cave_band(column.min_height, column.max_height) {
+        if let Some((bottom, _)) = generator.cave_band(column.min_height, column.max_height).filter(|_| detail) {
             low = low.min(chunk(bottom - reach));
         }
         let mut high = chunk(column.max_height + reach);
@@ -508,7 +513,7 @@ mod tests {
         assert_eq!(left.meshes.len(), LODS);
         let n = CHUNK_SIZE_FLOAT;
         // The ground alone, without the skirts.
-        let (fl, fr) = (DensityField::new(&left.generator, left.coord, 8), DensityField::new(&right.generator, right.coord, 8));
+        let (fl, fr) = (DensityField::new(&left.generator, left.coord, 8, true), DensityField::new(&right.generator, right.coord, 8, true));
         let ground = |field: &DensityField, lod: usize| -> Vec<[f32; 3]> {
             field.surface_nets(1 << lod).unwrap().0.iter().map(|v| v.position).collect()
         };
@@ -551,7 +556,7 @@ mod tests {
     fn neighbours_on_any_levels_leave_no_gap_between_them() {
         let left = DualContouringChunk::new(2, (0.0, 0.0, 0.0), 0);
         let right = DualContouringChunk::new(2, (1.0, 0.0, 0.0), 0);
-        let (fl, fr) = (DensityField::new(&left.generator, left.coord, 8), DensityField::new(&right.generator, right.coord, 8));
+        let (fl, fr) = (DensityField::new(&left.generator, left.coord, 8, true), DensityField::new(&right.generator, right.coord, 8, true));
         let left: Vec<_> = (0..LODS).map(|lod| fl.surface_nets(1 << lod).unwrap()).collect();
         let right: Vec<_> = (0..LODS).map(|lod| fr.surface_nets(1 << lod).unwrap()).collect();
         for (a, mesh_a) in left.iter().enumerate() {

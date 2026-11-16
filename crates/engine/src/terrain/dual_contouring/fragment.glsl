@@ -156,6 +156,12 @@ vec3 paletteColor(float h, float slope, float n) {
     return mix(color, rockColor, rockBlend);
 }
 
+// Haze: none up to `HAZE_START` metres, then thickening over
+// `HAZE_DISTANCE`, toward the sky's light times `HAZE_BRIGHTNESS`.
+const float HAZE_START = 600.0;
+const float HAZE_DISTANCE = 9000.0;
+const float HAZE_BRIGHTNESS = 1.0;
+
 // Height of the water's surface (`dual_contouring::WATER_LEVEL`).
 const float WATER_LINE = 0.0;
 // Footprints show their depth this close; further away the flat cover.
@@ -310,10 +316,19 @@ void main() {
     }
     // Darker toward the deep sea floor.
     albedo *= mix(0.45, 1.0, smoothstep(-30.0, 0.0, h));
+    // Open sea on the horizon (see `terrain::horizon::SEA_MARK`).
+    bool sea = Climate.y > 1.5;
+    if (sea) {
+        // Close to the colour the near water shows from afar.
+        albedo = pow(vec3(0.07, 0.25, 0.45), vec3(2.2));
+        roughness = 0.35;
+        N = Ng;
+        ao = 1.0;
+    }
 
     // Lasting snow where the mean temperature is well below freezing; it
     // slides off steep rock.
-    float snow = 1.0 - smoothstep(-6.0, -3.5, Climate.x + n * 1.5);
+    float snow = sea ? 0.0 : 1.0 - smoothstep(-6.0, -3.5, Climate.x + n * 1.5);
     snow *= 1.0 - 0.75 * smoothstep(0.62, 0.85, slope);
     albedo = mix(albedo, pow(SNOW, vec3(2.2)), snow);
     roughness = mix(roughness, 0.6, snow);
@@ -328,5 +343,11 @@ void main() {
     }
 
     vec3 color = shadeSurface(WorldPos, N, Ng, albedo, roughness, metallic, ao, cloudShadow(WorldPos));
+    // Far away the air between hazes the ground into the sky's colour.
+    vec3 toPoint = WorldPos - cameraPosition;
+    float far = length(toPoint);
+    vec3 along = normalize(vec3(toPoint.x, max(toPoint.y, 0.0) * 0.3, toPoint.z));
+    float haze = 1.0 - exp(-max(far - HAZE_START, 0.0) / HAZE_DISTANCE);
+    color = mix(color, skyLight(along) * HAZE_BRIGHTNESS, haze);
     FragColor = vec4(toDisplay(color), 1.0);
 }

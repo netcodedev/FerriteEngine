@@ -38,6 +38,9 @@ pub struct DualContouringChunk {
     /// Water surface grid, present only when some terrain in this chunk
     /// comes near WATER_LEVEL. It reaches under the shore (see `water`).
     water_mesh: Option<ChunkMesh<water::WaterVertex>>,
+    /// Whether it has its caves and overhangs (it is made without them
+    /// far away).
+    caves: bool,
 }
 
 #[derive(Clone, Copy)]

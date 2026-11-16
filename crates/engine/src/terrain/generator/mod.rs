@@ -360,9 +360,10 @@ impl WorldGenerator {
 
     /// Caves and overhangs around the chunk at `coord` (see
     /// `Underground3`), or `None` where it has neither.
-    pub fn underground(&self, coord: ChunkCoord) -> Option<Underground3> {
+    /// `None` too unless `detail`: from afar neither shows, and both cost.
+    pub fn underground(&self, coord: ChunkCoord, detail: bool) -> Option<Underground3> {
         let u = &self.underground;
-        if !u.has_caves() && !u.has_overhangs() {
+        if !detail || (!u.has_caves() && !u.has_overhangs()) {
             return None;
         }
         let column = self.column(coord.x, coord.z);
@@ -410,6 +411,16 @@ impl WorldGenerator {
             }
         }
         any.then(|| Underground3::new(values))
+    }
+
+    /// The ground at world `(x, z)` on the 4 m grid of the large shape
+    /// (both multiples of `MACRO_STEP`): its height, exactly as
+    /// `surface_height` gives it there, and its biomes. Needs no cached
+    /// tiles, so it suits samples spread far apart (the horizon).
+    pub fn grid_sample(&self, x: f64, z: f64) -> (f32, BiomeBlend) {
+        let m = self.shape.macro_at(x, z);
+        let h = m.height + m.hills * self.shape.detail(x, z);
+        (h, biome::biome_at(m.temperature, m.humidity, h))
     }
 
     /// The column of chunk square `(cx, cz)`, from the cache or made now.

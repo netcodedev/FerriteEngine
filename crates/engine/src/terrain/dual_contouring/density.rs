@@ -38,7 +38,9 @@ pub(super) struct DensityField {
 impl DensityField {
     /// The field of the chunk at `coord`, far enough for levels up to
     /// `coarsest` metres between samples.
-    pub(super) fn new(generator: &WorldGenerator, coord: ChunkCoord, coarsest: i32) -> Self {
+    /// Without `detail`, the height field alone: no caves, no overhangs
+    /// (what is drawn from afar).
+    pub(super) fn new(generator: &WorldGenerator, coord: ChunkCoord, coarsest: i32, detail: bool) -> Self {
         // A level samples from one step before the chunk to one step past
         // it, and the normals look one metre further.
         assert!(coarsest < COLUMN_MARGIN, "the column is too narrow for steps of {coarsest} m");
@@ -47,7 +49,7 @@ impl DensityField {
             span: Column::SPAN,
             margin: COLUMN_MARGIN,
             floor: coord.y as f32 * CHUNK_SIZE_FLOAT,
-            underground: generator.underground(coord),
+            underground: generator.underground(coord, detail),
             dense: Vec::new(),
         };
         if field.underground.is_some() {

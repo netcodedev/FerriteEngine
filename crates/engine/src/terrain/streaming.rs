@@ -6,11 +6,15 @@
 //! worker that makes it knows from the column's heights which chunks of
 //! the stack hold ground, so nothing on the main thread has to.
 //!
+//! Columns near the anchor are made in full detail (caves and all);
+//! further out a cheaper version does, and is made again in detail when
+//! the anchor comes near (see `StreamRadius::detail`).
+//!
 //! Nothing here knows about GL or chunks: the work a column takes is a
 //! function handed in, and its result is passed back as it is.
 
 use std::{
-    collections::{BinaryHeap, HashSet},
+    collections::{BinaryHeap, HashMap, HashSet},
     cmp::Reverse,
     sync::{
         mpsc::{self, Receiver, Sender},
@@ -25,21 +29,26 @@ use super::CHUNK_SIZE;
 /// A column of chunks, by its chunk square `(x, z)`.
 pub type ColumnKey = (i32, i32);
 
-/// How far around the anchor columns load: up to `load_radius` metres
-/// from the anchor to the nearest point of their square, and stay loaded
-/// until `unload_radius`.
+/// How far around the anchor columns load: up to `load` metres from the
+/// anchor to the nearest point of their square, and stay loaded until
+/// `unload`. Up to `detail` they are made in full detail.
 #[derive(Clone, Copy, Debug)]
 pub struct StreamRadius {
     pub load: f64,
     pub unload: f64,
+    pub detail: f64,
 }
 
 impl StreamRadius {
     pub const DEFAULT: Self = Self {
         load: 720.0,
         unload: 720.0 + CHUNK_SIZE as f64,
+        detail: 300.0,
     };
 }
+
+/// A column to make, and whether in full detail.
+type Job = (ColumnKey, bool);
 
 /// Distance in metres from `(x, z)` to the nearest point of `column`'s
 /// square.
@@ -55,7 +64,7 @@ pub fn column_distance(column: ColumnKey, x: f64, z: f64) -> f64 {
 struct Queue {
     /// Columns waiting for a worker, nearest first (distance in
     /// centimetres, so it orders as an integer).
-    pending: BinaryHeap<Reverse<(u64, ColumnKey)>>,
+    pending: BinaryHeap<Reverse<(u64, Job)>>,
     /// Columns the main thread still wants: a worker skips a queued column
     /// that has dropped out of it.
     wanted: HashSet<ColumnKey>,
@@ -70,12 +79,13 @@ struct Shared {
 /// Loads columns around an anchor on worker threads; see the module.
 pub struct Streamer<R> {
     shared: Arc<Shared>,
-    results: Receiver<(ColumnKey, R)>,
+    results: Receiver<(Job, R)>,
     radius: StreamRadius,
-    /// Columns handed out and not back yet (queued or being made).
-    requested: HashSet<ColumnKey>,
-    /// Columns whose result was taken.
-    loaded: HashSet<ColumnKey>,
+    /// Columns handed out and not back yet (queued or being made), and
+    /// whether they were asked for in detail.
+    requested: HashMap<ColumnKey, bool>,
+    /// Columns whose result was taken, and whether it was in detail.
+    loaded: HashMap<ColumnKey, bool>,
     /// The column the anchor was in at the last update, and where it was.
     anchor: Option<(ColumnKey, [f64; 2])>,
 }
@@ -85,7 +95,7 @@ impl<R: Send + 'static> Streamer<R> {
     pub fn new(
         workers: usize,
         radius: StreamRadius,
-        make: impl Fn(ColumnKey) -> R + Send + Sync + 'static,
+        make: impl Fn(ColumnKey, bool) -> R + Send + Sync + 'static,
     ) -> Self {
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue {
@@ -105,8 +115,8 @@ impl<R: Send + 'static> Streamer<R> {
             shared,
             results,
             radius,
-            requested: HashSet::new(),
-            loaded: HashSet::new(),
+            requested: HashMap::new(),
+            loaded: HashMap::new(),
             anchor: None,
         }
     }
@@ -120,23 +130,23 @@ impl<R: Send + 'static> Streamer<R> {
             .max(2)
     }
 
-    fn work(shared: &Shared, tx: &Sender<(ColumnKey, R)>, make: &(dyn Fn(ColumnKey) -> R + Sync)) {
+    fn work(shared: &Shared, tx: &Sender<(Job, R)>, make: &(dyn Fn(ColumnKey, bool) -> R + Sync)) {
         loop {
-            let column = {
+            let (column, detail) = {
                 let mut queue = shared.queue.lock().unwrap();
                 loop {
                     if queue.stop {
                         return;
                     }
                     match queue.pending.pop() {
-                        Some(Reverse((_, column))) if queue.wanted.contains(&column) => break column,
+                        Some(Reverse((_, job))) if queue.wanted.contains(&job.0) => break job,
                         // No longer wanted: the main thread has forgotten it.
                         Some(_) => continue,
                         None => queue = shared.ready.wait(queue).unwrap(),
                     }
                 }
             };
-            if tx.send((column, make(column))).is_err() {
+            if tx.send(((column, detail), make(column, detail))).is_err() {
                 return;
             }
         }
@@ -156,14 +166,19 @@ impl<R: Send + 'static> Streamer<R> {
         let reach = (self.radius.unload / CHUNK_SIZE as f64).ceil() as i32 + 1;
         let mut wanted = HashSet::new();
         let mut pending = BinaryHeap::new();
+        // Columns to (re)make, and in detail or not.
+        let mut jobs: HashMap<ColumnKey, bool> = HashMap::new();
         for dz in -reach..=reach {
             for dx in -reach..=reach {
                 let column = (here.0 + dx, here.1 + dz);
                 let distance = column_distance(column, x, z);
                 if distance <= self.radius.load {
                     wanted.insert(column);
-                    if !self.loaded.contains(&column) && !self.requested.contains(&column) {
-                        pending.push(Reverse(((distance * 100.0) as u64, column)));
+                    let detail = distance <= self.radius.detail;
+                    let have = self.loaded.get(&column).copied().max(self.requested.get(&column).copied());
+                    // Missing, or made without the detail it now needs.
+                    if have.is_none_or(|have| detail && !have) {
+                        jobs.insert(column, detail);
                     }
                 }
             }
@@ -172,7 +187,7 @@ impl<R: Send + 'static> Streamer<R> {
         // radius (so stepping back and forth over an edge reloads
         // nothing); still wanted, a queued column keeps its place too.
         let mut unload = Vec::new();
-        for &column in self.loaded.iter() {
+        for &column in self.loaded.keys() {
             if column_distance(column, x, z) > self.radius.unload {
                 unload.push(column);
             }
@@ -182,26 +197,26 @@ impl<R: Send + 'static> Streamer<R> {
         }
         let mut queue = self.shared.queue.lock().unwrap();
         // Requested columns between the radii stay wanted.
-        for &column in &self.requested {
+        for &column in self.requested.keys() {
             if column_distance(column, x, z) <= self.radius.unload {
                 wanted.insert(column);
             }
         }
         // Requested but not wanted any more: a worker will skip it, or its
         // result is dropped when it comes.
-        self.requested.retain(|column| wanted.contains(column));
-        // Queued columns are ordered afresh from where the anchor is now.
-        let requeue: Vec<_> = queue
-            .pending
-            .drain()
-            .map(|Reverse((_, column))| column)
-            .filter(|column| wanted.contains(column))
-            .collect();
-        for column in requeue {
-            pending.push(Reverse(((column_distance(column, x, z) * 100.0) as u64, column)));
+        self.requested.retain(|column, _| wanted.contains(column));
+        // Queued columns are ordered afresh from where the anchor is now
+        // (asked for in detail if either asks for it).
+        for Reverse((_, (column, detail))) in queue.pending.drain() {
+            if wanted.contains(&column) {
+                let job = jobs.entry(column).or_insert(detail);
+                *job |= detail;
+            }
         }
-        for Reverse((_, column)) in pending.iter() {
-            self.requested.insert(*column);
+        for (column, detail) in jobs {
+            pending.push(Reverse(((column_distance(column, x, z) * 100.0) as u64, (column, detail))));
+            let asked = self.requested.entry(column).or_insert(detail);
+            *asked |= detail;
         }
         queue.pending = pending;
         queue.wanted = wanted;
@@ -216,12 +231,20 @@ impl<R: Send + 'static> Streamer<R> {
     pub fn receive(&mut self, budget: Duration) -> Vec<(ColumnKey, R)> {
         let start = Instant::now();
         let mut out = Vec::new();
-        while let Ok((column, result)) = self.results.try_recv() {
-            if !self.requested.remove(&column) {
+        while let Ok(((column, detail), result)) = self.results.try_recv() {
+            let Some(&asked) = self.requested.get(&column) else {
                 // Dropped while it was being made.
                 continue;
+            };
+            if self.loaded.get(&column) == Some(&true) {
+                // Made less detailed than what is there already.
+                continue;
             }
-            self.loaded.insert(column);
+            if detail == asked {
+                self.requested.remove(&column);
+            }
+            // Delivered again in detail, it replaces what was there.
+            self.loaded.insert(column, detail);
             out.push((column, result));
             if start.elapsed() >= budget {
                 break;
@@ -232,7 +255,12 @@ impl<R: Send + 'static> Streamer<R> {
 
     /// Whether `column` is loaded (its result was taken).
     pub fn is_loaded(&self, column: ColumnKey) -> bool {
-        self.loaded.contains(&column)
+        self.loaded.contains_key(&column)
+    }
+
+    /// Whether `column` is loaded in full detail.
+    pub fn is_detailed(&self, column: ColumnKey) -> bool {
+        self.loaded.get(&column) == Some(&true)
     }
 
     /// Columns queued or being made.
@@ -291,8 +319,8 @@ mod tests {
 
     #[test]
     fn columns_around_the_anchor_load_once_each() {
-        let radius = StreamRadius { load: 300.0, unload: 428.0 };
-        let mut streamer = Streamer::new(3, radius, |column| column);
+        let radius = StreamRadius { load: 300.0, unload: 428.0, detail: 0.0 };
+        let mut streamer = Streamer::new(3, radius, |column, _| column);
         assert!(streamer.update(10.0, 10.0).is_empty());
         let expected = within(300.0, 10.0, 10.0);
         let got = wait_for(&mut streamer, expected);
@@ -309,9 +337,9 @@ mod tests {
 
     #[test]
     fn the_nearest_columns_come_first() {
-        let radius = StreamRadius { load: 500.0, unload: 600.0 };
+        let radius = StreamRadius { load: 500.0, unload: 600.0, detail: 0.0 };
         // One worker, so the order is the queue's.
-        let mut streamer = Streamer::new(1, radius, |column| column);
+        let mut streamer = Streamer::new(1, radius, |column, _| column);
         streamer.update(-500.0, 900.0);
         let got = wait_for(&mut streamer, within(500.0, -500.0, 900.0));
         let distances: Vec<f64> = got.iter().map(|(c, _)| column_distance(*c, -500.0, 900.0)).collect();
@@ -320,8 +348,8 @@ mod tests {
 
     #[test]
     fn columns_unload_past_the_unload_radius_and_not_before() {
-        let radius = StreamRadius { load: 200.0, unload: 400.0 };
-        let mut streamer = Streamer::new(2, radius, |column| column);
+        let radius = StreamRadius { load: 200.0, unload: 400.0, detail: 0.0 };
+        let mut streamer = Streamer::new(2, radius, |column, _| column);
         streamer.update(0.0, 0.0);
         wait_for(&mut streamer, within(200.0, 0.0, 0.0));
         // A step past the load radius: everything stays.
@@ -343,10 +371,10 @@ mod tests {
 
     #[test]
     fn columns_left_behind_while_queued_are_not_delivered() {
-        let radius = StreamRadius { load: 600.0, unload: 700.0 };
+        let radius = StreamRadius { load: 600.0, unload: 700.0, detail: 0.0 };
         // Slow workers, so most columns are still queued when the anchor
         // jumps away.
-        let mut streamer = Streamer::new(1, radius, |column| {
+        let mut streamer = Streamer::new(1, radius, |column, _| {
             thread::sleep(Duration::from_millis(2));
             column
         });
@@ -354,5 +382,37 @@ mod tests {
         streamer.update(100_000.0, 0.0);
         let got = wait_for(&mut streamer, within(600.0, 100_000.0, 0.0));
         assert!(got.iter().all(|(c, _)| column_distance(*c, 100_000.0, 0.0) <= 600.0));
+    }
+
+    #[test]
+    fn columns_coming_near_are_made_again_in_detail() {
+        let radius = StreamRadius { load: 400.0, unload: 500.0, detail: 100.0 };
+        let mut streamer = Streamer::new(2, radius, |column, detail| (column, detail));
+        streamer.update(0.0, 0.0);
+        let got = wait_for(&mut streamer, within(400.0, 0.0, 0.0));
+        for (column, (_, detail)) in &got {
+            assert_eq!(*detail, column_distance(*column, 0.0, 0.0) <= 100.0, "{column:?}");
+        }
+        // 600 m on, the columns around (4, 0) come near: each comes once
+        // more, in detail, and nothing else does.
+        let target = (600.0, 0.0);
+        streamer.update(target.0, target.1);
+        let start = Instant::now();
+        let mut again = Vec::new();
+        while start.elapsed() < Duration::from_secs(10) && streamer.in_flight() > 0 {
+            again.extend(streamer.receive(Duration::from_secs(1)));
+            thread::sleep(Duration::from_millis(1));
+        }
+        for (column, (_, detail)) in &again {
+            let near = column_distance(*column, target.0, target.1) <= 100.0;
+            assert_eq!(*detail, near, "{column:?}");
+        }
+        let near = again.iter().filter(|(_, (_, detail))| *detail).count();
+        assert_eq!(near, within(100.0, target.0, target.1));
+        for (column, _) in &again {
+            if column_distance(*column, target.0, target.1) <= 100.0 {
+                assert!(streamer.is_detailed(*column));
+            }
+        }
     }
 }

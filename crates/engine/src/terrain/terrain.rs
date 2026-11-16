@@ -240,6 +240,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
             seed,
             world,
             map: WorldMap::new(),
+            horizon: super::horizon::Horizon::new(),
             streamer: Self::start_streaming(&generator),
             generator,
             reseed_in: None,
@@ -292,10 +293,11 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
     /// the camera (see `streaming`). They stop when the streamer is dropped.
     fn start_streaming(generator: &Arc<WorldGenerator>) -> Streamer<Vec<LoadedChunk<T>>> {
         let generator = generator.clone();
-        Streamer::new(Streamer::<()>::default_workers(), StreamRadius::DEFAULT, move |(x, z)| {
-            T::vertical_range(&generator, (x, z))
+        Streamer::new(Streamer::<()>::default_workers(), StreamRadius::DEFAULT, move |(x, z), detail| {
+            let lod = if detail { 0 } else { 1 };
+            T::vertical_range(&generator, (x, z), detail)
                 .filter_map(|y| {
-                    let chunk = T::generate(&generator, (x as f32, y as f32, z as f32), 0);
+                    let chunk = T::generate(&generator, (x as f32, y as f32, z as f32), lod);
                     (!chunk.is_empty()).then(|| LoadedChunk::new(chunk))
                 })
                 .collect()
@@ -318,6 +320,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
         self.generator = WorldGenerator::with_settings(self.seed, self.world.clone());
         self.streamer = Self::start_streaming(&self.generator);
         self.map.invalidate();
+        self.horizon.invalidate();
         exposure::world_changed();
     }
 
@@ -498,7 +501,9 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
             }
             exposure::world_changed();
         }
-        for (_, chunks) in self.streamer.receive(UPLOAD_BUDGET) {
+        for (column, chunks) in self.streamer.receive(UPLOAD_BUDGET) {
+            // Made again in detail: it replaces the chunks there.
+            self.remove_column(scene, entity, column);
             for LoadedChunk { mut chunk, collider } in chunks {
                 chunk.buffer_data();
                 let mut chunk_entity = Entity::new(&format!("chunk@{:?}", chunk.get_position()));
@@ -518,6 +523,24 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
                 chunk_entity.set_transient(true);
                 entity.add_child(chunk_entity);
                 exposure::world_changed();
+            }
+        }
+    }
+
+    /// Take the chunks of `column` out (with their colliders and models).
+    fn remove_column(&self, scene: &mut Scene, entity: &mut Entity, column: ColumnKey) {
+        let children = entity.get_children_mut();
+        let mut index = 0;
+        while index < children.len() {
+            let here = children[index]
+                .get_own_component::<T>()
+                .map(|chunk| chunk.get_bounds())
+                .map(|b| (b.min.0.div_euclid(CHUNK_SIZE as i32), b.min.2.div_euclid(CHUNK_SIZE as i32)));
+            if here == Some(column) {
+                let mut chunk_entity = children.remove(index);
+                chunk_entity.release_resources(&mut scene.physics_engine);
+            } else {
+                index += 1;
             }
         }
     }
@@ -651,6 +674,13 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         }
         self.scatter.tick(delta_time);
         self.stream(scene, entity);
+        if T::has_horizon() {
+            let eye = scene
+                .get_active_camera()
+                .map(|camera| camera.get_camera().get_eye_position())
+                .unwrap_or(Point3::new(0.0, 0.0, 0.0));
+            self.horizon.update(&self.generator, eye.x as f64, eye.z as f64);
+        }
         shader::delete_released_vertex_arrays();
         self.map.update(&self.generator);
         self.sync_scatter(scene, entity);
@@ -807,6 +837,15 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                 let distance = eye.map_or(0.0, |eye| chunk.get_bounds().distance_xz(eye));
                 chunk.draw(shader, &(transform * child.local_transform()), distance);
             }
+        }
+        // The horizon beyond them; it casts no shadow worth its cost.
+        if let (Some(mesh), Some(eye), true) = (self.horizon.mesh(), eye, hdr::draws_to_view()) {
+            shader.bind();
+            shader.set_uniform_1i("isHorizon", 1);
+            shader.set_uniform_3f("horizonSink", eye.x, eye.z, StreamRadius::DEFAULT.load as f32);
+            mesh.render(shader, &Matrix4::from_scale(1.0), None);
+            shader.bind();
+            shader.set_uniform_1i("isHorizon", 0);
         }
         unsafe {
             gl::Disable(gl::CULL_FACE);

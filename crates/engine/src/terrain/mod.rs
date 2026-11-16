@@ -17,6 +17,7 @@ pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 pub mod dual_contouring;
 pub mod generator;
 pub mod marching_cubes;
+pub mod horizon;
 pub mod materials;
 pub mod scatter;
 pub mod streaming;
@@ -37,6 +38,9 @@ pub struct Terrain<T: Chunk> {
     show_colliders: bool,
     /// The picture of the world the editor shows (see `WorldMap`).
     map: terrain::WorldMap,
+    /// The ground beyond the chunks (see `horizon`), for chunk types that
+    /// have one.
+    horizon: horizon::Horizon,
     /// Loads the chunks around the camera (see `streaming`).
     streamer: streaming::Streamer<Vec<terrain::LoadedChunk<T>>>,
     shader: Shader,
@@ -50,6 +54,8 @@ pub struct Terrain<T: Chunk> {
 pub trait Chunk {
     fn new(seed: u64, position: (f32, f32, f32), lod: usize) -> Self;
     /// The chunk at `position` (in chunks) as `generator` shapes the world.
+    /// `lod` 0 is the full detail; above it a backend may leave out what
+    /// only shows close up (the dual contouring chunks leave out caves and overhangs).
     /// Backends that make their own ground from the seed keep the default.
     fn generate(
         generator: &std::sync::Arc<generator::WorldGenerator>,
@@ -63,16 +69,27 @@ pub trait Chunk {
     }
 
     /// The chunks (by their `y`) of the column over chunk square
-    /// `column` that may hold anything; the others are not made. Backends
-    /// whose ground lies in the bottom row keep the default.
+    /// `column` that may hold anything, in full detail or not (see
+    /// `generate`); the others are not made. Backends whose ground lies in
+    /// the bottom row keep the default.
     fn vertical_range(
         _generator: &generator::WorldGenerator,
         _column: (i32, i32),
+        _detail: bool,
     ) -> std::ops::RangeInclusive<i32>
     where
         Self: Sized,
     {
         0..=0
+    }
+
+    /// Whether the terrain draws a horizon (see `horizon`) beyond these
+    /// chunks: only for chunk types whose programs take its vertices.
+    fn has_horizon() -> bool
+    where
+        Self: Sized,
+    {
+        false
     }
 
     /// Whether the chunk turned out to hold nothing to draw or collide
