@@ -16,6 +16,8 @@ in float Depth;
 in float BodySize;
 in float Crest;
 in float WaveHeight;
+// Metres per second the water flows (x, z).
+in vec2 Flow;
 
 out vec4 FragColor;
 
@@ -26,10 +28,25 @@ uniform sampler2D sceneDepth;
 uniform int hasScene;
 uniform mat4 viewProjection;
 uniform mat4 inverseViewProjection;
+// The far water is left out within `farHole` metres of the camera at
+// `farSink.xy` (under the ground, as the horizon is).
+uniform int isFarWater;
+uniform vec3 farSink;
+uniform float farHole;
+// Haze: as the terrain's (see its fragment shader), so far water fades into
+// the sky like the land beside it.
+const float HAZE_START = 600.0;
+const float HAZE_DISTANCE = 9000.0;
 
 // Absorption per unit of water, red, green and blue: red light is gone
 // after a few units, blue carries furthest.
 const vec3 ABSORPTION = vec3(0.45, 0.12, 0.085);
+// Water up to `CLEAR_DEPTH` deep absorbs (and scatters) only
+// `CLEAR_ABSORPTION` of that; from there to `BLUE_DEPTH` it turns to its
+// full colour.
+const float CLEAR_DEPTH = 1.0;
+const float BLUE_DEPTH = 5.0;
+const float CLEAR_ABSORPTION = 0.2;
 // Colour of the light the water scatters back (silt and plankton: a little
 // green in the blue).
 const vec3 SCATTER_COLOR = vec3(0.003, 0.025, 0.045);
@@ -43,6 +60,13 @@ const float SHORE_FOAM_DEPTH = 1.0;
 // Water fades into the ground over this depth, hiding the waterline's
 // pixel steps.
 const float SHORE_FADE_DEPTH = 0.12;
+// The surface reaches this far under the ground at most (its grid runs on
+// under the shore, see `water.rs`): beyond, behind a bank or a ridge, it
+// is cut off rather than left for the depth test.
+const float SURFACE_UNDER_GROUND = 1.0;
+// Flowing water: its pattern moves with the flow for this long, then a
+// second one half a period apart takes over (so it never stretches).
+const float FLOW_PERIOD = 2.0;
 
 // ── Noise ────────────────────────────────────────────────────────────────
 
@@ -240,8 +264,34 @@ vec3 lampReflections(vec3 N, vec3 V, float NdotV, float roughness) {
     return sum;
 }
 
+// Where the two flow phases have carried the pattern by now (`p` moved
+// back along the flow), and how much the first counts.
+void flowPhases(vec2 p, out vec2 p0, out vec2 p1, out float w0) {
+    float t0 = fract(uTime / FLOW_PERIOD);
+    float t1 = fract(uTime / FLOW_PERIOD + 0.5);
+    p0 = p - Flow * t0 * FLOW_PERIOD;
+    p1 = p - Flow * t1 * FLOW_PERIOD + vec2(7.3, 3.1);
+    w0 = 1.0 - abs(1.0 - 2.0 * t0);
+}
+
 void main()
 {
+    if (Depth < -SURFACE_UNDER_GROUND) {
+        discard;
+    }
+    if (isFarWater == 1 && length(WorldPos.xz - farSink.xy) < farHole) {
+        discard;
+    }
+    // Seen from under its own level, a water surface only shows its
+    // underside, and the far water's lies a little under the chunks' (see
+    // the vertex shader): from under the near water's surface (diving) it
+    // would show as a second surface below the first.
+    if (isFarWater == 1) {
+        float sink = 0.15 + 4.0 * (1.0 - smoothstep(farSink.z - 160.0, farSink.z - 20.0, length(WorldPos.xz - farSink.xy)));
+        if (cameraPosition.y < WorldPos.y + sink) {
+            discard;
+        }
+    }
     if (isShadowPass == 1) {
         FragColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
@@ -258,14 +308,28 @@ void main()
     float rippleStrength = mix(0.55, 1.0, smoothstep(10.0, 200.0, BodySize))
         * smoothstep(-0.5, 0.5, Depth);
     float footprint = length(fwidth(RestXZ));
-    vec2 slope = rippleSlope(RestXZ, uTime, footprint) * rippleStrength;
+    float speed = length(Flow);
+    vec2 slope;
+    if (speed > 0.05) {
+        // Carried downstream.
+        vec2 p0, p1;
+        float w0;
+        flowPhases(RestXZ, p0, p1, w0);
+        slope = (rippleSlope(p0, uTime, footprint) * w0 + rippleSlope(p1, uTime, footprint) * (1.0 - w0))
+            * rippleStrength * (1.0 + 0.25 * min(speed, 4.0));
+    } else {
+        slope = rippleSlope(RestXZ, uTime, footprint) * rippleStrength;
+    }
     // Rings where raindrops hit, too fine to see from afar.
     float rainNear = 1.0 - smoothstep(15.0, 50.0, viewDistance);
     if (rainAmount > 0.0 && rainNear > 0.0) {
         float open = skyExposure(WorldPos, vec3(0.0, 1.0, 0.0));
         slope += rainRipples(RestXZ, weatherTime, rainAmount, footprint) * 0.7 * rainNear * open;
     }
-    vec3 N = normalize(waves.normal + vec3(-slope.x, 0.0, -slope.y));
+    // Waves shorter than a few pixels would only shimmer (a moiré from
+    // afar or high up): their slope fades as a pixel grows.
+    vec3 waveNormal = normalize(mix(waves.normal, vec3(0.0, 1.0, 0.0), 0.8 * smoothstep(0.6, 4.0, footprint)));
+    vec3 N = normalize(waveNormal + vec3(-slope.x, 0.0, -slope.y));
     bool below = cameraPosition.y < WorldPos.y;
     if (below) {
         N = -N;
@@ -307,9 +371,15 @@ void main()
         float path = refractedDepth >= 1.0 ? 1e4 : distance(WorldPos, refractedGround);
         // The light also came down through the water to reach the ground.
         float column = refractedDepth >= 1.0 ? 1e4 : max(WorldPos.y - refractedGround.y, 0.0);
-        vec3 transmittance = exp(-ABSORPTION * (path + column * 0.6));
+        // Shallow water (a stream, the shallows of a lake) is clear: the
+        // ground shows through it as it is, and the water only turns blue
+        // where it gets deep.
+        float clear = 1.0 - smoothstep(CLEAR_DEPTH, BLUE_DEPTH, waterDepth);
+        float thickness = (path + column * 0.6) * mix(1.0, CLEAR_ABSORPTION, clear);
+        vec3 transmittance = exp(-ABSORPTION * thickness);
         vec3 behind = texture(sceneColor, refractedUv).rgb;
-        underwater = behind * transmittance + scattered * (1.0 - exp(-ABSORPTION.g * 2.5 * path));
+        underwater = behind * transmittance
+            + scattered * (1.0 - exp(-ABSORPTION.g * 2.5 * path * mix(1.0, CLEAR_ABSORPTION, clear)));
         alpha = smoothstep(0.0, SHORE_FADE_DEPTH, waterDepth);
     } else {
         waterDepth = max(Depth, 0.0);
@@ -373,7 +443,18 @@ void main()
     color += CREST_COLOR * sunLight * shadow * crestLight * 0.12;
 
     // ── Foam ──────────────────────────────────────────────────────────
-    float pattern = foamPattern(RestXZ, uTime);
+    float pattern;
+    float rapids = 0.0;
+    if (speed > 0.05) {
+        vec2 p0, p1;
+        float w0;
+        flowPhases(RestXZ, p0, p1, w0);
+        pattern = foamPattern(p0, uTime) * w0 + foamPattern(p1, uTime) * (1.0 - w0);
+        // White water where it runs fast.
+        rapids = smoothstep(0.55, 0.85, pattern) * smoothstep(1.5, 4.0, speed) * 0.8;
+    } else {
+        pattern = foamPattern(RestXZ, uTime);
+    }
     float shore = 1.0 - smoothstep(0.0, SHORE_FOAM_DEPTH, waterDepth);
     // Bands washing up the beach.
     float surge = 0.5 + 0.5 * sin(waterDepth * 5.0 - uTime * 1.8 + pattern * 6.0);
@@ -383,11 +464,15 @@ void main()
     // A thin wet line where the water touches the ground.
     shoreFoam = max(shoreFoam, (1.0 - smoothstep(0.0, 0.12, waterDepth)) * 0.7);
     float crestFoam = smoothstep(0.5, 0.85, pattern + Crest * 0.6) * Crest;
-    float foam = clamp(shoreFoam + crestFoam, 0.0, 1.0) * (1.0 - far * 0.7);
+    float foam = clamp(shoreFoam + crestFoam + rapids, 0.0, 1.0) * (1.0 - far * 0.7);
     vec3 foamLight = (sunLight * max(dot(normalize(N + vec3(0.0, 1.0, 0.0)), L), 0.0) * shadow
         + skyLight(vec3(0.0, 1.0, 0.0))) * 0.8;
     color = mix(color, foamLight, foam);
     alpha = max(alpha, foam * smoothstep(0.0, SHORE_FADE_DEPTH * 0.5, waterDepth));
 
+    vec3 toPoint = WorldPos - cameraPosition;
+    vec3 along = normalize(vec3(toPoint.x, max(toPoint.y, 0.0) * 0.3, toPoint.z));
+    float haze = 1.0 - exp(-max(length(toPoint) - HAZE_START, 0.0) / HAZE_DISTANCE);
+    color = mix(color, skyLight(along), haze);
     FragColor = vec4(toDisplay(weatherFog(color, WorldPos)), alpha);
 }

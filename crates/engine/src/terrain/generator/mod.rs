@@ -353,9 +353,10 @@ impl WorldGenerator {
     /// in, and how much of it is road, settlement and gravel (see
     /// `Column::paint`).
     fn shaped_and_paint(&self, near: Near, x: f64, z: f64, h: f32) -> (f32, [f32; 3]) {
+        let natural = h;
         let (h, river) = self.shaped_by_water(near.rivers, x, z, h);
         let lake = self.hydrology().and_then(|plan| plan.lake_at(x, z));
-        let gravel = Hydrology::gravel(river, lake);
+        let gravel = Hydrology::gravel(river, lake, natural);
         let Some((settlements, roads)) = near.works else {
             return (h, [0.0, 0.0, gravel]);
         };
@@ -401,18 +402,35 @@ impl WorldGenerator {
         let Some((level, inside)) = lake else {
             return (carved, river);
         };
-        let keep = Hydrology::lake_keeps_floor(inside);
-        if carved > h {
-            // In a lake the river's banks do not raise its floor.
-            return (carved + (h - carved) * keep, river);
+        // A river at the lake's level (running out of it, or into it)
+        // carries the lake's own water: over the lake's shore its banks
+        // stay under that water, or the two lie side by side, apart.
+        if river.is_some_and(|r| (r.level - level).abs() < 0.3) {
+            let joined = Hydrology::carve_into_lake(h, river).min(carved);
+            let shore = smoothstep(0.0, hydrology::LAKE_EDGE as f64, inside as f64) as f32;
+            return (carved + (joined - carved) * shore, river);
         }
+        let keep = Hydrology::lake_keeps_floor(inside);
         // A river leaving the lake lower than its water does not cut its
-        // shore: the lake would spill down the river's bed. The river
-        // starts below the shore instead.
+        // shore where the lake's water stands: the lake would spill down
+        // the river's bed.
         let outflow = river.is_some_and(|r| r.level < level - 0.3);
         if outflow {
-            let shore = smoothstep(0.0, hydrology::LAKE_WATER as f64, inside as f64) as f32 * (1.0 - keep);
-            return (carved + (h - carved) * shore, river);
+            // Only well inside it: nearer its edge the river's water stands
+            // over its bed instead of the lake's (see `water_level`), as it
+            // runs out of the lake (see `Hydrology::new`).
+            let shore = smoothstep(hydrology::LAKE_SHORE as f64, (hydrology::LAKE_SHORE + 0.1) as f64, inside as f64)
+                as f32
+                * (1.0 - keep);
+            let mut ground = carved + (h - carved) * shore;
+            // Beside the river's water its banks stay over the lake's, where
+            // the land was dry: there the lake's water would stand over them.
+            if let Some(r) = river {
+                if h >= level && r.distance >= r.width * 0.5 + 2.0 && inside >= hydrology::LAKE_WATER {
+                    ground = ground.max(level + 0.3);
+                }
+            }
+            return (ground, river);
         }
         (carved, river)
     }
@@ -422,13 +440,47 @@ impl WorldGenerator {
     /// there is no water.
     pub fn water_level(&self, x: f64, z: f64) -> f32 {
         let mut level = self.still_water_level(x, z);
-        let river = self.hydrology().and_then(|plan| plan.nearest(self.rivers_at(x, z), x, z));
+        let Some(plan) = self.hydrology() else {
+            return level;
+        };
+        let river = plan.nearest(self.rivers_at(x, z), x, z);
+        let lake = plan.lake_at(x, z);
         if let Some(river) = river {
             if river.distance < river.width * 0.5 + 2.0 {
-                level = level.max(river.level);
+                // A river running out of a lake, down from its level, near
+                // the lake's edge: the river's water over its bed, not the
+                // lake's over the river.
+                let outflow = lake.is_some_and(|(lake, inside)| {
+                    river.level < lake - 0.3 && inside < hydrology::LAKE_SHORE && level <= lake
+                });
+                level = if outflow { river.level.max(SEA_LEVEL) } else { level.max(river.level) };
+            }
+            // Between a lake and a river carrying its water, over the
+            // ground their banks share (see `shaped_by_water`): the lake's
+            // water, so the two are one.
+            if let Some((lake, inside)) = lake {
+                if inside > 0.0 && (river.level - lake).abs() < 0.3 {
+                    level = level.max(lake);
+                }
             }
         }
         level
+    }
+
+    /// How the water flows at world `(x, z)`, metres per second (world x,
+    /// z): down a river, faster the steeper it falls; still in the sea and
+    /// lakes.
+    pub fn water_flow(&self, x: f64, z: f64) -> [f32; 2] {
+        let river = self
+            .hydrology()
+            .and_then(|plan| plan.nearest(self.rivers_at(x, z), x, z));
+        match river {
+            Some(r) if r.distance < r.width * 0.5 + 2.0 => {
+                let speed = (0.5 + 25.0 * r.grade).clamp(0.5, 5.0);
+                r.direction.map(|c| c * speed)
+            }
+            _ => [0.0; 2],
+        }
     }
 
     /// The level of the sea or a lake at world `(x, z)`, without the

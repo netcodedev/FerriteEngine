@@ -45,7 +45,7 @@ use super::{
     generator::{map::MapLayer, WorldGenerator, WorldSettings},
     streaming::{ColumnKey, StreamRadius, Streamer},
     scatter::{Scatter, ScatterInstances, ScatterLayerData, TakenInstance},
-    Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
+    Chunk, ChunkBounds, ChunkMesh, FarWater, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
 };
 
 /// The tunnels' lamps: warm white, how bright, how far each reaches, and how
@@ -921,6 +921,19 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
                     Chunk::render_transparent(chunk, scene, view_projection, parent_transform);
                 }
             }
+        }
+        // The water beyond the chunks, after theirs (it lies under it where
+        // both are).
+        let eye = scene.get_active_camera().map(|camera| camera.get_camera().get_eye_position());
+        if let (Some(water), Some(eye), true) = (self.horizon.water(), eye, T::has_horizon()) {
+            let load = StreamRadius::DEFAULT.load as f32;
+            let under = eye.y < self.generator.surface_height(eye.x as f64, eye.z as f64) - 0.5;
+            let far = FarWater {
+                centre: [eye.x, eye.z],
+                load,
+                hole: if under { load - HORIZON_HOLE_MARGIN } else { 0.0 },
+            };
+            T::render_far_water(water, scene, view_projection, far);
         }
     }
 

@@ -1,6 +1,6 @@
 mod density;
 pub mod dual_contouring;
-mod water;
+pub mod water;
 
 use std::sync::Arc;
 

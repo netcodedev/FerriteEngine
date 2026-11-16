@@ -531,19 +531,10 @@ void main() {
     }
     // Darker toward the deep sea floor.
     albedo *= mix(0.45, 1.0, smoothstep(-30.0, 0.0, h));
-    // Open sea on the horizon (see `terrain::horizon::SEA_MARK`).
-    bool sea = Climate.y > 1.5;
-    if (sea) {
-        // Close to the colour the near water shows from afar.
-        albedo = pow(vec3(0.07, 0.25, 0.45), vec3(2.2));
-        roughness = 0.35;
-        N = Ng;
-        ao = 1.0;
-    }
 
     // Lasting snow where the mean temperature is well below freezing; it
     // slides off steep rock.
-    float snow = sea ? 0.0 : 1.0 - smoothstep(-6.0, -3.5, Climate.x + n * 1.5);
+    float snow = 1.0 - smoothstep(-6.0, -3.5, Climate.x + n * 1.5);
     snow *= 1.0 - 0.75 * smoothstep(0.62, 0.85, slope);
     albedo = mix(albedo, pow(SNOW, vec3(2.2)), snow);
     roughness = mix(roughness, 0.6, snow);

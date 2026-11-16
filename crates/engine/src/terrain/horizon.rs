@@ -5,8 +5,9 @@
 //! in steps, on a thread of its own.
 //!
 //! Where chunks are loaded the horizon sinks under them (in the vertex
-//! shaders, from the camera's live position), so the two never fight; the
-//! sea beyond the chunks is drawn as a flat surface of its own colour.
+//! shaders, from the camera's live position), so the two never fight. The
+//! water beyond the chunks (the sea, lakes) is a mesh of its own, drawn
+//! like the chunks' water (see `build`), over the ground under it.
 
 use std::sync::{
     mpsc::{self, Receiver},
@@ -16,7 +17,8 @@ use std::sync::{
 use gl::types::GLuint;
 
 use super::{
-    generator::WorldGenerator,
+    dual_contouring::water::WaterVertex,
+    generator::{WorldGenerator, SEA_LEVEL},
     ChunkMesh,
 };
 use crate::core::renderer::shader::VertexAttributes;
@@ -31,9 +33,19 @@ pub const LEVELS: usize = 4;
 /// The centre moves in steps of this many metres (twice the coarsest
 /// grid's step, so every grid stays on its own lattice).
 pub const CENTRE_STEP: f64 = FINEST_STEP * (1 << LEVELS) as f64;
-/// Humidity a horizon vertex carries to say it is open sea (the shaders
-/// colour it as water).
-pub const SEA_MARK: f32 = 2.0;
+/// Typical width of the sea and of lakes for the far water's waves (see
+/// `WaterVertex::body_size`).
+const SEA_SIZE: f32 = 1000.0;
+const LAKE_SIZE: f32 = 300.0;
+/// Ground up to this far above the water still gets far water over it, so
+/// its edge lies under the shore.
+const SHORE_MARGIN: f32 = 2.0;
+
+/// What `build` makes: the ground, and the water over it.
+pub struct Built {
+    pub ground: (Vec<HorizonVertex>, Vec<u32>),
+    pub water: (Vec<WaterVertex>, Vec<u32>),
+}
 
 /// The same layout as the chunks' vertices, so the terrain's programs draw
 /// it.
@@ -62,10 +74,14 @@ pub fn reach() -> f64 {
 }
 
 /// The horizon around `centre` (world `(x, z)`, a multiple of
-/// `CENTRE_STEP`): vertices in world metres and triangles facing up.
-pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> (Vec<HorizonVertex>, Vec<u32>) {
+/// `CENTRE_STEP`): the ground's vertices in world metres and triangles
+/// facing up, and the water's (the sea and lakes, flat at their levels)
+/// over the cells where the ground comes near them.
+pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> Built {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
+    let mut water_vertices = Vec::new();
+    let mut water_indices = Vec::new();
     for level in 0..LEVELS {
         let step = FINEST_STEP * (1 << level) as f64;
         let n = 2 * HALF_CELLS + 1;
@@ -78,11 +94,8 @@ pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> (Vec<HorizonVertex
                 samples.push(generator.grid_sample(centre[0] + at(i), centre[1] + at(j)));
             }
         }
-        // The ground, or the water over it.
-        let height = |i: i32, j: i32| {
-            let (h, _, water) = samples[((j + 1) * side + i + 1) as usize];
-            h.max(water)
-        };
+        // The ground (under the water too: the water is drawn over it).
+        let height = |i: i32, j: i32| samples[((j + 1) * side + i + 1) as usize].0;
         // On the edge a coarser grid meets, every other vertex lies on the
         // coarse grid's edge between its neighbours: no cracks.
         let outer = level + 1 < LEVELS;
@@ -100,19 +113,17 @@ pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> (Vec<HorizonVertex
         let first = vertices.len() as u32;
         for j in 0..n {
             for i in 0..n {
-                let (h, biome, water) = samples[((j + 1) * side + i + 1) as usize];
+                let (_, biome, _) = samples[((j + 1) * side + i + 1) as usize];
                 let y = edge_height(i, j);
                 let dx = height(i + 1, j) - height(i - 1, j);
                 let dz = height(i, j + 1) - height(i, j - 1);
                 let normal = [-dx, 2.0 * step as f32, -dz];
                 let length = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
-                // The sea, or a lake: flat water.
-                let sea = h < water;
                 vertices.push(HorizonVertex {
                     position: [(centre[0] + at(i + 1)) as f32, y, (centre[1] + at(j + 1)) as f32],
-                    normal: if sea { [0.0, 1.0, 0.0] } else { normal.map(|c| c / length) },
+                    normal: normal.map(|c| c / length),
                     color: biome.color,
-                    climate: [biome.temperature, if sea { SEA_MARK } else { biome.humidity }],
+                    climate: [biome.temperature, biome.humidity],
                     cover: [biome.forest, biome.dry, biome.jungle, biome.tundra],
                     // Of what lies on the ground, only swamps' mud is wide
                     // enough to show this far.
@@ -123,10 +134,61 @@ pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> (Vec<HorizonVertex
         }
         // The inner grid covers the middle of every grid but the finest.
         let hole = if level == 0 { 0 } else { HALF_CELLS / 2 };
+        let covered = |i: i32, j: i32| {
+            let (ci, cj) = (i - HALF_CELLS, j - HALF_CELLS);
+            level > 0 && ci >= -hole && ci < hole && cj >= -hole && cj < hole
+        };
+        // The water over this grid: cells with a corner near or under it,
+        // flat at its level (a dry corner takes its wet neighbours' level).
+        let sample = |i: i32, j: i32| samples[((j + 1) * side + i + 1) as usize];
+        let wet = |i: i32, j: i32| {
+            let (h, _, water) = sample(i, j);
+            h < water + SHORE_MARGIN
+        };
+        let surface = |i: i32, j: i32| {
+            let (_, _, own) = sample(i, j);
+            if wet(i, j) {
+                return own;
+            }
+            let mut best: Option<f32> = None;
+            for dj in -1..=1 {
+                for di in -1..=1 {
+                    if wet(i + di, j + dj) {
+                        let l = sample(i + di, j + dj).2;
+                        best = Some(best.map_or(l, |b: f32| b.max(l)));
+                    }
+                }
+            }
+            best.unwrap_or(own)
+        };
+        let mut index_of = vec![u32::MAX; (n * n) as usize];
         for j in 0..n - 1 {
             for i in 0..n - 1 {
-                let (ci, cj) = (i - HALF_CELLS, j - HALF_CELLS);
-                if level > 0 && ci >= -hole && ci < hole && cj >= -hole && cj < hole {
+                if covered(i, j) || !(0..2).any(|dj| (0..2).any(|di| wet(i + di, j + dj))) {
+                    continue;
+                }
+                let mut corner = |i: i32, j: i32| {
+                    let slot = &mut index_of[(j * n + i) as usize];
+                    if *slot == u32::MAX {
+                        let (h, _, _) = sample(i, j);
+                        let level = surface(i, j);
+                        *slot = water_vertices.len() as u32;
+                        water_vertices.push(WaterVertex {
+                            position: [(centre[0] + at(i + 1)) as f32, level, (centre[1] + at(j + 1)) as f32],
+                            depth: level - h,
+                            body_size: if level <= SEA_LEVEL + 0.01 { SEA_SIZE } else { LAKE_SIZE },
+                            flow: [0.0; 2],
+                        });
+                    }
+                    *slot
+                };
+                let (a, b, c, d) = (corner(i, j), corner(i + 1, j), corner(i, j + 1), corner(i + 1, j + 1));
+                water_indices.extend_from_slice(&[a, c, b, b, c, d]);
+            }
+        }
+        for j in 0..n - 1 {
+            for i in 0..n - 1 {
+                if covered(i, j) {
                     continue;
                 }
                 let v = |i: i32, j: i32| first + (j * n + i) as u32;
@@ -136,22 +198,28 @@ pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> (Vec<HorizonVertex
             }
         }
     }
-    (vertices, indices)
+    Built {
+        ground: (vertices, indices),
+        water: (water_vertices, water_indices),
+    }
 }
 
 /// The horizon the terrain draws, made again on a thread of its own when
 /// the camera has moved a step.
 pub struct Horizon {
     mesh: Option<ChunkMesh<HorizonVertex>>,
+    /// The water beyond the chunks.
+    water: Option<ChunkMesh<WaterVertex>>,
     /// Centre of the mesh drawn, and of the one being made.
     centre: Option<[f64; 2]>,
-    pending: Option<([f64; 2], Receiver<(Vec<HorizonVertex>, Vec<u32>)>)>,
+    pending: Option<([f64; 2], Receiver<Built>)>,
 }
 
 impl Horizon {
     pub fn new() -> Self {
         Self {
             mesh: None,
+            water: None,
             centre: None,
             pending: None,
         }
@@ -160,6 +228,7 @@ impl Horizon {
     /// Forget the mesh (the world changed).
     pub fn invalidate(&mut self) {
         self.mesh = None;
+        self.water = None;
         self.centre = None;
         self.pending = None;
     }
@@ -167,10 +236,17 @@ impl Horizon {
     /// Follow the camera at world `(x, z)`.
     pub fn update(&mut self, generator: &Arc<WorldGenerator>, x: f64, z: f64) {
         if let Some((centre, rx)) = &self.pending {
-            if let Ok((vertices, indices)) = rx.try_recv() {
+            if let Ok(built) = rx.try_recv() {
+                let (vertices, indices) = built.ground;
                 let mut mesh = ChunkMesh::new(vertices, Some(indices));
                 mesh.buffer_and_release();
                 self.mesh = Some(mesh);
+                let (vertices, indices) = built.water;
+                self.water = (!indices.is_empty()).then(|| {
+                    let mut water = ChunkMesh::new(vertices, Some(indices));
+                    water.buffer_and_release();
+                    water
+                });
                 self.centre = Some(*centre);
                 self.pending = None;
             }
@@ -191,6 +267,11 @@ impl Horizon {
     pub fn mesh(&self) -> Option<&ChunkMesh<HorizonVertex>> {
         self.mesh.as_ref()
     }
+
+    /// The water beyond the chunks, if there is any in reach.
+    pub fn water(&self) -> Option<&ChunkMesh<WaterVertex>> {
+        self.water.as_ref()
+    }
 }
 
 #[cfg(test)]
@@ -200,7 +281,7 @@ mod tests {
     #[test]
     fn the_grids_meet_without_cracks_and_face_up() {
         let generator = WorldGenerator::new(1);
-        let (vertices, indices) = build(&generator, [-2048.0, -6144.0]);
+        let (vertices, indices) = build(&generator, [-2048.0, -6144.0]).ground;
         assert_eq!(vertices.len(), LEVELS * (2 * HALF_CELLS as usize + 1).pow(2));
         for t in indices.chunks(3) {
             let [a, b, c] = [t[0], t[1], t[2]].map(|i| vertices[i as usize].position);

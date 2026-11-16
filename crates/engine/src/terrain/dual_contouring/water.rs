@@ -42,22 +42,32 @@ pub struct WaterVertex {
     /// Typical width of the body of water around the vertex, in world
     /// units (0 for a puddle the measurement does not catch).
     pub body_size: f32,
+    /// How the water flows here, metres per second (world x, z): 0 but in
+    /// rivers.
+    pub flow: [f32; 2],
 }
 
 impl VertexAttributes for WaterVertex {
     fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
-        vec![(3, gl::FLOAT), (1, gl::FLOAT), (1, gl::FLOAT)]
+        vec![
+            (3, gl::FLOAT),
+            (1, gl::FLOAT),
+            (1, gl::FLOAT),
+            (2, gl::FLOAT),
+        ]
     }
 }
 
 /// Build the water surface of the chunk whose corner is at world `(x0, z0)`
 /// and which is `size` wide, over the ground given by `ground(x, z)` (world
-/// height), where the water would stand at `level(x, z)`. Positions are
+/// height), where the water would stand at `level(x, z)` and flow as
+/// `flow(x, z)` says. Positions are
 /// relative to the chunk's corner and to `floor` (height). `None` when no
 /// water comes near the chunk.
 pub fn generate(
     ground: impl Fn(f32, f32) -> f32,
     level: impl Fn(f32, f32) -> f32,
+    flow: impl Fn(f32, f32) -> [f32; 2],
     x0: f32,
     z0: f32,
     size: f32,
@@ -81,27 +91,37 @@ pub fn generate(
     let vertex_wet = |i: i32, j: i32| height_at(&heights, i, j) < height_at(&levels, i, j) + SHORE_MARGIN;
     // A cell is wet when any of its corners is (nearly) under water.
     let wet = |i: i32, j: i32| -> bool { (0..2).any(|dj| (0..2).any(|di| vertex_wet(i + di, j + dj))) };
-    // Where the level changes (a river beside the sea's level, say), a dry
-    // vertex of a kept cell takes the highest level of the wet ones next to
-    // it, so the surface stays level instead of diving into the bank.
+    // A dry vertex of a kept cell takes the level of the wet ones nearest
+    // to it (their mean), so the surface carries on level instead of
+    // diving into the bank where its own level differs (a river's beside
+    // the land's); on a steep river the nearest are as high as the water
+    // beside it, not the highest upstream, which would stand over the bank.
     let surface_at = |i: i32, j: i32| -> f32 {
         let own = height_at(&levels, i, j);
         if vertex_wet(i, j) {
             return own;
         }
-        // Two vertices out: a kept cell's corners lie that close to a wet
-        // vertex (its ring reaches one cell beyond the wet ones).
-        let mut best: Option<f32> = None;
-        for dj in -2..=2 {
-            for di in -2..=2 {
-                let (a, b) = (i + di, j + dj);
-                if (-2..=cells + 2).contains(&a) && (-2..=cells + 2).contains(&b) && vertex_wet(a, b) {
-                    let l = height_at(&levels, a, b);
-                    best = Some(best.map_or(l, |m: f32| m.max(l)));
+        // Up to two vertices out: a kept cell's corners lie that close to a
+        // wet vertex (its ring reaches one cell beyond the wet ones).
+        for ring in 1..=2i32 {
+            let (mut sum, mut count) = (0.0f32, 0);
+            for dj in -ring..=ring {
+                for di in -ring..=ring {
+                    if di.abs().max(dj.abs()) != ring {
+                        continue;
+                    }
+                    let (a, b) = (i + di, j + dj);
+                    if (-2..=cells + 2).contains(&a) && (-2..=cells + 2).contains(&b) && vertex_wet(a, b) {
+                        sum += height_at(&levels, a, b);
+                        count += 1;
+                    }
                 }
             }
+            if count > 0 {
+                return sum / count as f32;
+            }
         }
-        best.unwrap_or(own)
+        own
     };
     // Kept: wet, or next to a wet cell (the ring that tucks the edge under
     // the shore).
@@ -138,6 +158,7 @@ pub fn generate(
                 position: [x, surface - floor, z],
                 depth: surface - height_at(&heights, i, j),
                 body_size: body_size.at(x, z),
+                flow: flow(x0 + x, z0 + z),
             });
         }
         *slot
@@ -251,6 +272,11 @@ fn measure_body(ground: &impl Fn(f32, f32) -> f32, level: f32, x: f32, z: f32) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Water that does not flow.
+    fn still(_: f32, _: f32) -> [f32; 2] {
+        [0.0; 2]
+    }
     use crate::terrain::dual_contouring::WATER_LEVEL;
 
     const SIZE: f32 = 128.0;
@@ -270,7 +296,7 @@ mod tests {
 
     #[test]
     fn dry_chunks_have_no_water() {
-        assert!(generate(|_, _| WATER_LEVEL + 20.0, sea, 0.0, 0.0, SIZE, 0.0).is_none());
+        assert!(generate(|_, _| WATER_LEVEL + 20.0, sea, still, 0.0, 0.0, SIZE, 0.0).is_none());
     }
 
     #[test]
@@ -295,7 +321,7 @@ mod tests {
     fn surface_edges_end_under_land() {
         let ground = lake(50.0, 0.3);
         let (x0, z0) = (-64.0, -64.0);
-        let (vertices, indices) = generate(&ground, sea, x0, z0, SIZE, 0.0).expect("lake has water");
+        let (vertices, indices) = generate(&ground, sea, still, x0, z0, SIZE, 0.0).expect("lake has water");
         let mut edges = std::collections::HashMap::new();
         for tri in indices.chunks(3) {
             for k in 0..3 {
@@ -326,8 +352,8 @@ mod tests {
     #[test]
     fn neighbours_agree_on_their_border() {
         let ground = lake(150.0, 0.2);
-        let (left, _) = generate(&ground, sea, -128.0, 0.0, SIZE, 0.0).unwrap();
-        let (right, _) = generate(&ground, sea, 0.0, 0.0, SIZE, 0.0).unwrap();
+        let (left, _) = generate(&ground, sea, still, -128.0, 0.0, SIZE, 0.0).unwrap();
+        let (right, _) = generate(&ground, sea, still, 0.0, 0.0, SIZE, 0.0).unwrap();
         let border = |vertices: &[WaterVertex], x: f32| {
             let mut found: Vec<(i32, f32, f32)> = vertices
                 .iter()
@@ -355,9 +381,23 @@ mod tests {
         let river_level = 140.0;
         let ground = |_x: f32, z: f32| river_level - 2.0 + (z - 64.0).abs().max(6.0) - 6.0 + 2.0 * ((z - 64.0).abs() / 6.0).min(1.0);
         let level = |_x: f32, z: f32| if (z - 64.0).abs() < 10.0 { river_level } else { WATER_LEVEL };
-        let (vertices, _) = generate(ground, level, 0.0, 0.0, SIZE, 128.0).expect("river has water");
+        let (vertices, _) = generate(ground, level, still, 0.0, 0.0, SIZE, 128.0).expect("river has water");
         for v in &vertices {
             assert!((v.position[1] - (river_level - 128.0)).abs() < 1e-4, "{:?}", v.position);
+        }
+    }
+
+    #[test]
+    fn a_steep_river_does_not_stand_over_its_banks() {
+        // A narrow river falling 1.5 m per metre along x, its water at
+        // `level` over a channel 4 m wide, the banks 3 m over the water.
+        let level = |x: f32, _: f32| 200.0 - 1.5 * x;
+        let ground = |x: f32, z: f32| if (z - 64.0).abs() < 2.0 { level(x, z) - 1.0 } else { level(x, z) + 3.0 };
+        let (vertices, _) = generate(ground, level, still, 0.0, 0.0, SIZE, 0.0).expect("river has water");
+        for v in &vertices {
+            let [x, y, z] = v.position;
+            // About the water's own level here, not the water's upstream.
+            assert!(y < level(x, z) + 2.0, "the surface at {x}, {z} stands {} m over the water there", y - level(x, z));
         }
     }
 }

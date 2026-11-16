@@ -137,6 +137,18 @@ pub trait Chunk {
     /// Backends that draw themselves as components keep the default.
     fn draw(&self, _shader: &Shader, _transform: &Matrix4<f32>, _distance: f32) {}
 
+    /// Draw the far water (see `horizon`) as this chunk type draws its own.
+    /// Default: not at all.
+    fn render_far_water(
+        _water: &ChunkMesh<dual_contouring::water::WaterVertex>,
+        _scene: &Scene,
+        _view_projection: &Matrix4<f32>,
+        _far: FarWater,
+    ) where
+        Self: Sized,
+    {
+    }
+
     /// Optional transparent/overlay pass rendered after ALL chunks' opaque geometry.
     /// Override this to render water, glass, etc. Default is a no-op.
     fn render_transparent(
@@ -145,6 +157,17 @@ pub trait Chunk {
         _view_projection: &Matrix4<f32>,
         _parent_transform: &Matrix4<f32>,
     ) {}
+}
+
+/// Where the far water (see `horizon`) is drawn: it sinks under the loaded
+/// chunks around the camera at `centre` (world x, z) within `load` metres,
+/// and is left out within `hole` metres (under the ground, see the
+/// horizon's).
+#[derive(Clone, Copy, Debug)]
+pub struct FarWater {
+    pub centre: [f32; 2],
+    pub load: f32,
+    pub hole: f32,
 }
 
 pub struct ChunkMesh<T: VertexAttributes> {
