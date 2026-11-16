@@ -601,8 +601,9 @@ fn add_tube(part: &mut MeshPart, stem: &Stem, sides: usize, tile: f32, trunk_rad
         for j in 0..sides as u32 {
             let a = first + i * row + j;
             let (b, c, d) = (a + 1, a + row + 1, a + row);
-            part.triangles.push([a, d, c]);
-            part.triangles.push([a, c, b]);
+            // Counter-clockwise seen from outside.
+            part.triangles.push([a, c, d]);
+            part.triangles.push([a, b, c]);
         }
     }
 }
@@ -723,6 +724,27 @@ mod tests {
         let (_, max) = mesh.bounds();
         let third = max[1] / 3.0;
         assert!(width_at(&mesh, third, 2.0 * third) > width_at(&mesh, 2.0 * third, max[1]));
+    }
+
+    #[test]
+    fn bark_faces_outward() {
+        // Each triangle wound counter-clockwise seen from where its
+        // normals point, or the outside of the trunk is culled.
+        for name in TreeParams::PRESETS {
+            let bark = grow(&TreeParams::preset(name).unwrap()).bark;
+            let v = |i: u32| Vector3::from(bark.positions[i as usize]);
+            let (mut outward, mut total) = (0, 0);
+            for &[a, b, c] in &bark.triangles {
+                let face = (v(b) - v(a)).cross(v(c) - v(a));
+                if face.magnitude2() < 1e-12 {
+                    continue;
+                }
+                let normal = Vector3::from(bark.normals[a as usize]);
+                total += 1;
+                outward += (face.dot(normal) > 0.0) as usize;
+            }
+            assert!(outward * 100 >= total * 99, "{name}: {outward} of {total} face out");
+        }
     }
 
     #[test]
