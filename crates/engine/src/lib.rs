@@ -1,6 +1,7 @@
 pub mod core;
 pub mod player;
 pub mod terrain;
+pub mod vegetation;
 
 // Re-exported for game crates, which use the engine's own copies: a game
 // library links the engine dynamically and must not bring second copies.

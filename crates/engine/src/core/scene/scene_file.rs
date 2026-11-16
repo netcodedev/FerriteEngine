@@ -32,6 +32,7 @@ use crate::{
         },
         script,
     },
+    vegetation::{tree::TreeParams, tree_component::{TreeComponent, TreeTextures}},
     player::{build_animation_graph, default_animation_graph, load_graph_file, Player},
     terrain::{
         dual_contouring::DualContouringChunk,
@@ -182,6 +183,13 @@ pub enum ComponentData {
         kind: ShapeKind,
         color: [f32; 3],
     },
+    /// A tree grown from parameters (see `vegetation::tree`), with the
+    /// texture assets it is given.
+    Tree {
+        params: TreeParams,
+        #[serde(default)]
+        textures: TreeTextures,
+    },
     /// A component written in a game crate (see `core::script`), by name,
     /// with the data it is built from.
     Script {
@@ -239,6 +247,7 @@ impl ComponentData {
             ComponentData::AnimationGraph { .. } => "Animation",
             ComponentData::Model { .. } => "Model",
             ComponentData::Shape { .. } => "Shape",
+            ComponentData::Tree { .. } => "Tree",
             ComponentData::Script { name, .. } => return format!("Script {name}"),
         }
         .to_string()
@@ -258,6 +267,13 @@ impl ComponentData {
         vec![
             ("Camera".into(), ComponentData::default_camera()),
             ("Sky light".into(), ComponentData::default_sky_light()),
+            (
+                "Tree".into(),
+                ComponentData::Tree {
+                    params: TreeParams::default(),
+                    textures: TreeTextures::default(),
+                },
+            ),
             ("Point light".into(), ComponentData::light(LightSettings::default())),
             (
                 "Spot light".into(),
@@ -492,6 +508,15 @@ impl ComponentData {
                     entity.add_component(MissingComponent::new(self.clone(), e));
                 }
             },
+            ComponentData::Tree { params, textures } => {
+                match TreeComponent::new(params.clone(), textures.clone()) {
+                    Ok(tree) => entity.add_component(tree),
+                    Err(e) => {
+                        log::warn!("could not grow tree: {e}");
+                        entity.add_component(MissingComponent::new(self.clone(), e));
+                    }
+                }
+            }
             ComponentData::Model { asset } => {
                 let result = match entity.get_component_mut::<ModelComponent>() {
                     // A prefab was already built with this model.
