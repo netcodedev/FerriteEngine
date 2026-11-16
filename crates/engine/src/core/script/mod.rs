@@ -18,7 +18,7 @@ mod parameters;
 
 use std::{borrow::Cow, collections::BTreeMap, sync::RwLock};
 
-use cgmath::Matrix4;
+use cgmath::{Matrix4, Point3, Vector3};
 use glfw::{Glfw, Window, WindowEvent};
 use ron::Value;
 use serde::{de::DeserializeOwned, Serialize};
@@ -62,6 +62,13 @@ pub trait Behaviour: 'static {
     ) {
     }
     fn handle_event(&mut self, glfw: &mut Glfw, window: &mut Window, event: &WindowEvent) {}
+    /// Distance along the ray (`dir` normalized) to the nearest point where
+    /// it hits what the script draws, for picking in the editor (see
+    /// `Component::raycast`). A script that draws its own models answers
+    /// here, or clicking them selects nothing.
+    fn raycast(&self, transform: &Matrix4<f32>, origin: Point3<f32>, dir: Vector3<f32>) -> Option<f32> {
+        None
+    }
     /// When its entity leaves the scene: release what it owns outside of
     /// itself (physics bodies, say).
     fn on_remove(&mut self, physics: &mut PhysicsEngine) {}
@@ -113,6 +120,10 @@ impl<S: Script> ScriptComponent<S> {
 impl<S: Script> Component for ScriptComponent<S> {
     fn update(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {
         self.script.update(scene, entity, delta_time);
+    }
+
+    fn raycast(&self, transform: &Matrix4<f32>, origin: Point3<f32>, dir: Vector3<f32>) -> Option<f32> {
+        self.script.raycast(transform, origin, dir)
     }
 
     fn update_in_editor(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {

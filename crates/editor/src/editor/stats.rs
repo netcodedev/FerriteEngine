@@ -16,7 +16,7 @@ use ferrite::core::{
 };
 use ferrite_ui::ui::{
     element_handle::UIElementHandle,
-    elements::{panel::Panel, scroll::ScrollArea, section::Section},
+    elements::{panel::Panel, scroll::ScrollArea, section::Section, toggle::Toggle},
     theme, UIElement,
 };
 use glfw::{Glfw, WindowEvent};
@@ -430,6 +430,78 @@ impl UIElement for StatRow {
     }
 }
 
+/// The "VSync" row: a switch for whether frames wait for the display.
+struct VsyncRow {
+    handle: UIElementHandle,
+    offset: Offset,
+    size: Size,
+    label: Text,
+    toggle: Toggle,
+    on: DataSource<bool>,
+}
+
+impl VsyncRow {
+    fn new(on: DataSource<bool>, width: f32) -> Self {
+        Self {
+            handle: UIElementHandle::new(),
+            offset: Offset::default(),
+            size: Size::new(width, 24.0),
+            label: theme::text("VSync", theme::FONT_SIZE_SMALL + 0.5, theme::TEXT_MUTED),
+            toggle: Toggle::new(Position::default(), on.clone()),
+            on,
+        }
+    }
+}
+
+impl UIElement for VsyncRow {
+    fn update(&mut self, scene: &mut Scene) {
+        let y = self.offset.y;
+        let ly = theme::center_y(&self.label, self.size.height);
+        self.label.prepare_render_at(Position::new(self.offset.x + 4.0, y + ly, 3.0));
+        self.toggle.set_offset(Offset { x: self.offset.x + self.size.width - 42.0, y: y + 3.0 });
+        self.toggle.update(scene);
+    }
+    fn render(&self) {
+        self.label.render();
+        self.toggle.render();
+    }
+    fn handle_events(&mut self, scene: &mut Scene, window: &mut glfw::Window, glfw: &mut Glfw, event: &WindowEvent) -> bool {
+        let before = self.on.read();
+        let used = self.toggle.handle_events(scene, window, glfw, event);
+        if self.on.read() != before {
+            glfw.set_swap_interval(if self.on.read() { glfw::SwapInterval::Sync(1) } else { glfw::SwapInterval::None });
+        }
+        used
+    }
+    fn add_child(&mut self, _child: Box<dyn UIElement>) {}
+    fn add_child_to(&mut self, _p: UIElementHandle, _c: Box<dyn UIElement>) {}
+    fn contains_child(&self, _h: &UIElementHandle) -> bool {
+        false
+    }
+    fn get_child(&self, _h: &UIElementHandle) -> Option<&Box<dyn UIElement>> {
+        None
+    }
+    fn get_child_mut(&mut self, _h: &UIElementHandle) -> Option<&mut Box<dyn UIElement>> {
+        None
+    }
+    fn get_handle(&self) -> &UIElementHandle {
+        &self.handle
+    }
+    fn get_offset(&self) -> &Offset {
+        &self.offset
+    }
+    fn set_offset(&mut self, offset: Offset) {
+        self.offset = offset;
+    }
+    fn get_size(&self) -> &Size {
+        &self.size
+    }
+    fn set_z_index(&mut self, z: f32) {
+        self.label.set_z_index(z + 1.0);
+        self.toggle.set_z_index(z + 1.0);
+    }
+}
+
 /// Bar graph of recent frame times with a 60 fps reference line.
 struct FrameGraph {
     handle: UIElementHandle,
@@ -656,6 +728,8 @@ pub struct StatsPanel {
     values: Vec<(Key, DataSource<String>)>,
     /// Open/closed state per section, kept across rebuilds.
     open: Vec<DataSource<bool>>,
+    /// Whether frames wait for the display (the window starts with it on).
+    vsync: DataSource<bool>,
     built_width: Option<i32>,
     last_refresh: Option<Instant>,
 }
@@ -675,6 +749,7 @@ impl StatsPanel {
             body,
             values: Vec::new(),
             open: SECTIONS.iter().map(|_| DataSource::new(true)).collect(),
+            vsync: DataSource::new(true),
             built_width: None,
             last_refresh: None,
         }
@@ -690,6 +765,7 @@ impl StatsPanel {
             section.bind_open(self.open[index].clone());
             if index == 0 {
                 section.add_child(Box::new(FrameGraph::new(self.state.clone(), content - 8.0)));
+                section.add_child(Box::new(VsyncRow::new(self.vsync.clone(), content - 8.0)));
             }
             for (key, label) in rows.iter() {
                 let source = DataSource::new(String::from("-"));

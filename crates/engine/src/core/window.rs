@@ -33,6 +33,9 @@ impl Window {
             .expect("Fenster konnte nicht erstellt werden");
 
         window.make_current();
+        // Wait for the display (vsync) unless asked otherwise: what the
+        // driver would pick on its own differs.
+        glfw.set_swap_interval(glfw::SwapInterval::Sync(1));
         window.set_key_polling(true);
         window.set_mouse_button_polling(true);
         window.set_scroll_polling(true);
