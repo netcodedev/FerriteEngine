@@ -161,11 +161,33 @@ pub struct WorldShape {
     detail: Fractal,
     temperature: Fractal,
     humidity: Fractal,
+    seed: u64,
+    /// The points the gullies run from (see `gullies`), worked out once
+    /// for the whole world: a grid of cells for each octave.
+    gully_points: Vec<GullyGrid>,
+}
+
+/// The gully points of one octave, a cell each, from cell `first` on in x
+/// and z, `n` along each.
+struct GullyGrid {
+    first: i64,
+    n: i64,
+    points: Vec<GullyPoint>,
+}
+
+/// A point gullies run from: where it lies (in cells of its octave), which
+/// way across the slope there its stripes' phase runs, and how strongly
+/// (0 on flat ground and crests, 1 on steep slopes).
+#[derive(Clone, Copy)]
+struct GullyPoint {
+    at: [f64; 2],
+    across: [f64; 2],
+    strength: f64,
 }
 
 impl WorldShape {
     pub fn new(seed: u64, settings: WorldSettings) -> Self {
-        Self {
+        let mut shape = Self {
             settings,
             warp_x: Fractal::new(seed, "warp x", 3, 7000.0),
             warp_z: Fractal::new(seed, "warp z", 3, 7000.0),
@@ -176,7 +198,36 @@ impl WorldShape {
             detail: Fractal::new(seed, "hills", 6, 340.0),
             temperature: Fractal::new(seed, "temperature", 3, 10000.0),
             humidity: Fractal::new(seed, "humidity", 3, 7000.0),
+            gully_points: Vec::new(),
+            seed,
+        };
+        // Over the world and the sea around it (as far as the maps reach),
+        // on all cores.
+        let reach = shape.settings.size * 0.6;
+        let mut grids = Vec::new();
+        let mut wavelength = GULLY_WAVELENGTH;
+        for octave in 0..GULLY_OCTAVES {
+            let first = (-reach / wavelength).floor() as i64 - 2;
+            let n = (2.0 * reach / wavelength).ceil() as i64 + 5;
+            let mut points = vec![GullyPoint { at: [0.0; 2], across: [1.0, 0.0], strength: 0.0 }; (n * n) as usize];
+            let threads = std::thread::available_parallelism().map_or(4, |t| t.get());
+            let rows = (n as usize).div_ceil(threads) * n as usize;
+            let shape = &shape;
+            std::thread::scope(|scope| {
+                for (k, chunk) in points.chunks_mut(rows).enumerate() {
+                    scope.spawn(move || {
+                        for (i, p) in chunk.iter_mut().enumerate() {
+                            let cell = (k * rows + i) as i64;
+                            *p = shape.make_gully_point(octave, first + cell % n, first + cell / n, wavelength);
+                        }
+                    });
+                }
+            });
+            grids.push(GullyGrid { first, n, points });
+            wavelength *= 0.5;
         }
+        shape.gully_points = grids;
+        shape
     }
 
     /// Distance from the origin, in metres, scaled into how far a point is
@@ -197,7 +248,7 @@ impl WorldShape {
             x + 1200.0 * self.warp_x.at(x, z),
             z + 1200.0 * self.warp_z.at(x, z),
         );
-        let mut c = self.continentalness.at(wx, wz) * 1.6 + 0.22;
+        let mut c = self.continentalness.at(wx, wz) * 1.6 + 0.55;
         // The world's edge sinks into the deep sea over its last 3 km.
         // Its corners are rounded (a superellipse) and its line bent like
         // the coasts, so the world does not look square.
@@ -241,18 +292,32 @@ impl WorldShape {
         climate
     }
 
-    /// The large shape at world `(x, z)` (see `Macro`).
-    pub fn macro_at(&self, x: f64, z: f64) -> Macro {
-        let c = self.climate(x, z);
+    /// How mountainous the land is with climate `c`: 0 (not) .. about 1
+    /// (in a high range).
+    fn mountains(&self, c: &Climate) -> f32 {
         let s = &self.settings;
-        let base = s.continents.at(c.continentalness);
         // Mountains rise inland (and on the odd island), not out of the sea.
         let inland = smoothstep(-0.12, 0.25, c.continentalness as f64) as f32;
         // The high mountains stand in ranges; elsewhere low erosion only
         // makes rugged uplands.
         let rugged = s.mountains.at(c.erosion);
-        let mountains = (c.range * (0.6 + 0.4 * rugged)).max(rugged * 0.15) * inland * s.mountain_scale;
-        let ridge = (s.ridges.at(c.ridges) + s.massifs) * mountains;
+        (c.range * (0.6 + 0.4 * rugged)).max(rugged * 0.15) * inland * s.mountain_scale
+    }
+
+    /// The mountains' height at a point with climate `c`, before the
+    /// valleys are cut into them (see `eroded`).
+    pub(super) fn uplift(&self, c: &Climate) -> f32 {
+        let s = &self.settings;
+        (s.ridges.at(c.ridges) + s.massifs) * self.mountains(c)
+    }
+
+    /// The large shape at world `(x, z)` (see `Macro`).
+    pub fn macro_at(&self, x: f64, z: f64) -> Macro {
+        let c = self.climate(x, z);
+        let s = &self.settings;
+        let base = s.continents.at(c.continentalness);
+        let mountains = self.mountains(&c);
+        let ridge = self.eroded(x, z, self.uplift(&c));
         // Hills calm down toward the coast, so beaches are gentle.
         let coast = 0.35 + 0.65 * smoothstep(-0.1, 0.15, c.continentalness as f64) as f32;
         Macro {
@@ -263,10 +328,114 @@ impl WorldShape {
         }
     }
 
+    /// The mountains `uplift` metres high at world `(x, z)` with their
+    /// valleys cut in: gullies running down the slopes in several sizes,
+    /// so the slopes break into spurs and side valleys that run down from
+    /// the crests, as water wears real mountains down. (After the erosion
+    /// filter Rune Skovbo Johansen describes for terrain noise.)
+    pub(super) fn eroded(&self, x: f64, z: f64, uplift: f32) -> f32 {
+        if uplift < 1.0 {
+            return uplift;
+        }
+        let mut h = uplift as f64;
+        let mut wavelength = GULLY_WAVELENGTH;
+        // Deeper gullies in higher mountains.
+        let mut depth = uplift as f64 * GULLY_DEPTH;
+        for octave in 0..GULLY_OCTAVES {
+            // As much up between the gullies as down in them: cut only
+            // down, the few spots that lie between the gullies of every
+            // octave would stand as needles.
+            h += depth * 0.5 * self.gullies(x, z, octave, wavelength);
+            wavelength *= 0.5;
+            depth *= GULLY_GAIN;
+        }
+        h.max(0.0) as f32
+    }
+
+    /// Gullies `wavelength` apart at world `(x, z)`: `-1` in a gully, `1`
+    /// on the ridge between two, fading to 0 where the land is flat. The
+    /// stripes of points scattered on a grid, each running down the slope
+    /// where it lies (a plane wave: its gullies do not swing round as the
+    /// slope turns, which would bend them into cliffs), blended.
+    fn gullies(&self, x: f64, z: f64, octave: usize, wavelength: f64) -> f64 {
+        let (gx, gz) = (x / wavelength, z / wavelength);
+        let (cx, cz) = (gx.floor() as i64, gz.floor() as i64);
+        let tau = std::f64::consts::TAU;
+        // Each point's stripes as a turning vector (cos, sin of their
+        // phase), blended, then brought back to full length: blended as
+        // they are, stripes of different phases would cancel into noise.
+        let (mut c, mut s, mut weights) = (0.0, 0.0, 0.0);
+        // The four by four cells around: points further off lie a cell and
+        // a half away or more, where their weight is down to nothing (so no
+        // seams run along the grid).
+        let (ox, oz) = (if gx - gx.floor() < 0.5 { -2 } else { -1 }, if gz - gz.floor() < 0.5 { -2 } else { -1 });
+        for j in oz..oz + 4 {
+            for i in ox..ox + 4 {
+                let p = self.gully_point(octave, cx + i, cz + j, wavelength);
+                let (vx, vz) = (gx - p.at[0], gz - p.at[1]);
+                let w = (1.0 - (vx * vx + vz * vz) / 2.25).max(0.0).powi(3);
+                let (sin, cos) = ((vx * p.across[0] + vz * p.across[1]) * tau).sin_cos();
+                c += w * p.strength * cos;
+                s += w * p.strength * sin;
+                weights += w;
+            }
+        }
+        // Where the stripes nearly cancel (or the land is flat) the blend
+        // is short: it fades out there rather than turn abruptly.
+        c / c.hypot(s).max(weights * 0.5).max(1e-9)
+    }
+
+    /// The point gullies of `octave` (`wavelength` apart) run from in cell
+    /// `(px, pz)` (see `GullyPoint`).
+    fn gully_point(&self, octave: usize, px: i64, pz: i64, wavelength: f64) -> GullyPoint {
+        if let Some(grid) = self.gully_points.get(octave) {
+            let (i, j) = (px - grid.first, pz - grid.first);
+            if (0..grid.n).contains(&i) && (0..grid.n).contains(&j) {
+                return grid.points[(j * grid.n + i) as usize];
+            }
+        }
+        // Far out at sea (or while the grids are being made).
+        self.make_gully_point(octave, px, pz, wavelength)
+    }
+
+    fn make_gully_point(&self, octave: usize, px: i64, pz: i64, wavelength: f64) -> GullyPoint {
+        let hash = mix(self.seed ^ mix(octave as u64) ^ mix((px as u64).wrapping_mul(0x9E3779B97F4A7C15) ^ pz as u64));
+        let at = [
+            px as f64 + (hash & 0xFFFF) as f64 / 65535.0,
+            pz as f64 + ((hash >> 16) & 0xFFFF) as f64 / 65535.0,
+        ];
+        let (x, z) = (at[0] * wavelength, at[1] * wavelength);
+        // The slope there, from the uplift some way off: smoothed over the
+        // kinks of the ridges' noise.
+        let e = 150.0;
+        let here = self.uplift(&self.climate(x, z));
+        let gx = (self.uplift(&self.climate(x + e, z)) - here) as f64 / e;
+        let gz = (self.uplift(&self.climate(x, z + e)) - here) as f64 / e;
+        let length = gx.hypot(gz);
+        let across = if length > 1e-6 { [-gz / length, gx / length] } else { [1.0, 0.0] };
+        GullyPoint { at, across, strength: smoothstep(0.05, 0.35, length) }
+    }
+
     /// The hills on top of the large shape: `-1..1`, times `Macro::hills`.
     pub fn detail(&self, x: f64, z: f64) -> f32 {
         self.detail.at(x, z) as f32
     }
+}
+
+/// Wavelength of the coarsest gullies cut into mountains, metres; each
+/// finer octave half that.
+const GULLY_WAVELENGTH: f64 = 3000.0;
+const GULLY_OCTAVES: usize = 5;
+/// Depth of the coarsest gullies, as a share of the mountain's height, and
+/// of each finer octave's relative to the one before.
+const GULLY_DEPTH: f64 = 0.35;
+const GULLY_GAIN: f64 = 0.4;
+
+/// Mixes the bits of `z` (splitmix64's finaliser).
+fn mix(mut z: u64) -> u64 {
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+    z ^ (z >> 31)
 }
 
 pub fn smoothstep(edge0: f64, edge1: f64, x: f64) -> f64 {

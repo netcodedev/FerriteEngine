@@ -92,6 +92,10 @@ const MAX_STEEP_GRADE: f32 = 0.25;
 const RECONCILED_EMBANKMENT: f32 = 3.0;
 /// What crossing a river costs, in metres of road.
 const RIVER_CROSSING: f32 = 700.0;
+/// How far under the ground a river runs in a gorge, metres, and what
+/// coming near one costs a road besides, in metres of road.
+const GORGE_DEPTH: f32 = 20.0;
+const GORGE_CROSSING: f32 = 4000.0;
 
 /// A settlement: for now, a level ground for its houses to stand on.
 #[derive(Clone, Copy, Debug)]
@@ -244,13 +248,24 @@ impl Roads {
             Land,
             Water,
             River,
+            /// By a river deep under the ground: a road along it would
+            /// stand on the gorge's rim.
+            Gorge,
         }
         let ground_kind = |i: usize| {
             let (x, z) = (centre(i % n), centre(i / n));
             if ground(i) < SEA_LEVEL + 1.0 || lake(x, z) {
                 Ground::Water
             } else if river(x, z, CELL * 0.5) {
-                Ground::River
+                let c = |v: f64| (v / CHUNK_SIZE as f64).floor() as i32;
+                let level = rivers
+                    .and_then(|r| r.nearest(r.segments_near(c(x), c(z)), x, z))
+                    .map_or(f32::NEG_INFINITY, |r| r.level);
+                if ground(i) - level > GORGE_DEPTH {
+                    Ground::Gorge
+                } else {
+                    Ground::River
+                }
             } else {
                 Ground::Land
             }
@@ -417,6 +432,20 @@ impl Roads {
                         let needed = if from_end < PORTAL_APPROACH { -1.0 } else { TUNNEL_PLAN_COVER };
                         ground(c) - (gi + (gj - gi) * t as f32) >= needed
                     });
+                    // And over the ground between the cells' middles (where
+                    // a gully may cross the line), every 16 m.
+                    let covered = covered && {
+                        let (a, b) = ([centre(i % n), centre(i / n)], [centre(j % n), centre(j / n)]);
+                        let samples = (length / 16.0).ceil() as usize;
+                        (1..samples).all(|s| {
+                            let t = s as f64 / samples as f64;
+                            let from_end = (t * length).min((1.0 - t) * length);
+                            from_end < PORTAL_APPROACH
+                                || natural(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t).0
+                                    - (gi + (gj - gi) * t as f32)
+                                    >= TUNNEL_COVER
+                        })
+                    };
                     if covered {
                         out.push((j, (TUNNEL_COST * length) as f32 + PORTAL_COST));
                     }
@@ -484,8 +513,10 @@ impl Roads {
                 if passed.is_some_and(|cells| cells.iter().any(|&c| kind[c] == Ground::Water)) {
                     return None;
                 }
-                let crosses_river =
-                    kind[j] == Ground::River || passed.is_some_and(|cells| cells.iter().any(|&c| kind[c] == Ground::River));
+                let wet = |k: Ground| k == Ground::River || k == Ground::Gorge;
+                let crosses_river = wet(kind[j]) || passed.is_some_and(|cells| cells.iter().any(|&c| wet(kind[c])));
+                let gorge =
+                    kind[j] == Ground::Gorge || passed.is_some_and(|cells| cells.iter().any(|&c| kind[c] == Ground::Gorge));
                 let (di, dj) = ((i % n) as f32 - (j % n) as f32, (i / n) as f32 - (j / n) as f32);
                 let length = di.hypot(dj) * CELL as f32;
                 let grade = (ground(j) - ground(i)).abs() / length;
@@ -498,6 +529,9 @@ impl Roads {
                 let mut cost = length * (1.0 + 4.0 * grade + 300.0 * (grade - WINDING_GRADE).max(0.0).powi(2));
                 if crosses_river {
                     cost += RIVER_CROSSING;
+                }
+                if gorge {
+                    cost += GORGE_CROSSING;
                 }
                 // Roads merge: on one, cheaper; right beside one, dearer.
                 if road[j] {
@@ -1343,7 +1377,8 @@ fn lamps_along(tube: &[RoadSegment]) -> Vec<[f32; 3]> {
 /// at most `TUNNEL_MAX_LENGTH` apart, between which the way runs at least
 /// `TUNNEL_COST` times as far plus `TUNNEL_SAVING`, joined by a straight
 /// line no steeper than `TUNNEL_GRADE` from one's ground to the other's,
-/// with `TUNNEL_PLAN_COVER` of ground over it except near its ends, and
+/// with `TUNNEL_PLAN_COVER` of ground over it except near its ends (and
+/// `TUNNEL_COVER` of the ground as it lies, `exact`), and
 /// never under the ground there (no valley in between) or under water
 /// (`excluded`, which also keeps the ends out of settlements). The best
 /// first, then the next that does not overlap it. `ground` is the coarse
@@ -1388,6 +1423,20 @@ fn with_tunnels(
             let from_end = (t * length).min((1.0 - t) * length);
             let needed = if from_end < PORTAL_APPROACH { -1.0 } else { TUNNEL_PLAN_COVER };
             if cover < needed || excluded(p) {
+                return None;
+            }
+        }
+        // And over the ground as it lies (the coarse ground misses gullies
+        // between its points, which the tunnel would open into): looked at
+        // only for tunnels that pass so far, as it costs more.
+        for s in 1..samples {
+            let t = s as f64 / samples as f64;
+            let from_end = (t * length).min((1.0 - t) * length);
+            if from_end < PORTAL_APPROACH {
+                continue;
+            }
+            let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+            if exact(p) - (ga + (gb - ga) * t as f32) < TUNNEL_COVER {
                 return None;
             }
         }

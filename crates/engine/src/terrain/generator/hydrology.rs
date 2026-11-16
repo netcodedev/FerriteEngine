@@ -41,8 +41,8 @@ const RIVER_FLOW: f32 = 1.5;
 /// as lake.
 const LAKE_DEPTH: f32 = 0.75;
 /// Smallest lake, in cells, and how deep its deepest cell must be.
-const MIN_LAKE_CELLS: usize = 25;
-const MIN_LAKE_DEPTH: f32 = 6.0;
+const MIN_LAKE_CELLS: usize = 40;
+const MIN_LAKE_DEPTH: f32 = 12.0;
 /// How far rivers wind off the straight line between the plan's cells,
 /// at most, in metres, and over what length.
 const MEANDER: f64 = 18.0;
@@ -111,7 +111,9 @@ fn bank_width(width: f32, rise: f32) -> f32 {
 
 /// The widest banks a river `width` wide gets (see `bank_width`).
 fn max_bank_width(width: f32) -> f32 {
-    16.0 + 2.5 * width
+    // Wide enough for a gorge through mountains to keep its sides under
+    // about 45 degrees.
+    60.0 + 2.5 * width
 }
 
 /// How far an end into the sea or a lake reaches on past the plan's cell

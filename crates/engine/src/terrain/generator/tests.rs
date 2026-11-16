@@ -175,10 +175,13 @@ fn generation_timings() {
 #[test]
 fn caves_open_under_the_mountains_and_the_lattice_follows_them() {
     let generator = WorldGenerator::new(1);
-    // A mountain column with a known cave 40 m under its surface.
-    let (x, z) = (-2345.0, -5892.0);
-    let surface = generator.surface_height(x, z) as f64;
-    assert!(generator.density(x, surface - 40.0, z) > 0.0, "no cave");
+    // A mountain column with a cave 40 m under its surface: there is one
+    // in these mountains.
+    let (x, z, surface) = (0..200 * 200)
+        .map(|k| (-2345.0 + (k % 200 - 100) as f64 * 37.0, -5892.0 + (k / 200 - 100) as f64 * 37.0))
+        .map(|(x, z)| (x, z, generator.surface_height(x, z) as f64))
+        .find(|&(x, z, surface)| surface > 150.0 && generator.density(x, surface - 40.0, z) > 0.0)
+        .expect("no cave");
     let coord = ChunkCoord::containing(x, surface - 40.0, z);
     let lattice = generator.underground(coord, true).expect("caves in the chunk");
     let column = generator.column(coord.x, coord.z);
@@ -560,12 +563,13 @@ fn tunnels_are_tubes_through_the_rock() {
                 assert!(generator.density(x, (floor - 0.5) as f64, z) < 0.0, "no floor at {x}, {z}");
             }
         }
-        // Inside (away from the portals, where the cutting's slope comes
-        // down to them): at least 1.5 m of rock over the arch.
+        // Inside (away from the portals, as far as the cutting's slopes
+        // reach, which come down over them on a steep mountainside): at
+        // least 1.5 m of rock over the arch.
         let (start, end) = (tube[0].a, tube[tube.len() - 1].b);
         for s in &tube[1..tube.len() - 1] {
             let (x, z) = ((s.a[0] + s.b[0]) * 0.5, (s.a[1] + s.b[1]) * 0.5);
-            if (x - start[0]).hypot(z - start[1]).min((x - end[0]).hypot(z - end[1])) < 15.0 {
+            if (x - start[0]).hypot(z - start[1]).min((x - end[0]).hypot(z - end[1])) < 36.0 {
                 continue;
             }
             let top = 0.5 * (s.level[0] + s.level[1]) + TUNNEL_WALL + TUNNEL_HALF_WIDTH;
@@ -647,7 +651,9 @@ fn narrow_rivers_hold_water_at_every_metre_along_them() {
     // The terrain's mesh samples the ground at whole metres: around a
     // narrow river, the points whose ground lies under its water are
     // joined side by side (not only corner to corner), or the mesh catches
-    // the bed in pieces and the water shows in pieces.
+    // the bed in pieces and the water shows in pieces. A river runs out
+    // of the window it is looked at in; a piece that lies within it is a
+    // break (two rivers meeting beyond it are two pieces, but not breaks).
     let mut checked = 0;
     for seed in [1, 2, 3] {
         let generator = WorldGenerator::new(seed);
@@ -669,19 +675,20 @@ fn narrow_rivers_hold_water_at_every_metre_along_them() {
                     generator.water_level(x, z) - generator.surface_height(x, z) > 0.3
                 })
                 .collect();
-            // Pieces of joined wet points, but the smallest (a stray point at
-            // the window's edge).
+            // Pieces of joined wet points that do not reach the window's
+            // edge, but the smallest.
             let mut seen = vec![false; wet.len()];
-            let mut pieces = 0;
+            let (mut pieces, mut breaks) = (0, 0);
             for start in 0..wet.len() {
                 if !wet[start] || seen[start] {
                     continue;
                 }
-                let (mut stack, mut size) = (vec![start], 0);
+                let (mut stack, mut size, mut edge) = (vec![start], 0, false);
                 seen[start] = true;
                 while let Some(k) = stack.pop() {
                     size += 1;
                     let (i, j) = (k as i32 % n, k as i32 / n);
+                    edge |= i == 0 || j == 0 || i == n - 1 || j == n - 1;
                     for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
                         let (a, b) = (i + di, j + dj);
                         if (0..n).contains(&a) && (0..n).contains(&b) {
@@ -695,16 +702,14 @@ fn narrow_rivers_hold_water_at_every_metre_along_them() {
                 }
                 if size > 3 {
                     pieces += 1;
+                    breaks += !edge as i32;
                 }
             }
             if pieces == 0 {
                 continue;
             }
             checked += 1;
-            assert_eq!(
-                pieces, 1,
-                "seed {seed}: a river {w} m wide around {m:?} holds water in {pieces} pieces"
-            );
+            assert_eq!(breaks, 0, "seed {seed}: a river {w} m wide around {m:?} breaks into {pieces} pieces");
         }
     }
     assert!(checked >= 3, "{checked}");
