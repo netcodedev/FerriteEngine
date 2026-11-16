@@ -23,7 +23,7 @@ ndarray = "0.17.2"
 rand = "0.10.3"
 rapier3d = { version = "0.36.1", features = ["parallel"] }
 renet = "1"
-renet_netcode = "1"
+renet_netcode = "2"
 ron = "0.12.3"
 russimp-ng = { version = "3.2.7" }
 rusttype = { version = "0.9.3", features = ["gpu_cache"] }
