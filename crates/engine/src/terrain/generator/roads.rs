@@ -236,6 +236,10 @@ const BRIDGE_MAX_LENGTH: f64 = 500.0;
 const BRIDGE_HEIGHT: f32 = 6.0;
 const BRIDGE_LANDS: f32 = 2.0;
 const BRIDGE_MIN_LENGTH: f64 = 12.0;
+/// How far over the ground the road may be where a bridge ends.
+const BRIDGE_ENDS: f32 = 0.5;
+/// Steepest a bridge's deck climbs, metres per metre.
+const BRIDGE_MAX_GRADE: f32 = 0.07;
 /// How far before and after a point the ground is looked at for how deep
 /// a dip the road crosses there (see `BRIDGE_HEIGHT`).
 const DIP_REACH: f64 = 80.0;
@@ -841,25 +845,10 @@ impl Roads {
             }
         }
 
-        // What lies near each chunk square.
-        let chunk = CHUNK_SIZE as f64;
-        let mut local: HashMap<(i32, i32), Local> = HashMap::new();
-        let squares = |lo: [f64; 2], hi: [f64; 2], reach: f64| {
-            let r = |v: f64| (v / chunk).floor() as i32;
-            let (x0, x1, z0, z1) = (r(lo[0] - reach), r(hi[0] + reach), r(lo[1] - reach), r(hi[1] + reach));
-            (z0..=z1).flat_map(move |z| (x0..=x1).map(move |x| (x, z)))
-        };
-        for s in &settlements {
-            for key in squares(s.centre, s.centre, s.reach() + COLUMN_REACH) {
-                local.entry(key).or_default().settlements.push(*s);
-            }
-        }
-        // Pieces of road in a tunnel with enough ground over them are in
-        // its tube; the others shape the ground.
-        let mut tunnels = Vec::new();
-        let mut bridges: Vec<Arc<Bridge>> = Vec::new();
-        let mut on_bridges = Vec::new();
-        for ((way, lines), under) in ways.iter().zip(&in_tunnels).zip(&unders) {
+        // Which pieces of a way run in a tunnel's tube (`covered`) and which
+        // on a bridge, and the runs of bridge, from its heights, what its
+        // points lie on and the ground under them.
+        let classify = |way: &[([f64; 2], f32)], lines: &[Line], under: &[(f32, bool)]| {
             let in_tunnel: Vec<bool> = lines.iter().map(|&l| l == Line::Tunnel).collect();
             let piece = |k: usize| {
                 let ((a, la), (b, lb)) = (way[k], way[k + 1]);
@@ -949,15 +938,16 @@ impl Roads {
                     bridged[start..k].iter_mut().for_each(|b| *b = true);
                 }
             }
-            // (An embankment takes over beyond, up to where the road runs
-            // on the ground.)
-            for _ in 0..3 {
+            // On to where the road runs on the ground (not ending in the
+            // air: by a river its banks are not filled up to the road).
+            let over = |k: usize| way[k].1 - under[k].0;
+            for _ in 0..12 {
                 let grown: Vec<bool> = (0..bridged.len())
                     .map(|k| {
                         bridged[k]
                             || (!covered[k]
-                                && lifted(k) >= BRIDGE_LANDS
-                                && ((k > 0 && bridged[k - 1]) || (k + 1 < bridged.len() && bridged[k + 1])))
+                                && ((k > 0 && bridged[k - 1] && over(k) >= BRIDGE_ENDS)
+                                    || (k + 1 < bridged.len() && bridged[k + 1] && over(k + 1) >= BRIDGE_ENDS)))
                     })
                     .collect();
                 if grown == bridged {
@@ -983,11 +973,11 @@ impl Roads {
                 // Its ends where the road runs on the ground (or in a
                 // cutting) left to the ground.
                 let mut end = end;
-                while start < end && !wet(start) && lifted(start) < BRIDGE_LANDS * 0.5 {
+                while start < end && !wet(start) && over(start) < BRIDGE_ENDS && over(start + 1) < BRIDGE_ENDS {
                     bridged[start] = false;
                     start += 1;
                 }
-                while end > start && !wet(end - 1) && lifted(end - 1) < BRIDGE_LANDS * 0.5 {
+                while end > start && !wet(end - 1) && over(end) < BRIDGE_ENDS && over(end - 1) < BRIDGE_ENDS {
                     bridged[end - 1] = false;
                     end -= 1;
                 }
@@ -1005,12 +995,87 @@ impl Roads {
                     bridged[start..k].iter_mut().for_each(|b| *b = false);
                 }
             }
+            (covered, bridged, runs)
+        };
+        // Bridges have straight decks, no steeper than `BRIDGE_MAX_GRADE`:
+        // the road on either side climbs to meet them. (Over a few rounds:
+        // moved, the road may run on a bridge a little further.)
+        for (w, (lines, under)) in (0..3).flat_map(|_| in_tunnels.iter().zip(&unders).enumerate()) {
+            let (_, _, runs) = classify(&ways[w], lines, under);
+            if runs.is_empty() {
+                continue;
+            }
+            let points: Vec<[f64; 2]> = ways[w].iter().map(|p| p.0).collect();
+            let mut level: Vec<f32> = ways[w].iter().map(|p| p.1).collect();
+            let mut pinned = grounds[w].1.clone();
+            let mut run = vec![0.0f64; points.len()];
+            for k in 1..points.len() {
+                run[k] = run[k - 1] + (points[k][0] - points[k - 1][0]).hypot(points[k][1] - points[k - 1][1]);
+            }
+            for &(start, end) in &runs {
+                let length = (run[end] - run[start]).max(1e-6);
+                let (from, to) = (level[start], level[end]);
+                let most = BRIDGE_MAX_GRADE * length as f32;
+                // An end held already (a tunnel's portal, a settlement)
+                // stays; the other moves.
+                let (from, to) = match (pinned[start].is_some(), pinned[end].is_some()) {
+                    (true, true) if (to - from).abs() > most => continue,
+                    (true, true) => (from, to),
+                    (true, false) => (from, from + (to - from).clamp(-most, most)),
+                    (false, true) => (to - (to - from).clamp(-most, most), to),
+                    (false, false) => {
+                        let (middle, rise) = (0.5 * (from + to), (to - from).clamp(-most, most));
+                        (middle - 0.5 * rise, middle + 0.5 * rise)
+                    }
+                };
+                for k in start..=end {
+                    let t = ((run[k] - run[start]) / length) as f32;
+                    level[k] = from + (to - from) * t;
+                    pinned[k] = Some(level[k]);
+                }
+            }
+            limit_grade(&points, &mut level, MAX_STEEP_GRADE, &pinned);
+            for (p, l) in ways[w].iter_mut().zip(level) {
+                p.1 = l;
+            }
+        }
+
+        // What lies near each chunk square.
+        let chunk = CHUNK_SIZE as f64;
+        let mut local: HashMap<(i32, i32), Local> = HashMap::new();
+        let squares = |lo: [f64; 2], hi: [f64; 2], reach: f64| {
+            let r = |v: f64| (v / chunk).floor() as i32;
+            let (x0, x1, z0, z1) = (r(lo[0] - reach), r(hi[0] + reach), r(lo[1] - reach), r(hi[1] + reach));
+            (z0..=z1).flat_map(move |z| (x0..=x1).map(move |x| (x, z)))
+        };
+        for s in &settlements {
+            for key in squares(s.centre, s.centre, s.reach() + COLUMN_REACH) {
+                local.entry(key).or_default().settlements.push(*s);
+            }
+        }
+        // Pieces of road in a tunnel with enough ground over them are in
+        // its tube; the others shape the ground.
+        let mut tunnels = Vec::new();
+        let mut bridges: Vec<Arc<Bridge>> = Vec::new();
+        let mut on_bridges = Vec::new();
+        for ((way, lines), under) in ways.iter().zip(&in_tunnels).zip(&unders) {
+            let piece = |k: usize| {
+                let ((a, la), (b, lb)) = (way[k], way[k + 1]);
+                RoadSegment { a, b, level: [la, lb] }
+            };
+            let (covered, bridged, runs) = classify(way, lines, under);
             for &(start, end) in &runs {
                 let carried: Vec<RoadSegment> = (start..end).map(piece).collect();
                 // Roads that merged share a bridge: the first road's.
+                // (Only where it carries this road too: about where it runs
+                // and at its height.)
                 let middle = carried[carried.len() / 2];
                 let built = bridges.iter().any(|b| {
-                    b.pieces.iter().any(|s| s.distance(middle.a[0], middle.a[1]).0 < 6.0)
+                    b.pieces.iter().any(|s| {
+                        let (d, t) = s.distance(middle.a[0], middle.a[1]);
+                        let level = s.level[0] + (s.level[1] - s.level[0]) * t as f32;
+                        d < 2.5 && (level - middle.level[0]).abs() < 0.6
+                    })
                 });
                 if built {
                     continue;
@@ -1034,7 +1099,7 @@ impl Roads {
             // The first and last piece of a bridge shape the ground under
             // them too: its abutments, the ground there at the road's
             // height.
-            let abutment = |k: usize| runs.iter().any(|&(start, end)| end - start >= 3 && (k == start || k + 1 == end));
+            let abutment = |k: usize| runs.iter().any(|&(start, end)| k == start || k + 1 == end);
             for (k, &covered) in covered.iter().enumerate() {
                 let covered = covered || (bridged[k] && !abutment(k));
                 let segment = piece(k);

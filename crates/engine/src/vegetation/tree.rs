@@ -9,6 +9,8 @@ use std::f32::consts::{PI, TAU};
 use cgmath::{InnerSpace, Vector3};
 use serde::{Deserialize, Serialize};
 
+pub use crate::core::model::generated::MeshPart;
+
 /// The outline of the crown: which branches up the trunk are the longest.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CrownShape {
@@ -301,32 +303,6 @@ const MAX_TRIANGLES: usize = 400_000;
 const CARD_REACH: f32 = 0.45;
 /// How much a frond is folded along its middle, radians.
 const FROND_FOLD: f32 = 0.35;
-
-/// A triangle mesh: positions, normals, texture coordinates.
-#[derive(Default, Debug, Clone)]
-pub struct MeshPart {
-    pub positions: Vec<[f32; 3]>,
-    pub normals: Vec<[f32; 3]>,
-    pub uvs: Vec<[f32; 2]>,
-    pub triangles: Vec<[u32; 3]>,
-}
-
-impl MeshPart {
-    fn vertex(&mut self, p: Vector3<f32>, n: Vector3<f32>, uv: [f32; 2]) -> u32 {
-        self.positions.push(p.into());
-        self.normals.push(n.into());
-        self.uvs.push(uv);
-        (self.positions.len() - 1) as u32
-    }
-
-    /// A quad seen from both sides (foliage): each side faces its own way
-    /// for the winding, but both carry the normal `n`, so a leaf is lit
-    /// the same from either side.
-    fn two_sided(&mut self, corners: [u32; 4]) {
-        let [a, b, c, d] = corners;
-        self.triangles.extend([[a, b, c], [a, c, d], [a, c, b], [a, d, c]]);
-    }
-}
 
 /// A grown tree: its bark and its leaves.
 #[derive(Default, Debug, Clone)]

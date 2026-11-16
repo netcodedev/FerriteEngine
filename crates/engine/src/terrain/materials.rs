@@ -190,6 +190,32 @@ pub fn load(shader: &Shader) -> Vec<Texture> {
     textures
 }
 
+/// The road layer's colour and normal maps, as images (for what draws a
+/// road apart from the ground: the bridges).
+pub fn road_images() -> Option<(RgbaImage, Option<RgbaImage>)> {
+    let road = LAYERS.iter().find(|layer| layer.folder == "road")?;
+    let images = load_layer(&Path::new(FOLDER).join(road.folder), false)?;
+    Some((images.albedo, images.normal))
+}
+
+/// The bridges' stone: colour, normal, roughness and occlusion maps from
+/// `assets/textures/bridge/` (one repeat a bridge's stone tile, see
+/// `bridges::STONE_TILE`), if it has a colour map.
+pub fn bridge_images() -> Option<[Option<RgbaImage>; 4]> {
+    let images = load_layer(Path::new(BRIDGE_FOLDER), false)?;
+    // Gloss inverted where there is no roughness.
+    let roughness = images.roughness.or_else(|| {
+        images.gloss.map(|mut gloss| {
+            gloss.pixels_mut().for_each(|p| p.0[..3].iter_mut().for_each(|c| *c = 255 - *c));
+            gloss
+        })
+    });
+    Some([Some(images.albedo), images.normal, roughness, images.occlusion])
+}
+
+/// Where the bridges' textures lie (see `bridge_images`).
+const BRIDGE_FOLDER: &str = "assets/textures/bridge";
+
 /// Folder below `assets/textures/terrain/` with the snow's scan.
 pub const SNOW_FOLDER: &str = "snow";
 

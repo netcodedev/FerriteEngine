@@ -620,27 +620,18 @@ impl WorldGenerator {
             Roads::tunnel_air(tunnels, x, y as f32, z)
         };
         let cave = Roads::cave_beside_tunnel(u.cave(x, y, z, h, slope), tunnel);
-        let bridge = self
-            .bridges_near(square(x), square(z))
-            .iter()
-            .map(|b| b.solid(x, y as f32, z))
-            .fold(f32::INFINITY, f32::min);
-        (y as f32 - h - push).max(cave).max(tunnel).min(bridge)
+        (y as f32 - h - push).max(cave).max(tunnel)
     }
 
-    /// The bridges that may reach into chunk square `(cx, cz)` or its
-    /// column's margins (see `Bridge::solid`).
+    /// The bridges that may reach over chunk square `(cx, cz)` or its
+    /// column's margins.
     pub fn bridges_near(&self, cx: i32, cz: i32) -> &[Arc<bridges::Bridge>] {
         self.roads()
             .and_then(|r| r.near(cx, cz))
             .map_or(&[], |l| l.bridges.as_slice())
     }
 
-    /// The highest top of a bridge over chunk square `(cx, cz)`, if one
-    /// stands there.
-    pub fn bridge_top(&self, cx: i32, cz: i32) -> Option<f32> {
-        self.bridges_near(cx, cz).iter().map(|b| b.top).reduce(f32::max)
-    }
+
 
     /// The pieces of tunnel tubes that may reach into chunk square
     /// `(cx, cz)` or its column's margins (see `Roads::tunnel_air`).

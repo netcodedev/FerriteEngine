@@ -332,6 +332,7 @@ impl<T: Chunk + Component + Send + 'static> Terrain<T> {
                 index += 1;
             }
         }
+        super::bridge_view::clear(scene, entity);
         self.generator = WorldGenerator::with_settings(self.seed, self.world.clone());
         self.streamer = Self::start_streaming(&self.generator);
         self.map.invalidate();
@@ -689,6 +690,13 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         }
         self.scatter.tick(delta_time);
         self.stream(scene, entity);
+        {
+            let eye = scene
+                .get_active_camera()
+                .map(|camera| camera.get_camera().get_eye_position())
+                .unwrap_or(Point3::new(0.0, 0.0, 0.0));
+            super::bridge_view::sync(&self.generator, scene, entity, eye);
+        }
         if T::has_horizon() {
             let eye = scene
                 .get_active_camera()

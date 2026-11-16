@@ -17,6 +17,7 @@ pub mod ik;
 mod bone;
 mod channel;
 pub mod clip_file;
+pub mod generated;
 pub mod grip;
 pub mod material_maps;
 mod model;

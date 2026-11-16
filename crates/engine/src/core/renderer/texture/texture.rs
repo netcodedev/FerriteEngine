@@ -12,7 +12,7 @@ impl Texture {
 
     fn gen_texture() -> Self {
         if crate::core::headless::is_headless() {
-            return Texture { id: 0, target: gl::TEXTURE_2D };
+            return Texture { id: 0, target: gl::TEXTURE_2D, owned: true };
         }
         let mut id = 0;
         unsafe {
@@ -21,6 +21,17 @@ impl Texture {
         Texture {
             id,
             target: gl::TEXTURE_2D,
+            owned: true,
+        }
+    }
+
+    /// Another handle on this texture, for many models to use one
+    /// texture. It does not free the texture: this one must outlive it.
+    pub fn share(&self) -> Texture {
+        Texture {
+            id: self.id,
+            target: self.target,
+            owned: false,
         }
     }
 
@@ -183,7 +194,7 @@ impl Texture {
         Texture::unbind();
     }
 
-    /// Upload a material map with mipmaps. A colour map is `srgb`, so the
+    /// Upload a material map with mipmaps and anisotropic filtering. A colour map is `srgb`, so the
     /// shader samples it in linear space; data maps (normal, roughness, ...)
     /// are stored as they are.
     pub fn load_material_map(&self, width: u32, height: u32, data: Vec<u8>, srgb: bool) {
@@ -212,6 +223,10 @@ impl Texture {
                 gl::UNSIGNED_BYTE,
                 data.as_ptr() as *const _,
             );
+            // Sharp at a glancing angle too, as the terrain's textures
+            // (GL_TEXTURE_MAX_ANISOTROPY, see `load_array`).
+            const TEXTURE_MAX_ANISOTROPY: gl::types::GLenum = 0x84FE;
+            gl::TexParameterf(gl::TEXTURE_2D, TEXTURE_MAX_ANISOTROPY, 8.0);
             gl::GenerateMipmap(gl::TEXTURE_2D);
         }
         Texture::unbind();
@@ -303,7 +318,7 @@ impl Texture {
 
 impl Drop for Texture {
     fn drop(&mut self) {
-        if crate::core::headless::is_headless() {
+        if crate::core::headless::is_headless() || !self.owned {
             return;
         }
         unsafe {

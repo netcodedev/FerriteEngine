@@ -1,14 +1,10 @@
 //! A tree grown from `TreeParams` on an entity. Every parameter is a
 //! property, so the editor shows the tree change as a slider moves; its
 //! bark and leaves take the project's texture assets, or textures drawn in
-//! code where none is chosen. Like `ShapeComponent`, the mesh is written to
-//! a temporary OBJ file and loaded like any model.
+//! code where none is chosen. The mesh becomes a model as in
+//! `core::model::generated`.
 
-use std::{
-    fmt::Write as _,
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::path::PathBuf;
 
 use cgmath::{Matrix4, Point3, Vector3};
 use russimp_ng::material::TextureType;
@@ -21,14 +17,14 @@ use crate::core::{
         Entity,
     },
     headless,
-    model::{Model, ModelBuilder},
+    model::{generated, Model},
     renderer::{pbr::Lighting, texture::Texture, weather::exposure},
     scene::{scene_file::ComponentData, Scene},
 };
 
 use super::{
     textures::{self, LeafKind},
-    tree::{self, CrownShape, Foliage, TreeMesh, TreeParams},
+    tree::{self, CrownShape, Foliage, TreeParams},
 };
 
 /// The textures a tree is given (texture assets); each one left out is
@@ -116,15 +112,7 @@ impl TreeComponent {
         if headless::is_headless() {
             return Ok(());
         }
-        let path = write_obj(&mesh)?;
-        let built = ModelBuilder::from_file(&path.to_string_lossy())
-            .map_err(|e| format!("could not build a tree: {e}"))
-            .map(|builder| builder.with_scale(1.0).build());
-        // The file is read: not needed any more.
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(path.with_extension("mtl"));
-        let mut model = built?;
-        model.init();
+        let mut model = generated::build_model(&[("bark", &mesh.bark), ("leaves", &mesh.leaves)])?;
         self.apply_textures(&mut model);
         self.model = Some(model);
         Ok(())
@@ -226,50 +214,6 @@ impl TreeComponent {
             }
         }
     }
-}
-
-/// A fresh temporary file name for a tree's OBJ (its MTL beside it).
-fn obj_path() -> Result<PathBuf, String> {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!("ferrite-trees-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    Ok(dir.join(format!("tree-{}.obj", NEXT.fetch_add(1, Ordering::Relaxed))))
-}
-
-/// The mesh as an OBJ file with two materials, `bark` and `leaves`.
-fn write_obj(mesh: &TreeMesh) -> Result<PathBuf, String> {
-    let path = obj_path()?;
-    let mtl = path.with_extension("mtl");
-    let mtl_name = mtl.file_name().unwrap().to_string_lossy().to_string();
-    let mut text = format!("mtllib {mtl_name}\n");
-    let mut base = 1;
-    for (name, part) in [("bark", &mesh.bark), ("leaves", &mesh.leaves)] {
-        if part.triangles.is_empty() {
-            continue;
-        }
-        let _ = writeln!(text, "o {name}\nusemtl {name}");
-        for [x, y, z] in &part.positions {
-            let _ = writeln!(text, "v {x:.4} {y:.4} {z:.4}");
-        }
-        for [x, y, z] in &part.normals {
-            let _ = writeln!(text, "vn {x:.4} {y:.4} {z:.4}");
-        }
-        for [u, v] in &part.uvs {
-            let _ = writeln!(text, "vt {u:.4} {v:.4}");
-        }
-        for t in &part.triangles {
-            let [a, b, c] = t.map(|i| i as usize + base);
-            let _ = writeln!(text, "f {a}/{a}/{a} {b}/{b}/{b} {c}/{c}/{c}");
-        }
-        base += part.positions.len();
-    }
-    write(&path, &text)?;
-    write(&mtl, "newmtl bark\nKd 1 1 1\n\nnewmtl leaves\nKd 1 1 1\n")?;
-    Ok(path)
-}
-
-fn write(path: &Path, text: &str) -> Result<(), String> {
-    std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 impl Component for TreeComponent {
@@ -410,24 +354,5 @@ impl Component for TreeComponent {
         }
         *p = p.sanitized();
         self.dirty = true;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_obj_holds_both_materials_and_every_triangle() {
-        let mesh = tree::grow(&TreeParams::preset("oak").unwrap());
-        let path = write_obj(&mesh).unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
-        let faces = text.lines().filter(|l| l.starts_with("f ")).count();
-        assert_eq!(faces, mesh.triangle_count());
-        assert!(text.contains("usemtl bark") && text.contains("usemtl leaves"));
-        let mtl = std::fs::read_to_string(path.with_extension("mtl")).unwrap();
-        assert!(mtl.contains("newmtl leaves"));
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(path.with_extension("mtl"));
     }
 }

@@ -14,6 +14,7 @@ use crate::core::{
 pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 
+pub mod bridge_view;
 pub mod dual_contouring;
 pub mod generator;
 pub mod marching_cubes;
