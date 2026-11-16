@@ -145,6 +145,12 @@ impl WorldGenerator {
                                 if road.is_some_and(|r| (r.distance as f64) < step * 0.5) {
                                     return [0.30, 0.18, 0.10];
                                 }
+                                // Tunnels dashed, lighter: under the ground.
+                                let tunnel = super::roads::Roads::nearest(&works.tunnels, x, z);
+                                let dash = ((x / step).floor() + (z / step).floor()).rem_euclid(3.0) < 2.0;
+                                if dash && tunnel.is_some_and(|r| (r.distance as f64) < step * 0.5) {
+                                    return [0.52, 0.46, 0.40];
+                                }
                             }
                             let Some(plan) = self.hydrology() else {
                                 return ground;

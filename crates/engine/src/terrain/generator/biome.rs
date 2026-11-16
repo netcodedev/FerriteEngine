@@ -128,6 +128,14 @@ pub struct BiomeBlend {
     pub color: [f32; 3],
     /// How much vegetation grows, 0..1.
     pub vegetation: f32,
+    /// How much of the ground is forest floor (forest, taiga), dry grass
+    /// (savanna, steppe), jungle floor, moss (tundra, alpine) and swamp,
+    /// 0..1 each: the terrain's texture layers.
+    pub forest: f32,
+    pub dry: f32,
+    pub jungle: f32,
+    pub tundra: f32,
+    pub swamp: f32,
     /// Temperature at the surface, °C.
     pub temperature: f32,
     pub humidity: f32,
@@ -177,6 +185,7 @@ pub fn biome_at(sea_temperature: f32, humidity: f32, h: f32) -> BiomeBlend {
 
     let mut color = [0.0f32; 3];
     let mut vegetation = 0.0;
+    let (mut forest, mut dry, mut jungle, mut tundra, mut swamp) = (0.0, 0.0, 0.0, 0.0, 0.0);
     let mut dominant = (Biome::Ocean, -1.0f32);
     for (biome, &w) in Biome::ALL.iter().zip(weights.iter()) {
         let traits = biome.traits();
@@ -184,6 +193,14 @@ pub fn biome_at(sea_temperature: f32, humidity: f32, h: f32) -> BiomeBlend {
             color[k] += traits.color[k] * w;
         }
         vegetation += traits.vegetation * w;
+        match biome {
+            Biome::Forest | Biome::Taiga => forest += w,
+            Biome::Savanna | Biome::Steppe => dry += w,
+            Biome::Jungle => jungle += w,
+            Biome::Tundra | Biome::Alpine => tundra += w,
+            Biome::Swamp => swamp += w,
+            _ => {}
+        }
         if w > dominant.1 {
             dominant = (*biome, w);
         }
@@ -192,6 +209,11 @@ pub fn biome_at(sea_temperature: f32, humidity: f32, h: f32) -> BiomeBlend {
         dominant: dominant.0,
         color,
         vegetation,
+        forest,
+        dry,
+        jungle,
+        tundra,
+        swamp,
         temperature,
         humidity,
     }

@@ -44,11 +44,15 @@ pub struct HorizonVertex {
     normal: [f32; 3],
     color: [f32; 3],
     climate: [f32; 2],
+    cover: [f32; 4],
+    /// Roads, settlements, gravel and mud: not drawn this far away.
+    paint: [f32; 4],
+    underground: f32,
 }
 
 impl VertexAttributes for HorizonVertex {
     fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
-        vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT), (2, gl::FLOAT)]
+        vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT), (2, gl::FLOAT), (4, gl::FLOAT), (4, gl::FLOAT), (1, gl::FLOAT)]
     }
 }
 
@@ -109,6 +113,11 @@ pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> (Vec<HorizonVertex
                     normal: if sea { [0.0, 1.0, 0.0] } else { normal.map(|c| c / length) },
                     color: biome.color,
                     climate: [biome.temperature, if sea { SEA_MARK } else { biome.humidity }],
+                    cover: [biome.forest, biome.dry, biome.jungle, biome.tundra],
+                    // Of what lies on the ground, only swamps' mud is wide
+                    // enough to show this far.
+                    paint: [0.0, 0.0, 0.0, biome.swamp],
+                    underground: 0.0,
                 });
             }
         }

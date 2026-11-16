@@ -61,6 +61,17 @@ pub trait Component: AsAny {
     /// terrain chunks or refitting the shadow box to the editor camera.
     fn update_in_editor(&mut self, _scene: &mut Scene, _entity: &mut Entity, _delta_time: f64) {}
 
+    /// Lights the component gives besides `Light` components (a terrain's
+    /// tunnel lamps), for a camera at `eye`: added to `out`. `transform` is
+    /// the entity's world transform.
+    fn lights(
+        &self,
+        _transform: &Matrix4<f32>,
+        _eye: Point3<f32>,
+        _out: &mut Vec<crate::core::renderer::light::light::LightSource>,
+    ) {
+    }
+
     /// Bodies whose colliders the user asked to see (the component's "show
     /// collider" toggle). Drawn by tools as wireframes.
     fn visible_collider_bodies(&self, _entity: &Entity) -> Vec<rapier3d::prelude::RigidBodyHandle> {

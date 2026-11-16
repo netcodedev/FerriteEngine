@@ -423,6 +423,22 @@ impl Hydrology {
         bank + (h - bank) * s
     }
 
+    /// How much of the ground is gravel, 0..1: river beds and a strip of
+    /// each bank (wider for wider rivers), and lake floors and shores.
+    /// `river` the nearest river, `lake` what `lake_at` says.
+    pub fn gravel(river: Option<NearestRiver>, lake: Option<(f32, f32)>) -> f32 {
+        let by_river = river.map_or(0.0, |r| {
+            let edge = (r.width * 0.5 + 1.5) as f64;
+            let reach = edge + 2.0 + 0.15 * bank_width(r.width) as f64;
+            1.0 - smoothstep(edge, reach, r.distance as f64) as f32
+        });
+        // The lake's water begins at `LAKE_WATER`; its shore a little before.
+        let by_lake = lake.map_or(0.0, |(_, inside)| {
+            smoothstep((LAKE_WATER * 0.35) as f64, LAKE_WATER as f64, inside as f64) as f32
+        });
+        by_river.max(by_lake)
+    }
+
     /// The lake near world `(x, z)`: its water level and how far into it
     /// the point lies, from 0 (on its outer edge) to 1 (well inside), blended
     /// between the plan's cells so its shore does not follow the grid.

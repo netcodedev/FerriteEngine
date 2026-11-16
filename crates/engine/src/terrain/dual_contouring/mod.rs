@@ -52,4 +52,12 @@ pub struct Vertex {
     color: [f32; 3],
     /// Temperature (°C, at this height) and humidity (0..1).
     climate: [f32; 2],
+    /// How much of the ground is forest floor, dry grass, jungle floor and
+    /// moss (see `BiomeBlend`), 0..1 each.
+    cover: [f32; 4],
+    /// How much of the ground is road, settlement, gravel (see
+    /// `Column::paint`) and mud (swamps), 0..1 each.
+    paint: [f32; 4],
+    /// How far it lies under the surface (caves, under overhangs), 0..1.
+    underground: f32,
 }

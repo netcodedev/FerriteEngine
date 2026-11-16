@@ -438,23 +438,26 @@ impl LightSource {
     }
 }
 
-/// Every enabled light in the scene with its entity's world transform.
-pub fn gather(scene: &Scene) -> Vec<LightSource> {
-    fn visit(entity: &Entity, parent: &Matrix4<f32>, out: &mut Vec<LightSource>) {
+/// Every enabled light in the scene with its entity's world transform, and
+/// the lights components give themselves (see `Component::lights`) for a
+/// camera at `eye`.
+pub fn gather(scene: &Scene, eye: Point3<f32>) -> Vec<LightSource> {
+    fn visit(entity: &Entity, parent: &Matrix4<f32>, eye: Point3<f32>, out: &mut Vec<LightSource>) {
         let transform = parent * entity.local_transform();
         for component in entity.components() {
             if let Some(light) = component.as_any().downcast_ref::<Light>() {
                 out.extend(light.source(&transform));
             }
+            component.lights(&transform, eye, out);
         }
         for child in entity.get_children() {
-            visit(child, &transform, out);
+            visit(child, &transform, eye, out);
         }
     }
     let mut out = Vec::new();
     let identity = Matrix4::from_scale(1.0);
     for entity in scene.get_entities() {
-        visit(entity, &identity, &mut out);
+        visit(entity, &identity, eye, &mut out);
     }
     out
 }

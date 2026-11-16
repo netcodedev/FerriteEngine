@@ -235,11 +235,11 @@ impl Scene {
         let Some(camera) = self.get_active_camera() else {
             return;
         };
-        let found = lights::gather(self);
+        let eye = camera.get_camera().get_eye_position();
+        let found = lights::gather(self, eye);
         if found.is_empty() && self.lights.borrow().is_none() {
             return;
         }
-        let eye = camera.get_camera().get_eye_position();
         let mut selected = lights::select(found, eye);
         shadow::assign(&mut selected, eye);
         let mut buffer = self.lights.borrow_mut();

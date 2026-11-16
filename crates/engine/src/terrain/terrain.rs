@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cgmath::{EuclideanSpace, Matrix4, Point3};
+use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3};
 use glfw::MouseButton;
 use image::RgbaImage;
 use lazy_static::lazy_static;
@@ -26,7 +26,10 @@ use crate::core::{
     physics::rigidbody::RigidBody,
     renderer::{
         hdr,
-        light::skylight::SkyLight,
+        light::{
+            light::{Light, LightSource},
+            skylight::SkyLight,
+        },
         line::Line,
         pbr::Lighting,
         shader::{self, DynamicVertexArray, Shader, VertexAttributes},
@@ -44,6 +47,18 @@ use super::{
     scatter::{Scatter, ScatterInstances, ScatterLayerData, TakenInstance},
     Chunk, ChunkBounds, ChunkMesh, Terrain, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
 };
+
+/// The tunnels' lamps: warm white, how bright, how far each reaches, and how
+/// near the camera one must be to be lit at all.
+const TUNNEL_LAMP_COLOR: [f32; 3] = [1.0, 0.86, 0.66];
+const TUNNEL_LAMP_INTENSITY: f32 = 6.0;
+const TUNNEL_LAMP_RANGE: f32 = 13.0;
+const TUNNEL_LAMP_REACH: f32 = 160.0;
+
+/// Under the ground, how far inside the loaded chunks' reach the horizon
+/// is left out: where it is sunk all the way (see the terrain's vertex
+/// shader).
+const HORIZON_HOLE_MARGIN: f32 = 170.0;
 
 /// Pixels per side of the world map (see `WorldMap`).
 const MAP_PIXELS: u32 = 256;
@@ -697,6 +712,22 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         Component::update(self, scene, entity, delta_time);
     }
 
+    /// The tunnels' lamps near the camera (the others light nothing it
+    /// sees: rock lies between).
+    fn lights(&self, transform: &Matrix4<f32>, eye: Point3<f32>, out: &mut Vec<LightSource>) {
+        let Some(roads) = self.generator.roads() else {
+            return;
+        };
+        let lamp = Light::point(TUNNEL_LAMP_COLOR, TUNNEL_LAMP_INTENSITY, TUNNEL_LAMP_RANGE);
+        for &[x, y, z] in roads.tunnel_lamps() {
+            let at = Point3::new(x, y, z);
+            if (at - eye).magnitude2() > TUNNEL_LAMP_REACH * TUNNEL_LAMP_REACH {
+                continue;
+            }
+            out.extend(lamp.source(&(transform * Matrix4::from_translation(at.to_vec()))));
+        }
+    }
+
     fn to_data(&self) -> Option<ComponentData> {
         Some(ComponentData::Terrain {
             seed: self.seed,
@@ -856,7 +887,13 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
         if let (Some(mesh), Some(eye), true) = (self.horizon.mesh(), eye, hdr::draws_to_view()) {
             shader.bind();
             shader.set_uniform_1i("isHorizon", 1);
-            shader.set_uniform_3f("horizonSink", eye.x, eye.z, StreamRadius::DEFAULT.load as f32);
+            let load = StreamRadius::DEFAULT.load as f32;
+            shader.set_uniform_3f("horizonSink", eye.x, eye.z, load);
+            // Under the ground (a tunnel, a cave) the horizon sunk under the
+            // chunks would show from below: there it is left out (from
+            // above it stands in for chunks still loading).
+            let under = eye.y < self.generator.surface_height(eye.x as f64, eye.z as f64) - 0.5;
+            shader.set_uniform_1f("horizonHole", if under { load - HORIZON_HOLE_MARGIN } else { 0.0 });
             mesh.render(shader, &Matrix4::from_scale(1.0), None);
             shader.bind();
             shader.set_uniform_1i("isHorizon", 0);

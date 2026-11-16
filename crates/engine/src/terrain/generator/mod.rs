@@ -87,9 +87,10 @@ pub struct Column {
     /// Temperature at sea level (°C) and humidity on a coarser grid,
     /// `CLIMATE_STEP` metres apart from `CLIMATE_ORIGIN`, row by row.
     climate: Vec<[f32; 2]>,
-    /// How much of the ground is road and settlement at each height
-    /// sample (0..255 each); `None` where neither comes near.
-    paint: Option<Vec<[u8; 2]>>,
+    /// How much of the ground is road, settlement and gravel (river beds
+    /// and banks, lake shores) at each height sample (0..255 each); `None`
+    /// where none comes near.
+    paint: Option<Vec<[u8; 3]>>,
     /// Lowest and highest height in the column (margin included).
     pub min_height: f32,
     pub max_height: f32,
@@ -131,11 +132,11 @@ impl Column {
     }
 
     /// How much of the ground at chunk-local `(x, z)` (within the
-    /// margins) is road and how much settlement, 0..1 each, blended
+    /// margins) is road, settlement and gravel, 0..1 each, blended
     /// between whole metres.
-    pub fn paint(&self, x: f32, z: f32) -> [f32; 2] {
+    pub fn paint(&self, x: f32, z: f32) -> [f32; 3] {
         let Some(paint) = &self.paint else {
-            return [0.0; 2];
+            return [0.0; 3];
         };
         let limit = (CHUNK_SIZE as i32 + COLUMN_MARGIN - 1) as f32;
         let (x, z) = (x.clamp(-COLUMN_MARGIN as f32, limit), z.clamp(-COLUMN_MARGIN as f32, limit));
@@ -349,11 +350,14 @@ impl WorldGenerator {
 
     /// The ground `h` at world `(x, z)` with the rivers' beds, the lakes'
     /// basins, the settlements' level grounds and the roads' beds worked
-    /// in, and how much of it is road and settlement (see `Column::paint`).
-    fn shaped_and_paint(&self, near: Near, x: f64, z: f64, h: f32) -> (f32, [f32; 2]) {
+    /// in, and how much of it is road, settlement and gravel (see
+    /// `Column::paint`).
+    fn shaped_and_paint(&self, near: Near, x: f64, z: f64, h: f32) -> (f32, [f32; 3]) {
         let (h, river) = self.shaped_by_water(near.rivers, x, z, h);
+        let lake = self.hydrology().and_then(|plan| plan.lake_at(x, z));
+        let gravel = Hydrology::gravel(river, lake);
         let Some((settlements, roads)) = near.works else {
-            return (h, [0.0; 2]);
+            return (h, [0.0, 0.0, gravel]);
         };
         // Not across a river: the road fords it, the river keeps its bed.
         let dry = river.map_or(1.0, |r| {
@@ -366,12 +370,15 @@ impl WorldGenerator {
         let road = Roads::nearest(roads, x, z);
         let mut h = h + (Roads::bed(h, road) - h) * dry;
         // Nor into a lake: dry ground beside one stays above its water.
-        if let Some((level, _)) = self.hydrology().and_then(|plan| plan.lake_at(x, z)) {
+        if let Some((level, _)) = lake {
             if before >= level {
                 h = h.max(level + 0.3);
             }
         }
-        (h, [Roads::surface(road) * dry, settlement * dry])
+        let road = Roads::surface(road) * dry;
+        // Roads and settlements lie over the gravel of a bank.
+        let gravel = gravel * (1.0 - road.max(settlement * dry));
+        (h, [road, settlement * dry, gravel])
     }
 
     /// The ground `h` at world `(x, z)` with the rivers' beds and the
@@ -521,7 +528,7 @@ impl WorldGenerator {
         let h = self.surface_height(x, z);
         // Kept clear: roads and settlements.
         let m = self.interpolated(x, z, &mut |tx, tz| self.tile(tx, tz));
-        let (_, [road, settlement]) =
+        let (_, [road, settlement, _]) =
             self.shaped_and_paint(self.near_point(x, z), x, z, m.height + m.hills * self.shape.detail(x, z));
         if road > 0.0 || settlement > 0.3 {
             return false;
@@ -533,15 +540,46 @@ impl WorldGenerator {
     }
 
     /// The ground as a volume at world `(x, y, z)`: negative inside,
-    /// positive in the air (roughly metres from the surface), with caves
-    /// and overhangs. Straight from the noise: chunks blend the same
+    /// positive in the air (roughly metres from the surface), with caves,
+    /// overhangs and tunnels. Straight from the noise: chunks blend the same
     /// values from a 4 m lattice, so they differ from this a little.
     pub fn density(&self, x: f64, y: f64, z: f64) -> f32 {
         let h = self.surface_height(x, z);
         let u = &self.underground;
-        let slope = self.slope(x, z);
+        // Flat where a road or settlement made the ground (as the chunks'
+        // lattice, see `underground`).
+        let worked = self
+            .near_point(x, z)
+            .works
+            .map_or(0.0, |(settlements, roads)| Roads::worked(settlements, roads, x, z));
+        let slope = self.slope(x, z) * (1.0 - worked);
         let push = if u.has_overhangs() { u.overhang(x, y, z, slope) } else { 0.0 };
-        (y as f32 - h - push).max(u.cave(x, y, z, h, slope))
+        let square = |v: f64| (v / CHUNK_SIZE as f64).floor() as i32;
+        let tunnels = self.tunnels_near(square(x), square(z));
+        let tunnel = if tunnels.is_empty() {
+            f32::NEG_INFINITY
+        } else {
+            Roads::tunnel_air(tunnels, x, y as f32, z)
+        };
+        let cave = Roads::cave_beside_tunnel(u.cave(x, y, z, h, slope), tunnel);
+        (y as f32 - h - push).max(cave).max(tunnel)
+    }
+
+    /// The pieces of tunnel tubes that may reach into chunk square
+    /// `(cx, cz)` or its column's margins (see `Roads::tunnel_air`).
+    pub fn tunnels_near(&self, cx: i32, cz: i32) -> &[roads::RoadSegment] {
+        self.roads()
+            .and_then(|r| r.near(cx, cz))
+            .map_or(&[], |l| l.tunnels.as_slice())
+    }
+
+    /// The lowest floor of a tunnel under chunk square `(cx, cz)`, if one
+    /// runs there.
+    pub fn tunnel_floor(&self, cx: i32, cz: i32) -> Option<f32> {
+        self.tunnels_near(cx, cz)
+            .iter()
+            .map(|s| s.level[0].min(s.level[1]))
+            .reduce(f32::min)
     }
 
     /// Heights between which caves may lie under ground whose surface
@@ -577,13 +615,18 @@ impl WorldGenerator {
         let [x0, y0, z0] = coord.origin();
         let span = Underground3::SPAN;
         let at = |i: i32| (Underground3::ORIGIN + i * Underground3::STEP) as f64;
-        // The surface and its slope over the lattice's columns.
+        // The surface and its slope over the lattice's columns. Where a
+        // road or settlement made the ground, it counts as flat: no
+        // overhang pushes a road into bumps and no cave opens in its
+        // cutting.
+        let works = self.near(coord.x, coord.z).works;
         let mut ground = Vec::with_capacity((span * span) as usize);
         for k in 0..span {
             for i in 0..span {
                 let (x, z) = (x0 + at(i), z0 + at(k));
                 let h = self.surface_height(x, z);
-                let slope = self.slope(x, z);
+                let worked = works.map_or(0.0, |(settlements, roads)| Roads::worked(settlements, roads, x, z));
+                let slope = self.slope(x, z) * (1.0 - worked);
                 ground.push((h, slope));
             }
         }
@@ -651,9 +694,7 @@ impl WorldGenerator {
                 let (wx, wz) = (x0 + x as f64, z0 + z as f64);
                 let m = self.interpolated(wx, wz, &mut tile);
                 let (h, p) = self.shaped_and_paint(near, wx, wz, m.height + m.hills * self.shape.detail(wx, wz));
-                if near.works.is_some() {
-                    paint.push(p.map(|v| (v * 255.0).round() as u8));
-                }
+                paint.push(p.map(|v| (v * 255.0).round() as u8));
                 min_height = min_height.min(h);
                 max_height = max_height.max(h);
                 heights.push(h);
@@ -668,8 +709,8 @@ impl WorldGenerator {
                 climate.push([m.temperature, m.humidity]);
             }
         }
-        // Only where a road or settlement comes near.
-        let paint = paint.iter().any(|p| p[0] > 0 || p[1] > 0).then_some(paint);
+        // Only where a road, settlement or gravel is.
+        let paint = paint.iter().any(|p| p.iter().any(|&v| v > 0)).then_some(paint);
         Column {
             heights,
             climate,

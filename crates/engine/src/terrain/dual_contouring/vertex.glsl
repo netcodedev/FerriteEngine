@@ -6,11 +6,21 @@ layout (location = 1) in vec3 normals;
 // (°C at this height) and humidity (see `generator::biome`).
 layout (location = 2) in vec3 groundColor;
 layout (location = 3) in vec2 climate;
+// Forest floor, dry grass, jungle floor and moss (see
+// `generator::biome::BiomeBlend`); road, settlement, gravel (see
+// `generator::Column::paint`) and mud. 0..1 each.
+layout (location = 4) in vec4 cover;
+layout (location = 5) in vec4 paint;
+// How far under the surface, 0..1.
+layout (location = 6) in float underground;
 
 out vec3 Normal;
 out vec3 WorldPos;
 out vec3 GroundColor;
 out vec2 Climate;
+out vec4 Cover;
+out vec4 Paint;
+out float Underground;
 
 uniform mat4 model;
 uniform mat4 viewProjection;
@@ -41,4 +51,7 @@ void main()
     WorldPos = worldPosition.xyz;
     GroundColor = groundColor;
     Climate = climate;
+    Cover = cover;
+    Paint = paint;
+    Underground = underground;
 }

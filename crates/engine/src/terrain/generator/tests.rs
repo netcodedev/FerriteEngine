@@ -1,6 +1,7 @@
 use std::{sync::Arc, thread, time::Instant};
 
 use super::*;
+use super::roads::{TUNNEL_HALF_WIDTH, TUNNEL_WALL};
 
 #[test]
 fn a_column_holds_the_surface_height_at_every_metre() {
@@ -422,16 +423,22 @@ fn roads_join_settlements_and_lie_on_the_ground() {
     assert!(ways.len() * 4 >= roads.settlements().len() * 3, "{} roads", ways.len());
     let is_settlement = |p: [f64; 2]| roads.settlements().iter().any(|s| s.centre == p);
     let (mut on, mut checked) = (0, 0);
-    for way in ways {
+    let (mut gentle, mut pieces) = (0, 0);
+    for (w, way) in ways.iter().enumerate() {
         assert!(is_settlement(way[0].0) && is_settlement(way.last().unwrap().0));
         for pair in way.windows(2) {
             let ((a, la), (b, lb)) = (pair[0], pair[1]);
             let run = (a[0] - b[0]).hypot(a[1] - b[1]) as f32;
-            assert!((la - lb).abs() <= 0.121 * run + 1e-3, "steep: {pair:?}");
+            // Steeper than a road should climb only where the ground forces
+            // it, and never very steep.
+            assert!((la - lb).abs() <= 0.4 * run + 1e-3, "steep: {pair:?}");
+            pieces += 1;
+            gentle += ((la - lb).abs() <= 0.121 * run + 1e-3) as i32;
         }
-        for &([x, z], level) in way.iter().step_by(23) {
-            // Where no river crosses (the road fords it).
-            if generator.hydrology().unwrap().river_near(x, z, 40.0) {
+        for (k, &([x, z], level)) in way.iter().enumerate().step_by(23) {
+            // Where no river crosses (the road fords it), and not in a
+            // tunnel.
+            if generator.hydrology().unwrap().river_near(x, z, 40.0) || roads.in_tunnel(w, k) {
                 continue;
             }
             checked += 1;
@@ -439,9 +446,128 @@ fn roads_join_settlements_and_lie_on_the_ground() {
             on += ((h - level).abs() < 0.5) as i32;
             let c = ChunkCoord::containing(x, 0.0, z);
             let [ox, _, oz] = c.origin();
-            let [road, _] = generator.column(c.x, c.z).paint((x - ox) as f32, (z - oz) as f32);
+            let [road, _, _] = generator.column(c.x, c.z).paint((x - ox) as f32, (z - oz) as f32);
             assert!(road > 0.9, "{road} road at {x}, {z}");
         }
     }
     assert!(checked > 50 && on as f32 > 0.95 * checked as f32, "{on} of {checked}");
+    assert!(gentle as f32 > 0.85 * pieces as f32, "{gentle} of {pieces} gentle");
+}
+
+#[test]
+fn roads_keep_near_the_ground() {
+    // No long ramps or deep cuttings: the road's surface stays near the
+    // ground's own height (with the rivers' beds and the settlements).
+    let generator = WorldGenerator::new(1);
+    let roads = generator.roads().unwrap();
+    let mut off = Vec::new();
+    for (w, way) in roads.ways().iter().enumerate() {
+        for (k, &(p, level)) in way.iter().enumerate().step_by(5) {
+            // (In a tunnel the road is under the ground, of course.)
+            if roads.in_tunnel(w, k) {
+                continue;
+            }
+            let m = generator.interpolated(p[0], p[1], &mut |tx, tz| generator.tile(tx, tz));
+            let h = m.height + m.hills * generator.shape.detail(p[0], p[1]);
+            let (h, _) = generator.shaped_by_water(generator.near_point(p[0], p[1]).rivers, p[0], p[1], h);
+            let (h, _) = Roads::level_settlements(roads.settlements(), p[0], p[1], h);
+            off.push((level - h).abs());
+        }
+    }
+    off.sort_by(|a, b| a.total_cmp(b));
+    let at = |f: f64| off[((off.len() - 1) as f64 * f) as usize];
+    assert!(at(0.9) < 8.0 && at(0.99) < 16.0 && at(1.0) < 45.0, "p90 {} p99 {} max {}", at(0.9), at(0.99), at(1.0));
+}
+
+#[test]
+fn no_walls_beside_roads() {
+    // Where two pieces of road at different heights come close (a hairpin,
+    // a junction) and on steep hillsides, the ground beside the road stays
+    // a slope, not a wall.
+    let generator = WorldGenerator::new(2);
+    let roads = generator.roads().unwrap();
+    let (mut walls, mut samples, mut worst) = (0, 0, 0.0f32);
+    for (w, way) in roads.ways().iter().enumerate() {
+        for (k, &(p, _)) in way.iter().enumerate().step_by(40) {
+            // Over a tunnel lies the mountain as it is.
+            if roads.in_tunnel(w, k) {
+                continue;
+            }
+            for dz in -20..20 {
+                for dx in -20..20 {
+                    let (x, z) = (p[0].round() + dx as f64, p[1].round() + dz as f64);
+                    let h = generator.surface_height(x, z);
+                    let step = (generator.surface_height(x + 1.0, z) - h)
+                        .abs()
+                        .max((generator.surface_height(x, z + 1.0) - h).abs());
+                    samples += 1;
+                    walls += (step > 4.0) as i32;
+                    worst = worst.max(step);
+                }
+            }
+        }
+    }
+    assert!(walls * 2000 < samples && worst < 8.0, "{walls} walls of {samples}, worst {worst} m per metre");
+}
+
+#[test]
+fn roads_do_not_cross_themselves() {
+    let crosses = |a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]| {
+        let o = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+        o(a, b, c) * o(a, b, d) < 0.0 && o(c, d, a) * o(c, d, b) < 0.0
+    };
+    let generator = WorldGenerator::new(2);
+    for way in generator.roads().unwrap().ways() {
+        for i in 0..way.len() - 1 {
+            for j in i + 2..way.len() - 1 {
+                assert!(
+                    !crosses(way[i].0, way[i + 1].0, way[j].0, way[j + 1].0),
+                    "crosses itself at {:?}",
+                    way[i].0
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn tunnels_are_tubes_through_the_rock() {
+    // Seed 2 has tunnels. In each: air over the floor up to a person's
+    // height and more along its middle, rock under the floor, and where
+    // enough ground lies over it, rock over the arch; at its ends it opens
+    // into the cutting, on the ground at the road's height.
+    let generator = WorldGenerator::new(2);
+    let tunnels = generator.roads().unwrap().tunnels();
+    assert!(tunnels.len() >= 3, "{} tunnels", tunnels.len());
+    for tube in tunnels {
+        let length: f64 = tube.iter().map(|s| (s.a[0] - s.b[0]).hypot(s.a[1] - s.b[1])).sum();
+        assert!(length > 100.0, "a tube {length} m long");
+        for s in tube {
+            for t in [0.0, 0.5, 1.0] {
+                let (x, z) = (s.a[0] + (s.b[0] - s.a[0]) * t, s.a[1] + (s.b[1] - s.a[1]) * t);
+                let floor = s.level[0] + (s.level[1] - s.level[0]) * t as f32;
+                for up in [0.3, 1.0, 2.0, 4.5] {
+                    let d = generator.density(x, (floor + up) as f64, z);
+                    assert!(d > 0.0, "no air {up} m over the floor at {x}, {z}: {d}");
+                }
+                assert!(generator.density(x, (floor - 0.5) as f64, z) < 0.0, "no floor at {x}, {z}");
+            }
+        }
+        // Inside (away from the portals, where the cutting's slope comes
+        // down to them): at least 1.5 m of rock over the arch.
+        let (start, end) = (tube[0].a, tube[tube.len() - 1].b);
+        for s in &tube[1..tube.len() - 1] {
+            let (x, z) = ((s.a[0] + s.b[0]) * 0.5, (s.a[1] + s.b[1]) * 0.5);
+            if (x - start[0]).hypot(z - start[1]).min((x - end[0]).hypot(z - end[1])) < 15.0 {
+                continue;
+            }
+            let top = 0.5 * (s.level[0] + s.level[1]) + TUNNEL_WALL + TUNNEL_HALF_WIDTH;
+            assert!(generator.density(x, (top + 1.5) as f64, z) < 0.0, "no rock over the arch at {x}, {z}");
+        }
+        let (first, last) = (tube[0], tube[tube.len() - 1]);
+        for (p, level) in [(first.a, first.level[0]), (last.b, last.level[1])] {
+            let h = generator.surface_height(p[0], p[1]);
+            assert!((h - level).abs() < 1.5, "the portal at {p:?}: ground {h}, road {level}");
+        }
+    }
 }

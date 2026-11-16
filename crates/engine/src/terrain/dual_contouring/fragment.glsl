@@ -1,6 +1,9 @@
 // Terrain surface: the biomes' ground colour (from the vertices), sand on
 // the shore, rock on cliffs and snow where it is cold. With textures:
-// grass, sand and rock blended by height, slope, climate and the textures'
+// grass, sand, rock, forest floor, dry grass, gravel, road, dirt, jungle
+// floor, tundra moss, mud and cave rock blended
+// by height, slope, climate, the biomes and what lies on the ground
+// (roads, settlements, river banks), refined by the textures'
 // own height maps, projected triplanar so cliffs do not
 // stretch, and lit like models (`lighting.glsl` comes before this). Without
 // textures the terrain falls back to plain colours.
@@ -11,6 +14,12 @@ in vec3 WorldPos;
 in vec3 GroundColor;
 // Temperature (°C at this height), humidity (0..1).
 in vec2 Climate;
+// Forest floor, dry grass, jungle floor, moss.
+in vec4 Cover;
+// Road, settlement, gravel, mud.
+in vec4 Paint;
+// How far under the surface (caves, under overhangs), 0..1.
+in float Underground;
 
 out vec4 FragColor;
 
@@ -19,15 +28,41 @@ layout(binding = 1) uniform sampler2DArray terrainNormal;
 // r: roughness, g: ambient occlusion, b: height
 layout(binding = 2) uniform sampler2DArray terrainSurface;
 uniform int hasTerrainTextures;
-// Metres one texture tile covers, per layer.
-uniform float tileSize[3];
-// Metres between the lowest and highest point of a layer's height map.
-uniform float heightDepth[3];
-
+// The horizon (see `terrain::horizon` and the vertex shader) is left out
+// within `horizonHole` metres of the camera at `horizonSink.xy` (x, z).
+uniform int isHorizon;
+uniform vec3 horizonSink;
+uniform float horizonHole;
 // Layers, in the order of `terrain::materials::LAYERS`.
 const int GRASS = 0;
 const int SAND = 1;
 const int ROCK = 2;
+const int FOREST = 3;
+const int DRY = 4;
+const int GRAVEL = 5;
+const int ROAD = 6;
+const int DIRT = 7;
+const int JUNGLE = 8;
+const int TUNDRA = 9;
+const int MUD = 10;
+const int CAVE_ROCK = 11;
+const int LAYER_COUNT = 12;
+
+// Metres one texture tile covers, per layer.
+uniform float tileSize[LAYER_COUNT];
+// Metres between the lowest and highest point of a layer's height map.
+uniform float heightDepth[LAYER_COUNT];
+// How far the layer's placements may be turned, as a share of a full turn
+// either way (0 for the road, whose tracks follow it).
+uniform float turn[LAYER_COUNT];
+// 1 where the biomes' ground colour tints the layer (grass).
+uniform float tinted[LAYER_COUNT];
+
+// Colours of what lies on the ground, without textures (display space).
+const vec3 ROAD_COLOR = vec3(0.50, 0.41, 0.26);
+const vec3 TRODDEN_COLOR = vec3(0.56, 0.50, 0.38);
+const vec3 GRAVEL_COLOR = vec3(0.47, 0.44, 0.40);
+const vec3 MUD_COLOR = vec3(0.24, 0.19, 0.13);
 
 const vec3 SNOW = vec3(0.86, 0.88, 0.92);
 
@@ -37,7 +72,7 @@ const vec3 SNOW = vec3(0.86, 0.88, 0.92);
 const float MACRO_SCALE = 6.0;
 // Parallax depth relative to the scan's real height, and the distance
 // over which it fades out (it is invisible further away).
-const float PARALLAX_STRENGTH = 2.0;
+const float PARALLAX_STRENGTH = 1.0;
 const float PARALLAX_FADE_START = 6.0;
 const float PARALLAX_FADE_END = 20.0;
 
@@ -62,23 +97,110 @@ float desertness(vec2 climate) {
 
 // How much of each layer a spot gets before the height maps refine it:
 // sand on the shore, under water and in deserts, rock on cliffs and above
-// the trees, grass elsewhere. `n` (-1..1) wobbles the borders.
-vec3 layerWeights(float h, float slope, float n, vec2 climate) {
+// the trees, dark rock underground; where plants grow, jungle floor in
+// jungles, forest floor in forests (with grassy clearings), dry grass in
+// savanna and steppe, moss in tundra and above the trees, grass elsewhere.
+// Over that, mud in swamps, gravel on river banks and lake shores, dirt in
+// settlements and the road, each leaving the rock of a cliff or a cave.
+// `n` (-1..1) wobbles the borders.
+void layerWeights(float h, float slope, float n, vec2 climate, out float w[LAYER_COUNT]) {
     float sand = max(1.0 - smoothstep(5.0, 8.5, h + n * 1.5), desertness(climate));
     float cliff = smoothstep(0.50, 0.72, slope + n * 0.05) * smoothstep(0.0, 8.0, h);
     float rock = max(cliff, 1.0 - smoothstep(-4.0, 0.0, climate.x + n * 1.5));
+    float cave = smoothstep(0.1, 0.6, Underground);
+    rock = max(rock, cave);
     sand *= 1.0 - rock;
-    return vec3(max(1.0 - sand - rock, 0.0), sand, rock);
+    float plants = max(1.0 - sand - rock, 0.0);
+
+    float patches = valueNoise(WorldPos.xz * 0.045);
+    // Each takes what the ones before leave.
+    float jungle = smoothstep(0.3, 0.6, Cover.z + n * 0.08);
+    float forest = smoothstep(0.3, 0.65, Cover.x * mix(0.55, 1.15, patches) + n * 0.08) * (1.0 - jungle);
+    float dry = smoothstep(0.25, 0.7, Cover.y + n * 0.12) * (1.0 - jungle - forest);
+    float tundra = smoothstep(0.25, 0.65, Cover.w + n * 0.1) * (1.0 - jungle - forest - dry);
+    for (int i = 0; i < LAYER_COUNT; i++) {
+        w[i] = 0.0;
+    }
+    w[GRASS] = plants * max(1.0 - jungle - forest - dry - tundra, 0.0);
+    w[SAND] = sand;
+    w[ROCK] = rock * (1.0 - cave);
+    w[CAVE_ROCK] = rock * cave;
+    w[FOREST] = plants * forest;
+    w[DRY] = plants * dry;
+    w[JUNGLE] = plants * jungle;
+    w[TUNDRA] = plants * tundra;
+
+    // What lies on the ground, in the order it covers itself: a swamp's
+    // mud under gravel under a settlement's dirt under the road.
+    // A settlement's ground is trodden bare in patches, grass between;
+    // a swamp's is mud in pools.
+    float trodden = valueNoise(WorldPos.xz * 0.07) * 0.7 + valueNoise(WorldPos.xz * 0.23) * 0.3;
+    float pools = valueNoise(WorldPos.xz * 0.05 + 17.0) * 0.6 + valueNoise(WorldPos.xz * 0.19) * 0.4;
+    float cover[4] = float[4](
+        smoothstep(0.3, 0.55, Paint.w * (pools + 0.2)),
+        smoothstep(0.15, 0.6, Paint.z + n * 0.1),
+        smoothstep(0.35, 0.6, Paint.y * (trodden + 0.15)),
+        smoothstep(0.1, 0.5, Paint.x));
+    int layers[4] = int[4](MUD, GRAVEL, DIRT, ROAD);
+    for (int k = 0; k < 4; k++) {
+        // Over everything but a cliff or a cave: also over the bare rock
+        // above the trees, where a mountain road runs.
+        float o = cover[k] * (1.0 - max(cliff, cave));
+        if (o <= 0.0) {
+            continue;
+        }
+        for (int i = 0; i < LAYER_COUNT; i++) {
+            w[i] *= 1.0 - o;
+        }
+        w[layers[k]] += o;
+    }
+
+    // Too little to see is not sampled.
+    float total = 0.0;
+    for (int i = 0; i < LAYER_COUNT; i++) {
+        w[i] = w[i] < 0.03 ? 0.0 : w[i];
+        total += w[i];
+    }
+    for (int i = 0; i < LAYER_COUNT; i++) {
+        w[i] /= max(total, 1e-4);
+    }
+}
+
+// The strongest layers at a spot, at most `MAX_SAMPLED` (the rest are
+// thin edges): their indices (-1: none) and weights, summing to 1.
+const int MAX_SAMPLED = 4;
+void strongest(float w[LAYER_COUNT], out ivec4 ids, out vec4 weights) {
+    ids = ivec4(-1);
+    weights = vec4(0.0);
+    for (int i = 0; i < LAYER_COUNT; i++) {
+        float v = w[i];
+        int id = i;
+        if (v <= 0.0) {
+            continue;
+        }
+        // Insert into the list kept strongest first.
+        for (int k = 0; k < MAX_SAMPLED; k++) {
+            if (v > weights[k]) {
+                float tv = weights[k];
+                int ti = ids[k];
+                weights[k] = v;
+                ids[k] = id;
+                v = tv;
+                id = ti;
+            }
+        }
+    }
+    weights /= max(weights.x + weights.y + weights.z + weights.w, 1e-4);
 }
 
 // Height-based blend: where layers meet, the one whose height map is higher
 // shows, so grass grows into the cracks of rock instead of fading over it.
-vec3 heightBlend(vec3 weights, vec3 heights) {
+vec4 heightBlend(vec4 weights, vec4 heights) {
     const float depth = 0.2;
-    vec3 h = heights + weights;
-    float top = max(max(h.x, h.y), h.z) - depth;
-    vec3 b = max(h - top, 0.0) * step(0.001, weights);
-    return b / max(b.x + b.y + b.z, 1e-4);
+    vec4 h = heights + weights;
+    float top = max(max(h.x, h.y), max(h.z, h.w)) - depth;
+    vec4 b = max(h - top, 0.0) * step(0.001, weights);
+    return b / max(b.x + b.y + b.z + b.w, 1e-4);
 }
 
 vec3 unpackNormal(vec4 texel) {
@@ -94,46 +216,115 @@ struct LayerSample {
     vec3 surface; // roughness, occlusion, height
 };
 
+// Tiling without repetition (after Inigo Quilez, "Texture Repetition",
+// technique 3): a smooth noise picks one of many placements of the texture
+// across the ground, each shifted and (for layers that allow it) turned by
+// its own random angle, so neither a grid of copies nor the same strands
+// in the same direction show. Where the noise moves from one placement to
+// the next, both are read and the higher of the two by its height map
+// shows. Gradients are given (`dx`, `dy`) so the jumps do not upset the
+// mip level.
+const float NO_TILE_SCALE = 0.5; // noise cells per tile
+const float NO_TILE_STEPS = 12.0; // placements across the noise's range
+
+struct Texels {
+    vec3 albedo;
+    vec3 surface;
+    // Unpacked, in the frame of the unturned texture.
+    vec3 normal;
+};
+
+// The texels at `uv` read through placement `i`: shifted and turned.
+Texels fetchPlaced(int layer, vec2 uv, vec2 dx, vec2 dy, float i) {
+    float h1 = hash12(vec2(i, float(layer) * 7.31 + 1.7));
+    float h2 = hash12(vec2(i + 19.1, float(layer) * 3.17));
+    float h3 = hash12(vec2(i * 1.37 + 5.3, 11.0));
+    float angle = 6.2831853 * (h1 * 2.0 - 1.0) * turn[layer];
+    float c = cos(angle), s = sin(angle);
+    mat2 turn = mat2(c, s, -s, c);
+    vec3 at = vec3(turn * uv + vec2(h2, h3) * 7.0, layer);
+    vec2 tdx = turn * dx, tdy = turn * dy;
+    vec3 n = unpackNormal(textureGrad(terrainNormal, at, tdx, tdy));
+    // The normal's slope turned back into the ground's frame.
+    n.xy = transpose(turn) * n.xy;
+    return Texels(textureGrad(terrainAlbedo, at, tdx, tdy).rgb,
+                  textureGrad(terrainSurface, at, tdx, tdy).rgb,
+                  n);
+}
+
+Texels sampleNoTile(int layer, vec2 uv, vec2 dx, vec2 dy) {
+    float l = valueNoise(uv * NO_TILE_SCALE + float(layer) * 13.7) * NO_TILE_STEPS;
+    float i = floor(l);
+    float f = fract(l);
+    // Away from a change only one is needed.
+    if (f < 0.35) {
+        return fetchPlaced(layer, uv, dx, dy, i);
+    }
+    if (f > 0.65) {
+        return fetchPlaced(layer, uv, dx, dy, i + 1.0);
+    }
+    Texels a = fetchPlaced(layer, uv, dx, dy, i);
+    Texels b = fetchPlaced(layer, uv, dx, dy, i + 1.0);
+    // The height maps move the change by at most 0.07: it stays within
+    // the band where both are read.
+    float w = smoothstep(0.42, 0.58, f + 0.07 * (b.surface.b - a.surface.b));
+    return Texels(mix(a.albedo, b.albedo, w), mix(a.surface, b.surface, w), mix(a.normal, b.normal, w));
+}
+
 // Triplanar sample of one layer with whiteout-blended normals
-// (Ben Golus, "Normal Mapping for a Triplanar Shader"), `s` tiles per metre.
-// `parallax` (0..1) shifts the top projection by the height map toward the
-// viewer `V`, so the ground looks deeper close up.
-LayerSample sampleLayer(int layer, vec3 p, vec3 Ng, vec3 blend, float s, vec3 V, float parallax) {
+// (Ben Golus, "Normal Mapping for a Triplanar Shader"), `s` tiles per metre,
+// each projection without repetition (`sampleNoTile`). `dpdx`, `dpdy`: how
+// the world position changes across the pixel. `parallax` (0..1) shifts the
+// top projection by the height map toward the viewer `V`, so the ground
+// looks deeper close up.
+LayerSample sampleLayer(int layer, vec3 p, vec3 Ng, vec3 blend, float s, vec3 V, float parallax,
+                        vec3 dpdx, vec3 dpdy) {
     vec3 axisSign = vec3(Ng.x < 0.0 ? -1.0 : 1.0, Ng.y < 0.0 ? -1.0 : 1.0, Ng.z < 0.0 ? -1.0 : 1.0);
     vec3 albedo = vec3(0.0);
     vec3 surface = vec3(0.0);
     vec3 nX = vec3(0.0), nY = vec3(0.0), nZ = vec3(0.0);
     if (blend.x > 0.01) {
-        vec3 uv = vec3(p.z * s * axisSign.x, p.y * s, layer);
-        albedo += texture(terrainAlbedo, uv).rgb * blend.x;
-        surface += texture(terrainSurface, uv).rgb * blend.x;
-        vec3 t = unpackNormal(texture(terrainNormal, uv));
-        t.x *= axisSign.x;
-        t.z *= axisSign.x;
-        nX = vec3(t.xy + Ng.zy, abs(t.z) * Ng.x);
+        vec2 uv = vec2(p.z * axisSign.x, p.y) * s;
+        vec2 dx = vec2(dpdx.z * axisSign.x, dpdx.y) * s;
+        vec2 dy = vec2(dpdy.z * axisSign.x, dpdy.y) * s;
+        Texels t = sampleNoTile(layer, uv, dx, dy);
+        albedo += t.albedo * blend.x;
+        surface += t.surface * blend.x;
+        vec3 n = t.normal;
+        n.x *= axisSign.x;
+        n.z *= axisSign.x;
+        nX = vec3(n.xy + Ng.zy, abs(n.z) * Ng.x);
     }
     if (blend.y > 0.01) {
-        vec3 uv = vec3(p.x * s * axisSign.y, p.z * s, layer);
+        vec2 uv = vec2(p.x * axisSign.y, p.z) * s;
+        vec2 dx = vec2(dpdx.x * axisSign.y, dpdx.z) * s;
+        vec2 dy = vec2(dpdy.x * axisSign.y, dpdy.z) * s;
         if (parallax > 0.0 && Ng.y > 0.0) {
-            float height = texture(terrainSurface, uv).b;
-            vec2 toEye = vec2(V.x * axisSign.y, V.z) / max(V.y, 0.3);
-            uv.xy += toEye * (height - 0.5) * heightDepth[layer] * PARALLAX_STRENGTH * s * parallax;
+            float height = sampleNoTile(layer, uv, dx, dy).surface.b;
+            // Offset limiting: not divided by the view's height, so a
+            // grazing view does not drag the texture into streaks.
+            vec2 toEye = vec2(V.x * axisSign.y, V.z);
+            uv += toEye * (height - 0.5) * heightDepth[layer] * PARALLAX_STRENGTH * s * parallax;
         }
-        albedo += texture(terrainAlbedo, uv).rgb * blend.y;
-        surface += texture(terrainSurface, uv).rgb * blend.y;
-        vec3 t = unpackNormal(texture(terrainNormal, uv));
-        t.x *= axisSign.y;
-        t.z *= axisSign.y;
-        nY = vec3(t.xy + Ng.xz, abs(t.z) * Ng.y);
+        Texels t = sampleNoTile(layer, uv, dx, dy);
+        albedo += t.albedo * blend.y;
+        surface += t.surface * blend.y;
+        vec3 n = t.normal;
+        n.x *= axisSign.y;
+        n.z *= axisSign.y;
+        nY = vec3(n.xy + Ng.xz, abs(n.z) * Ng.y);
     }
     if (blend.z > 0.01) {
-        vec3 uv = vec3(-p.x * s * axisSign.z, p.y * s, layer);
-        albedo += texture(terrainAlbedo, uv).rgb * blend.z;
-        surface += texture(terrainSurface, uv).rgb * blend.z;
-        vec3 t = unpackNormal(texture(terrainNormal, uv));
-        t.x *= -axisSign.z;
-        t.z *= axisSign.z;
-        nZ = vec3(t.xy + Ng.xy, abs(t.z) * Ng.z);
+        vec2 uv = vec2(-p.x * axisSign.z, p.y) * s;
+        vec2 dx = vec2(-dpdx.x * axisSign.z, dpdx.y) * s;
+        vec2 dy = vec2(-dpdy.x * axisSign.z, dpdy.y) * s;
+        Texels t = sampleNoTile(layer, uv, dx, dy);
+        albedo += t.albedo * blend.z;
+        surface += t.surface * blend.z;
+        vec3 n = t.normal;
+        n.x *= -axisSign.z;
+        n.z *= axisSign.z;
+        nZ = vec3(n.xy + Ng.xy, abs(n.z) * Ng.z);
     }
     float total = max(blend.x * step(0.01, blend.x) + blend.y * step(0.01, blend.y)
                       + blend.z * step(0.01, blend.z), 1e-4);
@@ -148,6 +339,10 @@ vec3 paletteColor(float h, float slope, float n) {
     vec3 rock       = vec3(0.46, 0.43, 0.39);
     vec3 darkRock   = vec3(0.36, 0.34, 0.32);
     vec3 color = mix(seabedDeep, GroundColor, smoothstep(-40.0, -3.0, h));
+    color = mix(color, MUD_COLOR, Paint.w * 0.5);
+    color = mix(color, GRAVEL_COLOR, Paint.z * 0.7);
+    color = mix(color, TRODDEN_COLOR, Paint.y * 0.55);
+    color = mix(color, ROAD_COLOR, Paint.x);
     // Patches, so a field is not one flat colour.
     color *= mix(0.9, 1.08, valueNoise(WorldPos.xz * 0.035) * 0.6 + n * 0.2 + 0.2);
     float rockBlend = smoothstep(0.57, 0.80, slope) * smoothstep(0.0, 8.0, h);
@@ -247,7 +442,14 @@ void terrainSnow(float exposure, inout vec3 albedo, inout vec3 N, vec3 Ng,
 }
 
 void main() {
+    if (isHorizon == 1 && length(WorldPos.xz - horizonSink.xy) < horizonHole) {
+        discard;
+    }
     snowGradients(WorldPos);
+    // Here, where every pixel of a quad still runs: the layers are read
+    // with these gradients further down, in branches.
+    vec3 dpdx = dFdx(WorldPos);
+    vec3 dpdy = dFdy(WorldPos);
     if (isShadowPass == 1) {
         FragColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
@@ -265,43 +467,56 @@ void main() {
     if (hasTerrainTextures == 1) {
         vec3 blend = pow(abs(Ng), vec3(4.0));
         blend /= blend.x + blend.y + blend.z;
-        vec3 weights = layerWeights(h, slope, n, Climate);
+        float weights[LAYER_COUNT];
+        layerWeights(h, slope, n, Climate, weights);
 
         vec3 V = normalize(cameraPosition - WorldPos);
         float viewDistance = length(cameraPosition - WorldPos);
         float parallax = 1.0 - smoothstep(PARALLAX_FADE_START, PARALLAX_FADE_END, viewDistance);
         // Far away the coarse sampling takes over half of the colour.
         float far = smoothstep(15.0, 80.0, viewDistance) * 0.5;
+        float macroBumps = mix(0.15, 1.0, smoothstep(8.0, 60.0, viewDistance));
 
-        LayerSample samples[3];
-        vec3 heights = vec3(0.0);
-        for (int i = 0; i < 3; i++) {
-            if (weights[i] > 0.001) {
-                float s = 1.0 / tileSize[i];
-                LayerSample fine = sampleLayer(i, WorldPos, Ng, blend, s, V, parallax);
-                LayerSample macro = sampleLayer(i, WorldPos, Ng, blend, s / MACRO_SCALE, V, 0.0);
-                samples[i].albedo = mix(fine.albedo, macro.albedo, far);
-                // Add both layers' bumps to the surface normal.
-                samples[i].normal = normalize(Ng + (fine.normal - Ng) + (macro.normal - Ng));
-                samples[i].surface = fine.surface;
-                heights[i] = fine.surface.b;
-            } else {
-                samples[i] = LayerSample(vec3(0.0), Ng, vec3(0.0));
+        ivec4 ids;
+        vec4 layerWeight;
+        strongest(weights, ids, layerWeight);
+        LayerSample samples[MAX_SAMPLED];
+        vec4 heights = vec4(0.0);
+        for (int k = 0; k < MAX_SAMPLED; k++) {
+            int i = ids[k];
+            if (i < 0) {
+                samples[k] = LayerSample(vec3(0.0), Ng, vec3(0.0));
+                continue;
             }
+            float s = 1.0 / tileSize[i];
+            LayerSample fine = sampleLayer(i, WorldPos, Ng, blend, s, V, parallax, dpdx, dpdy);
+            LayerSample macro = sampleLayer(i, WorldPos, Ng, blend, s / MACRO_SCALE, V, 0.0, dpdx, dpdy);
+            samples[k].albedo = mix(fine.albedo, macro.albedo, far);
+            // Add both samplings' bumps to the surface normal. The coarse
+            // one is the same scan six times larger: up close its bumps are
+            // wide, soft waves, so they come in with distance.
+            samples[k].normal = normalize(Ng + (fine.normal - Ng) + (macro.normal - Ng) * macroBumps);
+            samples[k].surface = fine.surface;
+            heights[k] = fine.surface.b;
         }
-        weights = heightBlend(weights, heights);
+        layerWeight = heightBlend(layerWeight, heights);
         // The grass takes on the biomes' colour (relative to a mid green,
-        // so the texture's own detail stays).
+        // so the texture's own detail stays). Red and blue never outgrow
+        // green by much: a brown ground colour would turn grass purple.
         vec3 tint = clamp(GroundColor / vec3(0.24, 0.50, 0.13), vec3(0.4), vec3(2.5));
-        samples[GRASS].albedo *= pow(mix(vec3(1.0), tint, 0.7), vec3(2.2));
+        tint.rb = min(tint.rb, vec2(tint.g * 1.4));
+        vec3 grassTint = pow(mix(vec3(1.0), tint, 0.7), vec3(2.2));
 
         albedo = vec3(0.0);
         vec3 normal = vec3(0.0);
         vec3 surface = vec3(0.0);
-        for (int i = 0; i < 3; i++) {
-            albedo += samples[i].albedo * weights[i];
-            normal += samples[i].normal * weights[i];
-            surface += samples[i].surface * weights[i];
+        for (int k = 0; k < MAX_SAMPLED; k++) {
+            if (ids[k] < 0) {
+                continue;
+            }
+            albedo += samples[k].albedo * mix(vec3(1.0), grassTint, tinted[ids[k]]) * layerWeight[k];
+            normal += samples[k].normal * layerWeight[k];
+            surface += samples[k].surface * layerWeight[k];
         }
         N = normalize(normal);
         roughness = surface.r;

@@ -13,7 +13,10 @@ use fast_surface_nets::{
 
 use super::Vertex;
 use crate::terrain::{
-    generator::{ChunkCoord, Column, Underground3, WorldGenerator, COLUMN_MARGIN},
+    generator::{
+        roads::{RoadSegment, Roads, TUNNEL_HALF_WIDTH, TUNNEL_WALL},
+        ChunkCoord, Column, Underground3, WorldGenerator, COLUMN_MARGIN,
+    },
     CHUNK_SIZE, CHUNK_SIZE_FLOAT,
 };
 
@@ -29,6 +32,10 @@ pub(super) struct DensityField {
     floor: f32,
     /// Caves and overhangs, where the chunk has any.
     underground: Option<Underground3>,
+    /// The tunnel tubes that reach into the chunk (see
+    /// `Roads::tunnel_air`), and the chunk's corner in world metres.
+    tunnels: Vec<RoadSegment>,
+    origin: [f64; 3],
     /// Where it has: the whole field at every whole metre the meshing
     /// reads (`span` per side from `-margin`, x fastest, then y), made
     /// once, since each vertex reads it a few hundred times.
@@ -38,21 +45,47 @@ pub(super) struct DensityField {
 impl DensityField {
     /// The field of the chunk at `coord`, far enough for levels up to
     /// `coarsest` metres between samples.
-    /// Without `detail`, the height field alone: no caves, no overhangs
-    /// (what is drawn from afar).
+    /// Without `detail`, the height field alone: no caves, no overhangs,
+    /// no tunnels (what is drawn from afar).
     pub(super) fn new(generator: &WorldGenerator, coord: ChunkCoord, coarsest: i32, detail: bool) -> Self {
         // A level samples from one step before the chunk to one step past
         // it, and the normals look one metre further.
         assert!(coarsest < COLUMN_MARGIN, "the column is too narrow for steps of {coarsest} m");
+        let origin = coord.origin();
+        let floor = coord.y as f32 * CHUNK_SIZE_FLOAT;
+        // The tubes that come within the field's reach.
+        let reach = (COLUMN_MARGIN + 1) as f64 + TUNNEL_HALF_WIDTH as f64;
+        let tunnels: Vec<RoadSegment> = if detail {
+            generator
+                .tunnels_near(coord.x, coord.z)
+                .iter()
+                .filter(|s| {
+                    let (lo, hi) = (s.level[0].min(s.level[1]), s.level[0].max(s.level[1]));
+                    let (bottom, top) = (floor - reach as f32, floor + CHUNK_SIZE_FLOAT + reach as f32);
+                    let size = CHUNK_SIZE as f64;
+                    hi + TUNNEL_WALL + TUNNEL_HALF_WIDTH >= bottom
+                        && lo <= top
+                        && s.a[0].max(s.b[0]) >= origin[0] - reach
+                        && s.a[0].min(s.b[0]) <= origin[0] + size + reach
+                        && s.a[1].max(s.b[1]) >= origin[2] - reach
+                        && s.a[1].min(s.b[1]) <= origin[2] + size + reach
+                })
+                .copied()
+                .collect()
+        } else {
+            Vec::new()
+        };
         let mut field = Self {
             column: generator.column(coord.x, coord.z),
             span: Column::SPAN,
             margin: COLUMN_MARGIN,
-            floor: coord.y as f32 * CHUNK_SIZE_FLOAT,
+            floor,
             underground: generator.underground(coord, detail),
+            tunnels,
+            origin,
             dense: Vec::new(),
         };
-        if field.underground.is_some() {
+        if field.underground.is_some() || !field.tunnels.is_empty() {
             let (span, margin) = (field.span, field.margin);
             let mut dense = Vec::with_capacity((span * span * span) as usize);
             for z in -margin..span - margin {
@@ -69,13 +102,20 @@ impl DensityField {
 
     fn compute(&self, x: i32, y: i32, z: i32) -> f32 {
         let ground = self.floor + y as f32 - self.column.height(x, z);
-        match &self.underground {
+        let tunnel = if self.tunnels.is_empty() {
+            f32::NEG_INFINITY
+        } else {
+            let (wx, wz) = (self.origin[0] + x as f64, self.origin[2] + z as f64);
+            Roads::tunnel_air(&self.tunnels, wx, self.floor + y as f32, wz)
+        };
+        let ground = match &self.underground {
             None => ground,
             Some(u) => {
                 let [push, cave] = u.at(x, y, z);
-                (ground - push).max(cave)
+                (ground - push).max(Roads::cave_beside_tunnel(cave, tunnel))
             }
-        }
+        };
+        ground.max(tunnel)
     }
 
     /// Density at chunk-local `(x, y, z)`, in metres from the surface
@@ -93,7 +133,9 @@ impl DensityField {
     /// Whether the chunk lies wholly in solid ground (under its surface,
     /// with no cave), so it has nothing to mesh.
     pub(super) fn is_solid(&self) -> bool {
-        self.underground.is_none() && self.floor + CHUNK_SIZE_FLOAT + 12.0 < self.column.min_height
+        self.underground.is_none()
+            && self.tunnels.is_empty()
+            && self.floor + CHUNK_SIZE_FLOAT + 12.0 < self.column.min_height
     }
 
     /// The field at chunk-local `p`, blended from the eight whole-metre
@@ -112,6 +154,38 @@ impl DensityField {
             }
         }
         sum
+    }
+
+    /// Whether chunk-local `p` (on the surface, its normal `up` high) is
+    /// on a tunnel's floor: facing up, with the tube right over it.
+    fn on_tunnel_floor(&self, p: [f32; 3], up: f32) -> bool {
+        if self.tunnels.is_empty() || up < 0.7 {
+            return false;
+        }
+        let (x, z) = (self.origin[0] + p[0] as f64, self.origin[2] + p[2] as f64);
+        Roads::tunnel_air(&self.tunnels, x, self.floor + p[1] + 1.0, z) > 0.5
+    }
+
+    /// How far from chunk-local `p` the ground stays solid going against the
+    /// normal `n`, up to `limit` metres (less a little, so what reaches
+    /// that far stays inside): where rock is thin (beside a tunnel) a skirt
+    /// hung that deep would come out on the other side.
+    pub(super) fn solid_depth(&self, p: [f32; 3], n: [f32; 3], limit: f32) -> f32 {
+        const STEP: f32 = 0.5;
+        // Within the field (the column's margins around the chunk).
+        let (low, high) = (1.0 - self.margin as f32, (self.span - self.margin - 2) as f32);
+        let mut t = STEP;
+        while t <= limit {
+            let at: [f32; 3] = std::array::from_fn(|i| {
+                let c = p[i] - n[i] * t;
+                if i == 1 { c } else { c.clamp(low, high) }
+            });
+            if self.value(at) > 0.0 {
+                return (t - 2.0 * STEP).max(STEP * 0.5);
+            }
+            t += STEP;
+        }
+        limit
     }
 
     /// `p` moved onto the full-detail surface, along the gradient (a few
@@ -211,22 +285,25 @@ impl DensityField {
                 let below = self.column.height(cx, cz) - y;
                 let inside = ((below - 1.5) / 4.0).clamp(0.0, 1.0);
                 let rock = [0.40, 0.37, 0.33];
-                // Roads (packed earth) and settlements (trodden ground)
-                // on the surface.
-                let [road, settlement] = self.column.paint(position[0], position[2]);
-                let (road, settlement) = (road * (1.0 - inside), settlement * (1.0 - inside));
-                let ground: [f32; 3] = std::array::from_fn(|k| {
-                    let c = biome.color[k] + (TRODDEN[k] - biome.color[k]) * settlement * 0.55;
-                    c + (ROAD[k] - c) * road
-                });
+                // A tunnel's floor is road (its walls and arch are rock).
+                let floor = self.on_tunnel_floor(position, g[1] / length);
+                // Roads, settlements and gravel lie on the surface only.
+                let surface = if floor { 1.0 } else { 1.0 - inside };
+                let [road, settlement, gravel] = self.column.paint(position[0], position[2]);
+                let road = if floor { 1.0 } else { road };
+                // Swamps are mud in patches, except where something lies.
+                let mud = biome.swamp * (1.0 - road.max(settlement).max(gravel));
                 Vertex {
                     position,
                     normal: g.map(|c| c / length),
-                    color: std::array::from_fn(|k| ground[k] + (rock[k] - ground[k]) * inside),
+                    color: std::array::from_fn(|k| biome.color[k] + (rock[k] - biome.color[k]) * inside),
                     climate: [
                         biome.temperature + (biome.temperature.max(4.0) - biome.temperature) * inside,
                         biome.humidity,
                     ],
+                    cover: [biome.forest, biome.dry, biome.jungle, biome.tundra].map(|v| v * surface),
+                    paint: [road, settlement, gravel, mud].map(|v| v * surface),
+                    underground: if floor { 0.0 } else { inside },
                 }
             })
             .collect();
@@ -234,15 +311,17 @@ impl DensityField {
     }
 }
 
-/// Colour of a road's surface and of a settlement's ground (display space).
-const ROAD: [f32; 3] = [0.50, 0.41, 0.26];
-const TRODDEN: [f32; 3] = [0.56, 0.50, 0.38];
-
-/// Hang a skirt from the open edges of a mesh (edges of one triangle only,
-/// which surface nets leaves at the sides of the cube it meshed): each edge
-/// again, moved `depth` metres into the ground against its normal, joined
-/// to the edge by quads facing both ways.
-pub(super) fn add_skirt(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, depth: f32) {
+/// Hang a skirt from the open edges of a mesh along the sides of the cube
+/// it meshed (edges of one triangle only, which surface nets leaves there;
+/// `step` the metres between its samples): each edge again, moved into the
+/// ground against its normal as far as `depth(position, normal)` says,
+/// joined to the edge by quads facing both ways.
+pub(super) fn add_skirt(
+    vertices: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    depth: impl Fn([f32; 3], [f32; 3]) -> f32,
+    step: f32,
+) {
     // An inner edge appears in two triangles, once each way round.
     let mut open: HashMap<(u32, u32), ()> = HashMap::with_capacity(indices.len() / 8);
     for triangle in indices.chunks_exact(3) {
@@ -257,6 +336,7 @@ pub(super) fn add_skirt(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, dept
     let mut lower = |vertices: &mut Vec<Vertex>, index: u32| {
         *lowered.entry(index).or_insert_with(|| {
             let mut v = vertices[index as usize];
+            let depth = depth(v.position, v.normal);
             for i in 0..3 {
                 v.position[i] -= v.normal[i] * depth;
             }
@@ -264,7 +344,20 @@ pub(super) fn add_skirt(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, dept
             vertices.len() as u32 - 1
         })
     };
-    let mut edges: Vec<(u32, u32)> = open.into_keys().collect();
+    // Only edges along a side of the chunk, where a neighbour drawn at
+    // another level meets it: thin rock (beside a tunnel, say) leaves edges
+    // that count as open inside the chunk too, and a skirt there would
+    // stick out of the ground.
+    let band = 0.5 * step;
+    let side = |p: [f32; 3], q: [f32; 3]| {
+        [0, 2].iter().any(|&i| {
+            (p[i] <= band && q[i] <= band) || (p[i] >= CHUNK_SIZE_FLOAT - band && q[i] >= CHUNK_SIZE_FLOAT - band)
+        })
+    };
+    let mut edges: Vec<(u32, u32)> = open
+        .into_keys()
+        .filter(|&(a, b)| side(vertices[a as usize].position, vertices[b as usize].position))
+        .collect();
     // The same mesh gets the same skirt.
     edges.sort_unstable();
     for (top0, top1) in edges {

@@ -94,10 +94,12 @@ impl DualContouringChunk {
             if lod == 0 {
                 ground_indices = indices.len();
             }
+            let depth = SKIRT_DEPTH + SKIRT_DEPTH_PER_STEP * step as f32;
             add_skirt(
                 &mut vertices,
                 &mut indices,
-                SKIRT_DEPTH + SKIRT_DEPTH_PER_STEP * step as f32,
+                |p, n| field.solid_depth(p, n, depth),
+                step as f32,
             );
             meshes.push(ChunkMesh::new(vertices, Some(indices)));
         }
@@ -263,6 +265,7 @@ impl Chunk for DualContouringChunk {
     fn vertical_range(generator: &WorldGenerator, column: (i32, i32), detail: bool) -> std::ops::RangeInclusive<i32> {
         // A chunk meshes the ground up to a coarse step (and its skirt)
         // beyond its floor and ceiling.
+        let column_coord = column;
         let column = generator.column(column.0, column.1);
         let reach = 2.0 * (1 << (LODS - 1)) as f32;
         let chunk = |h: f32| (h / CHUNK_SIZE_FLOAT).floor() as i32;
@@ -270,6 +273,10 @@ impl Chunk for DualContouringChunk {
         // Caves reach down under the surface.
         if let Some((bottom, _)) = generator.cave_band(column.min_height, column.max_height).filter(|_| detail) {
             low = low.min(chunk(bottom - reach));
+        }
+        // And tunnels.
+        if let Some(floor) = generator.tunnel_floor(column_coord.0, column_coord.1).filter(|_| detail) {
+            low = low.min(chunk(floor - reach));
         }
         // The water over the ground is drawn by the lowest chunk (see
         // `generate_water_mesh`).
@@ -503,7 +510,7 @@ impl Component for DualContouringChunk {
 
 impl VertexAttributes for Vertex {
     fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
-        vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT), (2, gl::FLOAT)]
+        vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT), (2, gl::FLOAT), (4, gl::FLOAT), (4, gl::FLOAT), (1, gl::FLOAT)]
     }
 }
 
@@ -621,6 +628,41 @@ mod tests {
         // The collider is the ground alone.
         assert_eq!(chunk.get_indices().len() * 3, chunk.ground_indices);
         assert!(indices.len() > chunk.ground_indices, "no skirt");
+    }
+
+    #[test]
+    fn skirts_stay_in_the_ground_beside_a_tunnel() {
+        // Beside a tunnel's portal the rock between the tube and the hillside
+        // is thin: a skirt hung deeper than it would stick out of the
+        // hillside. Every chunk around a portal, at full detail: each skirt's
+        // lowered vertex in the ground.
+        let generator = WorldGenerator::new(2);
+        let roads = generator.roads().unwrap();
+        let tube = &roads.tunnels()[0];
+        let (portal, level) = (tube[0].a, tube[0].level[0]);
+        let size = CHUNK_SIZE as f64;
+        let home = ((portal[0] / size).floor() as i32, (portal[1] / size).floor() as i32);
+        let y = (level / CHUNK_SIZE_FLOAT).floor() as i32;
+        let mut checked = 0;
+        for (dx, dz) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
+            let (cx, cz) = (home.0 + dx, home.1 + dz);
+            for cy in [y - 1, y, y + 1] {
+                let chunk = DualContouringChunk::generate(&generator, (cx as f32, cy as f32, cz as f32), 0);
+                let Some(mesh) = chunk.meshes.first() else {
+                    continue;
+                };
+                let indices = mesh.indices.as_ref().unwrap();
+                let ground = indices[..chunk.ground_indices].iter().map(|&i| i + 1).max().unwrap_or(0);
+                let [ox, oy, oz] = ChunkCoord::from_position((cx as f32, cy as f32, cz as f32)).origin();
+                for v in &mesh.vertices[ground as usize..] {
+                    let [x, y, z] = v.position;
+                    let density = generator.density(ox + x as f64, oy + y as f64, oz + z as f64);
+                    assert!(density < 1.0, "a skirt out of the ground at {:?}: {density}", [ox + x as f64, oy + y as f64, oz + z as f64]);
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 100, "{checked} skirt vertices");
     }
 
     #[test]

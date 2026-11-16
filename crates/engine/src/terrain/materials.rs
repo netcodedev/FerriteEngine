@@ -1,6 +1,12 @@
-//! Textures of the terrain's surface materials (grass, sand, rock), loaded
-//! from `assets/textures/terrain/<layer>/` as array textures: one layer per
+//! Textures of the terrain's surface materials (grass, sand, rock, forest
+//! floor, dry grass, gravel, road, dirt, jungle floor, tundra moss, mud,
+//! cave rock), loaded from
+//! `assets/textures/terrain/<layer>/` as array textures: one layer per
 //! material, one array per kind of map.
+//!
+//! Grass, sand and rock are needed (without them the terrain is drawn in
+//! plain colours); a project without one of the others gets its stand-in's
+//! textures in its place.
 
 use std::path::{Path, PathBuf};
 
@@ -21,25 +27,60 @@ pub struct TerrainLayer {
     /// Metres between the lowest and highest point of the height map, from
     /// the scan.
     pub height_depth: f32,
+    /// The layer whose textures stand in when this one's are missing;
+    /// `None`: needed.
+    pub stand_in: Option<usize>,
+    /// Whether the biomes' ground colour tints it (grass does).
+    pub tinted: bool,
+    /// How far the shader may turn its copies to hide the tiling, as a
+    /// share of a full turn either way (0: never, as a road's tracks
+    /// follow it; small where the texture has a direction).
+    pub turn: f32,
 }
 
-/// In the order the terrain shader's `GRASS`, `SAND`, `ROCK` index them.
-pub const LAYERS: [TerrainLayer; 3] = [
+const fn layer(folder: &'static str, tile_size: f32, height_depth: f32, stand_in: Option<usize>) -> TerrainLayer {
     TerrainLayer {
-        folder: "grass",
-        tile_size: 1.0,
-        height_depth: 0.04,
-    },
+        folder,
+        tile_size,
+        height_depth,
+        stand_in,
+        tinted: false,
+        turn: 0.5,
+    }
+}
+
+pub const GRASS: usize = 0;
+pub const SAND: usize = 1;
+pub const ROCK: usize = 2;
+pub const FOREST: usize = 3;
+pub const DIRT: usize = 7;
+
+/// In the order the terrain shader's `GRASS`, `SAND`, `ROCK`, `FOREST`,
+/// `DRY`, `GRAVEL`, `ROAD`, `DIRT`, `JUNGLE`, `TUNDRA`, `MUD`, `CAVE_ROCK`
+/// index them. Stand-ins come before what they stand in for.
+pub const LAYERS: [TerrainLayer; 12] = [
     TerrainLayer {
-        folder: "sand",
-        tile_size: 2.0,
-        height_depth: 0.031,
+        tinted: true,
+        ..layer("grass", 1.0, 0.04, None)
     },
+    layer("sand", 2.0, 0.031, None),
+    layer("rock", 0.83, 0.059, None),
+    layer("forest_floor", 1.5, 0.057, Some(GRASS)),
+    layer("dry_grass", 1.0, 0.035, Some(GRASS)),
+    layer("gravel", 0.39, 0.05, Some(SAND)),
     TerrainLayer {
-        folder: "rock",
-        tile_size: 0.83,
-        height_depth: 0.059,
+        turn: 0.0,
+        ..layer("road", 2.0, 0.029, Some(SAND))
     },
+    // Its tracks run one way: turned a little only.
+    TerrainLayer {
+        turn: 0.04,
+        ..layer("dirt", 1.0, 0.052, Some(SAND))
+    },
+    layer("jungle_floor", 2.0, 0.018, Some(FOREST)),
+    layer("tundra", 4.0, 0.032, Some(GRASS)),
+    layer("mud", 0.42, 0.049, Some(DIRT)),
+    layer("cave_rock", 1.0, 0.151, Some(ROCK)),
 ];
 
 /// What a layer leaves out: medium roughness, no occlusion, flat, half
@@ -63,18 +104,39 @@ struct LayerImages {
 /// plain colours — when a layer's colour map is missing.
 pub fn load(shader: &Shader) -> Vec<Texture> {
     shader.bind();
-    for (index, layer) in LAYERS.iter().enumerate() {
-        shader.set_uniform_1f(&format!("tileSize[{index}]"), layer.tile_size);
-        shader.set_uniform_1f(&format!("heightDepth[{index}]"), layer.height_depth);
-    }
-    let layers: Option<Vec<LayerImages>> = LAYERS
+    let loaded: Vec<Option<LayerImages>> = LAYERS
         .iter()
-        .map(|layer| load_layer(&Path::new(FOLDER).join(layer.folder)))
+        .map(|layer| load_layer(&Path::new(FOLDER).join(layer.folder), layer.stand_in.is_none()))
         .collect();
-    let Some(layers) = layers else {
+    if LAYERS.iter().zip(&loaded).any(|(layer, images)| layer.stand_in.is_none() && images.is_none()) {
         shader.set_uniform_1i("hasTerrainTextures", 0);
         return Vec::new();
-    };
+    }
+    // Missing layers take their stand-in's textures, size and tint (or
+    // its stand-in's, when that is missing too).
+    let mut from = [0usize; LAYERS.len()];
+    for (index, layer) in LAYERS.iter().enumerate() {
+        from[index] = match (&loaded[index], layer.stand_in) {
+            (None, Some(stand_in)) => {
+                let source = from[stand_in];
+                log::info!("terrain: no {} textures, using {}'s", layer.folder, LAYERS[source].folder);
+                source
+            }
+            _ => index,
+        };
+    }
+    for (index, &source) in from.iter().enumerate() {
+        let layer = &LAYERS[source];
+        shader.set_uniform_1f(&format!("tileSize[{index}]"), layer.tile_size);
+        shader.set_uniform_1f(&format!("heightDepth[{index}]"), layer.height_depth);
+        shader.set_uniform_1f(&format!("tinted[{index}]"), if layer.tinted { 1.0 } else { 0.0 });
+        // Its own direction, even when another layer's textures stand in.
+        shader.set_uniform_1f(&format!("turn[{index}]"), LAYERS[index].turn);
+    }
+    let layers: Vec<&LayerImages> = from
+        .iter()
+        .map(|&source| loaded[source].as_ref().expect("needed layers are loaded"))
+        .collect();
     let (width, height) = layers[0].albedo.dimensions();
     let fit = |image: &RgbaImage| {
         if image.dimensions() == (width, height) {
@@ -117,6 +179,7 @@ pub fn load(shader: &Shader) -> Vec<Texture> {
         .collect();
 
     let mut textures = Vec::with_capacity(3);
+    debug_assert_eq!(albedo.len(), LAYERS.len());
     for (layers, srgb) in [(albedo, true), (normal, false), (surface, false)] {
         let mut texture = Texture::new();
         texture.load_array(width, height, &layers, srgb);
@@ -134,7 +197,7 @@ pub const SNOW_FOLDER: &str = "snow";
 /// arrays: colour with roughness in alpha (sRGB colour), and the normal
 /// with occlusion in alpha. Nothing when there is no colour map.
 pub fn load_snow() -> Option<[Texture; 2]> {
-    let layer = load_layer(&Path::new(FOLDER).join(SNOW_FOLDER))?;
+    let layer = load_layer(&Path::new(FOLDER).join(SNOW_FOLDER), true)?;
     let (width, height) = layer.albedo.dimensions();
     let fit = |image: &RgbaImage| {
         if image.dimensions() == (width, height) {
@@ -166,7 +229,9 @@ pub fn load_snow() -> Option<[Texture; 2]> {
     Some(textures)
 }
 
-fn load_layer(folder: &Path) -> Option<LayerImages> {
+/// The textures in `folder`, if it has a colour map; `needed`: say so when
+/// it has none.
+fn load_layer(folder: &Path, needed: bool) -> Option<LayerImages> {
     let files: Vec<PathBuf> = std::fs::read_dir(folder)
         .ok()?
         .flatten()
@@ -190,6 +255,9 @@ fn load_layer(folder: &Path) -> Option<LayerImages> {
         }
     };
     let Some(albedo) = read(MapKind::BaseColor) else {
+        if !needed {
+            return None;
+        }
         log::warn!(
             "terrain: no colour map in {}, drawing the terrain in plain colours",
             folder.display()
@@ -232,6 +300,13 @@ fn common_prefix(names: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stand_ins_come_first() {
+        for (index, layer) in LAYERS.iter().enumerate() {
+            assert!(layer.stand_in.is_none_or(|s| s < index), "{}", layer.folder);
+        }
+    }
 
     #[test]
     fn the_common_prefix_ends_between_words() {
