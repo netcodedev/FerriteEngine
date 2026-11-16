@@ -79,3 +79,54 @@ impl Fractal {
         (sum / self.norm).clamp(0.0, 1.0)
     }
 }
+
+/// Fractal simplex noise in three dimensions (see `Fractal`). Its
+/// gradient is about `GRADIENT / wavelength` long: a value `v` near zero
+/// lies about `v * wavelength / GRADIENT` metres from the zero surface.
+pub struct Fractal3 {
+    /// Each octave with its own shift: simplex noise is zero on its whole
+    /// lattice, so fields sampled unshifted would all be zero together
+    /// there (tunnels, which run where two fields are zero, would only
+    /// pass through those points).
+    sources: Vec<(Simplex<3>, [f64; 3])>,
+    frequency: f64,
+    gain: f64,
+    norm: f64,
+}
+
+impl Fractal3 {
+    pub const GRADIENT: f64 = 2.5;
+
+    pub fn new(seed: u64, name: &str, octaves: usize, wavelength: f64) -> Self {
+        let base = field_seed(seed, name);
+        let gain: f64 = 0.5;
+        let sources = (0..octaves as u64)
+            .map(|i| {
+                let seed = base.wrapping_add(i.wrapping_mul(0x9E3779B97F4A7C15));
+                let shift = std::array::from_fn(|k| {
+                    (field_seed(seed, ["x", "y", "z"][k]) >> 11) as f64 / (1u64 << 53) as f64 * 1000.0
+                });
+                (Source::simplex(seed), shift)
+            })
+            .collect();
+        let norm = (0..octaves).map(|i| gain.powi(i as i32)).sum();
+        Self {
+            sources,
+            frequency: 1.0 / wavelength,
+            gain,
+            norm,
+        }
+    }
+
+    pub fn at(&self, x: f64, y: f64, z: f64) -> f64 {
+        let mut sum = 0.0;
+        let (mut f, mut w) = (self.frequency, 1.0);
+        for (source, [sx, sy, sz]) in &self.sources {
+            sum += w * source.sample([x * f + sx, y * f + sy, z * f + sz]);
+            f *= 2.0;
+            w *= self.gain;
+        }
+        sum / self.norm
+    }
+}
+

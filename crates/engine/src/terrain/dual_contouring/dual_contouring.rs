@@ -77,13 +77,19 @@ impl DualContouringChunk {
     fn generate_meshes(&self) -> (Vec<ChunkMesh<Vertex>>, usize) {
         let coarsest = 1 << (LODS - 1);
         let field = DensityField::new(&self.generator, self.coord, coarsest);
+        if field.is_solid() {
+            return (Vec::new(), 0);
+        }
         let mut ground_indices = 0;
         let mut meshes = Vec::with_capacity(LODS);
         for lod in 0..LODS {
             let step = 1 << lod;
-            let Some((mut vertices, mut indices)) = field.surface_nets(step) else {
+            let (mut vertices, mut indices) = match field.surface_nets(step) {
+                Some(mesh) => mesh,
                 // No ground in this chunk.
-                return (Vec::new(), 0);
+                None if lod == 0 => return (Vec::new(), 0),
+                // Caves too small for this level.
+                None => (Vec::new(), Vec::new()),
             };
             if lod == 0 {
                 ground_indices = indices.len();
@@ -195,9 +201,10 @@ impl DualContouringChunk {
             if y < SCATTER_MIN_Y || y < floor || y >= ceiling {
                 continue;
             }
-            // As much grows as the biomes here let grow.
+            // As much grows as the biomes here let grow, and only on the
+            // plain ground (not over a cave mouth or on an overhang).
             let biome = self.generator.surface_biome(x as f64, z as f64);
-            if grow >= biome.vegetation {
+            if grow >= biome.vegetation || !self.generator.is_plain_ground(x as f64, z as f64) {
                 continue;
             }
 
@@ -237,7 +244,11 @@ impl Chunk for DualContouringChunk {
         let column = generator.column(column.0, column.1);
         let reach = 2.0 * (1 << (LODS - 1)) as f32;
         let chunk = |h: f32| (h / CHUNK_SIZE_FLOAT).floor() as i32;
-        let low = chunk(column.min_height - reach);
+        let mut low = chunk(column.min_height - reach);
+        // Caves reach down under the surface.
+        if let Some((bottom, _)) = generator.cave_band(column.min_height, column.max_height) {
+            low = low.min(chunk(bottom - reach));
+        }
         let mut high = chunk(column.max_height + reach);
         // Over ground below the water, the chunk holding its surface too
         // (in the open sea far above the sea floor).
@@ -560,7 +571,16 @@ mod tests {
 
     #[test]
     fn the_finest_level_follows_the_ground() {
-        let chunk = DualContouringChunk::new(2, (0.0, 0.0, 0.0), 0);
+        // The height field alone: caves and overhangs leave it on purpose.
+        let generator = WorldGenerator::with_settings(
+            2,
+            crate::terrain::generator::WorldSettings {
+                caves: 0.0,
+                overhangs: 0.0,
+                ..Default::default()
+            },
+        );
+        let chunk = DualContouringChunk::generate(&generator, (0.0, 0.0, 0.0), 0);
         let mesh = &chunk.meshes[0];
         let indices = mesh.indices.as_ref().unwrap();
         // The ground (not the skirt) lies where scatter and water put it.

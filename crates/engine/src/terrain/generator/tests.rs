@@ -148,3 +148,81 @@ fn generation_timings() {
     let chunk = start.elapsed() / n as u32;
     println!("column: {column:?}, whole chunk (column, 4 meshes, water): {chunk:?}");
 }
+
+#[test]
+fn caves_open_under_the_mountains_and_the_lattice_follows_them() {
+    let generator = WorldGenerator::new(1);
+    // A mountain column with a known cave 40 m under its surface.
+    let (x, z) = (-2345.0, -5892.0);
+    let surface = generator.surface_height(x, z) as f64;
+    assert!(generator.density(x, surface - 40.0, z) > 0.0, "no cave");
+    let coord = ChunkCoord::containing(x, surface - 40.0, z);
+    let lattice = generator.underground(coord).expect("caves in the chunk");
+    let column = generator.column(coord.x, coord.z);
+    let [x0, y0, z0] = coord.origin();
+    // Where the exact field is clearly in rock or air, the blended one
+    // agrees nearly everywhere.
+    let (mut agree, mut total) = (0, 0);
+    for k in 0..4000 {
+        let (lx, ly, lz) = ((k * 37) % 128, (k * 101) % 128, (k * 59) % 128);
+        let (wx, wy, wz) = (x0 + lx as f64, y0 + ly as f64, z0 + lz as f64);
+        let exact = generator.density(wx, wy, wz);
+        if exact.abs() < 1.5 {
+            continue;
+        }
+        let [push, cave] = lattice.at(lx, ly, lz);
+        let blended = (wy as f32 - column.height(lx, lz) - push).max(cave);
+        total += 1;
+        agree += (exact.signum() == blended.signum()) as i32;
+    }
+    assert!(agree as f32 > 0.98 * total as f32, "{agree} of {total}");
+}
+
+#[test]
+fn no_cave_opens_near_the_spawn() {
+    let generator = WorldGenerator::new(1);
+    for i in 0..400 {
+        let (x, z) = ((i % 20) as f64 * 50.0 - 500.0, (i / 20) as f64 * 50.0 - 500.0);
+        let h = generator.surface_height(x, z) as f64;
+        for depth in [0.5, 2.0, 5.0] {
+            assert!(generator.density(x, h - depth, z) < 0.0, "hole at ({x}, {z}), {depth} m down");
+        }
+    }
+}
+
+#[test]
+fn without_caves_and_overhangs_the_ground_is_the_height_field() {
+    let settings = WorldSettings { caves: 0.0, overhangs: 0.0, ..Default::default() };
+    let generator = WorldGenerator::with_settings(1, settings);
+    assert!(generator.underground(ChunkCoord::new(-19, 1, -46)).is_none());
+    let h = generator.surface_height(-2345.0, -5892.0) as f64;
+    assert_eq!(generator.density(-2345.0, h - 40.0, -5892.0), -40.0);
+}
+
+/// Time to make every chunk of a few mountain columns, with and without
+/// caves and overhangs: `cargo test --release -p ferrite underground_timings -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn underground_timings() {
+    use crate::terrain::{dual_contouring::DualContouringChunk, Chunk};
+    for (caves, overhangs) in [(0.0, 0.0), (1.0, 1.0)] {
+        let generator = WorldGenerator::with_settings(1, WorldSettings { caves, overhangs, ..Default::default() });
+        let (mut chunks, mut lattice) = (0, std::time::Duration::ZERO);
+        let start = Instant::now();
+        for cx in -18..-14 {
+            let cz = -46;
+            for cy in DualContouringChunk::vertical_range(&generator, (cx, cz)) {
+                let t = Instant::now();
+                let _ = generator.underground(ChunkCoord::new(cx, cy, cz));
+                lattice += t.elapsed();
+                DualContouringChunk::generate(&generator, (cx as f32, cy as f32, cz as f32), 0);
+                chunks += 1;
+            }
+        }
+        println!(
+            "caves {caves}: {chunks} chunks, {:?} per chunk, of which lattice {:?}",
+            start.elapsed() / chunks,
+            lattice / chunks
+        );
+    }
+}

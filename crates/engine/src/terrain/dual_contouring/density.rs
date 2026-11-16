@@ -13,7 +13,7 @@ use fast_surface_nets::{
 
 use super::Vertex;
 use crate::terrain::{
-    generator::{ChunkCoord, Column, WorldGenerator, COLUMN_MARGIN},
+    generator::{ChunkCoord, Column, Underground3, WorldGenerator, COLUMN_MARGIN},
     CHUNK_SIZE, CHUNK_SIZE_FLOAT,
 };
 
@@ -27,6 +27,12 @@ pub(super) struct DensityField {
     margin: i32,
     /// The chunk's floor, in world metres.
     floor: f32,
+    /// Caves and overhangs, where the chunk has any.
+    underground: Option<Underground3>,
+    /// Where it has: the whole field at every whole metre the meshing
+    /// reads (`span` per side from `-margin`, x fastest, then y), made
+    /// once, since each vertex reads it a few hundred times.
+    dense: Vec<f32>,
 }
 
 impl DensityField {
@@ -36,18 +42,56 @@ impl DensityField {
         // A level samples from one step before the chunk to one step past
         // it, and the normals look one metre further.
         assert!(coarsest < COLUMN_MARGIN, "the column is too narrow for steps of {coarsest} m");
-        Self {
+        let mut field = Self {
             column: generator.column(coord.x, coord.z),
             span: Column::SPAN,
             margin: COLUMN_MARGIN,
             floor: coord.y as f32 * CHUNK_SIZE_FLOAT,
+            underground: generator.underground(coord),
+            dense: Vec::new(),
+        };
+        if field.underground.is_some() {
+            let (span, margin) = (field.span, field.margin);
+            let mut dense = Vec::with_capacity((span * span * span) as usize);
+            for z in -margin..span - margin {
+                for y in -margin..span - margin {
+                    for x in -margin..span - margin {
+                        dense.push(field.compute(x, y, z));
+                    }
+                }
+            }
+            field.dense = dense;
+        }
+        field
+    }
+
+    fn compute(&self, x: i32, y: i32, z: i32) -> f32 {
+        let ground = self.floor + y as f32 - self.column.height(x, z);
+        match &self.underground {
+            None => ground,
+            Some(u) => {
+                let [push, cave] = u.at(x, y, z);
+                (ground - push).max(cave)
+            }
         }
     }
 
     /// Density at chunk-local `(x, y, z)`, in metres from the surface
     /// (roughly): negative inside the ground.
+    #[inline]
     pub(super) fn at(&self, x: i32, y: i32, z: i32) -> f32 {
-        self.floor + y as f32 - self.column.height(x, z)
+        if self.dense.is_empty() {
+            return self.floor + y as f32 - self.column.height(x, z);
+        }
+        // Newton steps may overshoot the chunk's height a little.
+        let i = |v: i32| (v + self.margin).clamp(0, self.span - 1);
+        self.dense[((i(z) * self.span + i(y)) * self.span + i(x)) as usize]
+    }
+
+    /// Whether the chunk lies wholly in solid ground (under its surface,
+    /// with no cave), so it has nothing to mesh.
+    pub(super) fn is_solid(&self) -> bool {
+        self.underground.is_none() && self.floor + CHUNK_SIZE_FLOAT + 12.0 < self.column.min_height
     }
 
     /// The field at chunk-local `p`, blended from the eight whole-metre
@@ -157,12 +201,22 @@ impl DensityField {
                 let position = self.onto_surface(p.map(|c| (c - 1.0) * step as f32), step as f32);
                 let g = self.gradient(position);
                 let length = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt().max(1e-6);
-                let biome = self.column.biome(position[0], position[2], self.floor + position[1]);
+                let y = self.floor + position[1];
+                let biome = self.column.biome(position[0], position[2], y);
+                // Under the surface (in caves and under overhangs): bare
+                // rock, out of the snow.
+                let (cx, cz) = (position[0].round() as i32, position[2].round() as i32);
+                let below = self.column.height(cx, cz) - y;
+                let inside = ((below - 1.5) / 4.0).clamp(0.0, 1.0);
+                let rock = [0.40, 0.37, 0.33];
                 Vertex {
                     position,
                     normal: g.map(|c| c / length),
-                    color: biome.color,
-                    climate: [biome.temperature, biome.humidity],
+                    color: std::array::from_fn(|k| biome.color[k] + (rock[k] - biome.color[k]) * inside),
+                    climate: [
+                        biome.temperature + (biome.temperature.max(4.0) - biome.temperature) * inside,
+                        biome.humidity,
+                    ],
                 }
             })
             .collect();

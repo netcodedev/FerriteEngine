@@ -17,12 +17,15 @@ use std::{
 use super::CHUNK_SIZE;
 
 pub mod biome;
+pub mod caves;
 pub mod map;
 mod noise;
 pub mod spline;
 pub mod world;
 
 pub use biome::{Biome, BiomeBlend};
+pub use caves::{Underground3, CAVE_DEPTH};
+use caves::Underground;
 pub use world::{Climate, WorldSettings, SEA_LEVEL};
 use world::{Macro, WorldShape};
 
@@ -202,6 +205,7 @@ impl<V> Cache<V> {
 pub struct WorldGenerator {
     seed: u64,
     shape: WorldShape,
+    underground: Underground,
     tiles: Mutex<Cache<MacroTile>>,
     columns: Mutex<Cache<Column>>,
 }
@@ -226,6 +230,7 @@ impl WorldGenerator {
     pub fn with_settings(seed: u64, settings: WorldSettings) -> Arc<Self> {
         Arc::new(Self {
             seed,
+            underground: Underground::new(seed, &settings),
             shape: WorldShape::new(seed, settings),
             tiles: Mutex::new(Cache::new(TILE_CACHE)),
             columns: Mutex::new(Cache::new(COLUMN_CACHE)),
@@ -315,6 +320,96 @@ impl WorldGenerator {
         let m = self.interpolated(x, z, &mut |tx, tz| self.tile(tx, tz));
         let h = m.height + m.hills * self.shape.detail(x, z);
         biome::biome_at(m.temperature, m.humidity, h)
+    }
+
+    /// How steep the ground is at world `(x, z)`: rise per metre.
+    fn slope(&self, x: f64, z: f64) -> f32 {
+        let dx = self.surface_height(x + 1.0, z) - self.surface_height(x - 1.0, z);
+        let dz = self.surface_height(x, z + 1.0) - self.surface_height(x, z - 1.0);
+        0.5 * dx.hypot(dz)
+    }
+
+    /// Whether the ground at world `(x, z)` is the plain height field
+    /// there: no overhang pushes it and no cave opens under it. What
+    /// stands on `surface_height` stands on the ground there.
+    pub fn is_plain_ground(&self, x: f64, z: f64) -> bool {
+        let h = self.surface_height(x, z);
+        if self.underground.has_overhangs() && self.underground.overhang_amplitude(self.slope(x, z)) > 0.25 {
+            return false;
+        }
+        self.underground.cave(x, h as f64 - 1.5, z, h, self.slope(x, z)) < -1.0
+    }
+
+    /// The ground as a volume at world `(x, y, z)`: negative inside,
+    /// positive in the air (roughly metres from the surface), with caves
+    /// and overhangs. Straight from the noise: chunks blend the same
+    /// values from a 4 m lattice, so they differ from this a little.
+    pub fn density(&self, x: f64, y: f64, z: f64) -> f32 {
+        let h = self.surface_height(x, z);
+        let u = &self.underground;
+        let slope = self.slope(x, z);
+        let push = if u.has_overhangs() { u.overhang(x, y, z, slope) } else { 0.0 };
+        (y as f32 - h - push).max(u.cave(x, y, z, h, slope))
+    }
+
+    /// Heights between which caves may lie under ground whose surface
+    /// lies between `low` and `high` (see `caves::Underground::cave_band`).
+    pub fn cave_band(&self, low: f32, high: f32) -> Option<(f32, f32)> {
+        self.underground.cave_band(low, high)
+    }
+
+    /// Caves and overhangs around the chunk at `coord` (see
+    /// `Underground3`), or `None` where it has neither.
+    pub fn underground(&self, coord: ChunkCoord) -> Option<Underground3> {
+        let u = &self.underground;
+        if !u.has_caves() && !u.has_overhangs() {
+            return None;
+        }
+        let column = self.column(coord.x, coord.z);
+        let floor = coord.y as f32 * CHUNK_SIZE as f32;
+        let ceiling = floor + CHUNK_SIZE as f32;
+        // Steps reach 8 m and the lattice 12 m beyond the chunk.
+        let (low, high) = (floor - 12.0, ceiling + 12.0);
+        let caves = u
+            .cave_band(column.min_height, column.max_height)
+            .is_some_and(|(bottom, top)| bottom <= high && top + 12.0 >= low);
+        let reach = caves::OVERHANG_DEPTH * self.settings().overhangs.max(0.0);
+        let overhangs = u.has_overhangs()
+            && column.max_height - column.min_height > 40.0
+            && column.min_height - reach <= high
+            && column.max_height + reach >= low;
+        if !caves && !overhangs {
+            return None;
+        }
+        let [x0, y0, z0] = coord.origin();
+        let span = Underground3::SPAN;
+        let at = |i: i32| (Underground3::ORIGIN + i * Underground3::STEP) as f64;
+        // The surface and its slope over the lattice's columns.
+        let mut ground = Vec::with_capacity((span * span) as usize);
+        for k in 0..span {
+            for i in 0..span {
+                let (x, z) = (x0 + at(i), z0 + at(k));
+                let h = self.surface_height(x, z);
+                let slope = self.slope(x, z);
+                ground.push((h, slope));
+            }
+        }
+        let mut values = Vec::with_capacity((span * span * span) as usize);
+        let mut any = false;
+        for k in 0..span {
+            for j in 0..span {
+                for i in 0..span {
+                    let (x, y, z) = (x0 + at(i), y0 + at(j), z0 + at(k));
+                    let (h, slope) = ground[(k * span + i) as usize];
+                    let near_surface = (y as f32 - h).abs() < caves::OVERHANG_DEPTH + 8.0;
+                    let push = if overhangs && near_surface { u.overhang(x, y, z, slope) } else { 0.0 };
+                    let cave = if caves { u.cave_parts(x, y, z, h, slope) } else { caves::CaveParts::NONE };
+                    any |= push != 0.0 || cave.value() > -12.0;
+                    values.push(Underground3::entry(push, cave));
+                }
+            }
+        }
+        any.then(|| Underground3::new(values))
     }
 
     /// The column of chunk square `(cx, cz)`, from the cache or made now.

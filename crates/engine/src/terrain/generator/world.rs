@@ -47,6 +47,10 @@ pub struct WorldSettings {
     /// Metres around the origin kept as low, gentle land, so a scene's
     /// player and camera stand on the ground.
     pub spawn_radius: f64,
+    /// How many and how wide caves are (0: none, 1: as designed, up to 2).
+    pub caves: f32,
+    /// How far cliffs overhang (0: not at all, 1: as designed).
+    pub overhangs: f32,
 }
 
 impl Default for WorldSettings {
@@ -93,6 +97,8 @@ impl Default for WorldSettings {
             mountain_scale: 1.0,
             hill_scale: 1.0,
             spawn_radius: 700.0,
+            caves: 1.0,
+            overhangs: 1.0,
         }
     }
 }

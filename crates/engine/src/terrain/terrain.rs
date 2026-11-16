@@ -681,6 +681,8 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             Property::ranged("world size (km)", (self.world.size / 1000.0) as f32, 4.0, 64.0),
             Property::ranged("mountain height", self.world.mountain_scale, 0.0, 2.0),
             Property::ranged("hill height", self.world.hill_scale, 0.0, 3.0),
+            Property::ranged("caves", self.world.caves, 0.0, 2.0),
+            Property::ranged("overhangs", self.world.overhangs, 0.0, 2.0),
             Property::choice(
                 "map",
                 self.map.layer.name().into(),
@@ -722,6 +724,18 @@ impl<T: Chunk + Component + Send + 'static> Component for Terrain<T> {
             ("hill height", PropertyValue::Float(v)) => {
                 if v.max(0.0) != self.world.hill_scale {
                     self.world.hill_scale = v.max(0.0);
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("caves", PropertyValue::Float(v)) => {
+                if v.clamp(0.0, 2.0) != self.world.caves {
+                    self.world.caves = v.clamp(0.0, 2.0);
+                    self.reseed_in = Some(RESEED_DELAY);
+                }
+            }
+            ("overhangs", PropertyValue::Float(v)) => {
+                if v.clamp(0.0, 2.0) != self.world.overhangs {
+                    self.world.overhangs = v.clamp(0.0, 2.0);
                     self.reseed_in = Some(RESEED_DELAY);
                 }
             }
