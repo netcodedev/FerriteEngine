@@ -34,6 +34,11 @@ pub trait Component: AsAny {
         _parent_transform: &Matrix4<f32>,
     ) {
     }
+    /// Third render phase: 2D drawing on top of the finished, tone mapped
+    /// image (a HUD, an inventory, menus), with `PlaneRenderer` and `Text`
+    /// in the viewport's pixels. Depth testing is off; what is drawn later
+    /// lies on top.
+    fn render_overlay(&self, _scene: &Scene, _entity: &Entity) {}
     fn handle_event(&mut self, glfw: &mut Glfw, window: &mut Window, event: &glfw::WindowEvent);
 
     /// Short human-readable type name, e.g. `Terrain` or `SkyLight`.

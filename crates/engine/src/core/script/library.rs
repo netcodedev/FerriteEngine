@@ -29,12 +29,27 @@ pub const SCRIPTS_LIBRARY: &str = SCRIPTS_PACKAGE;
 /// this process is such a game.
 pub fn packaged_library() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let path = exe.parent()?.join(format!(
+    let dir = exe.parent()?;
+    // A player or server built in the engine's workspace (`cargo run -p
+    // sandbox`) lies next to the library the scripts are built into, which
+    // holds whichever project's scripts were built last: not packaged.
+    if is_engine_target(dir) {
+        return None;
+    }
+    let path = dir.join(format!(
         "{}{SCRIPTS_PACKAGE}{}",
         std::env::consts::DLL_PREFIX,
         std::env::consts::DLL_SUFFIX
     ));
     path.is_file().then_some(path)
+}
+
+/// Whether `dir` is where the engine's workspace builds to (its `target`
+/// folder, any profile or target triple below it).
+fn is_engine_target(dir: &Path) -> bool {
+    let target = engine_workspace().join("target");
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    dir.starts_with(&target)
 }
 
 /// The engine's cargo workspace, where it was built from.
@@ -176,6 +191,16 @@ pub fn load_library(path: &Path) -> Result<ScriptRegistry, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_player_built_in_the_engine_workspace_is_not_a_packaged_game() {
+        // `cargo run -p sandbox`: next to the library the scripts are
+        // built into, which must be built for the project, not taken as is.
+        let target = engine_workspace().join("target");
+        assert!(is_engine_target(&target.join("debug")));
+        assert!(is_engine_target(&target.join("x86_64-pc-windows-gnu/release")));
+        assert!(!is_engine_target(&std::env::temp_dir().join("exported-game")));
+    }
 
     #[test]
     fn variables_cargo_run_sets_are_dropped_but_cargo_config_is_kept() {

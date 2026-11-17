@@ -583,6 +583,21 @@ impl Scene {
             hdr.finish(&hdr_settings);
             self.weather_maps.set(None);
             self.light_count.set(0);
+
+            // 2D overlays (HUD, inventory, menus) on the tone mapped image.
+            // In the order drawn: the plane and text renderers switch the
+            // depth test on, so it passes everything and writes nothing.
+            unsafe {
+                gl::DepthFunc(gl::ALWAYS);
+                gl::DepthMask(gl::FALSE);
+            }
+            for entity in self.entities.iter() {
+                entity.render_overlay(self);
+            }
+            unsafe {
+                gl::DepthMask(gl::TRUE);
+                gl::DepthFunc(gl::LESS);
+            }
         }
 
         // ── Debug overlay (F10) ───────────────────────────────────────────
