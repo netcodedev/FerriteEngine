@@ -192,3 +192,14 @@ mod tests {
         assert!(gl::DeleteTextures::is_loaded());
     }
 }
+
+/// Whether frames wait for the display (vsync), for the GL context current on
+/// this thread.
+///
+/// Lives here so crates that link the engine as a shared library can switch
+/// it: the dylib exports Rust items but not GLFW's C symbols, so calling
+/// `glfw::ffi::glfwSwapInterval` from outside the engine fails to link.
+#[inline(never)]
+pub fn set_vsync(on: bool) {
+    unsafe { glfw::ffi::glfwSwapInterval(if on { 1 } else { 0 }) };
+}
