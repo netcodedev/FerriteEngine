@@ -1,0 +1,65 @@
+(
+    version: 1,
+    entities: [
+        (
+            id: 1001,
+            name: "camera",
+            position: (0.0, 0.0, 0.0),
+            rotation: (1.0, 0.0, 0.0, 0.0),
+            components: [
+                Camera(
+                    position: (0.0, 70.0, 0.0),
+                    yaw_deg: 0.0,
+                    pitch_deg: -10.0,
+                    fov_deg: 70.0,
+                    near: 0.1,
+                    far: 4000.0,
+                    speed: 15.0,
+                    free: false,
+                ),
+            ],
+        ),
+        (
+            id: 1002,
+            name: "sky light",
+            position: (0.0, 0.0, 0.0),
+            rotation: (1.0, 0.0, 0.0, 0.0),
+            components: [
+                SkyLight(
+                    time_of_day: 0.40,
+                    day_length_seconds: 600.0,
+                    paused: true,
+                    cloud_coverage: 0.3,
+                ),
+            ],
+        ),
+        (
+            id: 1003,
+            name: "terrain",
+            position: (0.0, 0.0, 0.0),
+            rotation: (1.0, 0.0, 0.0, 0.0),
+            components: [
+                Terrain(seed: 2, scatter: []),
+            ],
+        ),
+        (
+            id: 1004,
+            name: "builder",
+            position: (0.0, 0.0, 0.0),
+            rotation: (1.0, 0.0, 0.0, 0.0),
+            components: [
+                Script(
+                    name: "Builder",
+                    data: {
+                        "walk_speed": 5.0,
+                        "fly_speed": 14.0,
+                        "reach": 7.0,
+                        "mouse_sensitivity": 0.12,
+                        "start": [0.0, 0.0],
+                        "start_yaw": 0.0,
+                    },
+                ),
+            ],
+        ),
+    ],
+)
