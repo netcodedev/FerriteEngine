@@ -325,7 +325,18 @@ pub fn draw(
             centre: [0.0; 2],
             load: 0.0,
             hole: 0.0,
+            loaded: (0, (0, 0)),
         });
+        // The loaded columns (see `columns`), which the far water leaves
+        // to the chunks.
+        ws.set_uniform_1i("loadedColumns", super::columns::LOADED_UNIT as i32);
+        ws.set_uniform_2i("loadedOrigin", far.loaded.1 .0, far.loaded.1 .1);
+        ws.set_uniform_1f("columnSize", super::CHUNK_SIZE as f32);
+        unsafe {
+            gl::ActiveTexture(gl::TEXTURE0 + super::columns::LOADED_UNIT);
+            gl::BindTexture(gl::TEXTURE_2D, far.loaded.0);
+            gl::ActiveTexture(gl::TEXTURE0);
+        }
         ws.set_uniform_1i("isFarWater", (far.load > 0.0) as i32);
         ws.set_uniform_3f("farSink", far.centre[0], far.centre[1], far.load);
         ws.set_uniform_1f("farHole", far.hole);

@@ -28,8 +28,9 @@ uniform sampler2D sceneDepth;
 uniform int hasScene;
 uniform mat4 viewProjection;
 uniform mat4 inverseViewProjection;
-// The far water is left out within `farHole` metres of the camera at
-// `farSink.xy` (under the ground, as the horizon is).
+// The far water is left out where the chunks are loaded (`columnLoaded`),
+// and within `farHole` metres of the camera at `farSink.xy` (under the
+// ground, as the horizon is).
 uniform int isFarWater;
 uniform vec3 farSink;
 uniform float farHole;
@@ -279,7 +280,7 @@ void main()
     if (Depth < -SURFACE_UNDER_GROUND) {
         discard;
     }
-    if (isFarWater == 1 && length(WorldPos.xz - farSink.xy) < farHole) {
+    if (isFarWater == 1 && (columnLoaded(WorldPos.xz) || length(WorldPos.xz - farSink.xy) < farHole)) {
         discard;
     }
     // Seen from under its own level, a water surface only shows its
@@ -287,8 +288,7 @@ void main()
     // the vertex shader): from under the near water's surface (diving) it
     // would show as a second surface below the first.
     if (isFarWater == 1) {
-        float sink = 0.15 + 4.0 * (1.0 - smoothstep(farSink.z - 160.0, farSink.z - 20.0, length(WorldPos.xz - farSink.xy)));
-        if (cameraPosition.y < WorldPos.y + sink) {
+        if (cameraPosition.y < WorldPos.y + 0.15) {
             discard;
         }
     }

@@ -14,7 +14,12 @@ use std::sync::{
     Arc,
 };
 
-use super::{mesher::TerrainVertex, source::TerrainSource, water::WaterVertex, ChunkMesh};
+use super::{
+    mesher::TerrainVertex,
+    source::{RiverPiece, TerrainSource},
+    water::WaterVertex,
+    ChunkMesh,
+};
 
 /// Metres between the samples of the finest grid (a multiple of
 /// `MACRO_STEP`, so samples fall on the large shape's grid).
@@ -34,10 +39,78 @@ const LAKE_SIZE: f32 = 300.0;
 /// its edge lies under the shore.
 const SHORE_MARGIN: f32 = 2.0;
 
+/// How far under the ground's samples the horizon is drawn beyond the
+/// chunks (see the terrain's vertex program), metres.
+pub const SINK: f32 = 4.0;
+/// Rivers on the horizon lie this far over the ground drawn, metres, and
+/// this much more per metre between the grid's samples there: a band's
+/// straight stretches would cut through the coarse grids' rises.
+const RIVER_LIFT: f32 = 1.0;
+const RIVER_LIFT_PER_STEP: f32 = 0.04;
+/// Narrowest a river is drawn on the horizon, metres: narrower ones would
+/// show in pieces from far away.
+const MIN_RIVER_WIDTH: f32 = 6.0;
+/// Longest stretch of a river band between two of its vertices, metres, so
+/// it follows the ground's grid instead of cutting through its hills.
+const RIVER_STEP: f64 = 12.0;
+/// Depth the water of a river on the horizon is coloured for, metres.
+const RIVER_DEPTH: f32 = 2.0;
+/// Speed of the water of a river on the horizon, metres per second.
+const RIVER_FLOW: f32 = 1.0;
+
 /// What `build` makes: the ground, and the water over it.
 pub struct Built {
     pub ground: (Vec<HorizonVertex>, Vec<u32>),
     pub water: (Vec<WaterVertex>, Vec<u32>),
+    pub heights: Arc<HeightGrid>,
+}
+
+/// The heights of the horizon's ground as it is drawn (before it is sunk
+/// by `SINK`), for what stands on it (see `far_scatter`).
+pub struct HeightGrid {
+    centre: [f64; 2],
+    /// Per grid, from the finest: the heights of its vertices, row by row.
+    levels: Vec<Vec<f32>>,
+}
+
+impl HeightGrid {
+    /// Where the grids are centred (world x, z).
+    pub fn centre(&self) -> [f64; 2] {
+        self.centre
+    }
+
+    /// The height of the drawn ground at world `(x, z)`, on the finest grid
+    /// that holds it (the one drawn there), on its triangles; `None` beyond
+    /// the horizon.
+    pub fn height(&self, x: f64, z: f64) -> Option<f32> {
+        self.sample(x, z).map(|(height, _)| height)
+    }
+
+    /// `height`, and the step of the grid it is from (metres).
+    pub fn sample(&self, x: f64, z: f64) -> Option<(f32, f32)> {
+        let n = (2 * HALF_CELLS + 1) as usize;
+        for (level, heights) in self.levels.iter().enumerate() {
+            let step = FINEST_STEP * (1 << level) as f64;
+            let fx = (x - self.centre[0]) / step + HALF_CELLS as f64;
+            let fz = (z - self.centre[1]) / step + HALF_CELLS as f64;
+            let last = (n - 1) as f64;
+            if !(0.0..last).contains(&fx) || !(0.0..last).contains(&fz) {
+                continue;
+            }
+            let (i, j) = (fx as usize, fz as usize);
+            let (u, v) = ((fx - i as f64) as f32, (fz - j as f64) as f32);
+            let h = |i: usize, j: usize| heights[j * n + i];
+            // The triangles of `build`: split from (i + 1, j) to (i, j + 1).
+            let (a, b, c, d) = (h(i, j), h(i + 1, j), h(i, j + 1), h(i + 1, j + 1));
+            let height = if u + v <= 1.0 {
+                a + u * (b - a) + v * (c - a)
+            } else {
+                d + (1.0 - u) * (c - d) + (1.0 - v) * (b - d)
+            };
+            return Some((height, step as f32));
+        }
+        None
+    }
 }
 
 /// The horizon's vertices: the chunks', so the terrain's programs draw it.
@@ -58,6 +131,10 @@ pub fn build(source: &dyn TerrainSource, centre: [f64; 2]) -> Built {
     let mut indices = Vec::new();
     let mut water_vertices = Vec::new();
     let mut water_indices = Vec::new();
+    let mut grid = HeightGrid {
+        centre,
+        levels: Vec::with_capacity(LEVELS),
+    };
     for level in 0..LEVELS {
         let step = FINEST_STEP * (1 << level) as f64;
         let n = 2 * HALF_CELLS + 1;
@@ -88,10 +165,12 @@ pub fn build(source: &dyn TerrainSource, centre: [f64; 2]) -> Built {
             }
         };
         let first = vertices.len() as u32;
+        let mut drawn = Vec::with_capacity((n * n) as usize);
         for j in 0..n {
             for i in 0..n {
                 let (_, surface, _) = samples[((j + 1) * side + i + 1) as usize];
                 let y = edge_height(i, j);
+                drawn.push(y);
                 let dx = height(i + 1, j) - height(i - 1, j);
                 let dz = height(i, j + 1) - height(i, j - 1);
                 let normal = [-dx, 2.0 * step as f32, -dz];
@@ -169,17 +248,122 @@ pub fn build(source: &dyn TerrainSource, centre: [f64; 2]) -> Built {
                 indices.extend_from_slice(&[a, c, b, b, c, d]);
             }
         }
+        grid.levels.push(drawn);
     }
+    river_bands(&source.far_rivers(centre, reach()), &grid, &mut water_vertices, &mut water_indices);
     Built {
         ground: (vertices, indices),
         water: (water_vertices, water_indices),
+        heights: Arc::new(grid),
     }
+}
+
+/// The rivers `pieces` as bands of water lying on the horizon's ground
+/// (`grid`), added to `vertices` and `indices`. Their `body_size` is
+/// negative: the water's vertex program sinks them under the chunks
+/// further than the rest of the far water (see `water_vertex.glsl`).
+fn river_bands(pieces: &[RiverPiece], grid: &HeightGrid, vertices: &mut Vec<WaterVertex>, indices: &mut Vec<u32>) {
+    for chain in chains(pieces) {
+        // Points along the chain, no further apart than `RIVER_STEP`.
+        let mut points: Vec<([f64; 2], f32)> = Vec::new();
+        for piece in &chain {
+            let length = (piece.b[0] - piece.a[0]).hypot(piece.b[1] - piece.a[1]);
+            let steps = (length / RIVER_STEP).ceil().max(1.0) as usize;
+            let first = if points.is_empty() { 0 } else { 1 };
+            for k in first..=steps {
+                let t = k as f64 / steps as f64;
+                let p = [piece.a[0] + (piece.b[0] - piece.a[0]) * t, piece.a[1] + (piece.b[1] - piece.a[1]) * t];
+                let width = piece.width[0] + (piece.width[1] - piece.width[0]) * t as f32;
+                points.push((p, width.max(MIN_RIVER_WIDTH)));
+            }
+        }
+        if points.len() < 2 {
+            continue;
+        }
+        let first = vertices.len() as u32;
+        let mut made = 0u32;
+        for k in 0..points.len() {
+            let (prev, next) = (points[k.saturating_sub(1)].0, points[(k + 1).min(points.len() - 1)].0);
+            let (dx, dz) = (next[0] - prev[0], next[1] - prev[1]);
+            let length = dx.hypot(dz).max(1e-9);
+            let (dx, dz) = (dx / length, dz / length);
+            let (p, width) = points[k];
+            let half = width as f64 * 0.5;
+            let side = |s: f64| {
+                let (x, z) = (p[0] - dz * half * s, p[1] + dx * half * s);
+                let (ground, step) = grid.sample(x, z)?;
+                Some(WaterVertex {
+                    position: [x as f32, ground - SINK + RIVER_LIFT + RIVER_LIFT_PER_STEP * step, z as f32],
+                    depth: RIVER_DEPTH,
+                    body_size: -width,
+                    flow: [dx as f32 * RIVER_FLOW, dz as f32 * RIVER_FLOW],
+                })
+            };
+            let (Some(left), Some(right)) = (side(-1.0), side(1.0)) else {
+                // Beyond the horizon: the band ends here.
+                break;
+            };
+            vertices.push(left);
+            vertices.push(right);
+            made += 1;
+        }
+        for k in 0..made.saturating_sub(1) {
+            let (a, b) = (first + 2 * k, first + 2 * k + 1);
+            let (c, d) = (a + 2, b + 2);
+            // Up-facing whichever way the river runs.
+            let (pa, pb, pc) = (vertices[a as usize].position, vertices[b as usize].position, vertices[c as usize].position);
+            let cross = (pb[2] - pa[2]) * (pc[0] - pa[0]) - (pb[0] - pa[0]) * (pc[2] - pa[2]);
+            if cross > 0.0 {
+                indices.extend_from_slice(&[a, b, c, b, d, c]);
+            } else {
+                indices.extend_from_slice(&[a, c, b, b, c, d]);
+            }
+        }
+    }
+}
+
+/// `pieces` joined into runs: each piece followed by the one beginning
+/// where it ends (exactly).
+fn chains(pieces: &[RiverPiece]) -> Vec<Vec<RiverPiece>> {
+    use std::collections::HashMap;
+    let key = |p: [f64; 2]| (p[0].to_bits(), p[1].to_bits());
+    let mut starting: HashMap<(u64, u64), usize> = HashMap::new();
+    for (i, piece) in pieces.iter().enumerate() {
+        starting.entry(key(piece.a)).or_insert(i);
+    }
+    let ending: std::collections::HashSet<(u64, u64)> = pieces.iter().map(|p| key(p.b)).collect();
+    let mut used = vec![false; pieces.len()];
+    let mut out = Vec::new();
+    // Runs from where no piece leads in first, then whatever is left
+    // (loops).
+    let starts: Vec<usize> = (0..pieces.len())
+        .filter(|&i| !ending.contains(&key(pieces[i].a)))
+        .chain(0..pieces.len())
+        .collect();
+    for start in starts {
+        let mut chain = Vec::new();
+        let mut at = Some(start);
+        while let Some(i) = at {
+            if used[i] {
+                break;
+            }
+            used[i] = true;
+            chain.push(pieces[i]);
+            at = starting.get(&key(pieces[i].b)).copied();
+        }
+        if !chain.is_empty() {
+            out.push(chain);
+        }
+    }
+    out
 }
 
 /// The horizon the terrain draws, made again on a thread of its own when
 /// the camera has moved a step.
 pub struct Horizon {
     mesh: Option<ChunkMesh<HorizonVertex>>,
+    /// The heights of the ground drawn.
+    heights: Option<Arc<HeightGrid>>,
     /// The water beyond the chunks.
     water: Option<ChunkMesh<WaterVertex>>,
     /// Centre of the mesh drawn, and of the one being made.
@@ -191,6 +375,7 @@ impl Horizon {
     pub fn new() -> Self {
         Self {
             mesh: None,
+            heights: None,
             water: None,
             centre: None,
             pending: None,
@@ -200,6 +385,7 @@ impl Horizon {
     /// Forget the mesh (the world changed).
     pub fn invalidate(&mut self) {
         self.mesh = None;
+        self.heights = None;
         self.water = None;
         self.centre = None;
         self.pending = None;
@@ -213,6 +399,7 @@ impl Horizon {
                 let mut mesh = ChunkMesh::new(vertices, Some(indices));
                 mesh.buffer_and_release();
                 self.mesh = Some(mesh);
+                self.heights = Some(built.heights);
                 let (vertices, indices) = built.water;
                 self.water = (!indices.is_empty()).then(|| {
                     let mut water = ChunkMesh::new(vertices, Some(indices));
@@ -238,6 +425,11 @@ impl Horizon {
 
     pub fn mesh(&self) -> Option<&ChunkMesh<HorizonVertex>> {
         self.mesh.as_ref()
+    }
+
+    /// The heights of the ground drawn, once there is a mesh.
+    pub fn heights(&self) -> Option<&Arc<HeightGrid>> {
+        self.heights.as_ref()
     }
 
     /// The water beyond the chunks, if there is any in reach.

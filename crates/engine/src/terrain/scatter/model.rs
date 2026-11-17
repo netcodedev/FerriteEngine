@@ -37,6 +37,8 @@ struct ModelCache {
 pub struct ScatterModel {
     pub(super) shader: Rc<Shader>,
     pub(super) variants: Vec<ModelVariant>,
+    /// The variants pictured for far away, once asked for.
+    impostors: std::cell::OnceCell<Vec<super::impostor::Impostor>>,
 }
 
 /// Which detail tier to draw.
@@ -195,7 +197,11 @@ impl ScatterModel {
                 })
                 .clone()
         });
-        Ok(Rc::new(ScatterModel { shader, variants }))
+        Ok(Rc::new(ScatterModel {
+            shader,
+            variants,
+            impostors: std::cell::OnceCell::new(),
+        }))
     }
 
     /// Number of variants loaded (always at least one).
@@ -206,6 +212,13 @@ impl ScatterModel {
     /// Number of detail tiers of a variant.
     pub fn lod_count(&self, variant: usize) -> usize {
         self.variants.get(variant).map_or(0, |v| v.lods.len())
+    }
+
+    /// Every variant pictured for far away (see `impostor`), pictured on
+    /// the first call. Must run on the GL thread.
+    pub fn impostors(&self) -> &[super::impostor::Impostor] {
+        self.impostors
+            .get_or_init(|| self.variants.iter().map(super::impostor::bake).collect())
     }
 
     /// Corners of the box around a variant's most detailed tier, in model
@@ -465,7 +478,7 @@ fn is_foliage_material(model: &Model, material_index: usize, foliage: &[bool]) -
 
 /// Stable hash of (x, z) → variant index. Same input always picks the same variant,
 /// so a chunk's scatter doesn't reshuffle on reload.
-pub(super) fn pick_variant_index(x: f32, z: f32, variant_count: usize) -> usize {
+pub(crate) fn pick_variant_index(x: f32, z: f32, variant_count: usize) -> usize {
     if variant_count == 0 {
         return 0;
     }

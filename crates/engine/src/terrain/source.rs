@@ -236,6 +236,18 @@ pub struct HorizonSample {
     pub water: f32,
 }
 
+/// A piece of river for the horizon (see `TerrainSource::far_rivers`): a
+/// straight run from `a` to `b` (world x, z), with the water's level and
+/// width at each end. Pieces that end where the next begins (the very same
+/// point) are joined into one band.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RiverPiece {
+    pub a: [f64; 2],
+    pub b: [f64; 2],
+    pub level: [f32; 2],
+    pub width: [f32; 2],
+}
+
 /// The programs the terrain draws a source's ground with. The vertex
 /// program gets `position`, `normals`, `groundColor` and `data0..data2` at
 /// locations 0 to 5 (see `shaders::STANDARD_VERTEX`); most sources keep the
@@ -302,6 +314,24 @@ pub trait TerrainSource: Send + Sync + 'static {
         } else {
             0.0
         }
+    }
+
+    /// How likely a model of the scatter layer tagged `tag` grows at world
+    /// `(x, z)` seen from far away, beyond the loaded chunks, where the
+    /// horizon's ground stands at `height`. Asked for many spots at once
+    /// (on a thread of its own), so a source whose `scatter_chance` is slow
+    /// may answer from what it knows cheaply; it should mostly agree, or
+    /// trees appear and vanish where the chunks take over. Default:
+    /// `scatter_chance` at `height`.
+    fn far_scatter_chance(&self, tag: &str, x: f64, z: f64, height: f32) -> f32 {
+        self.scatter_chance(tag, x, height, z)
+    }
+
+    /// The rivers within `reach` metres of world `(x, z)` `centre`, for the
+    /// horizon to draw beyond the loaded chunks (they are too narrow for
+    /// its grid). Default: none.
+    fn far_rivers(&self, _centre: [f64; 2], _reach: f64) -> Vec<RiverPiece> {
+        Vec::new()
     }
 
     /// The ground at world `(x, z)` as the horizon shows it.

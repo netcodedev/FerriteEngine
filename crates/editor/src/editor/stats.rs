@@ -218,6 +218,28 @@ impl Stats {
         }
     }
 
+    /// The numbers the panel shows, for the MCP bridge (`editor_status`).
+    pub fn to_json(&self) -> serde_json::Value {
+        let (avg, min, max) = self.frame_avg_min_max();
+        let passes: serde_json::Map<String, serde_json::Value> = match self.pass_ms {
+            Some(ms) => profiler::Pass::ALL
+                .iter()
+                .zip(ms)
+                .map(|(pass, ms)| (pass.label().to_string(), serde_json::json!(round(ms))))
+                .collect(),
+            None => serde_json::Map::new(),
+        };
+        serde_json::json!({
+            "fps": round(self.fps()),
+            "frame_ms": { "avg": round(avg), "min": round(min), "max": round(max) },
+            "update_ms": round(self.update_ms.0),
+            "render_cpu_ms": round(self.render_ms.0),
+            "ui_ms": round(self.ui_ms.0),
+            "gpu_ms": round(self.gpu_ms.0),
+            "gpu_passes_ms": passes,
+        })
+    }
+
     fn frame_avg_min_max(&self) -> (f32, f32, f32) {
         if self.frame_ms.is_empty() {
             return (0.0, 0.0, 0.0);
@@ -227,6 +249,11 @@ impl Stats {
         let max = self.frame_ms.iter().copied().fold(0.0, f32::max);
         (sum / self.frame_ms.len() as f32, min, max)
     }
+}
+
+/// Two decimals are all a reading tells.
+fn round(value: f32) -> f32 {
+    (value * 100.0).round() / 100.0
 }
 
 fn count_scene(scene: &Scene) -> SceneCounts {
