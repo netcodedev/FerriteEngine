@@ -302,6 +302,7 @@ impl Scene {
     /// Edit-mode update: no physics, no gameplay — only components that keep
     /// the scene presentable (see `Component::update_in_editor`).
     pub fn update_in_editor(&mut self, delta_time: f64) {
+        self.physics_engine.paused_frame();
         for i in 0..self.entities.len() {
             let mut entity = self.entities.remove(i);
             entity.update_in_editor(self, delta_time);
@@ -343,11 +344,14 @@ impl Scene {
     }
 
     pub fn update(&mut self, delta_time: f64) {
+        self.physics_engine.begin_frame();
         // Messages in and out, and the other players where they are, before
         // anything moves.
         crate::core::net::update(self, delta_time);
         if self.physics_enabled {
             self.physics_engine.update((delta_time as f32).min(1.0 / 20.0));
+        } else {
+            self.physics_engine.paused_frame();
         }
         for i in 0..self.entities.len() {
             let mut entity = self.entities.remove(i);
@@ -991,6 +995,7 @@ impl Scene {
                     rapier3d::prelude::Vector::new(position.x, position.y, position.z),
                     true,
                 );
+                self.physics_engine.body_moved();
             }
         }
     }
