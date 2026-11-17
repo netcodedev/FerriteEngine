@@ -437,7 +437,7 @@ checksum = "157a8ba7b480713b56f4c09fd13fc3e0a22a5dfab8097ba61cbc5feef950788a"
 dependencies = [
  "glob",
  "libc",
- "libloading",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -753,7 +753,7 @@ name = "ferrite"
 version = "0.1.0"
 dependencies = [
  "as-any",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bincode",
  "cgmath",
  "ctrlc",
@@ -764,7 +764,7 @@ dependencies = [
  "glfw",
  "image",
  "lazy_static",
- "libloading",
+ "libloading 0.9.1",
  "libnoise",
  "log",
  "ndarray",
@@ -783,7 +783,7 @@ dependencies = [
 name = "ferrite-editor"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "cgmath",
  "env_logger",
  "ferrite",
@@ -792,7 +792,7 @@ dependencies = [
  "gl",
  "glfw",
  "image",
- "libloading",
+ "libloading 0.9.1",
  "log",
  "rfd",
  "serde_json",
@@ -1641,6 +1641,16 @@ name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
+name = "libloading"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1832accd5a4ca2795ace4d05d15c4039be15b62d3b950eff99746a990e3cc10"
 dependencies = [
  "cfg-if",
  "windows-link",
@@ -2684,9 +2694,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "renet"
-version = "1.2.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c3784a36baf3db87eb738af59a2d57cd54b2d09088499eaab300440f81fd41a"
+checksum = "4ff4fbced648dbc74405b8aa88a95e8392c83ce7585ce74a8b3e140a0cf6f27a"
 dependencies = [
  "bytes",
  "log",
@@ -2695,9 +2705,9 @@ dependencies = [
 
 [[package]]
 name = "renet_netcode"
-version = "1.2.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d73ffa79c2081fe93286acac186a20d49657b93b8cfa4e0e8b79b1f3ee81241"
+checksum = "284128e56a973662c37ea314b117a5e54dd438a9f34f141719691a1acc47e602"
 dependencies = [
  "log",
  "renet",
@@ -2706,9 +2716,9 @@ dependencies = [
 
 [[package]]
 name = "renetcode"
-version = "1.0.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "118d456f815f7fd5bd12713a9e69a0b0f8b45806bd515e05bb60146f1867310d"
+checksum = "76bed9d6d190d20804b5645511932fef803145520ef4eb76d5e4b5a841980eac"
 dependencies = [
  "chacha20poly1305",
  "log",
