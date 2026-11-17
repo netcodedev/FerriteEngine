@@ -146,3 +146,49 @@ impl Window {
         }
     }
 }
+
+impl Drop for Window {
+    /// Whatever still owns GL objects past here (thread-locals, statics,
+    /// caches in scripts) would call into the driver once the context and
+    /// the driver are gone, and crash the process on exit: from here on
+    /// every GL call does nothing.
+    fn drop(&mut self) {
+        disconnect_gl();
+    }
+}
+
+/// What every GL function is once the context is gone: it does nothing and
+/// returns 0 (no object, no error), whatever its arguments (the caller
+/// cleans those up in the C calling conventions).
+extern "system" fn gl_gone() -> usize {
+    0
+}
+
+/// Point every GL function at `gl_gone` (see `Window`'s `Drop`). GL objects
+/// dropped after this are not freed: the process is ending, and the driver
+/// frees them with the context.
+pub fn disconnect_gl() {
+    gl::load_with(|_| gl_gone as *const std::ffi::c_void);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gl_calls_after_the_context_is_gone_do_nothing() {
+        disconnect_gl();
+        unsafe {
+            let texture = 7;
+            gl::DeleteTextures(1, &texture);
+            gl::DeleteBuffers(1, &texture);
+            gl::DeleteVertexArrays(1, &texture);
+            gl::DeleteFramebuffers(1, &texture);
+            gl::DeleteProgram(3);
+            // Loops waiting for no error end.
+            assert_eq!(gl::GetError(), gl::NO_ERROR);
+            assert!(gl::GetString(gl::VERSION).is_null());
+        }
+        assert!(gl::DeleteTextures::is_loaded());
+    }
+}

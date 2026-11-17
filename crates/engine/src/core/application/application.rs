@@ -84,6 +84,8 @@ impl Drop for Application {
             drop(layer);
         }
         // Thread-local GL caches would otherwise outlive the context too.
+        // (Any not freed here — a cache in a script, say — does nothing
+        // once the window is dropped: see `Window`'s `Drop`.)
         crate::terrain::scatter::release_gl_resources();
         crate::core::renderer::particles::release_gl_resources();
         crate::terrain::bridge_view::release_gl_resources();
