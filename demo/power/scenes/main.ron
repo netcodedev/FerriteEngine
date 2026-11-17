@@ -1,0 +1,68 @@
+(
+    version: 1,
+    entities: [
+        (
+            id: 1001,
+            name: "camera",
+            position: (0.0, 0.0, 0.0),
+            rotation: (1.0, 0.0, 0.0, 0.0),
+            components: [
+                Camera(
+                    position: (0.0, 70.0, 0.0),
+                    yaw_deg: 0.0,
+                    pitch_deg: -10.0,
+                    fov_deg: 70.0,
+                    near: 0.1,
+                    far: 4000.0,
+                    speed: 15.0,
+                    free: false,
+                ),
+            ],
+        ),
+        (
+            id: 1002,
+            name: "sky light",
+            position: (0.0, 0.0, 0.0),
+            rotation: (1.0, 0.0, 0.0, 0.0),
+            components: [
+                SkyLight(
+                    time_of_day: 0.42,
+                    day_length_seconds: 1200.0,
+                    paused: false,
+                    cloud_coverage: 0.25,
+                ),
+            ],
+        ),
+        (
+            id: 1003,
+            name: "terrain",
+            position: (0.0, 0.0, 0.0),
+            rotation: (1.0, 0.0, 0.0, 0.0),
+            components: [
+                Terrain(seed: 2, scatter: []),
+            ],
+        ),
+        (
+            id: 1004,
+            name: "electrician",
+            position: (0.0, 0.0, 0.0),
+            rotation: (1.0, 0.0, 0.0, 0.0),
+            components: [
+                Script(
+                    name: "Electrician",
+                    data: {
+                        "walk_speed": 5.0,
+                        "fly_speed": 14.0,
+                        "reach": 9.0,
+                        "mouse_sensitivity": 0.12,
+                        "start": [-12.0, -160.0],
+                        "start_yaw": 0.0,
+                        "cable_length": 50.0,
+                        "pole_line": [-22.0, -151.0, 0.0, 4.0, 22.0],
+                        "setup": true,
+                    },
+                ),
+            ],
+        ),
+    ],
+)

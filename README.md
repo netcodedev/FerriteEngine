@@ -17,6 +17,8 @@ A personal project to get a better understanding of Rust and OpenGL: a 3D engine
 | `ferrite-mcp` | `crates/mcp` | Authoring-time MCP server for AI assistants (not shipped in games) |
 | `sandbox` | `crates/sandbox` | Small demo world to play around in |
 
+Demo projects live in `demo/`: [power](demo/power) shows producers, batteries and consumers joined by cables drawn by hand.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md) — crate map and how a frame runs
