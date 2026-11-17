@@ -62,6 +62,7 @@ Every method is optional:
 | `update_in_editor(scene, entity, delta_time)` | Every frame while the scene is edited, not played |
 | `render(scene, entity, view_projection, parent_transform)` | Drawing |
 | `render_transparent(...)` | After everything opaque is drawn (overlays, transparency) |
+| `render_overlay(scene, entity)` | 2D on top of the finished image: HUD, inventory, menus (`PlaneRenderer`, `Text`) |
 | `handle_event(glfw, window, event)` | Window events (keys, mouse) |
 | `on_remove(physics)` | When the entity leaves the scene: release what it owns (physics bodies) |
 

@@ -39,6 +39,16 @@ impl Model {
         }
     }
 
+    /// Colour a material plainly: `color` is sRGB, each channel 0 to 1.
+    /// For models made in code (see `generated`), whose materials have no
+    /// maps of their own.
+    pub fn set_material_color(&mut self, material_index: usize, color: [f32; 3]) {
+        let [r, g, b] = color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+        let texture = Texture::new();
+        texture.load_material_map(1, 1, vec![r, g, b, 255], true);
+        self.set_material_texture(material_index, TextureType::Diffuse, texture);
+    }
+
     /// Use the image file at `path` as one map of a material, e.g. one the
     /// user assigned to the asset. Returns false if it cannot be read.
     pub fn set_material_map_file(

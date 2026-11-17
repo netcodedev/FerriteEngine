@@ -61,6 +61,9 @@ pub trait Behaviour: 'static {
         parent_transform: &Matrix4<f32>,
     ) {
     }
+    /// 2D drawing on top of the finished image: a HUD, an inventory, menus
+    /// (`PlaneRenderer`, `Text`), in the viewport's pixels.
+    fn render_overlay(&self, scene: &Scene, entity: &Entity) {}
     fn handle_event(&mut self, glfw: &mut Glfw, window: &mut Window, event: &WindowEvent) {}
     /// Distance along the ray (`dir` normalized) to the nearest point where
     /// it hits what the script draws, for picking in the editor (see
@@ -153,6 +156,10 @@ impl<S: Script> Component for ScriptComponent<S> {
     ) {
         self.script
             .render_transparent(scene, entity, view_projection, parent_transform);
+    }
+
+    fn render_overlay(&self, scene: &Scene, entity: &Entity) {
+        self.script.render_overlay(scene, entity);
     }
 
     fn handle_event(&mut self, glfw: &mut Glfw, window: &mut Window, event: &WindowEvent) {

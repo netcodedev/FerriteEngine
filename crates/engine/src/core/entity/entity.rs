@@ -159,6 +159,17 @@ impl Entity {
         }
     }
 
+    /// 2D overlays of the components (see `Component::render_overlay`),
+    /// then of the children.
+    pub fn render_overlay(&self, scene: &Scene) {
+        for component in self.components.iter() {
+            component.render_overlay(scene, self);
+        }
+        for child in self.children.iter() {
+            child.render_overlay(scene);
+        }
+    }
+
     pub fn add_child(&mut self, child: Entity) {
         self.children.push(child);
     }
