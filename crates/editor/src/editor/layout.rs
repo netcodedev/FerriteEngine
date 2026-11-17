@@ -22,8 +22,15 @@ pub struct Layout {
     pub hierarchy: Rect,
     pub inspector: Rect,
     pub viewport: Rect,
-    /// Asset browser below the viewport; zero height when hidden.
+    /// The strip below the viewport holding the asset browser and/or the
+    /// console; zero height when both are hidden.
+    pub bottom: Rect,
+    /// Asset browser below the viewport (left part of `bottom`); zero size
+    /// when hidden.
     pub assets: Rect,
+    /// Log console below the viewport (right part of `bottom`); zero size
+    /// when hidden.
+    pub console: Rect,
     /// The whole right column; zero width when nothing is docked there.
     pub right: Rect,
     /// Statistics (scene) or preview (animation) in the right column; zero
@@ -44,6 +51,8 @@ pub const MIN_COLUMN: f32 = 220.0;
 pub const MIN_PANEL_HEIGHT: f32 = 120.0;
 /// Height the viewport keeps when the asset browser is enlarged.
 pub const MIN_VIEWPORT_HEIGHT: f32 = 160.0;
+/// Smallest width of the asset browser and the console side by side.
+pub const MIN_BOTTOM_PANEL: f32 = 160.0;
 
 /// User-adjustable panel sizes (dragged with the splitters).
 #[derive(Clone, Copy, Debug, PartialEq, ferrite::serde::Serialize, ferrite::serde::Deserialize)]
@@ -58,8 +67,11 @@ pub struct PanelSizes {
     /// Share of the right column's height for statistics when the widget
     /// showcase is docked below it.
     pub right_share: f32,
-    /// Height of the asset browser below the viewport.
+    /// Height of the strip below the viewport (asset browser, console).
     pub assets: f32,
+    /// Share of that strip's width given to the console when the asset
+    /// browser is shown beside it.
+    pub console_share: f32,
 }
 
 impl Default for PanelSizes {
@@ -71,6 +83,7 @@ impl Default for PanelSizes {
             preview: 360.0,
             right_share: 0.55,
             assets: 210.0,
+            console_share: 0.5,
         }
     }
 }
@@ -84,17 +97,19 @@ pub enum RightColumn {
 }
 
 impl Layout {
-    /// `assets`: whether the asset browser is docked below the viewport.
+    /// `assets`, `console`: whether the asset browser and the console are
+    /// docked below the viewport (side by side when both are).
     pub fn compute(
         window_w: f32,
         window_h: f32,
         right: RightColumn,
         assets: bool,
+        console: bool,
         sizes: &PanelSizes,
     ) -> Self {
         let body_h = (window_h - TOP).max(64.0);
         // The viewport keeps a minimum height; the browser gives way first.
-        let assets_h = if assets {
+        let assets_h = if assets || console {
             sizes
                 .assets
                 .min((body_h - MIN_VIEWPORT_HEIGHT).max(0.0))
@@ -122,6 +137,25 @@ impl Layout {
             (true, false) => body_h,
             _ => 0.0,
         };
+        let center_x = side_w;
+        let center_w = (window_w - side_w - stats_w).max(1.0);
+        let bottom = Rect {
+            x: center_x,
+            y: TOP + body_h - assets_h,
+            w: center_w,
+            h: assets_h,
+        };
+        let console_w = match (assets, console) {
+            (_, false) => 0.0,
+            (false, true) => center_w,
+            (true, true) => {
+                let max = (center_w - MIN_BOTTOM_PANEL).max(center_w * 0.5);
+                (center_w * sizes.console_share)
+                    .clamp(MIN_BOTTOM_PANEL.min(center_w * 0.5), max)
+                    .floor()
+            }
+        };
+        let assets_w = if assets { center_w - console_w } else { 0.0 };
         let hierarchy_h = (body_h * sizes.top_share)
             .clamp(MIN_PANEL_HEIGHT.min(body_h * 0.5), (body_h - MIN_PANEL_HEIGHT).max(body_h * 0.5))
             .floor();
@@ -158,11 +192,18 @@ impl Layout {
                 w: (window_w - side_w - stats_w).max(1.0),
                 h: (body_h - assets_h).max(1.0),
             },
+            bottom,
             assets: Rect {
-                x: side_w,
-                y: TOP + body_h - assets_h,
-                w: (window_w - side_w - stats_w).max(1.0),
-                h: assets_h,
+                x: center_x,
+                y: bottom.y,
+                w: assets_w,
+                h: if assets { assets_h } else { 0.0 },
+            },
+            console: Rect {
+                x: center_x + assets_w,
+                y: bottom.y,
+                w: console_w,
+                h: if console { assets_h } else { 0.0 },
             },
             right: Rect {
                 x: window_w - stats_w,
@@ -209,11 +250,11 @@ mod tests {
     #[test]
     fn asset_browser_sits_below_the_viewport() {
         let sizes = PanelSizes::default();
-        let without = Layout::compute(1280.0, 720.0, PANELS, false, &sizes);
+        let without = Layout::compute(1280.0, 720.0, PANELS, false, false, &sizes);
         assert_eq!(without.assets.h, 0.0);
         assert_eq!(without.viewport.h, 720.0 - TOP);
 
-        let with = Layout::compute(1280.0, 720.0, PANELS, true, &sizes);
+        let with = Layout::compute(1280.0, 720.0, PANELS, true, false, &sizes);
         assert_eq!(with.assets.h, sizes.assets);
         assert_eq!(with.assets.x, with.viewport.x);
         assert_eq!(with.assets.w, with.viewport.w);
@@ -227,8 +268,26 @@ mod tests {
             assets: 500.0,
             ..PanelSizes::default()
         };
-        let layout = Layout::compute(1280.0, 400.0, PANELS, true, &sizes);
+        let layout = Layout::compute(1280.0, 400.0, PANELS, true, false, &sizes);
         assert_eq!(layout.viewport.h, MIN_VIEWPORT_HEIGHT);
         assert_eq!(layout.assets.h, 400.0 - TOP - MIN_VIEWPORT_HEIGHT);
+    }
+
+    #[test]
+    fn console_shares_the_strip_below_the_viewport() {
+        let sizes = PanelSizes::default();
+        let alone = Layout::compute(1280.0, 720.0, PANELS, false, true, &sizes);
+        assert_eq!(alone.assets.w, 0.0);
+        assert_eq!(alone.assets.h, 0.0);
+        assert_eq!(alone.console, alone.bottom);
+        assert_eq!(alone.console.h, sizes.assets);
+        assert_eq!(alone.console.y, alone.viewport.y + alone.viewport.h);
+
+        let both = Layout::compute(1280.0, 720.0, PANELS, true, true, &sizes);
+        assert_eq!(both.assets.x, both.bottom.x);
+        assert_eq!(both.console.x, both.assets.x + both.assets.w);
+        assert_eq!(both.assets.w + both.console.w, both.bottom.w);
+        assert_eq!(both.console.w, (both.bottom.w * sizes.console_share).floor());
+        assert_eq!(both.assets.h, both.console.h);
     }
 }

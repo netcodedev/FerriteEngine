@@ -13,7 +13,9 @@ impl Application {
     /// Like `new`, but without the system title bar when `decorated` is
     /// false.
     pub fn with_decorations(width: u32, height: u32, title: &str, decorated: bool) -> Self {
-        env_logger::init();
+        // stderr shows errors unless RUST_LOG says otherwise; the editor's
+        // console keeps more (see `logging`).
+        crate::core::logging::init("error");
         let window = Window::with_decorations(width, height, title, decorated);
 
         TextRenderer::resize(width, height);

@@ -57,6 +57,8 @@ impl Default for {type_name} {{
 impl Behaviour for {type_name} {{
     fn update(&mut self, _scene: &mut Scene, _entity: &mut Entity, delta_time: f64) {{
         self.elapsed += delta_time * self.speed as f64;
+        // info!("..."), warn!("..."), error!("...") write to the editor's
+        // console.
     }}
 }}
 "#

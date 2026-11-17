@@ -1,6 +1,6 @@
 //! Drag handles between the docked panels: left column ↔ viewport, top ↔
 //! bottom panel of the left column, viewport ↔ right column, viewport ↔
-//! asset browser.
+//! the strip below it (asset browser, console), asset browser ↔ console.
 
 use ferrite::core::{
     primitives::{Offset, Position, Size},
@@ -11,7 +11,7 @@ use ferrite_ui::ui::{element_handle::UIElementHandle, theme, UIElement};
 use glfw::{Action, Cursor, Glfw, MouseButton, StandardCursor, WindowEvent};
 
 use super::{
-    layout::{Layout, Rect, MIN_COLUMN, MIN_PANEL_HEIGHT, MIN_VIEWPORT_HEIGHT},
+    layout::{Layout, Rect, MIN_BOTTOM_PANEL, MIN_COLUMN, MIN_PANEL_HEIGHT, MIN_VIEWPORT_HEIGHT},
     Shared, Workspace,
 };
 
@@ -29,14 +29,16 @@ enum Edge {
     Right,
     /// Between statistics and the widget showcase in the right column.
     RightSplit,
-    /// Top edge of the asset browser.
+    /// Top edge of the strip below the viewport (asset browser, console).
     Assets,
+    /// Between the asset browser and the console.
+    BottomSplit,
 }
 
 impl Edge {
     fn cursor(self) -> StandardCursor {
         match self {
-            Edge::Side | Edge::Right => StandardCursor::HResize,
+            Edge::Side | Edge::Right | Edge::BottomSplit => StandardCursor::HResize,
             Edge::SideSplit | Edge::RightSplit | Edge::Assets => StandardCursor::VResize,
         }
     }
@@ -78,13 +80,20 @@ impl Splitter {
         if (x - (side.x + side.w)).abs() <= GRAB {
             return Some(Edge::Side);
         }
-        let assets = layout.assets;
-        if assets.h > 0.0
-            && x > assets.x + GRAB
-            && x < assets.x + assets.w - GRAB
-            && (y - assets.y).abs() <= GRAB
+        let bottom = layout.bottom;
+        if bottom.h > 0.0
+            && x > bottom.x + GRAB
+            && x < bottom.x + bottom.w - GRAB
+            && (y - bottom.y).abs() <= GRAB
         {
             return Some(Edge::Assets);
+        }
+        if layout.assets.w > 0.0
+            && layout.console.w > 0.0
+            && y > bottom.y + GRAB
+            && (x - layout.console.x).abs() <= GRAB
+        {
+            return Some(Edge::BottomSplit);
         }
         let right = layout.right;
         if right.w > 0.0
@@ -129,10 +138,16 @@ impl Splitter {
                 h: 2.0,
             },
             Edge::Assets => Rect {
-                x: layout.assets.x,
-                y: layout.assets.y - 1.0,
-                w: layout.assets.w,
+                x: layout.bottom.x,
+                y: layout.bottom.y - 1.0,
+                w: layout.bottom.w,
                 h: 2.0,
+            },
+            Edge::BottomSplit => Rect {
+                x: layout.console.x - 1.0,
+                y: layout.bottom.y,
+                w: 2.0,
+                h: layout.bottom.h,
             },
         }
     }
@@ -159,10 +174,16 @@ impl Splitter {
                 sizes.right_share = top / body.max(1.0);
             }
             Edge::Assets => {
-                let bottom = layout.assets.y + layout.assets.h;
-                let body = layout.viewport.h + layout.assets.h;
+                let bottom = layout.bottom.y + layout.bottom.h;
+                let body = layout.viewport.h + layout.bottom.h;
                 let max = (body - MIN_VIEWPORT_HEIGHT).max(MIN_PANEL_HEIGHT);
                 sizes.assets = (bottom - y).clamp(MIN_PANEL_HEIGHT, max).round();
+            }
+            Edge::BottomSplit => {
+                let strip = layout.bottom;
+                let max = (strip.w - MIN_BOTTOM_PANEL).max(MIN_BOTTOM_PANEL);
+                let console = (strip.x + strip.w - x).clamp(MIN_BOTTOM_PANEL, max);
+                sizes.console_share = console / strip.w.max(1.0);
             }
             Edge::Right => {
                 let max = (layout.window_w - layout.hierarchy.w - MIN_VIEWPORT).max(MIN_COLUMN);

@@ -35,5 +35,7 @@ pub mod prelude {
         Zero,
     };
     pub use glfw::{Action, Key, MouseButton, WindowEvent};
+    // `info!("...")` and friends: shown in the editor's console.
+    pub use log::{debug, error, info, trace, warn};
     pub use serde::{Deserialize, Serialize};
 }

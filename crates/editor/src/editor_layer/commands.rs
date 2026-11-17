@@ -146,6 +146,7 @@ impl EditorLayer {
                 if self.state.borrow().workspace != Workspace::Scene {
                     self.run(Command::SetWorkspace(Workspace::Scene));
                 }
+                log::info!("Play mode started");
                 self.play_snapshot = Some(self.scene.to_file());
                 self.scene.set_editor_camera(None);
                 self.scene.set_physics_enabled(true);
@@ -162,6 +163,7 @@ impl EditorLayer {
                 if mode == Mode::Edit {
                     return;
                 }
+                log::info!("Play mode stopped");
                 // A game played on a server leaves it with play mode.
                 ferrite::core::net::disconnect();
                 if let Some(snapshot) = self.play_snapshot.take() {

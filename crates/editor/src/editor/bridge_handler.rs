@@ -229,7 +229,24 @@ fn status(scene: &Scene, state: &EditorState) -> serde_json::Value {
         "has_camera": has_camera,
         "performance": state.stats.to_json(),
         "debug_views": state.debug.to_json(),
+        "recent_logs": recent_logs(),
     })
+}
+
+/// The newest messages of the console, warnings and errors only (scripts'
+/// `info!` can be chatty), oldest first.
+fn recent_logs() -> Vec<serde_json::Value> {
+    ferrite::core::logging::recent(30, ferrite::log::Level::Warn)
+        .iter()
+        .map(|entry| {
+            json!({
+                "level": entry.level.as_str(),
+                "source": entry.target,
+                "time_s": (entry.time.as_secs_f64() * 1000.0).round() / 1000.0,
+                "message": entry.message,
+            })
+        })
+        .collect()
 }
 
 fn list_entities(scene: &Scene) -> serde_json::Value {

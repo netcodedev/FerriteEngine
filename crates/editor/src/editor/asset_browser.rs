@@ -358,10 +358,13 @@ impl UIElement for AssetBrowser {
         });
         let has_selection = self.state.borrow().asset_selection.is_some();
         self.edit.set_enabled(has_selection);
+        let details_x = after_refresh + self.edit.get_size().width + 10.0;
         self.details.set_offset(Offset {
-            x: after_refresh + self.edit.get_size().width + 10.0,
+            x: details_x,
             y: ay + 5.0,
         });
+        self.details
+            .set_max_width(Some((rect.x + rect.w - details_x - 8.0).max(0.0)));
 
         let tree_top = rect.y + header + ACTIONS_HEIGHT + 6.0;
         self.tree.set_position(Position::new(x, tree_top, 1.0));
