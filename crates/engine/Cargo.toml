@@ -16,20 +16,20 @@ gl = "0.14.0"
 glfw = "0.63.0"
 image = "0.25.10"
 lazy_static = "1.5.1"
-libloading = "0.8"
+libloading = "0.9"
 libnoise = "1.2.0"
 log = "0.4.35"
 ndarray = "0.17.2"
 rand = "0.10.3"
 rapier3d = { version = "0.36.1", features = ["parallel"] }
-renet = "1"
-renet_netcode = "1"
+renet = "2"
+renet_netcode = "2"
 ron = "0.12.3"
 russimp-ng = { version = "3.2.7" }
 rusttype = { version = "0.9.3", features = ["gpu_cache"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
-base64 = "0.22"
+base64 = "0.23"
 
 [features]
 # Assimp and GLFW built from source and linked in, instead of the
