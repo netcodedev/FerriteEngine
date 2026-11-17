@@ -18,29 +18,28 @@ out vec2 Flow;
 uniform mat4 model;
 uniform mat4 viewProjection;
 // The far water (see `terrain::horizon`): flat (its grid is far too coarse
-// for the waves to move it), and sunk under the loaded chunks, within
-// `farSink.z` metres of the camera at `farSink.xy` (x, z), so the chunks'
-// water lies over it.
+// for the waves to move it), a little under its level, and left out where
+// the chunks are loaded (see the fragment program). Its rivers have a
+// negative `bodySize`.
 uniform int isFarWater;
-uniform vec3 farSink;
 
 void main()
 {
     vec3 rest = (model * vec4(position, 1.0)).xyz;
-    WaveSample waves = sampleWaves(rest.xz, bodySize, depth);
+    float size = abs(bodySize);
+    WaveSample waves = sampleWaves(rest.xz, size, depth);
     vec3 world = rest + waves.offset;
     if (isFarWater == 1) {
-        float d = length(rest.xz - farSink.xy);
-        world = rest - vec3(0.0, 0.15 + 4.0 * (1.0 - smoothstep(farSink.z - 160.0, farSink.z - 20.0, d)), 0.0);
+        world = rest - vec3(0.0, 0.15, 0.0);
         waves.offset = vec3(0.0);
     }
     gl_Position = viewProjection * vec4(world, 1.0);
     WorldPos = world;
     RestXZ = rest.xz;
     Depth = depth;
-    BodySize = bodySize;
+    BodySize = size;
     Flow = flow;
     Crest = smoothstep(0.62, 0.35, waves.jacobian);
-    float amplitude = waveAmplitude(bodySize, depth);
+    float amplitude = waveAmplitude(size, depth);
     WaveHeight = amplitude > 1e-3 ? clamp(waves.offset.y / amplitude, -1.0, 1.0) : 0.0;
 }

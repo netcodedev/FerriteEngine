@@ -22,6 +22,7 @@ use crate::core::{
 
 use super::CHUNK_SIZE_FLOAT;
 
+pub mod impostor;
 mod instances;
 mod layer;
 mod model;

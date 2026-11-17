@@ -7,9 +7,11 @@
 //! `cameraPosition`, `isShadowPass`...) and `fragment_common.glsl` (the
 //! standard vertex program's outputs `Normal`, `WorldPos`, `GroundColor`,
 //! `Data0..Data2`, `FragColor`, `hiddenHorizon()`, `terrainHaze()` and
-//! `waterLine`).
+//! `waterLine`) and `HAZE_GLSL`.
 
 use crate::core::renderer::{pbr, sky};
+
+use super::columns::COLUMNS_GLSL;
 
 /// The standard vertex program: positions, normals, the ground's colour and
 /// the source's data at locations 0 to 5, sunk under the chunks where it
@@ -23,6 +25,10 @@ pub const STANDARD_DEPTH_VERTEX: &str = include_str!("shaders/depth_vertex.glsl"
 /// `fragment_prelude()`): the vertices' colours, lit.
 pub const DEFAULT_FRAGMENT: &str = include_str!("shaders/default_fragment.glsl");
 
+/// `terrainHaze(color, p)`: the haze the terrain's far ground gets, for
+/// what stands on it to get the same. Goes after `pbr::LIGHTING_GLSL`.
+pub const HAZE_GLSL: &str = include_str!("shaders/haze.glsl");
+
 /// Uniforms `sky::CLOUD_FIELD_GLSL` needs that `pbr::LIGHTING_GLSL` does
 /// not declare.
 const CLOUD_UNIFORMS: &str = "uniform float uTime;\nuniform float cloudType;";
@@ -30,12 +36,19 @@ const CLOUD_UNIFORMS: &str = "uniform float uTime;\nuniform float cloudType;";
 /// What goes before a terrain fragment program's own code: see the module.
 pub fn fragment_prelude() -> String {
     format!(
-        "#version 460 core\n{}\n{CLOUD_UNIFORMS}\n{}\n{}\n{}",
+        "#version 460 core\n{}\n{CLOUD_UNIFORMS}\n{}\n{}\n{COLUMNS_GLSL}\n{}\n{HAZE_GLSL}",
         pbr::LIGHTING_GLSL,
         sky::CLOUD_FIELD_GLSL,
         sky::CLOUD_SHADOW_GLSL,
         include_str!("shaders/fragment_common.glsl"),
     )
+}
+
+/// The fragment program the horizon's depth is drawn with (after a depth
+/// vertex program that hands on `WorldPos`): left out where the chunks are
+/// loaded, as `hiddenHorizon()` leaves it out.
+pub fn horizon_depth_fragment() -> String {
+    format!("#version 460 core\n{COLUMNS_GLSL}\n{}", include_str!("shaders/horizon_depth_fragment.glsl"))
 }
 
 /// The water's programs (see `water`).
@@ -47,7 +60,7 @@ pub(super) fn water_sources() -> (String, String) {
             include_str!("shaders/water_vertex.glsl")
         ),
         format!(
-            "#version 460 core\n{}\n{}\n{}",
+            "#version 460 core\n{}\n{COLUMNS_GLSL}\n{}\n{}",
             pbr::LIGHTING_GLSL,
             include_str!("shaders/water_waves.glsl"),
             include_str!("shaders/water_fragment.glsl")

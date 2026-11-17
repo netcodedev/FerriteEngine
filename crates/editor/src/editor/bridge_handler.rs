@@ -207,6 +207,7 @@ fn status(scene: &Scene, state: &EditorState) -> serde_json::Value {
         "scripts": script::names(),
         "problems": scene.problems(),
         "has_camera": has_camera,
+        "performance": state.stats.to_json(),
     })
 }
 

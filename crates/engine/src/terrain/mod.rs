@@ -12,6 +12,8 @@ pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 
 pub mod chunk;
+pub mod columns;
+pub mod far_scatter;
 pub mod generators;
 pub mod hills;
 pub mod horizon;
@@ -27,22 +29,24 @@ pub mod water;
 
 pub use chunk::TerrainChunk;
 pub use source::{
-    ChunkCoord, ChunkField, ChunkSurface, HorizonSample, SurfacePoint, SurfaceSample, TerrainGenerator,
+    ChunkCoord, ChunkField, ChunkSurface, HorizonSample, RiverPiece, SurfaceBand, SurfacePoint, SurfaceSample, TerrainGenerator,
     TerrainShaders, TerrainSource,
 };
 pub use terrain::Terrain;
 
 use crate::core::renderer::shader::{DynamicVertexArray, VertexAttributes};
 
-/// Where the far water (see `horizon`) is drawn: it sinks under the loaded
-/// chunks around the camera at `centre` (world x, z) within `load` metres,
-/// and is left out within `hole` metres (under the ground, see the
-/// horizon's).
+/// Where the far water (see `horizon`) is drawn: not on the columns whose
+/// chunks are loaded (`loaded`: the picture of them, see `columns`, and its
+/// first column), nor within `hole` metres of the camera at `centre`
+/// (world x, z; under the ground, see the horizon's). `load` > 0 marks it
+/// as the far water.
 #[derive(Clone, Copy, Debug)]
 pub struct FarWater {
     pub centre: [f32; 2],
     pub load: f32,
     pub hole: f32,
+    pub loaded: (u32, (i32, i32)),
 }
 
 pub struct ChunkMesh<T: VertexAttributes> {

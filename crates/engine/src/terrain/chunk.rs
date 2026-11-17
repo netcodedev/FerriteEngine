@@ -161,33 +161,10 @@ impl TerrainChunk {
         if self.meshes.is_empty() {
             return Vec::new();
         }
-        let [x0, floor, z0] = self.coord.origin().map(|c| c as f32);
+        let floor = self.coord.floor();
         let ceiling = floor + CHUNK_SIZE_FLOAT;
-
-        // Deterministic chunk-local RNG so the same chunk always scatters
-        // the same spots for a given salt (across runs, across chunk
-        // reloads).
-        let cx = self.coord.x as u32 as u64;
-        let cz = self.coord.z as u32 as u64;
-        let mut rng: u64 = ((cx << 32 | cz) ^ salt).wrapping_mul(0x9E3779B97F4A7C15);
-        let mut next = || {
-            rng = rng
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            (rng >> 32) as u32
-        };
-        let unit = |r: u32| (r >> 8) as f32 / ((1u32 << 24) as f32);
-
         let mut out = Vec::new();
-        for _ in 0..attempts {
-            let rx = unit(next());
-            let rz = unit(next());
-            let x = x0 + rx * CHUNK_SIZE_FLOAT;
-            let z = z0 + rz * CHUNK_SIZE_FLOAT;
-            // Drawn for every spot, so a spot's yaw does not depend on
-            // whether the ones before it grew.
-            let (grow, yaw) = (unit(next()), unit(next()) * std::f32::consts::TAU);
-
+        for (x, z, grow, yaw) in scatter_spots((self.coord.x, self.coord.z), salt, attempts) {
             let y = source.surface_height(x as f64, z as f64);
             if y < floor || y >= ceiling {
                 continue;
@@ -412,4 +389,31 @@ mod tests {
             assert!(ChunkCoord::containing(x as f64, y as f64, z as f64) == coord);
         }
     }
+}
+
+/// The spots a scatter layer with `salt` tries on the chunk square
+/// `column` (`attempts` of them): world `(x, z)`, a number 0..1 that grows
+/// a model there if it is under the chance there (see
+/// `TerrainSource::scatter_chance`) and the model's turn. The same for
+/// every chunk of the column, every time, near and far (see `far_scatter`).
+pub fn scatter_spots(column: (i32, i32), salt: u64, attempts: u32) -> impl Iterator<Item = (f32, f32, f32, f32)> {
+    let (x0, z0) = (column.0 as f32 * CHUNK_SIZE_FLOAT, column.1 as f32 * CHUNK_SIZE_FLOAT);
+    let cx = column.0 as u32 as u64;
+    let cz = column.1 as u32 as u64;
+    let mut rng: u64 = ((cx << 32 | cz) ^ salt).wrapping_mul(0x9E3779B97F4A7C15);
+    let mut next = move || {
+        rng = rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (rng >> 32) as u32
+    };
+    let unit = |r: u32| (r >> 8) as f32 / ((1u32 << 24) as f32);
+    (0..attempts).map(move |_| {
+        let x = x0 + unit(next()) * CHUNK_SIZE_FLOAT;
+        let z = z0 + unit(next()) * CHUNK_SIZE_FLOAT;
+        // Drawn for every spot, so a spot's turn does not depend on
+        // whether the ones before it grew.
+        let (grow, yaw) = (unit(next()), unit(next()) * std::f32::consts::TAU);
+        (x, z, grow, yaw)
+    })
 }

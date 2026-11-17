@@ -26,7 +26,7 @@ use crate::core::{
     mouse_picker::MousePicker,
     physics::rigidbody::RigidBody,
     renderer::{
-        depth_pass, hdr,
+        depth_pass, hdr, ssao,
         light::{light::LightSource, skylight::SkyLight},
         line::Line,
         pbr::Lighting,
@@ -41,6 +41,8 @@ use crate::core::{
 
 use super::{
     chunk::TerrainChunk,
+    columns::ColumnMap,
+    far_scatter::FarScatter,
     generators::{self, GeneratorEntry},
     horizon::Horizon,
     scatter::{Scatter, ScatterInstances, ScatterLayerData, TakenInstance},
@@ -176,6 +178,9 @@ impl LoadedChunk {
 struct Look {
     shader: Shader,
     depth_shader: Option<Shader>,
+    /// The horizon's depth: the depth vertex program (the source's or the
+    /// standard one) with `shaders::horizon_depth_fragment`.
+    horizon_depth_shader: Shader,
     textures: Vec<Texture>,
 }
 
@@ -184,12 +189,17 @@ impl Look {
         let shaders = source.shaders();
         let shader = Shader::new(&shaders.vertex, &shaders.fragment);
         let textures = source.load_textures(&shader);
+        let horizon_depth_shader = Shader::new(
+            shaders.depth_vertex.as_deref().unwrap_or(super::shaders::STANDARD_DEPTH_VERTEX),
+            &super::shaders::horizon_depth_fragment(),
+        );
         let depth_shader = shaders
             .depth_vertex
             .map(|vertex| Shader::new(&vertex, depth_pass::EMPTY_FRAGMENT));
         Self {
             shader,
             depth_shader,
+            horizon_depth_shader,
             textures,
         }
     }
@@ -221,6 +231,15 @@ pub struct Terrain {
     map: WorldMap,
     /// The ground beyond the chunks (see `horizon`).
     horizon: Horizon,
+    /// The scattered models beyond the chunks (see `far_scatter`).
+    far_scatter: FarScatter,
+    /// Which columns' chunks are loaded (see `columns`): the horizon and
+    /// the far water leave those to them.
+    loaded: ColumnMap,
+    /// Whether the source was still preparing (`TerrainSource::status`)
+    /// on the last update: once it is done, the horizon is made again with
+    /// what it prepared (roads, say).
+    preparing: bool,
     /// Loads the chunks around the camera (see `streaming`).
     streamer: Option<Streamer<Vec<LoadedChunk>>>,
     look: Option<Look>,
@@ -311,6 +330,9 @@ impl Terrain {
             show_colliders: false,
             map: WorldMap::new(),
             horizon: Horizon::new(),
+            far_scatter: FarScatter::new(),
+            loaded: ColumnMap::new(),
+            preparing: false,
             streamer: None,
             look: None,
             mouse_picker: MousePicker::new(),
@@ -443,6 +465,7 @@ impl Terrain {
         self.generators_version = generators::version();
         self.map.invalidate();
         self.horizon.invalidate();
+        self.far_scatter.invalidate();
         exposure::world_changed();
         let made = match self.entry() {
             Some(entry) => entry.create(self.seed, &self.settings),
@@ -676,16 +699,21 @@ impl Terrain {
     /// Bring every loaded chunk in line with the scatter layers: plant what
     /// is missing and clear what no layer asks for any more (layer removed,
     /// model or density changed).
-    fn sync_scatter(&self, scene: &mut Scene, entity: &mut Entity) {
+    ///
+    /// Returns the columns whose every chunk carries every layer's models:
+    /// the far models leave those to them (see `far_scatter`).
+    fn sync_scatter(&self, scene: &mut Scene, entity: &mut Entity) -> HashSet<ColumnKey> {
+        let mut planted_columns = HashSet::new();
+        let mut unplanted_columns = HashSet::new();
         let Some(source) = &self.source else {
-            return;
+            return planted_columns;
         };
         let specs = self.scatter.specs();
         let mut planted = 0;
         for chunk_entity in entity.get_children_mut() {
-            if chunk_entity.get_own_component::<TerrainChunk>().is_none() {
+            let Some(column) = chunk_entity.get_own_component::<TerrainChunk>().map(TerrainChunk::column) else {
                 continue;
-            }
+            };
             let mut present = vec![false; specs.len()];
             let mut index = 0;
             while index < chunk_entity.components().len() {
@@ -706,6 +734,11 @@ impl Terrain {
                     }
                 }
                 index += 1;
+            }
+            if present.iter().all(|&p| p) {
+                planted_columns.insert(column);
+            } else {
+                unplanted_columns.insert(column);
             }
             for (spec, present) in specs.iter().zip(present) {
                 if present || planted >= SCATTER_PLANTINGS_PER_FRAME {
@@ -729,6 +762,8 @@ impl Terrain {
                 planted += 1;
             }
         }
+        planted_columns.retain(|column| !unplanted_columns.contains(column));
+        planted_columns
     }
 
     pub fn get_triangle_count(&self, entity: &Entity) -> usize {
@@ -816,12 +851,27 @@ impl Component for Terrain {
         self.stream(scene, entity, eye);
         if let Some(source) = self.source.clone() {
             source.sync_scene(scene, entity, eye);
+            let preparing = source.status().is_some();
+            if self.preparing && !preparing {
+                self.horizon.refresh();
+            }
+            self.preparing = preparing;
             self.horizon.update(&source, eye.x as f64, eye.z as f64);
             self.map.update(&source);
             snow_layer::set_water_line(source.sea_level().unwrap_or(NO_WATER_LINE));
         }
         shader::delete_released_vertex_arrays();
-        self.sync_scatter(scene, entity);
+        let planted = self.sync_scatter(scene, entity);
+        let loaded: HashSet<ColumnKey> = entity
+            .get_children()
+            .iter()
+            .filter_map(|child| child.get_own_component::<TerrainChunk>().map(TerrainChunk::column))
+            .collect();
+        self.loaded.set(eye, &loaded);
+        if let Some(source) = &self.source {
+            self.far_scatter.update(source, self.horizon.heights(), &self.scatter.specs());
+            self.far_scatter.leave_to_chunks(eye, &planted);
+        }
         if let Some(camera_component) = scene.get_active_camera() {
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();
@@ -980,18 +1030,32 @@ impl Component for Terrain {
         }
         // The horizon beyond them; it casts no shadow worth its cost.
         if let (Some(mesh), Some(eye), true) = (self.horizon.mesh(), eye, hdr::draws_to_view()) {
+            let depth_only = !std::ptr::eq(shader, &look.shader);
+            let shader = if depth_only { &look.horizon_depth_shader } else { shader };
             shader.bind();
+            if depth_only {
+                shader.set_uniform_mat4("viewProjection", view_projection);
+            }
             shader.set_uniform_1i("isHorizon", 1);
             let load = StreamRadius::DEFAULT.load as f32;
             shader.set_uniform_3f("horizonSink", eye.x, eye.z, load);
-            // Under the ground (a tunnel, a cave) the horizon sunk under the
-            // chunks would show from below: there it is left out (from
-            // above it stands in for chunks still loading).
+            // Left out where the chunks are loaded.
+            self.loaded.bind_loaded(shader);
+            // Under the ground (a tunnel, a cave) the horizon under the
+            // chunks would show from below: there it is left out within the
+            // chunks' reach altogether (from above it stands in for chunks
+            // still loading).
             let under = self.under_ground(eye);
             shader.set_uniform_1f("horizonHole", if under { load - HORIZON_HOLE_MARGIN } else { 0.0 });
             mesh.render(shader, &Matrix4::from_scale(1.0), None);
             shader.bind();
             shader.set_uniform_1i("isHorizon", 0);
+            // The models standing on it.
+            if !depth_pass::is_active() && !ssao::in_depth_pass() && !under {
+                if let Some(lighting) = Lighting::from_scene(scene) {
+                    self.far_scatter.draw(view_projection, &lighting, eye);
+                }
+            }
         }
         unsafe {
             gl::Disable(gl::CULL_FACE);
@@ -1026,6 +1090,7 @@ impl Component for Terrain {
                 centre: [eye.x, eye.z],
                 load,
                 hole: if self.under_ground(eye) { load - HORIZON_HOLE_MARGIN } else { 0.0 },
+                loaded: self.loaded.raw(),
             };
             water::draw(far_water, scene, view_projection, &Matrix4::from_scale(1.0), Some(far));
         }
