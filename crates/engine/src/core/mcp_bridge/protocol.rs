@@ -118,6 +118,18 @@ pub enum BridgeRequest {
         #[serde(default)]
         pitch_deg: Option<f32>,
     },
+    /// Switch VSync and the renderer's debug views (as the editor's
+    /// Performance panel does); what is left out stays.
+    SetDebugViews {
+        #[serde(default)]
+        vsync: Option<bool>,
+        #[serde(default)]
+        freeze_culling: Option<bool>,
+        #[serde(default)]
+        ambient_occlusion: Option<bool>,
+        #[serde(default)]
+        sun_shadow_maps: Option<bool>,
+    },
     /// Change one property of one component on one entity. The value is
     /// converted to the property's own kind (a number for a float, say).
     SetProperty {

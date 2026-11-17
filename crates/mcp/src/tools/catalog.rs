@@ -283,6 +283,22 @@ pub fn catalog() -> Vec<Tool> {
             &[],
         ),
         tool(
+            "editor_set_debug_views",
+            "Switch VSync and the renderer's debug views, as the editor's Performance panel does; \
+             what is left out stays. freeze_culling keeps culling the camera's view as it is \
+             (drawn as yellow lines) while the camera moves on, to see what culling leaves out; \
+             ambient_occlusion shows the ambient occlusion instead of the scene; sun_shadow_maps \
+             shows the sun's shadow cascades along the bottom. Returns the switches; \
+             editor_status reports them (debug_views) and what culling drew (performance.culling).",
+            json!({
+                "vsync": {"type": "boolean"},
+                "freeze_culling": {"type": "boolean"},
+                "ambient_occlusion": {"type": "boolean"},
+                "sun_shadow_maps": {"type": "boolean"},
+            }),
+            &[],
+        ),
+        tool(
             "viewport_screenshot",
             "What the editor shows, as an image: the viewport (default) or the whole window. \
              Scaled to max_width pixels across (default 1280; 0 for full size).",

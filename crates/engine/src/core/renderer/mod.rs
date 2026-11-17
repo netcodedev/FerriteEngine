@@ -1,3 +1,4 @@
+pub mod debug_views;
 pub mod depth_pass;
 pub mod framebuffer;
 pub mod hdr;

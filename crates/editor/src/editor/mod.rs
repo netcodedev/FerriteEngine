@@ -218,6 +218,11 @@ pub struct EditorState {
     pub panel_sizes: layout::PanelSizes,
     pub show_widgets: DataSource<bool>,
     pub show_stats: DataSource<bool>,
+    /// Which sections of the Performance panel are open (in
+    /// `stats::SECTIONS`'s order), kept in the project file.
+    pub stats_open: Vec<DataSource<bool>>,
+    /// The switches of the Performance panel, shared with the MCP bridge.
+    pub debug: stats::DebugSwitches,
     /// Asset browser below the viewport.
     pub show_assets: DataSource<bool>,
     /// What is selected in the asset browser.
@@ -268,6 +273,8 @@ impl EditorState {
             panel_sizes: layout::PanelSizes::default(),
             show_widgets: DataSource::new(false),
             show_stats: DataSource::new(true),
+            stats_open: stats::section_titles().map(|_| DataSource::new(true)).collect(),
+            debug: stats::DebugSwitches::new(),
             show_assets: DataSource::new(true),
             asset_selection: None,
             drag: None,

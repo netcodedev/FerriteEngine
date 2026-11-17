@@ -58,7 +58,7 @@ pub struct Toolbar {
 /// Window menu entries, checked while the panel is shown.
 fn window_items(stats: bool, widgets: bool, assets: bool) -> Vec<MenuItem> {
     vec![
-        MenuItem::new("Statistics").icon(icons::ACTIVITY).checked(stats),
+        MenuItem::new("Performance").icon(icons::ACTIVITY).checked(stats),
         MenuItem::new("Widget showcase").icon(icons::COMPONENT).checked(widgets),
         MenuItem::new("Assets").icon(icons::PACKAGE).checked(assets),
     ]

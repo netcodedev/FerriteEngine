@@ -137,6 +137,26 @@ fn respond(request: BridgeRequest, cx: Context) -> BridgeResponse {
             Ok(json!({ "building": true, "check": "editor_status → scripts_message" }))
         }
         BridgeRequest::Focus { id } => focus(scene, state, id),
+        BridgeRequest::SetDebugViews {
+            vsync,
+            freeze_culling,
+            ambient_occlusion,
+            sun_shadow_maps,
+        } => {
+            let switches = &state.debug;
+            for (wanted, switch) in [
+                (vsync, &switches.vsync),
+                (freeze_culling, &switches.freeze_culling),
+                (ambient_occlusion, &switches.ambient_occlusion),
+                (sun_shadow_maps, &switches.sun_shadow_maps),
+            ] {
+                if let Some(on) = wanted {
+                    switch.write(on);
+                }
+            }
+            switches.apply();
+            Ok(switches.to_json())
+        }
         BridgeRequest::SetView {
             position,
             yaw_deg,
@@ -208,6 +228,7 @@ fn status(scene: &Scene, state: &EditorState) -> serde_json::Value {
         "problems": scene.problems(),
         "has_camera": has_camera,
         "performance": state.stats.to_json(),
+        "debug_views": state.debug.to_json(),
     })
 }
 

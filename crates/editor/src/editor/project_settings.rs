@@ -12,6 +12,8 @@ pub struct EditorSettings {
     pub show_stats: bool,
     pub show_widgets: bool,
     pub show_assets: bool,
+    /// The sections of the Performance panel that are folded, by title.
+    pub closed_stats_sections: Vec<String>,
     /// Window size in pixels; `None` keeps the default.
     pub window: Option<(u32, u32)>,
     pub maximized: bool,
@@ -24,6 +26,7 @@ impl Default for EditorSettings {
             show_stats: true,
             show_widgets: false,
             show_assets: true,
+            closed_stats_sections: Vec::new(),
             window: None,
             maximized: false,
         }
@@ -53,6 +56,11 @@ impl EditorSettings {
             show_stats: state.show_stats.read(),
             show_widgets: state.show_widgets.read(),
             show_assets: state.show_assets.read(),
+            closed_stats_sections: super::stats::section_titles()
+                .zip(&state.stats_open)
+                .filter(|(_, open)| !open.read())
+                .map(|(title, _)| title.to_string())
+                .collect(),
             window,
             maximized,
         }
@@ -64,5 +72,8 @@ impl EditorSettings {
         state.show_stats.write(self.show_stats);
         state.show_widgets.write(self.show_widgets);
         state.show_assets.write(self.show_assets);
+        for (title, open) in super::stats::section_titles().zip(&state.stats_open) {
+            open.write(!self.closed_stats_sections.iter().any(|closed| closed == title));
+        }
     }
 }

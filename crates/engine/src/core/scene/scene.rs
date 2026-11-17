@@ -13,7 +13,7 @@ use crate::core::{
     physics::{collider_debug, physics_engine::PhysicsEngine, rigidbody::RigidBody},
     renderer::{
         framebuffer::{CascadedShadowMap, FrameBuffer, ShadowFrameBuffer},
-        line::Line,
+        line::{Line, LineRenderer},
         plane::PlaneRenderer,
         text::TextRenderer,
         light::{
@@ -22,6 +22,7 @@ use crate::core::{
             shadow::{self, LightShadowMaps, ShadowPlanner},
             skylight::{SkyLight, SHADOW_CASCADES},
         },
+        debug_views,
         depth_pass::DepthPass,
         hdr::{self, Hdr, HdrSettings},
         profiler::{self, Pass},
@@ -33,6 +34,7 @@ use crate::core::{
     },
     scene::scene_file::ComponentData,
     script,
+    view_frustum::ViewFrustum,
     window::Window,
 };
 
@@ -286,6 +288,45 @@ impl Scene {
         self.apply_viewport(window);
     }
 
+    /// The view culling is frozen at (see `ViewFrustum::set_frozen`), as
+    /// lines: its near rectangle and its edges out to a kilometre and a
+    /// half.
+    fn render_frozen_view(&self, view_projection: &Matrix4<f32>) {
+        let Some(c) = ViewFrustum::frozen_corners(1500.0) else {
+            return;
+        };
+        let mut lines = Vec::new();
+        let mut line = |a: Point3<f32>, b: Point3<f32>| {
+            let along = b - a;
+            let length = along.magnitude();
+            if length > 1e-4 {
+                lines.push(Line::new(a, along / length, length));
+            }
+        };
+        for i in 0..4 {
+            let j = (i + 1) % 4;
+            line(c[i], c[j]);
+            line(c[4 + i], c[4 + j]);
+            line(c[i], c[4 + i]);
+        }
+        LineRenderer::render_lines(view_projection, &lines, Vector3::new(4.0, 3.0, 0.4), false);
+    }
+
+    /// The debug views the editor switched on (see `debug_views`), over
+    /// the tone mapped view.
+    fn render_debug_views(&self, depth_prepass: bool) {
+        if debug_views::ambient_occlusion() && depth_prepass {
+            if let Some(texture) = self.ambient_occlusion_texture() {
+                debug_views::draw_ambient_occlusion(texture);
+            }
+        }
+        if debug_views::sun_shadows() {
+            if let Some(shadow_fbo) = &self.shadow_fbo {
+                debug_views::draw_shadow_cascades(shadow_fbo.texture().id, SHADOW_CASCADES);
+            }
+        }
+    }
+
     /// GL name of the last frame's ambient occlusion (one red channel, as big
     /// as the viewport), for debug views.
     pub fn ambient_occlusion_texture(&self) -> Option<u32> {
@@ -471,6 +512,9 @@ impl Scene {
         self.ambient_occlusion_origin.set(None);
         if let Some(camera) = self.get_active_camera() {
             let view_projection = camera.get_view_projection();
+            // The camera's passes cull against its view (or the one culling
+            // is frozen at, see `ViewFrustum::set_frozen`).
+            ViewFrustum::begin_view(view_projection);
 
             // Everything the camera sees goes into the HDR target, as big as
             // the viewport, and is tone mapped into the viewport at the end.
@@ -565,9 +609,11 @@ impl Scene {
             if depth_prepass {
                 unsafe { gl::DepthFunc(gl::LEQUAL) };
             }
+            ViewFrustum::begin_counting();
             for entity in self.entities.iter() {
                 entity.render(self, &view_projection, parent_transform);
             }
+            ViewFrustum::end_counting();
             self.render_snow_layer(&view_projection, false);
             if depth_prepass {
                 unsafe { gl::DepthFunc(gl::LESS) };
@@ -582,9 +628,13 @@ impl Scene {
                 entity.render_transparent(self, &view_projection, parent_transform);
             }
             self.render_precipitation(&view_projection);
+            self.render_frozen_view(&view_projection);
+            ViewFrustum::end_view();
             self.ambient_occlusion_origin.set(None);
             profiler::mark(Pass::Post);
             hdr.finish(&hdr_settings);
+            self.apply_viewport(window);
+            self.render_debug_views(depth_prepass);
             self.weather_maps.set(None);
             self.light_count.set(0);
 

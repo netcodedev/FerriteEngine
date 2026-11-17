@@ -7,7 +7,7 @@ use russimp_ng::{
 };
 
 use crate::core::{
-    view_frustum::ViewFrustum,
+    view_frustum::{Culled, ViewFrustum},
     assets::MaterialMap,
     renderer::{
         depth_pass,
@@ -258,7 +258,9 @@ impl Model {
             * Matrix4::from_translation(self.position.to_vec())
             * Matrix4::from_scale(self.scale);
         if let Some((min, max)) = self.cull_bounds {
-            if !ViewFrustum::is_box_visible(&(camera_projection * model_transform), min, max) {
+            let visible = ViewFrustum::is_model_box_visible(camera_projection, &model_transform, min, max);
+            ViewFrustum::count(Culled::Model, visible);
+            if !visible {
                 return;
             }
         }

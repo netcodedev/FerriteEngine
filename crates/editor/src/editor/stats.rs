@@ -1,14 +1,17 @@
 //! Render statistics: collection (frame timings, GPU time, memory, scene
-//! counts) and the docked "Statistics" panel that shows them in sections.
+//! counts) and the docked "Performance" panel that shows them in sections,
+//! with switches for the renderer's debug views (culling frozen, ambient
+//! occlusion, the sun's shadow maps).
 
 use std::{collections::VecDeque, ffi::CStr, time::Instant};
 
 use ferrite::core::{
+    view_frustum::{Culled, ViewFrustum},
     entity::Entity,
     primitives::{Offset, Position, Size},
     renderer::{
         plane::{Plane, PlaneBuilder},
-        profiler,
+        debug_views, profiler,
         text::{icons, Text},
     },
     scene::Scene,
@@ -237,6 +240,11 @@ impl Stats {
             "ui_ms": round(self.ui_ms.0),
             "gpu_ms": round(self.gpu_ms.0),
             "gpu_passes_ms": passes,
+            "culling": Culled::ALL
+                .iter()
+                .zip(ViewFrustum::counts())
+                .map(|(kind, count)| (format!("{kind:?}"), serde_json::json!({ "drawn": count.drawn, "total": count.total })))
+                .collect::<serde_json::Map<_, _>>(),
         })
     }
 
@@ -457,30 +465,97 @@ impl UIElement for StatRow {
     }
 }
 
-/// The "VSync" row: a switch for whether frames wait for the display.
-struct VsyncRow {
+/// The switches of the Performance panel: VSync and the renderer's debug
+/// views (see `debug_views`, `ViewFrustum::set_frozen`). Shared by the
+/// panel and the MCP bridge; `apply` hands them to the renderer.
+pub struct DebugSwitches {
+    pub vsync: DataSource<bool>,
+    pub freeze_culling: DataSource<bool>,
+    pub ambient_occlusion: DataSource<bool>,
+    pub sun_shadow_maps: DataSource<bool>,
+}
+
+impl Clone for DebugSwitches {
+    /// The same switches (a `DataSource` clone shares its value).
+    fn clone(&self) -> Self {
+        Self {
+            vsync: self.vsync.clone(),
+            freeze_culling: self.freeze_culling.clone(),
+            ambient_occlusion: self.ambient_occlusion.clone(),
+            sun_shadow_maps: self.sun_shadow_maps.clone(),
+        }
+    }
+}
+
+impl DebugSwitches {
+    pub fn new() -> Self {
+        Self {
+            // The window starts with it on.
+            vsync: DataSource::new(true),
+            freeze_culling: DataSource::new(false),
+            ambient_occlusion: DataSource::new(false),
+            sun_shadow_maps: DataSource::new(false),
+        }
+    }
+
+    /// Hand the switches as they are to the renderer and the window (whose
+    /// GL context must be current).
+    pub fn apply(&self) {
+        set_vsync(self.vsync.read());
+        ViewFrustum::set_frozen(self.freeze_culling.read());
+        debug_views::set_ambient_occlusion(self.ambient_occlusion.read());
+        debug_views::set_sun_shadows(self.sun_shadow_maps.read());
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "vsync": self.vsync.read(),
+            "freeze_culling": self.freeze_culling.read(),
+            "ambient_occlusion": self.ambient_occlusion.read(),
+            "sun_shadow_maps": self.sun_shadow_maps.read(),
+        })
+    }
+}
+
+/// Whether frames wait for the display, for the current GL context.
+fn set_vsync(on: bool) {
+    unsafe { glfw::ffi::glfwSwapInterval(if on { 1 } else { 0 }) };
+}
+
+/// The titles of the panel's sections, in order.
+pub fn section_titles() -> impl Iterator<Item = &'static str> {
+    SECTIONS.iter().map(|(title, _, _)| *title)
+}
+
+/// What a `ToggleRow` does when switched: given the new state.
+type OnToggle = Box<dyn FnMut(bool, &mut Glfw)>;
+
+/// A row with a label and a switch (VSync, the debug views).
+struct ToggleRow {
     handle: UIElementHandle,
     offset: Offset,
     size: Size,
     label: Text,
     toggle: Toggle,
     on: DataSource<bool>,
+    changed: OnToggle,
 }
 
-impl VsyncRow {
-    fn new(on: DataSource<bool>, width: f32) -> Self {
+impl ToggleRow {
+    fn new(label: &str, on: DataSource<bool>, width: f32, changed: OnToggle) -> Self {
         Self {
             handle: UIElementHandle::new(),
             offset: Offset::default(),
             size: Size::new(width, 24.0),
-            label: theme::text("VSync", theme::FONT_SIZE_SMALL + 0.5, theme::TEXT_MUTED),
+            label: theme::text(label, theme::FONT_SIZE_SMALL + 0.5, theme::TEXT_MUTED),
             toggle: Toggle::new(Position::default(), on.clone()),
             on,
+            changed,
         }
     }
 }
 
-impl UIElement for VsyncRow {
+impl UIElement for ToggleRow {
     fn update(&mut self, scene: &mut Scene) {
         let y = self.offset.y;
         let ly = theme::center_y(&self.label, self.size.height);
@@ -496,7 +571,7 @@ impl UIElement for VsyncRow {
         let before = self.on.read();
         let used = self.toggle.handle_events(scene, window, glfw, event);
         if self.on.read() != before {
-            glfw.set_swap_interval(if self.on.read() { glfw::SwapInterval::Sync(1) } else { glfw::SwapInterval::None });
+            (self.changed)(self.on.read(), glfw);
         }
         used
     }
@@ -675,11 +750,13 @@ enum Key {
     Mode,
     /// GPU time of one of the scene's passes (index into `Pass::ALL`).
     Pass(usize),
+    /// What the camera's view culled of a kind (index into `Culled::ALL`).
+    Culled(usize),
 }
 
 const SECTIONS: &[(&str, &str, &[(Key, &str)])] = &[
     (
-        "Performance",
+        "Frame rate",
         icons::GAUGE,
         &[
             (Key::Fps, "Frames per second"),
@@ -711,6 +788,20 @@ const SECTIONS: &[(&str, &str, &[(Key, &str)])] = &[
             (Key::Pass(6), "Transparent + weather"),
             (Key::Pass(7), "HDR + post"),
         ],
+    ),
+    (
+        "Culling (drawn / in reach)",
+        icons::SCAN,
+        &[
+            (Key::Culled(0), "Terrain chunks"),
+            (Key::Culled(1), "Tree and rock groups"),
+            (Key::Culled(2), "Models"),
+        ],
+    ),
+    (
+        "Debug views",
+        icons::BUG,
+        &[],
     ),
     (
         "Memory",
@@ -753,30 +844,34 @@ pub struct StatsPanel {
     panel: Panel,
     body: ScrollArea,
     values: Vec<(Key, DataSource<String>)>,
-    /// Open/closed state per section, kept across rebuilds.
+    /// Open/closed state per section (the editor's, kept in the project).
     open: Vec<DataSource<bool>>,
-    /// Whether frames wait for the display (the window starts with it on).
-    vsync: DataSource<bool>,
+    /// VSync and the debug views (the editor's, shared with the bridge).
+    switches: DebugSwitches,
     built_width: Option<i32>,
     last_refresh: Option<Instant>,
 }
 
 impl StatsPanel {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Statistics".into(), Position::default(), Size::new(300.0, 400.0));
+        let mut panel = Panel::new("Performance".into(), Position::default(), Size::new(300.0, 400.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
         let mut body = ScrollArea::new(Position::default(), Size::new(290.0, 300.0));
         body.set_gap(4.0);
+        let (open, switches) = {
+            let state = state.borrow();
+            (state.stats_open.iter().map(DataSource::clone).collect(), state.debug.clone())
+        };
         Self {
             handle: UIElementHandle::new(),
             state,
             panel,
             body,
             values: Vec::new(),
-            open: SECTIONS.iter().map(|_| DataSource::new(true)).collect(),
-            vsync: DataSource::new(true),
+            open,
+            switches,
             built_width: None,
             last_refresh: None,
         }
@@ -792,7 +887,27 @@ impl StatsPanel {
             section.bind_open(self.open[index].clone());
             if index == 0 {
                 section.add_child(Box::new(FrameGraph::new(self.state.clone(), content - 8.0)));
-                section.add_child(Box::new(VsyncRow::new(self.vsync.clone(), content - 8.0)));
+                section.add_child(Box::new(ToggleRow::new(
+                    "VSync",
+                    self.switches.vsync.clone(),
+                    content - 8.0,
+                    Box::new(|on, _| set_vsync(on)),
+                )));
+            }
+            if *title == "Debug views" {
+                let rows: [(&str, &DataSource<bool>, fn(bool)); 3] = [
+                    ("Freeze culling", &self.switches.freeze_culling, ViewFrustum::set_frozen),
+                    ("Ambient occlusion", &self.switches.ambient_occlusion, debug_views::set_ambient_occlusion),
+                    ("Sun shadow maps", &self.switches.sun_shadow_maps, debug_views::set_sun_shadows),
+                ];
+                for (label, on, set) in rows {
+                    section.add_child(Box::new(ToggleRow::new(
+                        label,
+                        on.clone(),
+                        content - 8.0,
+                        Box::new(move |on, _| set(on)),
+                    )));
+                }
             }
             for (key, label) in rows.iter() {
                 let source = DataSource::new(String::from("-"));
@@ -850,6 +965,10 @@ impl StatsPanel {
             Key::GlVersion => shorten(&stats.gl.version, 26),
             Key::Window => format!("{:.0} x {:.0}", layout.window_w, layout.window_h),
             Key::Viewport => format!("{:.0} x {:.0}", layout.viewport.w, layout.viewport.h),
+            Key::Culled(index) => {
+                let count = ViewFrustum::counts()[index];
+                format!("{} / {}", count.drawn, count.total)
+            }
             Key::Pass(index) => match stats.pass_ms {
                 Some(passes) => ms(passes[index]),
                 None => "n/a".into(),

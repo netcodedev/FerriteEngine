@@ -16,7 +16,7 @@ use crate::core::{
         shader::Shader,
     },
     scene::Scene,
-    view_frustum::ViewFrustum,
+    view_frustum::{Culled, ViewFrustum},
 };
 
 use super::super::ChunkBounds;
@@ -506,6 +506,8 @@ impl Component for ScatterInstances {
             return;
         }
         if !ViewFrustum::is_bounds_in_frustum_matrix(view_projection, self.bounds) {
+            let cells: usize = self.cells_by_variant.iter().map(Vec::len).sum();
+            ViewFrustum::count_many(Culled::ScatterCell, cells as u32, 0);
             return;
         }
         let Some(lighting) = Lighting::from_scene(scene) else {
@@ -579,8 +581,9 @@ impl ScatterInstances {
                             if !cells.is_empty() =>
                         {
                             for cell in cells {
-                                if !ViewFrustum::is_sphere_visible(planes, cell.center, cell.radius)
-                                {
+                                let visible = ViewFrustum::is_sphere_visible(planes, cell.center, cell.radius);
+                                ViewFrustum::count(Culled::ScatterCell, visible);
+                                if !visible {
                                     continue;
                                 }
                                 let distance = (cell.center - eye).magnitude();

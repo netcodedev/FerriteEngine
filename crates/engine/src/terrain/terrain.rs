@@ -36,7 +36,7 @@ use crate::core::{
     },
     physics::physics_engine::{collider_tag, PhysicsEngine},
     scene::{scene_file::ComponentData, Scene},
-    view_frustum::ViewFrustum,
+    view_frustum::{Culled, ViewFrustum},
 };
 
 use super::{
@@ -1023,7 +1023,9 @@ impl Component for Terrain {
             // than the chunk's cube (it matters most for the sun's shadow
             // maps, which see the boxes from the side); the level comes
             // from the chunk's own square.
-            if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_drawn_bounds()) {
+            let visible = ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_drawn_bounds());
+            ViewFrustum::count(Culled::Chunk, visible);
+            if visible {
                 let distance = eye.map_or(0.0, |eye| chunk.get_bounds().distance_xz(eye));
                 chunk.draw(shader, &(transform * child.local_transform()), distance);
             }
