@@ -33,6 +33,7 @@ use crate::editor::{
         preview::PreviewPanel,
     },
     asset_browser::AssetBrowser,
+    console::ConsolePanel,
     asset_editor::{AssetInspector, AssetPreview},
     bridge_handler::{self, Dispatch},
     dialogs::{self, ModalHost},
@@ -166,8 +167,15 @@ impl EditorLayer {
         add(
             &mut ui,
             Box::new(ToggleWindow::new(
-                browser_panel,
+                browser_panel.clone(),
                 Box::new(AssetBrowser::new(state.clone())),
+            )),
+        );
+        add(
+            &mut ui,
+            Box::new(ToggleWindow::new(
+                browser_panel,
+                Box::new(ConsolePanel::new(state.clone())),
             )),
         );
         // Animation workspace.
@@ -253,10 +261,17 @@ impl EditorLayer {
 
     fn on_script_event(&mut self, event: ScriptEvent) {
         let message = match event {
-            ScriptEvent::Building => "Building scripts...".to_string(),
-            ScriptEvent::Failed(e) => format!("Scripts: {e}"),
+            ScriptEvent::Building => {
+                log::info!("Building scripts...");
+                "Building scripts...".to_string()
+            }
+            ScriptEvent::Failed(e) => {
+                log::error!("Scripts: {e}");
+                format!("Scripts: {e}")
+            }
             ScriptEvent::Loaded { count } => {
                 let problems = self.scene.rebuild_scripts();
+                log::info!("Scripts reloaded ({count})");
                 // The scene the editor returns to after play mode is rebuilt
                 // from data on stop anyway.
                 match problems.first() {
@@ -556,12 +571,13 @@ impl Layer for EditorLayer {
             self.run_commands();
         }
         self.save_settings_if_changed();
-        let (show_stats, show_widgets, show_assets, workspace) = {
+        let (show_stats, show_widgets, show_assets, show_console, workspace) = {
             let s = self.state.borrow();
             (
                 s.show_stats.read(),
                 s.show_widgets.read(),
                 s.show_assets.read(),
+                s.show_console.read(),
                 s.workspace,
             )
         };
@@ -583,6 +599,7 @@ impl Layer for EditorLayer {
             window.height as f32,
             right,
             show_assets && workspace != Workspace::Animation,
+            show_console && workspace != Workspace::Animation,
             &sizes,
         );
         self.state.borrow_mut().layout = layout;

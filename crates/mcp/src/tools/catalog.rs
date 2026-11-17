@@ -170,7 +170,8 @@ pub fn catalog() -> Vec<Tool> {
             "editor_status",
             "The running editor: edit or play mode, open scene, unsaved changes, selection, the \
              last status message, the last script build message, loaded scripts, components \
-             that could not be built, whether the scene has a camera.",
+             that could not be built, whether the scene has a camera, and the newest warnings \
+             and errors of the editor's console (recent_logs).",
             json!({}),
             &[],
         ),

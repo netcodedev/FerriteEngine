@@ -29,6 +29,8 @@ pub struct Button {
 
     label: Option<(String, Text)>,
     icon: Option<(String, Text)>,
+    /// Colour of the icon instead of the label's (while enabled).
+    icon_color: Option<(f32, f32, f32, f32)>,
     plane: Plane,
     tooltip: Option<Tooltip>,
 }

@@ -19,6 +19,7 @@ pub mod asset_browser;
 pub mod bridge_handler;
 pub mod asset_editor;
 pub mod clip_editor;
+pub mod console;
 pub mod dialogs;
 pub mod drag;
 pub mod export;
@@ -225,6 +226,10 @@ pub struct EditorState {
     pub debug: stats::DebugSwitches,
     /// Asset browser below the viewport.
     pub show_assets: DataSource<bool>,
+    /// Log console below the viewport (beside the asset browser).
+    pub show_console: DataSource<bool>,
+    /// The console's filters, kept in the project file.
+    pub console: console::ConsoleFilter,
     /// What is selected in the asset browser.
     pub asset_selection: Option<AssetRef>,
     /// The asset pressed or being dragged in the asset browser.
@@ -268,6 +273,7 @@ impl EditorState {
                     widgets: false,
                 },
                 true,
+                true,
                 &layout::PanelSizes::default(),
             ),
             panel_sizes: layout::PanelSizes::default(),
@@ -276,6 +282,8 @@ impl EditorState {
             stats_open: stats::section_titles().map(|_| DataSource::new(true)).collect(),
             debug: stats::DebugSwitches::new(),
             show_assets: DataSource::new(true),
+            show_console: DataSource::new(true),
+            console: console::ConsoleFilter::default(),
             asset_selection: None,
             drag: None,
             drop_targets: Vec::new(),

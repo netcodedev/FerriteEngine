@@ -15,6 +15,8 @@ pub struct Label {
     content: String,
     source: Option<DataSource<String>>,
     text: FerriteText,
+    /// Longer text is cut with "…".
+    max_width: Option<f32>,
 }
 
 impl Label {
@@ -33,6 +35,7 @@ impl Label {
             },
             content,
             source: None,
+            max_width: None,
         }
     }
 
@@ -59,7 +62,40 @@ impl Label {
 
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.content = text.into();
-        self.text.set_content(&self.content);
+        let shown = self.fitted();
+        self.text.set_content(&shown);
+    }
+
+    /// Cut the text with "…" where it gets wider than `width`; `None`
+    /// shows all of it.
+    pub fn set_max_width(&mut self, width: Option<f32>) {
+        self.max_width = width;
+    }
+
+    /// The content as shown: cut to `max_width`.
+    fn fitted(&self) -> String {
+        let Some(max) = self.max_width else {
+            return self.content.clone();
+        };
+        if self.text.measure_str(&self.content) <= max {
+            return self.content.clone();
+        }
+        let chars: Vec<char> = self.content.chars().collect();
+        // The longest prefix that fits with the ellipsis.
+        let (mut low, mut high) = (0, chars.len());
+        while low < high {
+            let mid = (low + high + 1) / 2;
+            let candidate: String = chars[..mid].iter().chain(['\u{2026}'].iter()).collect();
+            if self.text.measure_str(&candidate) <= max {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        if low == 0 {
+            return String::new();
+        }
+        chars[..low].iter().chain(['\u{2026}'].iter()).collect()
     }
 }
 
@@ -68,7 +104,8 @@ impl UIElement for Label {
         if let Some(src) = &self.source {
             self.content = src.read();
         }
-        self.text.set_content(&self.content);
+        let shown = self.fitted();
+        self.text.set_content(&shown);
         self.text.prepare_render_at(self.region.get_absolute_position());
         self.region.size = self.text.get_size();
     }

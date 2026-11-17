@@ -43,6 +43,7 @@ impl Button {
 
             label: None,
             icon: None,
+            icon_color: None,
             plane: PlaneBuilder::new()
                 .position(position)
                 .size(size)
@@ -139,8 +140,21 @@ impl Button {
         if let Some((_, t)) = &mut self.label {
             t.set_color(text);
         }
+        let icon = match self.icon_color {
+            Some(color) if self.is_enabled => color,
+            _ => text,
+        };
         if let Some((_, t)) = &mut self.icon {
-            t.set_color(text);
+            t.set_color(icon);
+        }
+    }
+
+    /// Draw the icon in its own colour (e.g. a level's), not the label's;
+    /// `None` goes back to the label's.
+    pub fn set_icon_color(&mut self, color: Option<(f32, f32, f32, f32)>) {
+        if self.icon_color != color {
+            self.icon_color = color;
+            self.refresh_colors();
         }
     }
 
