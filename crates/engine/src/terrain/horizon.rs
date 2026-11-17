@@ -16,7 +16,7 @@ use std::sync::{
 
 use super::{
     mesher::TerrainVertex,
-    source::{RiverPiece, TerrainSource},
+    source::{RiverPiece, SurfaceBand, SurfaceSample, TerrainSource},
     water::WaterVertex,
     ChunkMesh,
 };
@@ -53,6 +53,11 @@ const MIN_RIVER_WIDTH: f32 = 6.0;
 /// Longest stretch of a river band between two of its vertices, metres, so
 /// it follows the ground's grid instead of cutting through its hills.
 const RIVER_STEP: f64 = 12.0;
+/// Strips of ground on the horizon (see `TerrainSource::far_bands`) lie this
+/// far over its ground (before `SINK` and plus `RIVER_LIFT_PER_STEP` per
+/// metre of grid step), and are drawn at least this wide.
+const BAND_LIFT: f32 = 0.5;
+const MIN_BAND_WIDTH: f32 = 6.0;
 /// Depth the water of a river on the horizon is coloured for, metres.
 const RIVER_DEPTH: f32 = 2.0;
 /// Speed of the water of a river on the horizon, metres per second.
@@ -251,6 +256,7 @@ pub fn build(source: &dyn TerrainSource, centre: [f64; 2]) -> Built {
         grid.levels.push(drawn);
     }
     river_bands(&source.far_rivers(centre, reach()), &grid, &mut water_vertices, &mut water_indices);
+    surface_bands(&source.far_bands(centre, reach()), &grid, &mut vertices, &mut indices);
     Built {
         ground: (vertices, indices),
         water: (water_vertices, water_indices),
@@ -311,6 +317,76 @@ fn river_bands(pieces: &[RiverPiece], grid: &HeightGrid, vertices: &mut Vec<Wate
             let (a, b) = (first + 2 * k, first + 2 * k + 1);
             let (c, d) = (a + 2, b + 2);
             // Up-facing whichever way the river runs.
+            let (pa, pb, pc) = (vertices[a as usize].position, vertices[b as usize].position, vertices[c as usize].position);
+            let cross = (pb[2] - pa[2]) * (pc[0] - pa[0]) - (pb[0] - pa[0]) * (pc[2] - pa[2]);
+            if cross > 0.0 {
+                indices.extend_from_slice(&[a, b, c, b, d, c]);
+            } else {
+                indices.extend_from_slice(&[a, c, b, b, c, d]);
+            }
+        }
+    }
+}
+
+/// The strips of ground `bands` laid on the horizon's ground (`grid`), a
+/// little over it, added to its `vertices` and `indices`.
+fn surface_bands(bands: &[SurfaceBand], grid: &HeightGrid, vertices: &mut Vec<HorizonVertex>, indices: &mut Vec<u32>) {
+    let mix = |a: &SurfaceSample, b: &SurfaceSample, t: f32| SurfaceSample {
+        color: std::array::from_fn(|i| a.color[i] + (b.color[i] - a.color[i]) * t),
+        data: std::array::from_fn(|i| a.data[i] + (b.data[i] - a.data[i]) * t),
+    };
+    for band in bands {
+        // Points along the band, no further apart than `RIVER_STEP`.
+        let mut points: Vec<([f64; 2], f32, SurfaceSample)> = Vec::new();
+        for pair in band.points.windows(2) {
+            let ((a, wa, sa), (b, wb, sb)) = (&pair[0], &pair[1]);
+            let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+            let steps = (length / RIVER_STEP).ceil().max(1.0) as usize;
+            let first = if points.is_empty() { 0 } else { 1 };
+            for k in first..=steps {
+                let t = k as f64 / steps as f64;
+                let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+                let width = (wa + (wb - wa) * t as f32).max(MIN_BAND_WIDTH);
+                points.push((p, width, mix(sa, sb, t as f32)));
+            }
+        }
+        if points.len() < 2 {
+            continue;
+        }
+        let first = vertices.len() as u32;
+        let mut made = 0u32;
+        for k in 0..points.len() {
+            let (prev, next) = (points[k.saturating_sub(1)].0, points[(k + 1).min(points.len() - 1)].0);
+            let (dx, dz) = (next[0] - prev[0], next[1] - prev[1]);
+            let length = dx.hypot(dz).max(1e-9);
+            let (dx, dz) = (dx / length, dz / length);
+            let (p, width, surface) = points[k];
+            let half = width as f64 * 0.5;
+            let side = |s: f64| {
+                let (x, z) = (p[0] - dz * half * s, p[1] + dx * half * s);
+                let (ground, step) = grid.sample(x, z)?;
+                // The ground's slope there, a grid step to either side.
+                let d = step as f64;
+                let h = |x: f64, z: f64| grid.height(x, z).unwrap_or(ground);
+                let normal = [h(x - d, z) - h(x + d, z), 2.0 * step, h(x, z - d) - h(x, z + d)];
+                let length = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+                Some(HorizonVertex {
+                    position: [x as f32, ground + BAND_LIFT + RIVER_LIFT_PER_STEP * step, z as f32],
+                    normal: normal.map(|c| c / length),
+                    color: surface.color,
+                    data: surface.data,
+                })
+            };
+            let (Some(left), Some(right)) = (side(-1.0), side(1.0)) else {
+                break;
+            };
+            vertices.push(left);
+            vertices.push(right);
+            made += 1;
+        }
+        for k in 0..made.saturating_sub(1) {
+            let (a, b) = (first + 2 * k, first + 2 * k + 1);
+            let (c, d) = (a + 2, b + 2);
             let (pa, pb, pc) = (vertices[a as usize].position, vertices[b as usize].position, vertices[c as usize].position);
             let cross = (pb[2] - pa[2]) * (pc[0] - pa[0]) - (pb[0] - pa[0]) * (pc[2] - pa[2]);
             if cross > 0.0 {
@@ -387,6 +463,13 @@ impl Horizon {
         self.mesh = None;
         self.heights = None;
         self.water = None;
+        self.centre = None;
+        self.pending = None;
+    }
+
+    /// Make it again where it is (the world finished something it shows,
+    /// see `TerrainSource::status`), drawing the one there is meanwhile.
+    pub fn refresh(&mut self) {
         self.centre = None;
         self.pending = None;
     }

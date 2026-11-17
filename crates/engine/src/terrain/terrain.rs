@@ -236,6 +236,10 @@ pub struct Terrain {
     /// Which columns' chunks are loaded (see `columns`): the horizon and
     /// the far water leave those to them.
     loaded: ColumnMap,
+    /// Whether the source was still preparing (`TerrainSource::status`)
+    /// on the last update: once it is done, the horizon is made again with
+    /// what it prepared (roads, say).
+    preparing: bool,
     /// Loads the chunks around the camera (see `streaming`).
     streamer: Option<Streamer<Vec<LoadedChunk>>>,
     look: Option<Look>,
@@ -328,6 +332,7 @@ impl Terrain {
             horizon: Horizon::new(),
             far_scatter: FarScatter::new(),
             loaded: ColumnMap::new(),
+            preparing: false,
             streamer: None,
             look: None,
             mouse_picker: MousePicker::new(),
@@ -846,6 +851,11 @@ impl Component for Terrain {
         self.stream(scene, entity, eye);
         if let Some(source) = self.source.clone() {
             source.sync_scene(scene, entity, eye);
+            let preparing = source.status().is_some();
+            if self.preparing && !preparing {
+                self.horizon.refresh();
+            }
+            self.preparing = preparing;
             self.horizon.update(&source, eye.x as f64, eye.z as f64);
             self.map.update(&source);
             snow_layer::set_water_line(source.sea_level().unwrap_or(NO_WATER_LINE));

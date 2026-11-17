@@ -248,6 +248,15 @@ pub struct RiverPiece {
     pub width: [f32; 2],
 }
 
+/// A strip of ground for the horizon (see `TerrainSource::far_bands`): a
+/// road, a path, anything too narrow for the horizon's grid. `points` run
+/// along its middle (world x, z), each with how wide it is there (metres)
+/// and what the ground looks like there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SurfaceBand {
+    pub points: Vec<([f64; 2], f32, SurfaceSample)>,
+}
+
 /// The programs the terrain draws a source's ground with. The vertex
 /// program gets `position`, `normals`, `groundColor` and `data0..data2` at
 /// locations 0 to 5 (see `shaders::STANDARD_VERTEX`); most sources keep the
@@ -331,6 +340,14 @@ pub trait TerrainSource: Send + Sync + 'static {
     /// horizon to draw beyond the loaded chunks (they are too narrow for
     /// its grid). Default: none.
     fn far_rivers(&self, _centre: [f64; 2], _reach: f64) -> Vec<RiverPiece> {
+        Vec::new()
+    }
+
+    /// Strips of ground within `reach` metres of world `(x, z)` `centre`
+    /// that the horizon should show although they are too narrow for its
+    /// grid (roads, say): laid on its ground and drawn with the source's
+    /// programs, as the ground around them. Default: none.
+    fn far_bands(&self, _centre: [f64; 2], _reach: f64) -> Vec<SurfaceBand> {
         Vec::new()
     }
 
