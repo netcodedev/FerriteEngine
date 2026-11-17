@@ -154,7 +154,9 @@ impl Hud {
         let (cx, cy) = (w / 2.0, h / 2.0);
         self.crosshair(cx, cy, state.selected == Item::Cable);
         if let Some(panel) = &state.target {
-            self.panel(cx + 30.0, cy - 30.0, 250.0, panel);
+            // Above the cable's panel while one is drawn.
+            let y = if state.cable.is_some() { cy - 40.0 - Self::panel_height(panel) } else { cy - 30.0 };
+            self.panel(cx + 30.0, y, 250.0, panel);
         }
         if let Some(panel) = &state.network {
             self.panel(20.0, 20.0, 270.0, panel);
@@ -177,11 +179,15 @@ impl Hud {
         self.circle(cx, cy, 2.0, (1.0, 1.0, 1.0, 0.9), None);
     }
 
+    fn panel_height(panel: &Panel) -> f32 {
+        let bar_h = if panel.bar.is_some() { 16.0 } else { 0.0 };
+        34.0 + panel.lines.len() as f32 * 19.0 + bar_h + 6.0
+    }
+
     /// A panel of a title, lines and maybe a bar, its top left at `(x, y)`.
     fn panel(&self, x: f32, y: f32, w: f32, panel: &Panel) {
         let line_h = 19.0;
-        let bar_h = if panel.bar.is_some() { 16.0 } else { 0.0 };
-        let h = 34.0 + panel.lines.len() as f32 * line_h + bar_h + 6.0;
+        let h = Self::panel_height(panel);
         self.rect(x, y, w, h, PANEL, 8.0, Some((1.0, PANEL_BORDER)));
         self.text(&panel.title, x + 12.0, y + 8.0, 15.0, TEXT, Fonts::InterSemiBold, Align::Left);
         for (i, (line, color)) in panel.lines.iter().enumerate() {
@@ -206,7 +212,7 @@ impl Hud {
         self.rect(x, y, w, h, PANEL, 8.0, Some(border));
         let title = format!("Kabel von {}", cable.from);
         self.text(&title, x + 12.0, y + 8.0, 14.0, TEXT, Fonts::InterSemiBold, Align::Left);
-        let length = format!("{:.1} / {:.0} m", cable.length, cable.max);
+        let length = format!("{:.1} / {} m", cable.length, cable.max);
         let over = cable.length > cable.max;
         self.text(&length, x + w - 12.0, y + 8.0, 14.0, if over { WARN } else { TEXT }, Fonts::InterSemiBold, Align::Right);
         let bw = w - 24.0;

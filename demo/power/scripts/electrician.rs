@@ -722,8 +722,8 @@ impl Electrician {
                 _ => LightSettings {
                     kind: LightKind::Spot,
                     color: [1.0, 0.80, 0.55],
-                    intensity: 14.0,
-                    range: 18.0,
+                    intensity: 26.0,
+                    range: 20.0,
                     inner_angle: 38.0,
                     outer_angle: 62.0,
                     shadows: false,
@@ -1310,7 +1310,7 @@ impl Electrician {
             Glow::Bulb => match device.kind {
                 DeviceKind::Floodlight => [7.0, 7.2, 7.5],
                 DeviceKind::Pole => [6.0, 4.6, 2.6],
-                _ => [6.0, 4.8, 3.0],
+                _ => [3.2, 2.5, 1.6],
             }
             .map(|c| c * g),
             Glow::Coil => [5.0, 1.1, 0.25].map(|c| c * g),
