@@ -1,5 +1,8 @@
 (
     version: 1,
+    settings: (
+        shadow_map_size: Some((4096, 4096)),
+    ),
     entities: [
         (
             id: 1001,
