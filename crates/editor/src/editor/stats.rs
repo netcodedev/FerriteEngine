@@ -501,7 +501,7 @@ impl DebugSwitches {
     /// Hand the switches as they are to the renderer and the window (whose
     /// GL context must be current).
     pub fn apply(&self) {
-        set_vsync(self.vsync.read());
+        ferrite::core::window::set_vsync(self.vsync.read());
         ViewFrustum::set_frozen(self.freeze_culling.read());
         debug_views::set_ambient_occlusion(self.ambient_occlusion.read());
         debug_views::set_sun_shadows(self.sun_shadow_maps.read());
@@ -515,11 +515,6 @@ impl DebugSwitches {
             "sun_shadow_maps": self.sun_shadow_maps.read(),
         })
     }
-}
-
-/// Whether frames wait for the display, for the current GL context.
-fn set_vsync(on: bool) {
-    unsafe { glfw::ffi::glfwSwapInterval(if on { 1 } else { 0 }) };
 }
 
 /// The titles of the panel's sections, in order.
@@ -891,7 +886,7 @@ impl StatsPanel {
                     "VSync",
                     self.switches.vsync.clone(),
                     content - 8.0,
-                    Box::new(|on, _| set_vsync(on)),
+                    Box::new(|on, _| ferrite::core::window::set_vsync(on)),
                 )));
             }
             if *title == "Debug views" {
