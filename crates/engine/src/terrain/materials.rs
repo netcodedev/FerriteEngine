@@ -1,12 +1,15 @@
-//! Textures of the terrain's surface materials (grass, sand, rock, forest
-//! floor, dry grass, gravel, road, dirt, jungle floor, tundra moss, mud,
-//! cave rock), loaded from
-//! `assets/textures/terrain/<layer>/` as array textures: one layer per
-//! material, one array per kind of map.
+//! Textures of a terrain's surface materials, for sources whose fragment
+//! program blends textured layers (see `TerrainSource::load_textures`):
+//! each layer's scan loaded from `assets/textures/terrain/<layer>/` as
+//! array textures, one layer per material, one array per kind of map
+//! (albedo, normal, and roughness/occlusion/height), and the uniforms
+//! `tileSize[i]`, `heightDepth[i]`, `tinted[i]`, `turn[i]` and
+//! `hasTerrainTextures` set.
 //!
-//! Grass, sand and rock are needed (without them the terrain is drawn in
-//! plain colours); a project without one of the others gets its stand-in's
-//! textures in its place.
+//! Layers without a stand-in are needed (without them the ground is drawn
+//! in plain colours); a project without one of the others gets its
+//! stand-in's textures in its place. The snow's scan (see `load_snow`) is
+//! the weather's, for every terrain.
 
 use std::path::{Path, PathBuf};
 
@@ -38,7 +41,7 @@ pub struct TerrainLayer {
     pub turn: f32,
 }
 
-const fn layer(folder: &'static str, tile_size: f32, height_depth: f32, stand_in: Option<usize>) -> TerrainLayer {
+pub const fn layer(folder: &'static str, tile_size: f32, height_depth: f32, stand_in: Option<usize>) -> TerrainLayer {
     TerrainLayer {
         folder,
         tile_size,
@@ -49,95 +52,66 @@ const fn layer(folder: &'static str, tile_size: f32, height_depth: f32, stand_in
     }
 }
 
-pub const GRASS: usize = 0;
-pub const SAND: usize = 1;
-pub const ROCK: usize = 2;
-pub const FOREST: usize = 3;
-pub const DIRT: usize = 7;
-
-/// In the order the terrain shader's `GRASS`, `SAND`, `ROCK`, `FOREST`,
-/// `DRY`, `GRAVEL`, `ROAD`, `DIRT`, `JUNGLE`, `TUNDRA`, `MUD`, `CAVE_ROCK`
-/// index them. Stand-ins come before what they stand in for.
-pub const LAYERS: [TerrainLayer; 12] = [
-    TerrainLayer {
-        tinted: true,
-        ..layer("grass", 1.0, 0.04, None)
-    },
-    layer("sand", 2.0, 0.031, None),
-    layer("rock", 0.83, 0.059, None),
-    layer("forest_floor", 1.5, 0.057, Some(GRASS)),
-    layer("dry_grass", 1.0, 0.035, Some(GRASS)),
-    layer("gravel", 0.39, 0.05, Some(SAND)),
-    TerrainLayer {
-        turn: 0.0,
-        ..layer("road", 2.0, 0.029, Some(SAND))
-    },
-    // Its tracks run one way: turned a little only.
-    TerrainLayer {
-        turn: 0.04,
-        ..layer("dirt", 1.0, 0.052, Some(SAND))
-    },
-    layer("jungle_floor", 2.0, 0.018, Some(FOREST)),
-    layer("tundra", 4.0, 0.032, Some(GRASS)),
-    layer("mud", 0.42, 0.049, Some(DIRT)),
-    layer("cave_rock", 1.0, 0.151, Some(ROCK)),
-];
-
 /// What a layer leaves out: medium roughness, no occlusion, flat, half
 /// height.
 const DEFAULT_ROUGHNESS: u8 = 204;
 const DEFAULT_NORMAL: [u8; 4] = [128, 128, 255, 255];
 
-struct LayerImages {
-    albedo: RgbaImage,
-    normal: Option<RgbaImage>,
-    roughness: Option<RgbaImage>,
+/// The maps of one material scan.
+pub struct MaterialImages {
+    pub albedo: RgbaImage,
+    pub normal: Option<RgbaImage>,
+    pub roughness: Option<RgbaImage>,
     /// Glossiness, used inverted when there is no roughness map.
-    gloss: Option<RgbaImage>,
-    occlusion: Option<RgbaImage>,
-    height: Option<RgbaImage>,
+    pub gloss: Option<RgbaImage>,
+    pub occlusion: Option<RgbaImage>,
+    pub height: Option<RgbaImage>,
 }
 
 /// Load the layers' textures and set the shader's terrain uniforms. Returns
 /// the albedo, normal and surface (roughness, occlusion, height) arrays for
 /// texture units 0, 1 and 2, or nothing — and the shader falls back to
 /// plain colours — when a layer's colour map is missing.
-pub fn load(shader: &Shader) -> Vec<Texture> {
+pub fn load(shader: &Shader, layers: &[TerrainLayer]) -> Vec<Texture> {
     shader.bind();
-    let loaded: Vec<Option<LayerImages>> = LAYERS
+    debug_assert!(
+        layers.iter().enumerate().all(|(i, l)| l.stand_in.is_none_or(|s| s < i)),
+        "stand-ins come before what they stand in for"
+    );
+    let loaded: Vec<Option<MaterialImages>> = layers
         .iter()
-        .map(|layer| load_layer(&Path::new(FOLDER).join(layer.folder), layer.stand_in.is_none()))
+        .map(|layer| load_images(&Path::new(FOLDER).join(layer.folder), layer.stand_in.is_none()))
         .collect();
-    if LAYERS.iter().zip(&loaded).any(|(layer, images)| layer.stand_in.is_none() && images.is_none()) {
+    if layers.is_empty() || layers.iter().zip(&loaded).any(|(layer, images)| layer.stand_in.is_none() && images.is_none()) {
         shader.set_uniform_1i("hasTerrainTextures", 0);
         return Vec::new();
     }
     // Missing layers take their stand-in's textures, size and tint (or
     // its stand-in's, when that is missing too).
-    let mut from = [0usize; LAYERS.len()];
-    for (index, layer) in LAYERS.iter().enumerate() {
+    let mut from = vec![0usize; layers.len()];
+    for (index, layer) in layers.iter().enumerate() {
         from[index] = match (&loaded[index], layer.stand_in) {
             (None, Some(stand_in)) => {
                 let source = from[stand_in];
-                log::info!("terrain: no {} textures, using {}'s", layer.folder, LAYERS[source].folder);
+                log::info!("terrain: no {} textures, using {}'s", layer.folder, layers[source].folder);
                 source
             }
             _ => index,
         };
     }
     for (index, &source) in from.iter().enumerate() {
-        let layer = &LAYERS[source];
+        let layer = &layers[source];
         shader.set_uniform_1f(&format!("tileSize[{index}]"), layer.tile_size);
         shader.set_uniform_1f(&format!("heightDepth[{index}]"), layer.height_depth);
         shader.set_uniform_1f(&format!("tinted[{index}]"), if layer.tinted { 1.0 } else { 0.0 });
         // Its own direction, even when another layer's textures stand in.
-        shader.set_uniform_1f(&format!("turn[{index}]"), LAYERS[index].turn);
+        shader.set_uniform_1f(&format!("turn[{index}]"), layers[index].turn);
     }
-    let layers: Vec<&LayerImages> = from
+    let images: Vec<&MaterialImages> = from
         .iter()
         .map(|&source| loaded[source].as_ref().expect("needed layers are loaded"))
         .collect();
-    let (width, height) = layers[0].albedo.dimensions();
+    let (width, height) = images[0].albedo.dimensions();
     let fit = |image: &RgbaImage| {
         if image.dimensions() == (width, height) {
             image.clone()
@@ -147,15 +121,15 @@ pub fn load(shader: &Shader) -> Vec<Texture> {
     };
     let pixels = (width * height) as usize;
 
-    let albedo: Vec<Vec<u8>> = layers.iter().map(|l| fit(&l.albedo).into_raw()).collect();
-    let normal: Vec<Vec<u8>> = layers
+    let albedo: Vec<Vec<u8>> = images.iter().map(|l| fit(&l.albedo).into_raw()).collect();
+    let normal: Vec<Vec<u8>> = images
         .iter()
         .map(|l| match &l.normal {
             Some(normal) => fit(normal).into_raw(),
             None => DEFAULT_NORMAL.repeat(pixels),
         })
         .collect();
-    let surface: Vec<Vec<u8>> = layers
+    let surface: Vec<Vec<u8>> = images
         .iter()
         .map(|l| {
             let channel = |image: &Option<RgbaImage>| image.as_ref().map(|i| fit(i).into_raw());
@@ -179,7 +153,7 @@ pub fn load(shader: &Shader) -> Vec<Texture> {
         .collect();
 
     let mut textures = Vec::with_capacity(3);
-    debug_assert_eq!(albedo.len(), LAYERS.len());
+    debug_assert_eq!(albedo.len(), layers.len());
     for (layers, srgb) in [(albedo, true), (normal, false), (surface, false)] {
         let mut texture = Texture::new();
         texture.load_array(width, height, &layers, srgb);
@@ -190,32 +164,6 @@ pub fn load(shader: &Shader) -> Vec<Texture> {
     textures
 }
 
-/// The road layer's colour and normal maps, as images (for what draws a
-/// road apart from the ground: the bridges).
-pub fn road_images() -> Option<(RgbaImage, Option<RgbaImage>)> {
-    let road = LAYERS.iter().find(|layer| layer.folder == "road")?;
-    let images = load_layer(&Path::new(FOLDER).join(road.folder), false)?;
-    Some((images.albedo, images.normal))
-}
-
-/// The bridges' stone: colour, normal, roughness and occlusion maps from
-/// `assets/textures/bridge/` (one repeat a bridge's stone tile, see
-/// `bridges::STONE_TILE`), if it has a colour map.
-pub fn bridge_images() -> Option<[Option<RgbaImage>; 4]> {
-    let images = load_layer(Path::new(BRIDGE_FOLDER), false)?;
-    // Gloss inverted where there is no roughness.
-    let roughness = images.roughness.or_else(|| {
-        images.gloss.map(|mut gloss| {
-            gloss.pixels_mut().for_each(|p| p.0[..3].iter_mut().for_each(|c| *c = 255 - *c));
-            gloss
-        })
-    });
-    Some([Some(images.albedo), images.normal, roughness, images.occlusion])
-}
-
-/// Where the bridges' textures lie (see `bridge_images`).
-const BRIDGE_FOLDER: &str = "assets/textures/bridge";
-
 /// Folder below `assets/textures/terrain/` with the snow's scan.
 pub const SNOW_FOLDER: &str = "snow";
 
@@ -223,7 +171,7 @@ pub const SNOW_FOLDER: &str = "snow";
 /// arrays: colour with roughness in alpha (sRGB colour), and the normal
 /// with occlusion in alpha. Nothing when there is no colour map.
 pub fn load_snow() -> Option<[Texture; 2]> {
-    let layer = load_layer(&Path::new(FOLDER).join(SNOW_FOLDER), true)?;
+    let layer = load_images(&Path::new(FOLDER).join(SNOW_FOLDER), true)?;
     let (width, height) = layer.albedo.dimensions();
     let fit = |image: &RgbaImage| {
         if image.dimensions() == (width, height) {
@@ -255,9 +203,10 @@ pub fn load_snow() -> Option<[Texture; 2]> {
     Some(textures)
 }
 
-/// The textures in `folder`, if it has a colour map; `needed`: say so when
-/// it has none.
-fn load_layer(folder: &Path, needed: bool) -> Option<LayerImages> {
+/// The maps of the scan in `folder` (found by their names, see
+/// `material_maps`), if it has a colour map; `needed`: say so when it has
+/// none.
+pub fn load_images(folder: &Path, needed: bool) -> Option<MaterialImages> {
     let files: Vec<PathBuf> = std::fs::read_dir(folder)
         .ok()?
         .flatten()
@@ -290,7 +239,7 @@ fn load_layer(folder: &Path, needed: bool) -> Option<LayerImages> {
         );
         return None;
     };
-    Some(LayerImages {
+    Some(MaterialImages {
         albedo,
         normal: read(MapKind::Normal),
         roughness: read(MapKind::Roughness),
@@ -326,13 +275,6 @@ fn common_prefix(names: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn stand_ins_come_first() {
-        for (index, layer) in LAYERS.iter().enumerate() {
-            assert!(layer.stand_in.is_none_or(|s| s < index), "{}", layer.folder);
-        }
-    }
 
     #[test]
     fn the_common_prefix_ends_between_words() {

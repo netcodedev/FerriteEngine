@@ -8,7 +8,7 @@ use ferrite::{
         primitives::{Offset, Position, Size},
         scene::Scene,
     },
-    terrain::{dual_contouring::DualContouringChunk, Terrain},
+    terrain::Terrain,
 };
 use ferrite_ui::ui::{element_handle::UIElementHandle, elements::image::Image, UIElement};
 use glfw::{Glfw, WindowEvent};
@@ -42,7 +42,7 @@ impl UIElement for WorldMapView {
     fn update(&mut self, scene: &mut Scene) {
         let map = scene
             .get_entity_mut(&self.terrain)
-            .and_then(|e| e.get_component_mut::<Terrain<DualContouringChunk>>())
+            .and_then(|e| e.get_component_mut::<Terrain>())
             .and_then(|terrain| terrain.world_map());
         if let Some((version, picture)) = map {
             if self.shown != Some(version) {

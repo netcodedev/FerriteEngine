@@ -10,7 +10,7 @@ use ferrite::{
         },
         scene::Scene,
     },
-    terrain::{dual_contouring::DualContouringChunk, Terrain},
+    terrain::Terrain,
 };
 use ferrite_ui::ui::{
     element_handle::UIElementHandle,
@@ -298,7 +298,7 @@ impl UIElement for Toolbar {
         // What the terrain is still busy with, unless something else is
         // being said.
         let loading = scene
-            .get_component::<Terrain<DualContouringChunk>>()
+            .get_component::<Terrain>()
             .and_then(|terrain| terrain.loading_status());
         self.spinning = status.is_none() && loading.is_some();
         let status = status.or(loading).unwrap_or_else(|| match mode {

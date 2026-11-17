@@ -23,7 +23,7 @@ use ferrite::core::{
     },
     window::Window,
 };
-use ferrite::terrain::{dual_contouring::DualContouringChunk, Terrain};
+use ferrite::terrain::Terrain;
 use ferrite_ui::ui::{UIElement, UI};
 use glfw::{Action, CursorMode, Glfw, WindowEvent};
 
@@ -380,10 +380,10 @@ impl EditorLayer {
         }
     }
 
-    fn terrain_mut(&mut self, id: &EntityHandle) -> Option<&mut Terrain<DualContouringChunk>> {
+    fn terrain_mut(&mut self, id: &EntityHandle) -> Option<&mut Terrain> {
         self.scene
             .get_entity_mut(id)?
-            .get_component_mut::<Terrain<DualContouringChunk>>()
+            .get_component_mut::<Terrain>()
     }
 
     /// Ask for files and import each as an asset.

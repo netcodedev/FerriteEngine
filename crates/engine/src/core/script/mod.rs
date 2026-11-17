@@ -14,7 +14,7 @@
 //! with.
 
 mod library;
-mod parameters;
+pub(crate) mod parameters;
 
 use std::{borrow::Cow, collections::BTreeMap, sync::RwLock};
 
@@ -22,6 +22,8 @@ use cgmath::{Matrix4, Point3, Vector3};
 use glfw::{Glfw, Window, WindowEvent};
 use ron::Value;
 use serde::{de::DeserializeOwned, Serialize};
+
+use crate::terrain::{generators::GeneratorEntry, source::TerrainGenerator};
 
 use super::{
     entity::{
@@ -272,10 +274,12 @@ struct Entry {
     create: Create,
 }
 
-/// The scripts a game offers, by name.
+/// The scripts a game offers, by name, and its worlds (see
+/// `terrain::source::TerrainGenerator`).
 #[derive(Default)]
 pub struct ScriptRegistry {
     scripts: BTreeMap<String, Entry>,
+    terrains: BTreeMap<String, GeneratorEntry>,
 }
 
 impl ScriptRegistry {
@@ -299,8 +303,18 @@ impl ScriptRegistry {
         );
     }
 
+    /// Offer the world `G` to scenes (`Terrain(generator: G::NAME)`).
+    pub fn register_terrain<G: TerrainGenerator>(&mut self) {
+        self.terrains.insert(G::NAME.to_string(), GeneratorEntry::of::<G>());
+    }
+
     pub fn len(&self) -> usize {
         self.scripts.len()
+    }
+
+    /// How many worlds it offers.
+    pub fn terrain_count(&self) -> usize {
+        self.terrains.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -310,12 +324,24 @@ impl ScriptRegistry {
 
 static REGISTRY: RwLock<ScriptRegistry> = RwLock::new(ScriptRegistry {
     scripts: BTreeMap::new(),
+    terrains: BTreeMap::new(),
 });
 
 /// Make the scripts of `registry` the ones scenes are built with,
 /// replacing all before.
 pub fn install(registry: ScriptRegistry) {
     *REGISTRY.write().unwrap() = registry;
+    crate::terrain::generators::changed();
+}
+
+/// The world named `name` the scripts offer.
+pub fn terrain_generator(name: &str) -> Option<GeneratorEntry> {
+    REGISTRY.read().unwrap().terrains.get(name).cloned()
+}
+
+/// The names of the worlds the scripts offer, sorted.
+pub fn terrain_generator_names() -> Vec<String> {
+    REGISTRY.read().unwrap().terrains.keys().cloned().collect()
 }
 
 /// A new component of the script `name`, from its saved parameters.
@@ -344,7 +370,7 @@ macro_rules! export_scripts {
     };
 }
 
-pub(crate) fn to_value<T: Serialize>(data: &T) -> Value {
+pub fn to_value<T: Serialize>(data: &T) -> Value {
     ron::to_string(data)
         .ok()
         .and_then(|text| ron::from_str(&text).ok())

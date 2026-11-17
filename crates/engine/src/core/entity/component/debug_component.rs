@@ -15,7 +15,7 @@ use crate::{
         },
         scene::Scene,
     },
-    terrain::{dual_contouring::DualContouringChunk, ChunkBounds, Terrain, CHUNK_SIZE},
+    terrain::{ChunkBounds, Terrain, CHUNK_SIZE},
 };
 use cgmath::{Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, Vector3};
 
@@ -186,9 +186,9 @@ impl Component for DebugController {
                 ));
             }
             let mut triangle_count = 0;
-            for terrain in scene.get_entities_with_component::<Terrain<DualContouringChunk>>() {
+            for terrain in scene.get_entities_with_component::<Terrain>() {
                 triangle_count += terrain
-                    .get_component::<Terrain<DualContouringChunk>>()
+                    .get_component::<Terrain>()
                     .unwrap()
                     .get_triangle_count(&terrain);
             }
@@ -289,7 +289,7 @@ impl Component for DebugController {
 
     fn render(&self, scene: &Scene, _: &Entity, view_projection: &Matrix4<f32>, _: &Matrix4<f32>) {
         if self.show_rays {
-            if let Some(terrain) = scene.get_component::<Terrain<DualContouringChunk>>() {
+            if let Some(terrain) = scene.get_component::<Terrain>() {
                 if let Some((line, _)) = &terrain.get_mouse_picker().ray {
                     LineRenderer::render(
                         view_projection,

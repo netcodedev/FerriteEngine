@@ -6,9 +6,11 @@ pub mod vegetation;
 // Re-exported for game crates, which use the engine's own copies: a game
 // library links the engine dynamically and must not bring second copies.
 pub use cgmath;
+pub use image;
 pub use glfw;
 pub use log;
 pub use rapier3d;
+pub use russimp_ng;
 pub use ron;
 pub use serde;
 

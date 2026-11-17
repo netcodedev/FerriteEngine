@@ -1,7 +1,7 @@
 //! The water surface of a terrain chunk.
 //!
 //! The surface is a regular grid at the water's level (the sea's, or a
-//! lake's or river's where one is: see `generator::hydrology`), aligned to world
+//! lake's or river's where one is: see `TerrainSource::water_level`), aligned to world
 //! coordinates so neighbouring chunks share their border vertices exactly.
 //! It does not stop at the shoreline: every cell whose ground comes near the
 //! water is kept, plus a ring of cells around them, so the grid's edge always
@@ -15,9 +15,38 @@
 //! waves toward the shore with the first and picks the waves the second can
 //! carry: ponds only ripple, lakes and the sea get long swells.
 
-use gl::types::GLuint;
+use std::time::Instant;
 
-use crate::core::renderer::shader::VertexAttributes;
+use cgmath::{Matrix4, Point3, SquareMatrix, Vector3};
+use gl::types::GLuint;
+use lazy_static::lazy_static;
+
+use crate::core::{
+    renderer::{
+        hdr,
+        pbr::Lighting,
+        shader::{Shader, VertexAttributes},
+    },
+    scene::Scene,
+};
+
+use super::{shaders, ChunkMesh, FarWater};
+
+thread_local! {
+    static WATER_SHADER: Shader = {
+        let (vertex, fragment) = shaders::water_sources();
+        Shader::new(&vertex, &fragment)
+    };
+}
+
+lazy_static! {
+    static ref START: Instant = Instant::now();
+}
+
+/// Texture units the opaque scene is bound to while the water draws (clear
+/// of the terrain's textures, the clouds, ambient occlusion and shadows).
+const SCENE_COLOR_UNIT: u32 = 11;
+const SCENE_DEPTH_UNIT: u32 = 12;
 
 /// Spacing of the surface grid. Small enough for the shortest waves that
 /// displace the surface (see `water_vertex.glsl`); shorter ones only bend
@@ -269,6 +298,96 @@ fn measure_body(ground: &impl Fn(f32, f32) -> f32, level: f32, x: f32, z: f32) -
     (log_sum / directions.len() as f32).exp()
 }
 
+/// Draw a water surface (a chunk's, or the far water's: see `FarWater`)
+/// with the water program, over the opaque scene.
+pub fn draw(
+    water_mesh: &ChunkMesh<WaterVertex>,
+    scene: &Scene,
+    view_projection: &Matrix4<f32>,
+    model: &Matrix4<f32>,
+    far: Option<FarWater>,
+) {
+    // Skip water when rendering into the shadow-map FBO or the terrain
+    // debug FBO.  The scene knows which FBOs allow the transparent pass.
+    if !scene.is_water_render_allowed() || !water_mesh.is_buffered() {
+        return;
+    }
+    let depth_capture = scene.is_water_depth_capture();
+    let opaque = hdr::opaque_scene().filter(|_| !depth_capture);
+
+    WATER_SHADER.with(|ws| {
+        ws.bind();
+        ws.set_uniform_mat4("viewProjection", view_projection);
+        let inverse = view_projection.invert().unwrap_or(Matrix4::identity());
+        ws.set_uniform_mat4("inverseViewProjection", &inverse);
+        ws.set_uniform_1f("uTime", START.elapsed().as_secs_f32());
+        let far = far.unwrap_or(FarWater {
+            centre: [0.0; 2],
+            load: 0.0,
+            hole: 0.0,
+        });
+        ws.set_uniform_1i("isFarWater", (far.load > 0.0) as i32);
+        ws.set_uniform_3f("farSink", far.centre[0], far.centre[1], far.load);
+        ws.set_uniform_1f("farHole", far.hole);
+        match Lighting::from_scene(scene) {
+            Some(lighting) => lighting.apply(ws),
+            None => {
+                let eye = scene
+                    .get_active_camera()
+                    .map(|c| c.get_camera().get_eye_position())
+                    .unwrap_or(Point3::new(0.0, 0.0, 0.0));
+                Lighting::preview(Vector3::new(0.3, 0.8, 0.2), eye).apply(ws);
+            }
+        }
+        ws.set_uniform_1i("sceneColor", SCENE_COLOR_UNIT as i32);
+        ws.set_uniform_1i("sceneDepth", SCENE_DEPTH_UNIT as i32);
+        ws.set_uniform_1i("hasScene", opaque.is_some() as i32);
+        unsafe {
+            if let Some(opaque) = opaque {
+                gl::ActiveTexture(gl::TEXTURE0 + SCENE_COLOR_UNIT);
+                gl::BindTexture(gl::TEXTURE_2D, opaque.color);
+                gl::ActiveTexture(gl::TEXTURE0 + SCENE_DEPTH_UNIT);
+                gl::BindTexture(gl::TEXTURE_2D, opaque.depth);
+                gl::ActiveTexture(gl::TEXTURE0);
+            }
+            gl::Disable(gl::CULL_FACE);
+            if depth_capture {
+                // Depth-capture mode: write the water surface's actual
+                // depth values into the FBO, ignoring whatever terrain
+                // depth is already there.  GL_ALWAYS + DepthMask=TRUE
+                // means every water fragment stamps its depth, giving a
+                // clean "water depth map" for the F10 debug panel.
+                gl::DepthMask(gl::TRUE);
+                gl::DepthFunc(gl::ALWAYS);
+            } else {
+                // Normal render: the shader composes the water with
+                // the opaque scene under it itself; alpha only fades
+                // it out where it thins to nothing at the shore.
+                gl::Enable(gl::BLEND);
+                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+                gl::DepthMask(gl::TRUE);
+                gl::DepthFunc(gl::LESS);
+            }
+        }
+        water_mesh.render(ws, model, None);
+        unsafe {
+            gl::DepthMask(gl::TRUE);
+            gl::DepthFunc(gl::LESS); // restore default
+            if !depth_capture {
+                gl::Disable(gl::BLEND);
+            }
+            if opaque.is_some() {
+                for unit in [SCENE_COLOR_UNIT, SCENE_DEPTH_UNIT] {
+                    gl::ActiveTexture(gl::TEXTURE0 + unit);
+                    gl::BindTexture(gl::TEXTURE_2D, 0);
+                }
+                gl::ActiveTexture(gl::TEXTURE0);
+            }
+            // CULL_FACE is re-enabled by the terrain opaque pass each frame.
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,7 +396,7 @@ mod tests {
     fn still(_: f32, _: f32) -> [f32; 2] {
         [0.0; 2]
     }
-    use crate::terrain::dual_contouring::WATER_LEVEL;
+    const WATER_LEVEL: f32 = 0.0;
 
     const SIZE: f32 = 128.0;
 

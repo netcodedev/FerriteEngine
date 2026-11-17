@@ -1,26 +1,22 @@
 #version 460 core
 
+// The standard terrain vertex program (see `terrain::source::TerrainShaders`).
 layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normals;
-// The biomes' ground colour (display space) and the climate: temperature
-// (°C at this height) and humidity (see `generator::biome`).
+// What the source made of the ground here (see
+// `terrain::source::SurfaceSample`): a colour (display space) and twelve
+// numbers only the source's fragment program knows the meaning of.
 layout (location = 2) in vec3 groundColor;
-layout (location = 3) in vec2 climate;
-// Forest floor, dry grass, jungle floor and moss (see
-// `generator::biome::BiomeBlend`); road, settlement, gravel (see
-// `generator::Column::paint`) and mud. 0..1 each.
-layout (location = 4) in vec4 cover;
-layout (location = 5) in vec4 paint;
-// How far under the surface, 0..1.
-layout (location = 6) in float underground;
+layout (location = 3) in vec4 data0;
+layout (location = 4) in vec4 data1;
+layout (location = 5) in vec4 data2;
 
 out vec3 Normal;
 out vec3 WorldPos;
 out vec3 GroundColor;
-out vec2 Climate;
-out vec4 Cover;
-out vec4 Paint;
-out float Underground;
+out vec4 Data0;
+out vec4 Data1;
+out vec4 Data2;
 
 uniform mat4 model;
 uniform mat4 viewProjection;
@@ -48,8 +44,7 @@ void main()
     Normal = normalize(transpose(inverse(mat3(model))) * normals);
     WorldPos = worldPosition.xyz;
     GroundColor = groundColor;
-    Climate = climate;
-    Cover = cover;
-    Paint = paint;
-    Underground = underground;
+    Data0 = data0;
+    Data1 = data1;
+    Data2 = data2;
 }

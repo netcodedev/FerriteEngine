@@ -32,8 +32,18 @@ const FINEST: f32 = 0.05;
 const LEVELS: u32 = 5;
 /// Snow thinner than this (metres) is left to the terrain's painted snow.
 const MIN_DEPTH: f32 = 0.02;
-/// Height of the water's surface; no snow lies at or below it.
-const WATER_LINE: f32 = crate::terrain::dual_contouring::WATER_LEVEL;
+/// Where the beach ends: no snow lies below the sea's level. Set by the
+/// terrain from its world (see `TerrainSource::sea_level`).
+static WATER_LINE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The sea's level, below which no snow lies.
+pub fn set_water_line(level: f32) {
+    WATER_LINE.store(level.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn water_line() -> f32 {
+    f32::from_bits(WATER_LINE.load(std::sync::atomic::Ordering::Relaxed))
+}
 /// Uniforms the cloud field needs that `LIGHTING_GLSL` does not declare.
 const CLOUD_UNIFORMS: &str = "uniform float uTime;\nuniform float cloudType;";
 
@@ -164,7 +174,7 @@ impl SnowLayer {
         lighting.apply(shader);
         shader.set_uniform_mat4("viewProjection", view_projection);
         shader.set_uniform_1f("cells", CELLS as f32);
-        shader.set_uniform_1f("waterLine", WATER_LINE);
+        shader.set_uniform_1f("waterLine", water_line());
         shader.set_uniform_1f("minUnderPrint", MIN_UNDER_PRINT);
         shader.set_uniform_1i("flatLayer", flat as i32);
         shader.set_uniform_1f("uTime", sky::seconds());

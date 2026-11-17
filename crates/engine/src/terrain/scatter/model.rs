@@ -223,6 +223,8 @@ pub struct ScatterSpec {
     pub attempts: u32,
     /// Makes each model scatter to its own spots.
     pub salt: u64,
+    /// What the world makes of the layer (see `ScatterLayerData::tag`).
+    pub tag: String,
 }
 
 impl ScatterSpec {
@@ -230,6 +232,7 @@ impl ScatterSpec {
         Rc::ptr_eq(&self.model, &other.model)
             && self.attempts == other.attempts
             && self.salt == other.salt
+            && self.tag == other.tag
     }
 }
 

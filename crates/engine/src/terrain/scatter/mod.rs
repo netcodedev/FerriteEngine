@@ -20,7 +20,7 @@ use crate::core::{
     entity::component::{Property, PropertyValue},
 };
 
-use super::{dual_contouring::WATER_LEVEL, CHUNK_SIZE_FLOAT};
+use super::CHUNK_SIZE_FLOAT;
 
 mod instances;
 mod layer;
@@ -31,10 +31,6 @@ mod tests;
 pub use instances::*;
 pub use layer::*;
 pub use model::*;
-
-/// Lowest ground scattered models stand on: clear of the water. How many
-/// grow where is up to the biomes (see `generator::biome`).
-pub const SCATTER_MIN_Y: f32 = WATER_LEVEL + 4.0;
 
 const MODEL_SCALE: f32 = 1.0;
 
@@ -148,9 +144,12 @@ impl Scatter {
         self.layers
             .iter()
             .filter(|l| !l.is_unused())
-            .map(|l| match &l.asset {
-                Some(asset) => ScatterLayerData::asset(asset.clone(), l.density),
-                None => ScatterLayerData::file(l.path(), l.density),
+            .map(|l| ScatterLayerData {
+                tag: l.tag.clone(),
+                ..match &l.asset {
+                    Some(asset) => ScatterLayerData::asset(asset.clone(), l.density),
+                    None => ScatterLayerData::file(l.path(), l.density),
+                }
             })
             .collect()
     }
@@ -203,6 +202,7 @@ impl Scatter {
                 model: model.clone(),
                 attempts,
                 salt: layer.salt(),
+                tag: layer.applied_tag.clone(),
             };
             // The same model at the same density twice would land on the
             // very same spots; plant it once.
@@ -229,6 +229,7 @@ impl Scatter {
                 0.0,
                 MAX_DENSITY,
             ));
+            properties.push(Property::text(format!("{TAG_PROPERTY}{number}"), layer.tag.clone()));
         }
         properties.push(Property::text("scatter", self.status()).read_only());
         properties
@@ -245,6 +246,16 @@ impl Scatter {
             if let (Some(layer), Some(text)) = (self.layers.get_mut(index), value.as_text()) {
                 if layer.asset.is_none() && text != layer.model {
                     layer.model = text.to_string();
+                    layer.apply_in = Some(APPLY_DELAY);
+                }
+            }
+            return true;
+        }
+        if let Some(index) = property_layer(name, TAG_PROPERTY) {
+            if let (Some(layer), Some(text)) = (self.layers.get_mut(index), value.as_text()) {
+                let tag = text.trim().to_string();
+                if tag != layer.tag {
+                    layer.tag = tag;
                     layer.apply_in = Some(APPLY_DELAY);
                 }
             }
@@ -293,6 +304,7 @@ impl Scatter {
 /// Property name prefixes of a layer; the 1-based layer number follows.
 const MODEL_PROPERTY: &str = "model ";
 const DENSITY_PROPERTY: &str = "density ";
+const TAG_PROPERTY: &str = "tag ";
 
 /// A placement's position to the millimetre: placements are recomputed
 /// identically when a chunk loads again.

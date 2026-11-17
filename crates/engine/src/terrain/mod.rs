@@ -1,164 +1,38 @@
-use cgmath::{Matrix4, Point3};
-use glfw::MouseButton;
-
-use crate::core::{
-    mouse_picker::MousePicker,
-    renderer::{
-        line::Line,
-        shader::{DynamicVertexArray, Shader, VertexAttributes},
-        texture::Texture,
-    },
-    scene::Scene,
-};
+//! The terrain: a world's ground streamed in chunks around the camera,
+//! meshed, drawn with the horizon beyond and water over it, with models
+//! scattered on it.
+//!
+//! What the world is (where the ground is, what it looks like, rivers,
+//! roads, biomes) is not decided here but by a `TerrainSource` (see
+//! `source`): the engine's own `hills`, or one a game's scripts register.
+//! The engine brings the frame: streaming, meshing (`mesher`), levels of
+//! detail, colliders, the horizon, water, scattered models and drawing.
 
 pub const CHUNK_SIZE: usize = 128;
 pub const CHUNK_SIZE_FLOAT: f32 = CHUNK_SIZE as f32;
 
-pub mod bridge_view;
-pub mod dual_contouring;
-pub mod generator;
-pub mod marching_cubes;
+pub mod chunk;
+pub mod generators;
+pub mod hills;
 pub mod horizon;
 pub mod materials;
+pub mod mesher;
+pub mod noise;
 pub mod scatter;
+pub mod shaders;
+pub mod source;
 pub mod streaming;
 mod terrain;
-pub mod voxel;
+pub mod water;
 
-pub struct Terrain<T: Chunk> {
-    seed: u64,
-    /// What shapes the world; the generator is made from it and the seed.
-    world: generator::WorldSettings,
-    /// Shapes the ground; shared with the loader threads and the chunks.
-    generator: std::sync::Arc<generator::WorldGenerator>,
-    /// Countdown until the chunks are rebuilt for an edited seed.
-    reseed_in: Option<f64>,
-    /// Models scattered over the chunks. Optional; see `scatter`.
-    scatter: scatter::Scatter,
-    /// Editor toggle: draw chunk and scatter colliders as wireframes.
-    show_colliders: bool,
-    /// The picture of the world the editor shows (see `WorldMap`).
-    map: terrain::WorldMap,
-    /// The ground beyond the chunks (see `horizon`), for chunk types that
-    /// have one.
-    horizon: horizon::Horizon,
-    /// Loads the chunks around the camera (see `streaming`).
-    streamer: streaming::Streamer<Vec<terrain::LoadedChunk<T>>>,
-    shader: Shader,
-    /// Draws the chunks in depth-only passes (see `depth_pass`), if the
-    /// chunk type has such a program.
-    depth_shader: Option<Shader>,
-    textures: Vec<Texture>,
-    mouse_picker: MousePicker,
-}
+pub use chunk::TerrainChunk;
+pub use source::{
+    ChunkCoord, ChunkField, ChunkSurface, HorizonSample, SurfacePoint, SurfaceSample, TerrainGenerator,
+    TerrainShaders, TerrainSource,
+};
+pub use terrain::Terrain;
 
-pub trait Chunk {
-    fn new(seed: u64, position: (f32, f32, f32), lod: usize) -> Self;
-    /// The chunk at `position` (in chunks) as `generator` shapes the world.
-    /// `lod` 0 is the full detail; above it a backend may leave out what
-    /// only shows close up (the dual contouring chunks leave out caves and overhangs).
-    /// Backends that make their own ground from the seed keep the default.
-    fn generate(
-        generator: &std::sync::Arc<generator::WorldGenerator>,
-        position: (f32, f32, f32),
-        lod: usize,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        Self::new(generator.seed(), position, lod)
-    }
-
-    /// The chunks (by their `y`) of the column over chunk square
-    /// `column` that may hold anything, in full detail or not (see
-    /// `generate`); the others are not made. Backends whose ground lies in
-    /// the bottom row keep the default.
-    fn vertical_range(
-        _generator: &generator::WorldGenerator,
-        _column: (i32, i32),
-        _detail: bool,
-    ) -> std::ops::RangeInclusive<i32>
-    where
-        Self: Sized,
-    {
-        0..=0
-    }
-
-    /// Whether the terrain draws a horizon (see `horizon`) beyond these
-    /// chunks: only for chunk types whose programs take its vertices.
-    fn has_horizon() -> bool
-    where
-        Self: Sized,
-    {
-        false
-    }
-
-    /// Whether the chunk turned out to hold nothing to draw or collide
-    /// with; such chunks are dropped right away.
-    fn is_empty(&self) -> bool {
-        false
-    }
-    fn buffer_data(&mut self);
-    fn get_bounds(&self) -> ChunkBounds;
-    /// A box around everything the chunk draws, for culling; the chunk's
-    /// cube unless the type knows better.
-    fn get_drawn_bounds(&self) -> ChunkBounds {
-        self.get_bounds()
-    }
-    fn process_line(&mut self, line: &Line, button: &MouseButton) -> bool;
-    fn get_position(&self) -> Point3<f32>;
-    fn get_shader_source() -> (String, String);
-    /// Vertex and fragment shader that draw the chunks' depth alone, for
-    /// depth-only passes; `None` draws them with the shading program.
-    fn get_depth_shader_source() -> Option<(String, String)> {
-        None
-    }
-    /// Textures bound to units 0, 1, ... while the terrain draws. May set
-    /// uniforms of `shader` that stay fixed.
-    fn get_textures(shader: &Shader) -> Vec<Texture>;
-    fn get_triangle_count(&self) -> usize;
-    fn get_vertices(&self) -> Vec<[f32; 3]>;
-    fn get_indices(&self) -> Vec<[u32; 3]>;
-
-    /// Spots on this chunk where scattered models (trees, rocks, ...) may
-    /// stand, as world-space `(x, y, z, yaw_radians)`. `attempts` random
-    /// spots are tried and the unsuitable ones dropped; `salt` varies the
-    /// pattern so each model gets its own. Must be deterministic for a given
-    /// chunk, salt and attempt count. The default is empty — only terrain
-    /// backends that support scattering implement this.
-    fn scatter_points(&self, _salt: u64, _attempts: u32) -> Vec<(f32, f32, f32, f32)> {
-        Vec::new()
-    }
-
-    /// Draw the chunk's ground. The terrain calls this for each of its
-    /// chunks in view, with its `shader` bound and set up (uniforms,
-    /// textures, `viewProjection`); `transform` is the chunk entity's,
-    /// `distance` from the camera to the nearest point of the chunk (for
-    /// its level of detail).
-    /// Backends that draw themselves as components keep the default.
-    fn draw(&self, _shader: &Shader, _transform: &Matrix4<f32>, _distance: f32) {}
-
-    /// Draw the far water (see `horizon`) as this chunk type draws its own.
-    /// Default: not at all.
-    fn render_far_water(
-        _water: &ChunkMesh<dual_contouring::water::WaterVertex>,
-        _scene: &Scene,
-        _view_projection: &Matrix4<f32>,
-        _far: FarWater,
-    ) where
-        Self: Sized,
-    {
-    }
-
-    /// Optional transparent/overlay pass rendered after ALL chunks' opaque geometry.
-    /// Override this to render water, glass, etc. Default is a no-op.
-    fn render_transparent(
-        &self,
-        _scene: &Scene,
-        _view_projection: &Matrix4<f32>,
-        _parent_transform: &Matrix4<f32>,
-    ) {}
-}
+use crate::core::renderer::shader::{DynamicVertexArray, VertexAttributes};
 
 /// Where the far water (see `horizon`) is drawn: it sinks under the loaded
 /// chunks around the camera at `centre` (world x, z) within `load` metres,

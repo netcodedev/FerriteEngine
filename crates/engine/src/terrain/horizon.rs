@@ -1,6 +1,6 @@
 //! The horizon: the ground beyond the loaded chunks, out to many
-//! kilometres, as one height field mesh. It is made from the generator's
-//! samples on a few nested grids, each twice as coarse as the one inside
+//! kilometres, as one height field mesh. It is made from the source's
+//! samples (`TerrainSource::horizon_sample`) on a few nested grids, each twice as coarse as the one inside
 //! it (like a geometry clipmap), around a centre that follows the camera
 //! in steps, on a thread of its own.
 //!
@@ -14,14 +14,7 @@ use std::sync::{
     Arc,
 };
 
-use gl::types::GLuint;
-
-use super::{
-    dual_contouring::water::WaterVertex,
-    generator::{WorldGenerator, SEA_LEVEL},
-    ChunkMesh,
-};
-use crate::core::renderer::shader::VertexAttributes;
+use super::{mesher::TerrainVertex, source::TerrainSource, water::WaterVertex, ChunkMesh};
 
 /// Metres between the samples of the finest grid (a multiple of
 /// `MACRO_STEP`, so samples fall on the large shape's grid).
@@ -47,26 +40,8 @@ pub struct Built {
     pub water: (Vec<WaterVertex>, Vec<u32>),
 }
 
-/// The same layout as the chunks' vertices, so the terrain's programs draw
-/// it.
-#[derive(Clone, Copy)]
-#[repr(C)]
-pub struct HorizonVertex {
-    position: [f32; 3],
-    normal: [f32; 3],
-    color: [f32; 3],
-    climate: [f32; 2],
-    cover: [f32; 4],
-    /// Roads, settlements, gravel and mud: not drawn this far away.
-    paint: [f32; 4],
-    underground: f32,
-}
-
-impl VertexAttributes for HorizonVertex {
-    fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
-        vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT), (2, gl::FLOAT), (4, gl::FLOAT), (4, gl::FLOAT), (1, gl::FLOAT)]
-    }
-}
+/// The horizon's vertices: the chunks', so the terrain's programs draw it.
+pub type HorizonVertex = TerrainVertex;
 
 /// Distance in metres from the centre to the horizon's edge.
 pub fn reach() -> f64 {
@@ -77,7 +52,8 @@ pub fn reach() -> f64 {
 /// `CENTRE_STEP`): the ground's vertices in world metres and triangles
 /// facing up, and the water's (the sea and lakes, flat at their levels)
 /// over the cells where the ground comes near them.
-pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> Built {
+pub fn build(source: &dyn TerrainSource, centre: [f64; 2]) -> Built {
+    let sea = source.sea_level();
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
     let mut water_vertices = Vec::new();
@@ -91,7 +67,8 @@ pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> Built {
         let mut samples = Vec::with_capacity((side * side) as usize);
         for j in 0..side {
             for i in 0..side {
-                samples.push(generator.grid_sample(centre[0] + at(i), centre[1] + at(j)));
+                let sample = source.horizon_sample(centre[0] + at(i), centre[1] + at(j));
+                samples.push((sample.height, sample.surface, sample.water));
             }
         }
         // The ground (under the water too: the water is drawn over it).
@@ -113,7 +90,7 @@ pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> Built {
         let first = vertices.len() as u32;
         for j in 0..n {
             for i in 0..n {
-                let (_, biome, _) = samples[((j + 1) * side + i + 1) as usize];
+                let (_, surface, _) = samples[((j + 1) * side + i + 1) as usize];
                 let y = edge_height(i, j);
                 let dx = height(i + 1, j) - height(i - 1, j);
                 let dz = height(i, j + 1) - height(i, j - 1);
@@ -122,13 +99,8 @@ pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> Built {
                 vertices.push(HorizonVertex {
                     position: [(centre[0] + at(i + 1)) as f32, y, (centre[1] + at(j + 1)) as f32],
                     normal: normal.map(|c| c / length),
-                    color: biome.color,
-                    climate: [biome.temperature, biome.humidity],
-                    cover: [biome.forest, biome.dry, biome.jungle, biome.tundra],
-                    // Of what lies on the ground, only swamps' mud is wide
-                    // enough to show this far.
-                    paint: [0.0, 0.0, 0.0, biome.swamp],
-                    underground: 0.0,
+                    color: surface.color,
+                    data: surface.data,
                 });
             }
         }
@@ -176,7 +148,7 @@ pub fn build(generator: &WorldGenerator, centre: [f64; 2]) -> Built {
                         water_vertices.push(WaterVertex {
                             position: [(centre[0] + at(i + 1)) as f32, level, (centre[1] + at(j + 1)) as f32],
                             depth: level - h,
-                            body_size: if level <= SEA_LEVEL + 0.01 { SEA_SIZE } else { LAKE_SIZE },
+                            body_size: if sea.is_some_and(|sea| level <= sea + 0.01) { SEA_SIZE } else { LAKE_SIZE },
                             flow: [0.0; 2],
                         });
                     }
@@ -234,7 +206,7 @@ impl Horizon {
     }
 
     /// Follow the camera at world `(x, z)`.
-    pub fn update(&mut self, generator: &Arc<WorldGenerator>, x: f64, z: f64) {
+    pub fn update(&mut self, source: &Arc<dyn TerrainSource>, x: f64, z: f64) {
         if let Some((centre, rx)) = &self.pending {
             if let Ok(built) = rx.try_recv() {
                 let (vertices, indices) = built.ground;
@@ -256,9 +228,9 @@ impl Horizon {
         let current = self.pending.as_ref().map(|(c, _)| *c).or(self.centre);
         if current != Some(wanted) {
             let (tx, rx) = mpsc::channel();
-            let generator = generator.clone();
+            let source = source.clone();
             std::thread::spawn(move || {
-                let _ = tx.send(build(&generator, wanted));
+                let _ = tx.send(build(&*source, wanted));
             });
             self.pending = Some((wanted, rx));
         }
@@ -280,8 +252,9 @@ mod tests {
 
     #[test]
     fn the_grids_meet_without_cracks_and_face_up() {
-        let generator = WorldGenerator::new(1);
-        let (vertices, indices) = build(&generator, [-2048.0, -6144.0]).ground;
+        use crate::terrain::{hills::{Hills, HillsSettings}, source::TerrainGenerator};
+        let source = Hills::create(1, HillsSettings::default());
+        let (vertices, indices) = build(&*source, [-2048.0, -6144.0]).ground;
         assert_eq!(vertices.len(), LEVELS * (2 * HALF_CELLS as usize + 1).pow(2));
         for t in indices.chunks(3) {
             let [a, b, c] = [t[0], t[1], t[2]].map(|i| vertices[i as usize].position);
@@ -304,14 +277,5 @@ mod tests {
             assert!((mid[1] - 0.5 * (ca + cb)).abs() < 1e-3, "crack at {mid:?}");
         }
         assert!(reach() >= 16000.0);
-    }
-
-    #[test]
-    fn the_horizon_samples_the_ground_the_chunks_have() {
-        let generator = WorldGenerator::new(3);
-        for (x, z) in [(0.0, 0.0), (-4096.0, 1024.0), (9000.0 - 8.0, -3200.0)] {
-            let (h, _, _) = generator.grid_sample(x, z);
-            assert_eq!(h, generator.surface_height(x, z), "({x}, {z})");
-        }
     }
 }

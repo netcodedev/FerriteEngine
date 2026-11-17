@@ -20,6 +20,11 @@ pub struct ScatterLayerData {
     pub model: String,
     /// Placements tried per 100 m x 100 m of terrain.
     pub density: f32,
+    /// What the world makes of the layer: its source may let the models of
+    /// a "tree" layer grow thick in forests and thin in the plains (see
+    /// `TerrainSource::scatter_chance`). Empty: untagged.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tag: String,
 }
 
 impl ScatterLayerData {
@@ -28,6 +33,7 @@ impl ScatterLayerData {
             asset: Some(asset),
             model: String::new(),
             density,
+            tag: String::new(),
         }
     }
 
@@ -36,6 +42,7 @@ impl ScatterLayerData {
             asset: None,
             model: model.into(),
             density,
+            tag: String::new(),
         }
     }
 }
@@ -50,6 +57,9 @@ pub(super) struct ScatterLayer {
     /// Raw model file as typed; empty when unused.
     pub(super) model: String,
     pub(super) density: f32,
+    pub(super) tag: String,
+    /// The tag of what is planted right now.
+    pub(super) applied_tag: String,
     /// What is planted right now.
     pub(super) loaded: Option<Rc<ScatterModel>>,
     /// Revision of the asset `loaded` was built from.
@@ -80,6 +90,8 @@ impl ScatterLayer {
             asset: data.asset,
             model: data.model,
             density: data.density,
+            applied_tag: data.tag.clone(),
+            tag: data.tag,
             loaded: None,
             loaded_revision: 0,
             applied_density: data.density,
@@ -134,6 +146,7 @@ impl ScatterLayer {
 
     pub(super) fn apply(&mut self) {
         self.applied_density = self.density;
+        self.applied_tag = self.tag.clone();
         self.error = None;
         self.loaded = None;
         let result = match &self.asset {

@@ -1,6 +1,8 @@
 //! Writes `scripts.rs`: a module for every `.rs` file in the folder named by
-//! FERRITE_SCRIPTS, and `register`, which registers every
-//! `#[derive(Script)]` struct in them. Without the variable there are none.
+//! FERRITE_SCRIPTS and for every folder in it with a `mod.rs` (whose own
+//! modules it declares as usual), and `register`, which registers every
+//! `#[derive(Script)]` struct and every `impl TerrainGenerator for ...` in
+//! those top-level files. Without the variable there are none.
 
 use std::{env, fs, path::PathBuf};
 
@@ -20,15 +22,23 @@ fn main() {
                 entries
                     .flatten()
                     .map(|e| e.path())
-                    .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "rs"))
+                    .filter(|p| {
+                        (p.is_file() && p.extension().is_some_and(|e| e == "rs"))
+                            || (p.is_dir() && p.join("mod.rs").is_file())
+                    })
                     .collect()
             })
             .unwrap_or_default();
         files.sort();
-        for file in files {
+        for path in files {
+            let (module, file) = if path.is_dir() {
+                (scan::folder_module_name(&path), path.join("mod.rs"))
+            } else {
+                (scan::module_name(&path), path.clone())
+            };
             // A changed file may define other scripts.
             println!("cargo:rerun-if-changed={}", file.display());
-            let Some(module) = scan::module_name(&file) else {
+            let Some(module) = module else {
                 println!(
                     "cargo:warning={} is not a valid module name and is left out",
                     file.display()
@@ -39,6 +49,9 @@ fn main() {
             let source = fs::read_to_string(&file).unwrap_or_default();
             for script in scan::script_structs(&source) {
                 registrations.push_str(&format!("    registry.register::<{module}::{script}>();\n"));
+            }
+            for world in scan::terrain_generators(&source) {
+                registrations.push_str(&format!("    registry.register_terrain::<{module}::{world}>();\n"));
             }
         }
     }

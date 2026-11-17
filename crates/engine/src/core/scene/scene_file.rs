@@ -35,8 +35,7 @@ use crate::{
     vegetation::{tree::TreeParams, tree_component::{TreeComponent, TreeTextures}},
     player::{build_animation_graph, default_animation_graph, load_graph_file, Player},
     terrain::{
-        dual_contouring::DualContouringChunk,
-        generator::WorldSettings,
+        generators,
         scatter::{Scatter, ScatterLayerData},
         Terrain,
     },
@@ -155,12 +154,16 @@ pub enum ComponentData {
     },
     Terrain {
         seed: u64,
+        /// The world (see `terrain::generators`): the engine's own, or one
+        /// the project's scripts register.
+        #[serde(default = "default_generator")]
+        generator: String,
+        /// The world's settings; left out (`()`) for its defaults.
+        #[serde(default = "unit_value", skip_serializing_if = "is_unit")]
+        settings: ron::Value,
         /// Models scattered over the terrain, each with its own density.
         #[serde(default)]
         scatter: Vec<ScatterLayerData>,
-        /// What shapes the world; left out while it is the default.
-        #[serde(default, skip_serializing_if = "WorldSettings::is_default")]
-        world: WorldSettings,
     },
     DebugController,
     /// Prefab marker: the entity is rebuilt with `Player::new`, which brings
@@ -334,12 +337,14 @@ impl ComponentData {
         }
     }
 
-    /// Terrain without any scattered models; they can be set later.
+    /// The engine's own terrain without any scattered models; they can be
+    /// set later.
     pub fn bare_terrain(seed: u64) -> Self {
         ComponentData::Terrain {
             seed,
+            generator: default_generator(),
+            settings: ron::Value::Unit,
             scatter: Vec::new(),
-            world: WorldSettings::default(),
         }
     }
 
@@ -470,10 +475,14 @@ impl ComponentData {
             ComponentData::Particles { effect } => {
                 entity.add_component(ParticleEmitter::new(*effect));
             }
-            ComponentData::Terrain { seed, scatter, world } => {
+            ComponentData::Terrain {
+                seed,
+                generator,
+                settings,
+                scatter,
+            } => {
                 entity.add_component(
-                    Terrain::<DualContouringChunk>::with_world(*seed, world.clone())
-                        .with_scatter(scatter.clone()),
+                    Terrain::new(*seed, generator.clone(), settings.clone()).with_scatter(scatter.clone()),
                 );
             }
             ComponentData::DebugController => entity.add_component(DebugController::new()),
@@ -556,6 +565,15 @@ impl Entity {
             children: self.get_children().iter().filter_map(|c| c.to_data()).collect(),
         })
     }
+}
+
+/// The world of a terrain whose scene names none: the engine's own.
+fn default_generator() -> String {
+    generators::DEFAULT.to_string()
+}
+
+fn is_unit(value: &ron::Value) -> bool {
+    *value == ron::Value::Unit
 }
 
 fn unit_scale() -> [f32; 3] {
@@ -755,8 +773,9 @@ pub fn default_scene_file() -> SceneFile {
         [0.0; 3],
         vec![ComponentData::Terrain {
             seed: 2,
+            generator: default_generator(),
+            settings: ron::Value::Unit,
             scatter: Scatter::default_layers(),
-            world: WorldSettings::default(),
         }],
     );
     terrain

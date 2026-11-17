@@ -15,6 +15,38 @@ pub fn module_name(file: &Path) -> Option<String> {
     (valid && stem != "lib" && stem != "mod" && stem != "register").then(|| stem.to_string())
 }
 
+/// A folder as a module name, if it is one: `landscape/` (holding a
+/// `mod.rs`) → `landscape`.
+pub fn folder_module_name(dir: &Path) -> Option<String> {
+    if !dir.join("mod.rs").is_file() {
+        return None;
+    }
+    let name = dir.file_name()?.to_str()?;
+    module_name(Path::new(&format!("{name}.rs")))
+}
+
+/// Names of the types in `source` that implement `TerrainGenerator` (`impl
+/// TerrainGenerator for Name`, the trait named by any path).
+pub fn terrain_generators(source: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for line in source.lines().map(str::trim) {
+        let Some(rest) = line.strip_prefix("impl ") else {
+            continue;
+        };
+        let Some((trait_name, ty)) = rest.split_once(" for ") else {
+            continue;
+        };
+        if trait_name.trim() != "TerrainGenerator" && !trait_name.trim().ends_with("::TerrainGenerator") {
+            continue;
+        }
+        let name: String = ty.trim().chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+        if !name.is_empty() {
+            found.push(name);
+        }
+    }
+    found
+}
+
 /// Names of the structs in `source` that derive `Script`.
 pub fn script_structs(source: &str) -> Vec<String> {
     let mut found = Vec::new();
@@ -75,6 +107,17 @@ mod tests {
             pub struct NotAScript;
         "#;
         assert_eq!(script_structs(source), ["Rotator", "Hidden"]);
+    }
+
+    #[test]
+    fn terrain_generators_are_found_by_their_impl() {
+        let source = r#"
+            impl TerrainGenerator for Landscape {
+            impl ferrite::terrain::TerrainGenerator for Moon {
+            impl TerrainSource for Landscape {
+            // impl TerrainGenerator for Commented
+        "#;
+        assert_eq!(terrain_generators(source), ["Landscape", "Moon"]);
     }
 
     #[test]

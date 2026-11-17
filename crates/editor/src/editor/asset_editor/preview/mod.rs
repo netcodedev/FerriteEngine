@@ -639,6 +639,7 @@ impl AssetPreview {
                             model: loaded,
                             attempts: 1,
                             salt: 0,
+                            tag: String::new(),
                         };
                         Shown::Model {
                             instances: ScatterInstances::new(&spec, &[(0.0, 0.0, 0.0, 0.0)]),
