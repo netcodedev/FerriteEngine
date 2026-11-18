@@ -83,6 +83,11 @@ pub struct ChunkField {
     /// The whole field, `(x, y, z)` with x fastest, then y, then z; `None`
     /// where the height field says it all.
     volume: Option<Vec<f32>>,
+    /// The sharp part of `volume` at each of its points (see
+    /// `fill_volume_layered`); `None` where it has none.
+    sharp: Option<Vec<f32>>,
+    /// The field as seen from afar (see `far_field`).
+    far: Far,
     /// Lowest and highest height (margin included).
     pub min_height: f32,
     pub max_height: f32,
@@ -100,6 +105,8 @@ impl ChunkField {
             coord,
             heights,
             volume: None,
+            sharp: None,
+            far: Far::HeightField,
             min_height,
             max_height,
         }
@@ -141,6 +148,62 @@ impl ChunkField {
         self.volume = Some(volume);
     }
 
+    /// As `fill_volume`, with `density` giving each point's density in
+    /// layers (see `VolumeSample`): its sharp part, which the source can
+    /// also give between the whole metres (`ChunkSurface::sharp`), and the
+    /// density as seen from afar.
+    pub fn fill_volume_layered(&mut self, mut density: impl FnMut(i32, i32, i32, f32) -> VolumeSample) {
+        let count = (FIELD_SPAN * FIELD_SPAN * FIELD_SPAN) as usize;
+        let mut sharp = Vec::with_capacity(count);
+        let mut far = Vec::with_capacity(count);
+        let (mut any_sharp, mut far_differs) = (false, false);
+        self.fill_volume(|x, y, z, ground| {
+            let sample = density(x, y, z, ground);
+            any_sharp |= sample.sharp != 0.0;
+            far_differs |= sample.far != sample.value;
+            sharp.push(sample.sharp);
+            far.push(sample.far);
+            sample.value
+        });
+        self.sharp = any_sharp.then_some(sharp);
+        self.far = if far_differs { Far::Own(far) } else { Far::Volume };
+    }
+
+    /// The field as seen from afar, if it differs from the field: as the
+    /// source gave it (`fill_volume_layered`), else the height field alone
+    /// (a volume's caves, overhangs and tunnels, sampled as coarsely as from
+    /// afar, would break through the slopes as holes). A source that makes
+    /// its chunks without detail as it gives the far field of those with
+    /// detail draws them alike from there.
+    pub fn far_field(&self) -> Option<ChunkField> {
+        self.volume.as_ref()?;
+        let mut far = ChunkField::from_heights(self.coord, self.heights.clone());
+        match &self.far {
+            Far::HeightField => {}
+            Far::Volume => return None,
+            Far::Own(volume) => far.volume = Some(volume.clone()),
+        }
+        Some(far)
+    }
+
+    /// Whether the field has a sharp part anywhere.
+    pub fn has_sharp(&self) -> bool {
+        self.sharp.is_some()
+    }
+
+    /// The sharp part of the density at chunk-local `(x, y, z)` (clamped to
+    /// the field), 0 where there is none.
+    #[inline]
+    pub fn sharp_at(&self, x: i32, y: i32, z: i32) -> f32 {
+        match &self.sharp {
+            None => 0.0,
+            Some(sharp) => {
+                let i = |v: i32| (v + FIELD_MARGIN).clamp(0, FIELD_SPAN - 1);
+                sharp[((i(z) * FIELD_SPAN + i(y)) * FIELD_SPAN + i(x)) as usize]
+            }
+        }
+    }
+
     /// Whether the field is more than its height field.
     pub fn has_volume(&self) -> bool {
         self.volume.is_some()
@@ -162,6 +225,33 @@ impl ChunkField {
     pub fn is_solid(&self) -> bool {
         self.volume.is_none() && self.coord.floor() + CHUNK_SIZE as f32 + 12.0 < self.min_height
     }
+}
+
+/// One point of a chunk's field in layers (see
+/// `ChunkField::fill_volume_layered`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VolumeSample {
+    /// The density there.
+    pub value: f32,
+    /// The part of it that is sharp detail (rock), given exactly between
+    /// the samples by `ChunkSurface::sharp`: meshing finds the crossings and
+    /// normals of the rest blended from the samples plus this exactly, so
+    /// the edges stay sharp. 0 where there is none.
+    pub sharp: f32,
+    /// The density as seen from afar: what is left of the ground when what
+    /// coarse sampling cannot draw (caves, tunnels) is left out.
+    pub far: f32,
+}
+
+/// What a chunk's field looks like from afar.
+#[derive(Clone)]
+enum Far {
+    /// The height field alone.
+    HeightField,
+    /// The volume as it is.
+    Volume,
+    /// Its own volume.
+    Own(Vec<f32>),
 }
 
 /// Numbers per vertex a source may fill as it likes (`SurfaceSample`),
@@ -207,6 +297,19 @@ pub trait ChunkSurface {
     fn field(&self) -> &ChunkField;
     /// What the ground looks like at a vertex of the mesh.
     fn surface(&self, point: &SurfacePoint) -> SurfaceSample;
+    /// Whether `sharp` gives the sharp part between the samples (else
+    /// meshing takes it from the samples like the rest). Default: when the
+    /// field has one.
+    fn exact_sharp(&self) -> bool {
+        self.field().has_sharp()
+    }
+    /// The sharp part of the density at chunk-local `p`, anywhere (not only
+    /// at whole metres), where the field has one (see
+    /// `ChunkField::fill_volume_layered`): at whole metres exactly what
+    /// the field holds. Default: none.
+    fn sharp(&self, _p: [f32; 3]) -> f32 {
+        0.0
+    }
 }
 
 /// A chunk surface that is its field and one look everywhere.

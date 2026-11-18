@@ -1015,6 +1015,21 @@ impl Component for Terrain {
         // distance from the camera: the shadows fall from the ground that
         // is drawn, and the depth prepass matches the shading pass.
         let eye = Lighting::from_scene(scene).map(|lighting| lighting.camera_position);
+        // A chunk drawn at another level than before, or new, casts another
+        // shadow than the far cascades (drawn every few frames) hold: they
+        // are drawn again. Asked in the first pass of the frame, the nearest
+        // cascade's, so the others are drawn after it this very frame.
+        if let Some(eye) = eye {
+            let mut changed = false;
+            for child in entity.get_children() {
+                if let Some(chunk) = child.get_own_component::<TerrainChunk>() {
+                    changed |= chunk.note_level(chunk.get_bounds().distance_xz(eye));
+                }
+            }
+            if changed {
+                scene.request_shadow_redraw();
+            }
+        }
         for child in entity.get_children() {
             let Some(chunk) = child.get_own_component::<TerrainChunk>() else {
                 continue;

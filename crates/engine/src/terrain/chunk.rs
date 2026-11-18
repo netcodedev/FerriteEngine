@@ -2,6 +2,8 @@
 //! `mesher`), its water (see `water`) and the spots scattered models stand
 //! on, made on a loader thread from the terrain's source.
 
+use std::cell::Cell;
+
 use cgmath::{Matrix4, Point3, Vector3};
 use glfw::{Glfw, WindowEvent};
 
@@ -34,6 +36,8 @@ pub struct TerrainChunk {
     /// The water's surface over the chunk's square, made by the lowest
     /// chunk of its column. It reaches under the shore (see `water`).
     water_mesh: Option<ChunkMesh<WaterVertex>>,
+    /// The level it was last drawn at (see `note_level`).
+    drawn_level: Cell<Option<usize>>,
 }
 
 impl TerrainChunk {
@@ -57,6 +61,7 @@ impl TerrainChunk {
                 max: (0, 0, 0),
             },
             water_mesh: None,
+            drawn_level: Cell::new(None),
         };
         // The lowest chunk of the column (the one holding its lowest
         // ground) has the water over it, whatever the water's height, so
@@ -231,6 +236,14 @@ impl TerrainChunk {
         (levels, self.ground_indices)
     }
 
+    /// Note the level it is drawn at for `distance` metres from the camera;
+    /// whether that differs from the one it was drawn at before (or it was
+    /// not drawn yet): then shadows drawn before show another shape.
+    pub fn note_level(&self, distance: f32) -> bool {
+        let level = Self::lod_at(distance).min(self.meshes.len().saturating_sub(1));
+        self.drawn_level.replace(Some(level)) != Some(level)
+    }
+
     /// Draw the chunk's ground at the level for `distance` metres from the
     /// camera, with `shader` bound and set up by the terrain.
     pub fn draw(&self, shader: &Shader, transform: &Matrix4<f32>, distance: f32) {
@@ -299,15 +312,20 @@ mod tests {
         let n = CHUNK_SIZE_FLOAT;
         let (sl, sr) = (source.chunk(left, true), source.chunk(right, true));
         let (fl, fr) = (DensityField { field: sl.field() }, DensityField { field: sr.field() });
-        let ground = |field: &DensityField, surface: &dyn crate::terrain::source::ChunkSurface, lod: usize| -> Vec<[f32; 3]> {
-            field.surface_nets(1 << lod, surface).unwrap().0.iter().map(|v| v.position).collect()
+        let ground = |field: &DensityField, surface: &dyn crate::terrain::source::ChunkSurface, lod: usize, nets: bool| -> Vec<[f32; 3]> {
+            let mesh = if nets {
+                field.surface_nets(1 << lod, surface)
+            } else {
+                field.dual_contouring(1 << lod, surface)
+            };
+            mesh.unwrap().0.iter().map(|v| v.position).collect()
         };
-        for lod in 0..LODS {
+        for (lod, nets) in (0..LODS).flat_map(|lod| [(lod, false), (lod, true)]) {
             let step = (1 << lod) as f32;
-            let theirs = ground(&fr, &*sr, lod);
+            let theirs = ground(&fr, &*sr, lod, nets);
             // The left chunk's last row of vertices lies in the right
             // one's first cells: the same points, so the meshes join.
-            let shared: Vec<_> = ground(&fl, &*sl, lod)
+            let shared: Vec<_> = ground(&fl, &*sl, lod, nets)
                 .into_iter()
                 .filter(|p| p[0] > n && p[0] < n + step && p[1] > 0.0 && p[1] < n)
                 .collect();

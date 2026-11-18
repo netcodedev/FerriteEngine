@@ -1,7 +1,7 @@
-//! Meshing a chunk's ground: surface nets over its density field (see
-//! `source::ChunkField`) at every level of detail, with the vertices moved
-//! onto the full-detail surface, normals from the full-detail field and
-//! skirts along the chunk's sides. Nothing here knows what the ground is
+//! Meshing a chunk's ground: dual contouring (see `dual_contouring`) or
+//! surface nets over its density field (see `source::ChunkField`) at every
+//! level of detail, with the vertices on the full-detail surface, normals
+//! from the full-detail field and skirts along the chunk's sides. Nothing here knows what the ground is
 //! made of: the source paints every vertex (`ChunkSurface::surface`).
 
 use std::collections::HashMap;
@@ -18,6 +18,25 @@ use super::{
     source::{ChunkField, ChunkSurface, SurfacePoint, FIELD_MARGIN, FIELD_SPAN, SURFACE_DATA},
     CHUNK_SIZE, CHUNK_SIZE_FLOAT,
 };
+
+/// How the ground's density field becomes triangles. Dual contouring by
+/// default; `FERRITE_TERRAIN_MESHER=surface_nets` brings back surface nets
+/// (to compare the two).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mesher {
+    DualContouring,
+    SurfaceNets,
+}
+
+impl Mesher {
+    pub fn in_use() -> Mesher {
+        static IN_USE: std::sync::OnceLock<Mesher> = std::sync::OnceLock::new();
+        *IN_USE.get_or_init(|| match std::env::var("FERRITE_TERRAIN_MESHER").as_deref() {
+            Ok("surface_nets") => Mesher::SurfaceNets,
+            _ => Mesher::DualContouring,
+        })
+    }
+}
 
 /// Levels of detail of the ground: the field meshed from samples 1, 2, 4
 /// and 8 metres apart.
@@ -76,9 +95,21 @@ pub fn mesh_chunk(surface: &dyn ChunkSurface) -> MeshedChunk {
     }
     let mut ground_indices = 0;
     let mut levels = Vec::with_capacity(LODS);
+    // The next level keeps the sharp detail, coarsely: it meets the finest
+    // level along chunk sides, and without the detail the ground would
+    // step there by as far as the detail reaches out or in.
+    // The coarsest levels, drawn beyond where chunks are made in detail
+    // (see `streaming::StreamRadius`), as a chunk made without detail is
+    // drawn there: the field as seen from afar (`ChunkField::far_field`),
+    // without caves. Those sampled that coarsely would break through the
+    // rock over them as dark holes, and only where a chunk happened to be
+    // made in detail before.
+    let plain = field.field.far_field();
+    let far = DensityField { field: plain.as_ref().unwrap_or(field.field) };
     for lod in 0..LODS {
         let step = 1 << lod;
-        let (mut vertices, mut indices) = match field.surface_nets(step, surface) {
+        let field = if lod < 2 { &field } else { &far };
+        let (mut vertices, mut indices) = match field.mesh_level(step, surface) {
             Some(mesh) => mesh,
             // No ground in this chunk.
             None if lod == 0 => return empty,
@@ -106,7 +137,7 @@ impl DensityField<'_> {
     const SPAN: i32 = FIELD_SPAN;
 
     #[inline]
-    fn at(&self, x: i32, y: i32, z: i32) -> f32 {
+    pub(super) fn at(&self, x: i32, y: i32, z: i32) -> f32 {
         self.field.at(x, y, z)
     }
 
@@ -232,33 +263,48 @@ impl DensityField<'_> {
         if buffer.indices.is_empty() {
             return None;
         }
-        let origin = self.field.coord.origin();
-        let floor = self.field.coord.floor();
         let vertices = buffer
             .positions
             .iter()
             .map(|p| {
                 let position = self.onto_surface(p.map(|c| (c - 1.0) * step as f32), step as f32);
-                let g = self.gradient(position);
-                let length = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt().max(1e-6);
-                let normal = g.map(|c| c / length);
-                let (cx, cz) = (position[0].round() as i32, position[2].round() as i32);
-                let depth = self.field.height(cx, cz) - (floor + position[1]);
-                let sample = surface.surface(&SurfacePoint {
-                    local: position,
-                    world: std::array::from_fn(|i| origin[i] + position[i] as f64),
-                    normal,
-                    depth,
-                });
-                TerrainVertex {
-                    position,
-                    normal,
-                    color: sample.color,
-                    data: sample.data,
-                }
+                self.painted(position, surface)
             })
             .collect();
         Some((vertices, buffer.indices))
+    }
+
+    /// The ground's level of detail `step` (metres between samples), by
+    /// the mesher in use (see `Mesher`).
+    pub fn mesh_level(&self, step: i32, surface: &dyn ChunkSurface) -> Option<(Vec<TerrainVertex>, Vec<u32>)> {
+        match Mesher::in_use() {
+            Mesher::DualContouring => self.dual_contouring(step, surface),
+            Mesher::SurfaceNets => self.surface_nets(step, surface),
+        }
+    }
+
+    /// The vertex at chunk-local `position` on the surface: its normal from
+    /// the full-detail field and what the source paints there.
+    pub(super) fn painted(&self, position: [f32; 3], surface: &dyn ChunkSurface) -> TerrainVertex {
+        let origin = self.field.coord.origin();
+        let floor = self.field.coord.floor();
+        let g = self.gradient(position);
+        let length = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt().max(1e-6);
+        let normal = g.map(|c| c / length);
+        let (cx, cz) = (position[0].round() as i32, position[2].round() as i32);
+        let depth = self.field.height(cx, cz) - (floor + position[1]);
+        let sample = surface.surface(&SurfacePoint {
+            local: position,
+            world: std::array::from_fn(|i| origin[i] + position[i] as f64),
+            normal,
+            depth,
+        });
+        TerrainVertex {
+            position,
+            normal,
+            color: sample.color,
+            data: sample.data,
+        }
     }
 }
 

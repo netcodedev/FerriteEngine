@@ -70,6 +70,7 @@ impl Scene {
             frame_lighting: Cell::new(None),
             drawn_cascades: Cell::new(None),
             shadow_frame: Cell::new(0),
+            shadow_redraw: Cell::new(false),
             shadow_eye: Cell::new(None),
             light_sources: RefCell::new(Vec::new()),
             light_shadows: RefCell::new(None),
@@ -183,6 +184,16 @@ impl Scene {
 
     /// The camera everything renders from: the editor camera when one is
     /// set, otherwise the first `CameraComponent` in the scene.
+    /// Have every cascade of the sun's shadows drawn again this frame
+    /// (else the far ones are drawn every few frames): asked for by what
+    /// changed shape since, from its draw into the nearest cascade (drawn
+    /// first, every frame), so the far ones do not show its old shadow on
+    /// its new shape. The terrain asks when a chunk changes its level of
+    /// detail, or is new.
+    pub fn request_shadow_redraw(&self) {
+        self.shadow_redraw.set(true);
+    }
+
     pub fn get_active_camera(&self) -> Option<&CameraComponent> {
         self.editor_camera
             .as_ref()
@@ -478,7 +489,10 @@ impl Scene {
                     // are drawn every few frames, staggered; the shaders use
                     // the projection each was drawn with.
                     let interval = intervals[index];
-                    if !redraw_all && (frame + index as u64) % interval != 0 {
+                    // Asked for while the nearest cascade was drawn, by what
+                    // changed shape there (see `request_shadow_redraw`).
+                    let asked = self.shadow_redraw.get();
+                    if !redraw_all && !asked && (frame + index as u64) % interval != 0 {
                         continue;
                     }
                     drawn[index] = *cascade;
@@ -491,6 +505,7 @@ impl Scene {
                     self.render_snow_layer(&cascade.view_projection, true);
                 }
                 self.drawn_cascades.set(Some(drawn));
+                self.shadow_redraw.set(false);
                 if let Some(mut lighting) = self.frame_lighting.get() {
                     lighting.shadow_cascades = Some(drawn);
                     self.frame_lighting.set(Some(lighting));
