@@ -6,7 +6,7 @@
 //! `TerrainGenerator`, so scenes can name it) in its scripts; the engine
 //! comes with one of its own, `Hills` (see `hills`), for projects that have
 //! none. The engine knows nothing of biomes, rivers or roads: a source
-//! hands it a density field per chunk, a colour and twelve free numbers per
+//! hands it a density field per chunk, a colour and sixteen free numbers per
 //! surface point (`SurfaceSample`) and the shaders that make sense of them.
 //!
 //! Everything a source answers must be a pure function of its seed,
@@ -255,8 +255,8 @@ enum Far {
 }
 
 /// Numbers per vertex a source may fill as it likes (`SurfaceSample`),
-/// read by its shaders as `Data0`, `Data1` and `Data2` (vec4 each).
-pub const SURFACE_DATA: usize = 12;
+/// read by its shaders as `Data0`, `Data1`, `Data2` and `Data3` (vec4 each).
+pub const SURFACE_DATA: usize = 16;
 
 /// What a point of the ground looks like: a colour (display space) and
 /// numbers only the source's shaders know the meaning of (which textures,
@@ -361,7 +361,7 @@ pub struct SurfaceBand {
 }
 
 /// The programs the terrain draws a source's ground with. The vertex
-/// program gets `position`, `normals`, `groundColor` and `data0..data2` at
+/// program gets `position`, `normals`, `groundColor` and `data0..data3` at
 /// locations 0 to 5 (see `shaders::STANDARD_VERTEX`); most sources keep the
 /// standard one and write a fragment program starting with
 /// `shaders::fragment_prelude()`.

@@ -10,6 +10,7 @@ in vec3 GroundColor;
 in vec4 Data0;
 in vec4 Data1;
 in vec4 Data2;
+in vec4 Data3;
 
 out vec4 FragColor;
 
