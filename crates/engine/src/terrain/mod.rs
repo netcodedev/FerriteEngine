@@ -31,7 +31,7 @@ pub mod water;
 pub use chunk::TerrainChunk;
 pub use source::{
     ChunkCoord, ChunkField, ChunkSurface, HorizonSample, RiverPiece, SurfaceBand, SurfacePoint, SurfaceSample, TerrainGenerator,
-    TerrainShaders, TerrainSource,
+    TerrainShaders, TerrainSource, VolumeSample,
 };
 pub use terrain::Terrain;
 

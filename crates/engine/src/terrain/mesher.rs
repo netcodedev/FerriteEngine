@@ -95,8 +95,20 @@ pub fn mesh_chunk(surface: &dyn ChunkSurface) -> MeshedChunk {
     }
     let mut ground_indices = 0;
     let mut levels = Vec::with_capacity(LODS);
+    // The next level keeps the sharp detail, coarsely: it meets the finest
+    // level along chunk sides, and without the detail the ground would
+    // step there by as far as the detail reaches out or in.
+    // The coarsest levels, drawn beyond where chunks are made in detail
+    // (see `streaming::StreamRadius`), as a chunk made without detail is
+    // drawn there: the field as seen from afar (`ChunkField::far_field`),
+    // without caves. Those sampled that coarsely would break through the
+    // rock over them as dark holes, and only where a chunk happened to be
+    // made in detail before.
+    let plain = field.field.far_field();
+    let far = DensityField { field: plain.as_ref().unwrap_or(field.field) };
     for lod in 0..LODS {
         let step = 1 << lod;
+        let field = if lod < 2 { &field } else { &far };
         let (mut vertices, mut indices) = match field.mesh_level(step, surface) {
             Some(mesh) => mesh,
             // No ground in this chunk.

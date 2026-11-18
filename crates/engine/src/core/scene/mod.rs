@@ -78,6 +78,10 @@ pub struct Scene {
     drawn_cascades: Cell<Option<[ShadowCascade; SHADOW_CASCADES]>>,
     /// Frames drawn with the sun's shadows, to stagger the far cascades.
     shadow_frame: Cell<u64>,
+    /// Whether what casts the sun's shadows changed shape since the far
+    /// cascades were drawn (see `Scene::request_shadow_redraw`): then they
+    /// are all drawn again this frame.
+    shadow_redraw: Cell<bool>,
     /// Where the camera was at the last shadow pass.
     shadow_eye: Cell<Option<cgmath::Point3<f32>>>,
     /// Work queued with `Scene::defer`, run once every entity is updated.

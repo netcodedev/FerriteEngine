@@ -2,6 +2,8 @@
 //! `mesher`), its water (see `water`) and the spots scattered models stand
 //! on, made on a loader thread from the terrain's source.
 
+use std::cell::Cell;
+
 use cgmath::{Matrix4, Point3, Vector3};
 use glfw::{Glfw, WindowEvent};
 
@@ -34,6 +36,8 @@ pub struct TerrainChunk {
     /// The water's surface over the chunk's square, made by the lowest
     /// chunk of its column. It reaches under the shore (see `water`).
     water_mesh: Option<ChunkMesh<WaterVertex>>,
+    /// The level it was last drawn at (see `note_level`).
+    drawn_level: Cell<Option<usize>>,
 }
 
 impl TerrainChunk {
@@ -57,6 +61,7 @@ impl TerrainChunk {
                 max: (0, 0, 0),
             },
             water_mesh: None,
+            drawn_level: Cell::new(None),
         };
         // The lowest chunk of the column (the one holding its lowest
         // ground) has the water over it, whatever the water's height, so
@@ -229,6 +234,14 @@ impl TerrainChunk {
             .map(|m| (m.vertices.as_slice(), m.indices.as_deref().unwrap_or_default()))
             .collect();
         (levels, self.ground_indices)
+    }
+
+    /// Note the level it is drawn at for `distance` metres from the camera;
+    /// whether that differs from the one it was drawn at before (or it was
+    /// not drawn yet): then shadows drawn before show another shape.
+    pub fn note_level(&self, distance: f32) -> bool {
+        let level = Self::lod_at(distance).min(self.meshes.len().saturating_sub(1));
+        self.drawn_level.replace(Some(level)) != Some(level)
     }
 
     /// Draw the chunk's ground at the level for `distance` metres from the
