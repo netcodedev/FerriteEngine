@@ -4,12 +4,13 @@
 layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normals;
 // What the source made of the ground here (see
-// `terrain::source::SurfaceSample`): a colour (display space) and twelve
+// `terrain::source::SurfaceSample`): a colour (display space) and sixteen
 // numbers only the source's fragment program knows the meaning of.
 layout (location = 2) in vec3 groundColor;
 layout (location = 3) in vec4 data0;
 layout (location = 4) in vec4 data1;
 layout (location = 5) in vec4 data2;
+layout (location = 6) in vec4 data3;
 
 out vec3 Normal;
 out vec3 WorldPos;
@@ -17,6 +18,7 @@ out vec3 GroundColor;
 out vec4 Data0;
 out vec4 Data1;
 out vec4 Data2;
+out vec4 Data3;
 
 uniform mat4 model;
 uniform mat4 viewProjection;
@@ -48,4 +50,5 @@ void main()
     Data0 = data0;
     Data1 = data1;
     Data2 = data2;
+    Data3 = data3;
 }

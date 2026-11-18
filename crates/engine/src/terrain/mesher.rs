@@ -64,7 +64,7 @@ pub struct TerrainVertex {
 
 impl VertexAttributes for TerrainVertex {
     fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
-        vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT), (4, gl::FLOAT), (4, gl::FLOAT), (4, gl::FLOAT)]
+        vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT), (4, gl::FLOAT), (4, gl::FLOAT), (4, gl::FLOAT), (4, gl::FLOAT)]
     }
 }
 

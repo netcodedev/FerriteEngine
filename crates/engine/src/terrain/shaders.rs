@@ -6,7 +6,7 @@
 //! (`shadeSurface`, `applyRain`, `skyExposure`, `cloudShadow`, `toDisplay`,
 //! `cameraPosition`, `isShadowPass`...) and `fragment_common.glsl` (the
 //! standard vertex program's outputs `Normal`, `WorldPos`, `GroundColor`,
-//! `Data0..Data2`, `FragColor`, `hiddenHorizon()`, `terrainHaze()` and
+//! `Data0..Data3`, `FragColor`, `hiddenHorizon()`, `terrainHaze()` and
 //! `waterLine`) and `HAZE_GLSL`.
 
 use crate::core::renderer::{pbr, sky};
