@@ -299,15 +299,20 @@ mod tests {
         let n = CHUNK_SIZE_FLOAT;
         let (sl, sr) = (source.chunk(left, true), source.chunk(right, true));
         let (fl, fr) = (DensityField { field: sl.field() }, DensityField { field: sr.field() });
-        let ground = |field: &DensityField, surface: &dyn crate::terrain::source::ChunkSurface, lod: usize| -> Vec<[f32; 3]> {
-            field.surface_nets(1 << lod, surface).unwrap().0.iter().map(|v| v.position).collect()
+        let ground = |field: &DensityField, surface: &dyn crate::terrain::source::ChunkSurface, lod: usize, nets: bool| -> Vec<[f32; 3]> {
+            let mesh = if nets {
+                field.surface_nets(1 << lod, surface)
+            } else {
+                field.dual_contouring(1 << lod, surface)
+            };
+            mesh.unwrap().0.iter().map(|v| v.position).collect()
         };
-        for lod in 0..LODS {
+        for (lod, nets) in (0..LODS).flat_map(|lod| [(lod, false), (lod, true)]) {
             let step = (1 << lod) as f32;
-            let theirs = ground(&fr, &*sr, lod);
+            let theirs = ground(&fr, &*sr, lod, nets);
             // The left chunk's last row of vertices lies in the right
             // one's first cells: the same points, so the meshes join.
-            let shared: Vec<_> = ground(&fl, &*sl, lod)
+            let shared: Vec<_> = ground(&fl, &*sl, lod, nets)
                 .into_iter()
                 .filter(|p| p[0] > n && p[0] < n + step && p[1] > 0.0 && p[1] < n)
                 .collect();
