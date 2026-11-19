@@ -10,7 +10,10 @@ use std::{
     io::{BufRead, BufReader, Write},
     net::{Shutdown, TcpListener, TcpStream},
     path::{Path, PathBuf},
-    sync::{mpsc, Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc, Mutex, OnceLock,
+    },
     thread,
     time::Duration,
 };
@@ -24,6 +27,8 @@ pub const LOCKFILE_NAME: &str = ".ferrite-mcp.lock";
 pub struct PendingRequest {
     pub request: BridgeRequest,
     reply: mpsc::Sender<BridgeResponse>,
+    /// To find it in the queue again (see `wait`).
+    id: u64,
 }
 
 impl PendingRequest {
@@ -39,8 +44,13 @@ struct State {
     pending: Mutex<Vec<PendingRequest>>,
     /// Where we wrote the lockfile. We remove it on stop.
     lockfile: Mutex<Option<PathBuf>>,
-    /// Flips to true on `stop()`; the listener loop checks it.
-    shutdown: Mutex<bool>,
+    /// Which bridge runs: `start` and `stop` both count it up. The threads
+    /// of a bridge end once it is no longer theirs.
+    generation: AtomicU64,
+    /// The running bridge's open connections (by id), closed on `stop`.
+    connections: Mutex<Vec<(u64, TcpStream)>>,
+    /// Ids of requests and connections.
+    next_id: AtomicU64,
 }
 
 static STATE: OnceLock<State> = OnceLock::new();
@@ -49,9 +59,14 @@ fn state() -> &'static State {
     STATE.get_or_init(|| State {
         pending: Mutex::new(Vec::new()),
         lockfile: Mutex::new(None),
-        shutdown: Mutex::new(false),
+        generation: AtomicU64::new(0),
+        connections: Mutex::new(Vec::new()),
+        next_id: AtomicU64::new(0),
     })
 }
+
+/// How long a client waits for the editor to answer a request.
+const ANSWER_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Start the bridge for a project. Safe to call twice: subsequent
 /// calls are no-ops if a bridge is already running.
@@ -76,16 +91,24 @@ pub fn start(project_dir: &Path) -> std::io::Result<u16> {
     let path = project_dir.join(LOCKFILE_NAME);
     std::fs::write(&path, port.to_string())?;
     *state.lockfile.lock().unwrap() = Some(path);
-    *state.shutdown.lock().unwrap() = false;
+    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
 
-    thread::spawn(move || listen(listener));
+    thread::spawn(move || listen(listener, generation));
     Ok(port)
 }
 
-/// Stop the bridge and remove the lockfile. Safe to call twice.
+/// Stop the bridge and remove the lockfile: it accepts no more
+/// connections, closes the open ones, and answers what is still queued
+/// with an error. Safe to call twice.
 pub fn stop() {
     let state = state();
-    *state.shutdown.lock().unwrap() = true;
+    // First: a connection accepted from now on is not registered.
+    state.generation.fetch_add(1, Ordering::SeqCst);
+    for (_, stream) in state.connections.lock().unwrap().drain(..) {
+        let _ = stream.shutdown(Shutdown::Both);
+    }
+    // Their clients hear that it stopped (see `wait`).
+    state.pending.lock().unwrap().clear();
     if let Some(path) = state.lockfile.lock().unwrap().take() {
         let _ = std::fs::remove_file(path);
     }
@@ -96,18 +119,37 @@ pub fn drain_pending() -> Vec<PendingRequest> {
     std::mem::take(&mut *state().pending.lock().unwrap())
 }
 
-fn is_shutdown() -> bool {
-    *state().shutdown.lock().unwrap()
+/// Whether the bridge `generation` was stopped (or another started).
+fn is_shutdown(generation: u64) -> bool {
+    state().generation.load(Ordering::SeqCst) != generation
 }
 
-fn listen(listener: TcpListener) {
+fn listen(listener: TcpListener, generation: u64) {
     loop {
-        if is_shutdown() {
+        if is_shutdown(generation) {
             break;
         }
         match listener.accept() {
             Ok((stream, _addr)) => {
-                thread::spawn(move || handle_connection(stream));
+                let id = state().next_id.fetch_add(1, Ordering::Relaxed);
+                {
+                    let mut connections = state().connections.lock().unwrap();
+                    // Checked under the lock `stop` closes them with.
+                    if is_shutdown(generation) {
+                        break;
+                    }
+                    match stream.try_clone() {
+                        Ok(clone) => connections.push((id, clone)),
+                        Err(e) => {
+                            log::warn!("mcp_bridge clone: {e}");
+                            continue;
+                        }
+                    }
+                }
+                thread::spawn(move || {
+                    handle_connection(stream, generation);
+                    state().connections.lock().unwrap().retain(|(other, _)| *other != id);
+                });
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(50));
@@ -120,7 +162,7 @@ fn listen(listener: TcpListener) {
     }
 }
 
-fn handle_connection(stream: TcpStream) {
+fn handle_connection(stream: TcpStream, generation: u64) {
     // Blocking reads on the connection are fine: each connection has
     // its own thread.
     if let Err(e) = stream.set_nonblocking(false) {
@@ -137,7 +179,7 @@ fn handle_connection(stream: TcpStream) {
     let reader = BufReader::new(read_stream);
     let mut writer = stream;
     for line in reader.lines() {
-        if is_shutdown() {
+        if is_shutdown(generation) {
             break;
         }
         let line = match line {
@@ -178,16 +220,50 @@ fn dispatch_line(line: &str) -> BridgeResponse {
         return BridgeResponse::data(serde_json::json!({"alive": true}));
     }
 
-    let (tx, rx) = mpsc::channel();
-    state()
-        .pending
-        .lock()
-        .unwrap()
-        .push(PendingRequest { request, reply: tx });
+    let (id, rx) = queue(request);
+    wait(id, rx, ANSWER_TIMEOUT)
+}
 
-    match rx.recv_timeout(Duration::from_secs(10)) {
+/// Put `request` in the queue for the editor.
+fn queue(request: BridgeRequest) -> (u64, mpsc::Receiver<BridgeResponse>) {
+    let (tx, rx) = mpsc::channel();
+    let id = state().next_id.fetch_add(1, Ordering::Relaxed);
+    state().pending.lock().unwrap().push(PendingRequest {
+        request,
+        reply: tx,
+        id,
+    });
+    (id, rx)
+}
+
+/// The editor's answer to the queued request `id`. One it has not taken
+/// by `timeout` is taken out of the queue again, so it does not run after
+/// the client was told it failed (and maybe tried again).
+fn wait(id: u64, rx: mpsc::Receiver<BridgeResponse>, timeout: Duration) -> BridgeResponse {
+    match rx.recv_timeout(timeout) {
         Ok(response) => response,
-        Err(_) => BridgeResponse::err("editor did not answer in time"),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            BridgeResponse::err("the editor stopped the bridge; the request was not run")
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            let mut pending = state().pending.lock().unwrap();
+            match pending.iter().position(|request| request.id == id) {
+                Some(index) => {
+                    pending.remove(index);
+                    BridgeResponse::err("editor did not answer in time; the request was not run")
+                }
+                // Taken: the editor is at it, and its answer may still come.
+                None => {
+                    drop(pending);
+                    rx.recv_timeout(timeout).unwrap_or_else(|_| {
+                        BridgeResponse::err(
+                            "editor did not answer in time; it started the request, which \
+                             may still take effect",
+                        )
+                    })
+                }
+            }
+        }
     }
 }
 
@@ -284,6 +360,46 @@ mod tests {
         reader.read_line(&mut line).unwrap();
         joiner.join().unwrap();
         assert!(line.contains("\"saw\":true"));
+        stop();
+    }
+
+    #[test]
+    fn a_request_not_taken_in_time_is_not_run_later() {
+        let _g = test_lock();
+        reset();
+        let (id, rx) = queue(BridgeRequest::Ping);
+        let response = wait(id, rx, Duration::from_millis(20));
+        let text = serde_json::to_string(&response).unwrap();
+        assert!(text.contains("not run"), "{text}");
+        assert!(drain_pending().is_empty());
+    }
+
+    #[test]
+    fn stop_closes_open_connections_and_the_listener() {
+        let _g = test_lock();
+        reset();
+        let dir = tmp_dir("stop");
+        let port = start(&dir).unwrap();
+        let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        // Until the connection is registered.
+        for _ in 0..100 {
+            if !state().connections.lock().unwrap().is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        stop();
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        // Closed by the bridge: end of stream, not a timeout.
+        assert_eq!(reader.read_line(&mut line).unwrap(), 0);
+        // A new bridge right after; the old one's port is let go.
+        let again = start(&dir).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        if again != port {
+            assert!(TcpStream::connect(("127.0.0.1", port)).is_err());
+        }
         stop();
     }
 
