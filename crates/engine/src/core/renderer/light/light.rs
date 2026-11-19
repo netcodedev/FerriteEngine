@@ -115,7 +115,12 @@ impl Default for LightSettings {
 }
 
 impl LightSettings {
-    pub const INTENSITY_RANGE: (f32, f32) = (0.0, 200.0);
+    /// What a light may be given: up to car headlights' beams, which
+    /// have to reach far.
+    pub const INTENSITY_RANGE: (f32, f32) = (0.0, 20_000.0);
+    /// What the inspector offers (lamps, torches, floodlights); stronger
+    /// lights are set from scripts.
+    pub const INTENSITY_SLIDER: (f32, f32) = (0.0, 200.0);
     pub const RANGE_RANGE: (f32, f32) = (0.1, 200.0);
     pub const ANGLE_RANGE: (f32, f32) = (1.0, 89.0);
     pub const BOUNCE_RANGE: (f32, f32) = (0.0, 4.0);
@@ -312,8 +317,8 @@ impl Component for Light {
             Property::ranged(
                 "intensity",
                 s.intensity,
-                LightSettings::INTENSITY_RANGE.0,
-                LightSettings::INTENSITY_RANGE.1,
+                LightSettings::INTENSITY_SLIDER.0,
+                LightSettings::INTENSITY_SLIDER.1.max(s.intensity),
             ),
             Property::ranged(
                 "range",

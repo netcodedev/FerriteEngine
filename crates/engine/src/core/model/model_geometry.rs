@@ -119,6 +119,43 @@ impl Model {
         Ok(())
     }
 
+    /// The meshes in the node of this name and below it, to draw with
+    /// `render_meshes`, and where the node is: its translation from the
+    /// file's root, at the model's scale. Meshes are drawn in their node's
+    /// own space (node transforms are not applied), so a model made of
+    /// parts, e.g. a vehicle with its wheels, draws each part's meshes
+    /// moved by this (and turned about it as it likes). `None` if the file
+    /// has no node of that name.
+    pub fn node_part(
+        &self,
+        name: &str,
+    ) -> Option<(std::collections::HashSet<String>, cgmath::Vector3<f32>)> {
+        use crate::core::utils::ToMatrix4;
+        fn find<'a>(
+            node: &'a russimp_ng::node::Node,
+            name: &str,
+            parent: cgmath::Matrix4<f32>,
+            out: &mut Option<(std::rc::Rc<russimp_ng::node::Node>, cgmath::Matrix4<f32>)>,
+            this: Option<std::rc::Rc<russimp_ng::node::Node>>,
+        ) {
+            let transform = parent * node.transformation.to_matrix_4();
+            if out.is_none() && node.name == name {
+                *out = this.map(|n| (n, transform));
+                return;
+            }
+            for child in node.children.borrow().iter() {
+                find(child, name, transform, out, Some(child.clone()));
+            }
+        }
+        let root = self.model.root.as_ref()?;
+        let mut found = None;
+        find(root, name, cgmath::SquareMatrix::identity(), &mut found, Some(root.clone()));
+        let (node, transform) = found?;
+        let mut names = std::collections::HashSet::new();
+        self.collect_mesh_names(&node, &mut names);
+        Some((names, transform.w.truncate() * self.scale))
+    }
+
     fn collect_mesh_names(
         &self,
         node: &russimp_ng::node::Node,
@@ -209,5 +246,34 @@ impl Model {
             vertex_offset += mesh.vertices.len() as u32;
         }
         indices
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::core::{
+        assets::{database::tests::TempDir, test_models},
+        model::Model,
+    };
+
+    #[test]
+    fn a_part_is_found_by_its_node_with_its_meshes_and_place() {
+        crate::core::headless::enable();
+        let temp = TempDir::new("node-part");
+        let file = temp.0.join("truck.gltf");
+        test_models::write_gltf(&file, &[("Body", &[]), ("Wheel", &["Tyre"])], None);
+        let text = std::fs::read_to_string(&file).unwrap().replace(
+            r#"{"name": "Wheel", "children""#,
+            r#"{"name": "Wheel", "translation": [1.0, 2.0, 3.0], "children""#,
+        );
+        std::fs::write(&file, text).unwrap();
+        let model = Model::from_file(file.to_str().unwrap(), (0.0, 0.0, 0.0)).unwrap();
+        let (meshes, at) = model.node_part("Wheel").expect("the wheel");
+        assert_eq!(meshes.len(), 1);
+        assert_eq!(at * (1.0 / model.scale()), cgmath::Vector3::new(1.0, 2.0, 3.0));
+        let (body, at) = model.node_part("Body").expect("the body");
+        assert_eq!(body.len(), 1);
+        assert_eq!(at, cgmath::Vector3::new(0.0, 0.0, 0.0));
+        assert!(model.node_part("Door").is_none());
     }
 }

@@ -72,6 +72,77 @@ impl Model {
     }
 }
 
+/// A glTF material's constant factors (its PBR "metallic-roughness"
+/// values without maps), as assimp reports them. Colours are linear.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GltfFactors {
+    pub base_color: [f32; 4],
+    pub metallic: f32,
+    pub roughness: f32,
+}
+
+/// The factors of a material read from a glTF file; `None` for materials
+/// of other formats (FBX, OBJ), whose colour values are left alone so
+/// those models look as they did.
+pub(crate) fn gltf_factors(material: &russimp_ng::material::Material) -> Option<GltfFactors> {
+    use russimp_ng::material::PropertyTypeInfo;
+    let floats = |key: &str| {
+        material.properties.iter().find_map(|p| match (&p.data, p.key == key) {
+            (PropertyTypeInfo::FloatArray(values), true) => Some(values.clone()),
+            _ => None,
+        })
+    };
+    let is_gltf = material.properties.iter().any(|p| p.key.starts_with("$mat.gltf."));
+    if !is_gltf {
+        return None;
+    }
+    let base = floats("$clr.base").unwrap_or_else(|| vec![1.0; 4]);
+    let get = |i: usize| base.get(i).copied().unwrap_or(1.0);
+    Some(GltfFactors {
+        base_color: [get(0), get(1), get(2), get(3)],
+        metallic: floats("$mat.metallicFactor").and_then(|v| v.first().copied()).unwrap_or(1.0),
+        roughness: floats("$mat.roughnessFactor").and_then(|v| v.first().copied()).unwrap_or(1.0),
+    })
+}
+
+/// Linear colour to sRGB, each channel 0 to 1.
+pub fn linear_to_srgb(c: f32) -> f32 {
+    let c = c.clamp(0.0, 1.0);
+    if c <= 0.003_130_8 {
+        12.92 * c
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+impl Model {
+    /// Give the glTF materials without any map their constant factors, as
+    /// 1×1 maps: without, such a material is drawn plain white, rough and
+    /// not metallic. Materials with maps (a textured tree) are left as
+    /// they are, so they look as before.
+    pub(super) fn apply_gltf_factors(&mut self) {
+        for index in 0..self.model.materials.len() {
+            let Some(factors) = gltf_factors(&self.model.materials[index]) else {
+                continue;
+            };
+            if self.textures.get(index).is_none_or(|maps| !maps.is_empty()) {
+                continue;
+            }
+            let [r, g, b, _] = factors.base_color;
+            self.set_material_color(index, [r, g, b].map(linear_to_srgb));
+            for (slot, value) in [
+                (TextureType::Roughness, factors.roughness),
+                (TextureType::Metalness, factors.metallic),
+            ] {
+                let v = (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+                let texture = Texture::new();
+                texture.load_material_map(1, 1, vec![v, v, v, 255], false);
+                self.set_material_texture(index, slot, texture);
+            }
+        }
+    }
+}
+
 /// The slot a texture of this assimp type is kept in. Spellings of the same
 /// map share one slot.
 pub(super) fn canonical_slot(texture_type: &TextureType) -> TextureType {
@@ -205,4 +276,41 @@ pub(super) fn texture_candidates(raw_path: &str, model_dir: &str) -> Vec<String>
     }
     candidates.push(trimmed.to_string());
     candidates
+}
+
+#[cfg(test)]
+mod tests {
+    use russimp_ng::scene::{PostProcess, Scene};
+
+    use super::{gltf_factors, linear_to_srgb};
+    use crate::core::assets::{database::tests::TempDir, test_models};
+
+    #[test]
+    fn a_gltf_material_without_maps_gives_its_colour_factors() {
+        let temp = TempDir::new("gltf-factors");
+        let file = temp.0.join("box.gltf");
+        test_models::write_gltf(&file, &[("box", &[])], None);
+        let scene = Scene::from_file(file.to_str().unwrap(), vec![PostProcess::Triangulate]).unwrap();
+        let factors = gltf_factors(&scene.materials[0]).expect("a glTF material");
+        assert_eq!(factors.base_color, [0.2, 0.5, 0.2, 1.0]);
+        // Not in the file: glTF's defaults.
+        assert_eq!((factors.metallic, factors.roughness), (1.0, 1.0));
+    }
+
+    #[test]
+    fn other_formats_keep_their_colours_out_of_it() {
+        let temp = TempDir::new("obj-factors");
+        let obj = temp.0.join("box.obj");
+        std::fs::write(temp.0.join("box.mtl"), "newmtl red\nKd 0.8 0.1 0.1\n").unwrap();
+        std::fs::write(&obj, "mtllib box.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl red\nf 1 2 3\n").unwrap();
+        let scene = Scene::from_file(obj.to_str().unwrap(), vec![PostProcess::Triangulate]).unwrap();
+        assert!(scene.materials.iter().all(|m| gltf_factors(m).is_none()));
+    }
+
+    #[test]
+    fn linear_colours_are_turned_into_srgb() {
+        assert_eq!(linear_to_srgb(0.0), 0.0);
+        assert!((linear_to_srgb(1.0) - 1.0).abs() < 1e-6);
+        assert!((linear_to_srgb(0.214) - 0.5).abs() < 0.01);
+    }
 }
