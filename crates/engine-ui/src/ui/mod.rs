@@ -11,6 +11,7 @@ pub mod clip;
 pub mod theme;
 pub mod element_handle;
 pub mod elements;
+pub mod focus;
 mod ui;
 
 pub trait UIElement {

@@ -93,6 +93,14 @@ impl UI {
         glfw: &mut Glfw,
         event: &WindowEvent,
     ) -> bool {
+        // The widget under the cursor takes focus again; any other focused
+        // one blurs, even if this press never reaches it.
+        if matches!(
+            event,
+            WindowEvent::MouseButton(glfw::MouseButton::Button1, glfw::Action::Press, _)
+        ) {
+            super::focus::clear();
+        }
         for (_, child) in &mut self.children {
             if child.is_modal() {
                 return child.handle_events(scene, window, glfw, event);

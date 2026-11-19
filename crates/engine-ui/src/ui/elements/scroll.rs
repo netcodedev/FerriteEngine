@@ -11,7 +11,7 @@ use glfw::{
     WindowEvent::{self, Scroll},
 };
 
-use crate::ui::{element_handle::UIElementHandle, UIElement};
+use crate::ui::{element_handle::UIElementHandle, focus, UIElement};
 
 /// Vertically scrollable container. Children are laid out from top to bottom
 /// with `gap` spacing. Scroll wheel updates the content offset.
@@ -153,14 +153,26 @@ impl UIElement for ScrollArea {
         for child in self.children.values_mut() {
             // Children scrolled out of view must not take clicks or the
             // wheel. Visible ones still get clicks outside the area (an open
-            // dropdown list may hang below it).
+            // dropdown list may hang below it), but not on their own clipped
+            // off part.
             if is_wheel && !inside {
                 continue;
             }
             if is_press {
-                let top = child.get_offset().y;
-                let visible = top < view_bottom && top + child.get_size().height > view_top;
-                if !visible {
+                let offset = child.get_offset();
+                let size = child.get_size();
+                let top = offset.y;
+                let visible = top < view_bottom && top + size.height > view_top;
+                let on_child = Region::new(Position::new(offset.x, offset.y, 0.0), *size)
+                    .contains(cx as f32, cy as f32);
+                if !visible || (!inside && on_child) {
+                    // The press is not for it, so focus held inside it ends
+                    // here (it would blur on a press it could see).
+                    if let Some(owner) = focus::owner() {
+                        if *child.get_handle() == owner || child.contains_child(&owner) {
+                            focus::clear();
+                        }
+                    }
                     continue;
                 }
             }

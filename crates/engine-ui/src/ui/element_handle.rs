@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct UIElementHandle(u64);
 
 // Auto-generated handles live above this value; `UIElementHandle::from(small)`
@@ -17,10 +17,19 @@ impl UIElementHandle {
     pub fn from(id: u64) -> Self {
         Self(id)
     }
+    pub(crate) fn id(&self) -> u64 {
+        self.0
+    }
 }
 
 impl Ord for UIElementHandle {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.cmp(&other.0)
+    }
+}
+
+impl PartialOrd for UIElementHandle {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
