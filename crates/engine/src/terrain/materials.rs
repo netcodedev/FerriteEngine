@@ -265,6 +265,10 @@ fn common_prefix(names: &[String]) -> String {
             .take_while(|(a, b)| a == b)
             .count();
     }
+    // Equal bytes may end inside a character (`é` and `è` share a byte).
+    while !first.is_char_boundary(length) {
+        length -= 1;
+    }
     let shared = &first[..length];
     match shared.rfind(['_', ' ', '-']) {
         Some(end) => shared[..=end].to_string(),
@@ -275,6 +279,14 @@ fn common_prefix(names: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_common_prefix_never_cuts_a_character() {
+        let names = ["café_ao.png".to_string(), "cafè_basecolor.png".to_string()];
+        assert_eq!(common_prefix(&names), "");
+        let names = ["mé_x_ao.png".to_string(), "mé_x_rough.png".to_string()];
+        assert_eq!(common_prefix(&names), "mé_x_");
+    }
 
     #[test]
     fn the_common_prefix_ends_between_words() {

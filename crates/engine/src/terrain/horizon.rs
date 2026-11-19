@@ -10,7 +10,7 @@
 //! like the chunks' water (see `build`), over the ground under it.
 
 use std::sync::{
-    mpsc::{self, Receiver},
+    mpsc::{self, Receiver, TryRecvError},
     Arc,
 };
 
@@ -477,7 +477,15 @@ impl Horizon {
     /// Follow the camera at world `(x, z)`.
     pub fn update(&mut self, source: &Arc<dyn TerrainSource>, x: f64, z: f64) {
         if let Some((centre, rx)) = &self.pending {
-            if let Ok(built) = rx.try_recv() {
+            let received = rx.try_recv();
+            if let Err(TryRecvError::Disconnected) = received {
+                // The build panicked (reported by the panic hook): keep
+                // drawing what there is, and try again from the next
+                // centre.
+                log::error!("the terrain's horizon could not be made at {centre:?}");
+                self.centre = Some(*centre);
+                self.pending = None;
+            } else if let Ok(built) = received {
                 let (vertices, indices) = built.ground;
                 let mut mesh = ChunkMesh::new(vertices, Some(indices));
                 mesh.buffer_and_release();

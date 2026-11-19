@@ -16,6 +16,7 @@
 use std::{
     collections::{BinaryHeap, HashMap, HashSet},
     cmp::Reverse,
+    panic::{self, AssertUnwindSafe},
     sync::{
         mpsc::{self, Receiver, Sender},
         Arc, Condvar, Mutex,
@@ -79,7 +80,8 @@ struct Shared {
 /// Loads columns around an anchor on worker threads; see the module.
 pub struct Streamer<R> {
     shared: Arc<Shared>,
-    results: Receiver<(Job, R)>,
+    /// What the workers made, or `None` where making it panicked.
+    results: Receiver<(Job, Option<R>)>,
     radius: StreamRadius,
     /// Columns handed out and not back yet (queued or being made), and
     /// whether they were asked for in detail.
@@ -130,7 +132,11 @@ impl<R: Send + 'static> Streamer<R> {
             .max(2)
     }
 
-    fn work(shared: &Shared, tx: &Sender<(Job, R)>, make: &(dyn Fn(ColumnKey, bool) -> R + Sync)) {
+    fn work(
+        shared: &Shared,
+        tx: &Sender<(Job, Option<R>)>,
+        make: &(dyn Fn(ColumnKey, bool) -> R + Sync),
+    ) {
         loop {
             let (column, detail) = {
                 let mut queue = shared.queue.lock().unwrap();
@@ -146,7 +152,11 @@ impl<R: Send + 'static> Streamer<R> {
                     }
                 }
             };
-            if tx.send(((column, detail), make(column, detail))).is_err() {
+            // A column that panics (a script's source, say) must not take
+            // the worker with it: the panic hook has reported it, and the
+            // main thread hears it failed.
+            let made = panic::catch_unwind(AssertUnwindSafe(|| make(column, detail))).ok();
+            if tx.send(((column, detail), made)).is_err() {
                 return;
             }
         }
@@ -234,6 +244,15 @@ impl<R: Send + 'static> Streamer<R> {
         while let Ok(((column, detail), result)) = self.results.try_recv() {
             let Some(&asked) = self.requested.get(&column) else {
                 // Dropped while it was being made.
+                continue;
+            };
+            let Some(result) = result else {
+                // Making it failed: no longer in flight, and asked for again
+                // once the anchor moves on to another column.
+                log::error!("terrain column {column:?} could not be made");
+                if detail == asked {
+                    self.requested.remove(&column);
+                }
                 continue;
             };
             if self.loaded.get(&column) == Some(&true) {
@@ -382,6 +401,30 @@ mod tests {
         streamer.update(100_000.0, 0.0);
         let got = wait_for(&mut streamer, within(600.0, 100_000.0, 0.0));
         assert!(got.iter().all(|(c, _)| column_distance(*c, 100_000.0, 0.0) <= 600.0));
+    }
+
+    #[test]
+    fn a_column_that_panics_is_given_up_and_the_workers_go_on() {
+        let radius = StreamRadius { load: 300.0, unload: 428.0, detail: 0.0 };
+        // One worker: were it to die, nothing more would come.
+        let mut streamer = Streamer::new(1, radius, |column: ColumnKey, _| {
+            if column == (0, 0) {
+                panic!("bad column");
+            }
+            column
+        });
+        streamer.update(10.0, 10.0);
+        let expected = within(300.0, 10.0, 10.0) - 1;
+        let got = wait_for(&mut streamer, expected);
+        assert_eq!(got.len(), expected);
+        assert!(got.iter().all(|(c, _)| *c != (0, 0)));
+        let start = Instant::now();
+        while streamer.in_flight() > 0 && start.elapsed() < Duration::from_secs(10) {
+            streamer.receive(Duration::from_secs(1));
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(streamer.in_flight(), 0);
+        assert!(!streamer.is_loaded((0, 0)));
     }
 
     #[test]

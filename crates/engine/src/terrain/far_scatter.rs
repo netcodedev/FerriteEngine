@@ -15,7 +15,7 @@ use std::{
     collections::HashSet,
     rc::Rc,
     sync::{
-        mpsc::{self, Receiver},
+        mpsc::{self, Receiver, TryRecvError},
         Arc,
     },
 };
@@ -232,10 +232,21 @@ impl FarScatter {
     /// that changed, or the layers did), and take up what was placed.
     pub fn update(&mut self, source: &Arc<dyn TerrainSource>, heights: Option<&Arc<HeightGrid>>, specs: &[ScatterSpec]) {
         if let Some((_, _, rx)) = &self.pending {
-            if let Ok(placed) = rx.try_recv() {
-                let (key, specs, _) = self.pending.take().expect("pending");
-                self.upload(&specs, placed);
-                self.made = Some(key);
+            match rx.try_recv() {
+                Ok(placed) => {
+                    let (key, specs, _) = self.pending.take().expect("pending");
+                    self.upload(&specs, placed);
+                    self.made = Some(key);
+                }
+                // Placing panicked (reported by the panic hook): keep
+                // drawing what there is, and try again when the ground or
+                // the layers change.
+                Err(TryRecvError::Disconnected) => {
+                    log::error!("the terrain's far models could not be placed");
+                    let (key, _, _) = self.pending.take().expect("pending");
+                    self.made = Some(key);
+                }
+                Err(TryRecvError::Empty) => {}
             }
         }
         let Some(heights) = heights else {

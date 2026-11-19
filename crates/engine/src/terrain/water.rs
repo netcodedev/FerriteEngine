@@ -43,6 +43,20 @@ lazy_static! {
     static ref START: Instant = Instant::now();
 }
 
+/// Wavelengths of the waves; must match `WAVE_LENGTHS` in
+/// `shaders/water_waves.glsl`.
+const WAVE_LENGTHS: [f64; 6] = [58.0, 37.0, 23.0, 14.5, 9.0, 5.8];
+
+/// The `waveTimePhase` uniform: how far each wave has run after `seconds`
+/// (deep water: ω = √(g·k)), wrapped to 0..2π. In f32 the product would
+/// lose its fraction in long sessions and the waves would stutter.
+fn wave_time_phases(seconds: f64) -> [f32; 6] {
+    WAVE_LENGTHS.map(|lambda| {
+        let omega = (9.81 * std::f64::consts::TAU / lambda).sqrt();
+        (omega * seconds).rem_euclid(std::f64::consts::TAU) as f32
+    })
+}
+
 /// Texture units the opaque scene is bound to while the water draws (clear
 /// of the terrain's textures, the clouds, ambient occlusion and shadows).
 const SCENE_COLOR_UNIT: u32 = 11;
@@ -321,6 +335,7 @@ pub fn draw(
         let inverse = view_projection.invert().unwrap_or(Matrix4::identity());
         ws.set_uniform_mat4("inverseViewProjection", &inverse);
         ws.set_uniform_1f("uTime", START.elapsed().as_secs_f32());
+        ws.set_uniform_1fv("waveTimePhase", &wave_time_phases(START.elapsed().as_secs_f64()));
         let far = far.unwrap_or(FarWater {
             centre: [0.0; 2],
             load: 0.0,
@@ -402,6 +417,26 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wave_phases_wrap_without_a_jump() {
+        let shader = include_str!("shaders/water_waves.glsl");
+        let lengths = WAVE_LENGTHS.map(|l| format!("{l:.1}")).join(", ");
+        assert!(shader.contains(&format!("float[]({lengths})")), "out of step with the shader");
+        // Early on, plainly ω·t.
+        let omega = (9.81 * std::f64::consts::TAU / 58.0).sqrt();
+        assert!((wave_time_phases(0.5)[0] as f64 - omega * 0.5).abs() < 1e-6);
+        // After a long session a frame still moves each wave by ω·dt, not
+        // by some multiple of f32's step.
+        let day = 86_400.0 * 30.0;
+        let dt = 1.0 / 60.0;
+        let (a, b) = (wave_time_phases(day), wave_time_phases(day + dt));
+        for (i, lambda) in WAVE_LENGTHS.iter().enumerate() {
+            let omega = (9.81 * std::f64::consts::TAU / lambda).sqrt();
+            let step = (b[i] as f64 - a[i] as f64).rem_euclid(std::f64::consts::TAU);
+            assert!((step - omega * dt).abs() < 1e-5, "wave {i}: {step}");
+        }
+    }
 
     /// Water that does not flow.
     fn still(_: f32, _: f32) -> [f32; 2] {

@@ -13,7 +13,12 @@
 uniform float uTime;
 
 const int WAVE_COUNT = 6;
+// Must match `WAVE_LENGTHS` in `water.rs`.
 const float WAVE_LENGTHS[WAVE_COUNT] = float[](58.0, 37.0, 23.0, 14.5, 9.0, 5.8);
+// How far each wave has run: its angular frequency times the time, wrapped
+// to 0..2π on the CPU (in double precision, so the waves stay smooth however
+// long the game runs).
+uniform float waveTimePhase[WAVE_COUNT];
 // Angle of each wave against the wind, and its phase.
 const float WAVE_ANGLES[WAVE_COUNT] = float[](0.0, 0.42, -0.36, 0.85, -0.7, 0.22);
 const float WAVE_PHASES[WAVE_COUNT] = float[](0.0, 1.7, 4.1, 2.6, 5.3, 0.9);
@@ -22,7 +27,6 @@ const vec2 WIND = vec2(0.8, 0.6);
 // (1 = the sharpest the sum allows without the surface looping).
 const float WAVE_STEEPNESS = 0.012;
 const float WAVE_CHOP = 0.8;
-const float GRAVITY = 9.81;
 
 float waveHash(vec2 p) {
     p = fract(p * vec2(233.34, 851.73));
@@ -86,13 +90,12 @@ WaveSample sampleWaves(vec2 xz, float bodySize, float depth) {
         }
         float lambda = WAVE_LENGTHS[i];
         float k = 6.2831853 / lambda;
-        float omega = sqrt(GRAVITY * k);
         vec2 d = waveDirection(i);
         float a = WAVE_STEEPNESS * lambda * weight * waveGroup(i, xz);
         // Every wave gets an equal share of the chop: their crests can all
         // line up without the surface folding over itself.
         float q = WAVE_CHOP / (6.2831853 * WAVE_STEEPNESS * 1.3 * float(WAVE_COUNT));
-        float theta = k * dot(d, xz) - omega * uTime + WAVE_PHASES[i];
+        float theta = k * dot(d, xz) - waveTimePhase[i] + WAVE_PHASES[i];
         float s = sin(theta);
         float c = cos(theta);
         offset += vec3(q * a * d.x * c, a * s, q * a * d.y * c);
