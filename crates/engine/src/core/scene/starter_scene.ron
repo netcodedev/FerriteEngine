@@ -1,5 +1,8 @@
 (
     version: 1,
+    settings: (
+        shadow_map_size: Some((4096, 4096)),
+    ),
     entities: [
         (
             id: 1001,
@@ -13,7 +16,7 @@
                     pitch_deg: -25.0,
                     fov_deg: 64.0,
                     near: 0.1,
-                    far: 1000.0,
+                    far: 20000.0,
                     speed: 15.0,
                     free: true,
                 ),
