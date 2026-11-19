@@ -36,6 +36,18 @@ pub(super) fn usize_field(args: &Value, name: &str) -> Result<usize, String> {
     Ok(u64_field(args, name)? as usize)
 }
 
+/// `item` as an f32, which must be finite (1e39 would turn into inf).
+fn finite_f32(item: &Value, name: &str, i: usize) -> Result<f32, String> {
+    let n = item
+        .as_f64()
+        .ok_or_else(|| format!("{name}[{i}]: not a number"))? as f32;
+    if n.is_finite() {
+        Ok(n)
+    } else {
+        Err(format!("{name}[{i}]: out of range"))
+    }
+}
+
 pub(super) fn vec3_field(args: &Value, name: &str) -> Result<Option<[f32; 3]>, String> {
     let Some(v) = args.get(name) else {
         return Ok(None);
@@ -48,9 +60,7 @@ pub(super) fn vec3_field(args: &Value, name: &str) -> Result<Option<[f32; 3]>, S
     }
     let mut out = [0.0; 3];
     for (i, item) in arr.iter().enumerate() {
-        out[i] = item
-            .as_f64()
-            .ok_or_else(|| format!("{name}[{i}]: not a number"))? as f32;
+        out[i] = finite_f32(item, name, i)?;
     }
     Ok(Some(out))
 }
@@ -67,9 +77,22 @@ pub(super) fn vec4_field(args: &Value, name: &str) -> Result<Option<[f32; 4]>, S
     }
     let mut out = [0.0; 4];
     for (i, item) in arr.iter().enumerate() {
-        out[i] = item
-            .as_f64()
-            .ok_or_else(|| format!("{name}[{i}]: not a number"))? as f32;
+        out[i] = finite_f32(item, name, i)?;
     }
     Ok(Some(out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn vectors_beyond_f32_range_are_rejected() {
+        let args = json!({"position": [0.0, 1e39, 2.0], "rotation": [1.0, 0.0, 0.0, -1e300]});
+        assert!(vec3_field(&args, "position").unwrap_err().contains("position[1]"));
+        assert!(vec4_field(&args, "rotation").unwrap_err().contains("rotation[3]"));
+        let ok = json!({"position": [1.0, 2.5, -3.0]});
+        assert_eq!(vec3_field(&ok, "position").unwrap(), Some([1.0, 2.5, -3.0]));
+    }
 }

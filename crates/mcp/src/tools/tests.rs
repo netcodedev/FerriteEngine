@@ -614,3 +614,57 @@ fn list_json_includes_every_tool() {
         assert!(tool["inputSchema"]["type"] == Value::from("object"));
     }
 }
+
+#[test]
+fn create_project_keeps_an_existing_main_scene() {
+    let (state, dir) = tmp_project("keep-scene");
+    let new_dir = dir.join("Old");
+    fs::create_dir_all(new_dir.join("scenes")).unwrap();
+    fs::write(new_dir.join("scenes/main.ron"), "(version: 1, entities: [])").unwrap();
+    let v = dispatch(
+        &state,
+        "create_project",
+        json!({"path": new_dir.to_str().unwrap(), "player_assets": false}),
+    )
+    .unwrap();
+    assert!(v["starter_scene"].as_str().unwrap().starts_with("kept"));
+    assert_eq!(
+        fs::read_to_string(new_dir.join("scenes/main.ron")).unwrap(),
+        "(version: 1, entities: [])"
+    );
+}
+
+#[test]
+fn add_component_rejects_text_that_breaks_the_file() {
+    let (state, dir) = tmp_project("ron-prefix");
+    dispatch(&state, "create_scene", json!({"scene": "main.ron"})).unwrap();
+    let id = dispatch(&state, "add_entity", json!({"scene": "main.ron", "name": "E"}))
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let before = fs::read_to_string(dir.join("scenes/main.ron")).unwrap();
+    let err = dispatch(
+        &state,
+        "add_component",
+        json!({"scene": "main.ron", "id": id, "ron": "#![enable(implicit_some)]\nDebugController"}),
+    );
+    assert!(err.is_err());
+    assert_eq!(fs::read_to_string(dir.join("scenes/main.ron")).unwrap(), before);
+    // A trailing comment is fine, also with a component after it.
+    for ron in ["Light(intensity: 8.0) // warm", "DebugController"] {
+        dispatch(&state, "add_component", json!({"scene": "main.ron", "id": id, "ron": ron}))
+            .unwrap();
+    }
+    let text = fs::read_to_string(dir.join("scenes/main.ron")).unwrap();
+    ron::from_str::<ron::Value>(&text).unwrap();
+}
+
+#[test]
+fn set_startup_scene_stores_the_scene_it_checked() {
+    let (state, dir) = tmp_project("startup-nested");
+    fs::create_dir_all(dir.join("scenes/scenes")).unwrap();
+    fs::write(dir.join("scenes/scenes/a.ron"), "(version: 1, entities: [])").unwrap();
+    dispatch(&state, "set_startup_scene", json!({"scene": "scenes/scenes/a.ron"})).unwrap();
+    let info = dispatch(&state, "project_info", json!({})).unwrap();
+    assert_eq!(info["startup_scene"], "scenes/scenes/a.ron");
+}
