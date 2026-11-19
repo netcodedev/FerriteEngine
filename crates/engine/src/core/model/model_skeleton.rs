@@ -16,7 +16,7 @@ impl Model {
             * Matrix4::from_translation(self.position.to_vec())
             * Matrix4::from_scale(self.scale);
         let mut lines: Vec<Line> = Vec::new();
-        for mesh in self.meshes.values() {
+        for (_, mesh) in &self.meshes {
             if let Some(root_bone) = &mesh.root_bone {
                 lines.extend(self.render_child_bones(root_bone, root));
             }
@@ -39,11 +39,14 @@ impl Model {
             * Matrix4::from_translation(self.position.to_vec())
             * Matrix4::from_scale(self.scale);
         let mut out = Vec::new();
-        for mesh in self.meshes.values() {
+        for (_, mesh) in &self.meshes {
             if let Some(bone) = &mesh.root_bone {
                 self.collect_bone_segments(bone, root, &mut out);
             }
         }
+        // Every skinned mesh has its own copy of the bones: each once.
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|(name, _, _)| seen.insert(name.clone()));
         out
     }
 
@@ -65,15 +68,26 @@ impl Model {
         }
     }
 
-    /// A copy of the bone hierarchy in its current pose, from the mesh with
-    /// the most bones; `None` for a model without bones.
-    pub fn skeleton(&self) -> Option<super::ik::Skeleton> {
+    /// The mesh with the most bones, whose bones stand for the model's
+    /// skeleton; `None` for a model without bones.
+    fn skeleton_mesh(&self) -> Option<usize> {
         fn count(bone: &Bone) -> usize {
             1 + bone
                 .children
                 .as_ref()
                 .map_or(0, |children| children.iter().map(count).sum())
         }
+        self.meshes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (_, mesh))| Some((index, count(mesh.root_bone.as_ref()?))))
+            .max_by_key(|&(_, bones)| bones)
+            .map(|(index, _)| index)
+    }
+
+    /// A copy of the bone hierarchy in its current pose, from the mesh with
+    /// the most bones; `None` for a model without bones.
+    pub fn skeleton(&self) -> Option<super::ik::Skeleton> {
         fn collect(bone: &Bone, parent: Option<usize>, out: &mut Vec<super::ik::Joint>) {
             out.push(super::ik::Joint {
                 name: bone.name.clone(),
@@ -88,11 +102,7 @@ impl Model {
                 }
             }
         }
-        let root = self
-            .meshes
-            .values()
-            .filter_map(|mesh| mesh.root_bone.as_ref())
-            .max_by_key(|bone| count(bone))?;
+        let root = self.meshes[self.skeleton_mesh()?].1.root_bone.as_ref()?;
         let mut joints = Vec::new();
         collect(root, None, &mut joints);
         Some(super::ik::Skeleton::new(joints))
@@ -115,7 +125,7 @@ impl Model {
             .iter()
             .map(|joint| (joint.name.as_str(), joint.local))
             .collect();
-        for mesh in self.meshes.values_mut() {
+        for (_, mesh) in &mut self.meshes {
             if let Some(root) = &mut mesh.root_bone {
                 set(root, &locals);
             }
@@ -124,10 +134,16 @@ impl Model {
     }
 
     pub fn apply_pose(&mut self, pose: &Pose) {
+        // Every skinned mesh moves its own copy of the root; the model
+        // moves once, as the skeleton's mesh says.
+        let skeleton_mesh = self.skeleton_mesh();
         let mut root_translation = Vector3::zero();
-        for mesh in self.meshes.values_mut() {
+        for (index, (_, mesh)) in self.meshes.iter_mut().enumerate() {
             if let Some(root_bone) = &mut mesh.root_bone {
-                root_translation += root_bone.apply_pose(pose, true);
+                let delta = root_bone.apply_pose(pose, true);
+                if Some(index) == skeleton_mesh {
+                    root_translation = delta;
+                }
             }
         }
         self.position += root_translation * self.scale;
@@ -150,6 +166,37 @@ impl Model {
             }
         }
         lines
+    }
+
+    /// The bone tree of a mesh with `bones`, from the topmost node below
+    /// the scene root that holds them: the root bone itself when it sits
+    /// right below the scene root, or else a node that is not a bone (a
+    /// Blender "Armature", a glTF scene node) with the rig below it.
+    pub(super) fn find_root_bone(&self, bones: &Vec<russimp_ng::bone::Bone>) -> Option<Bone> {
+        fn holds(node: &Rc<Node>, bones: &[russimp_ng::bone::Bone]) -> bool {
+            bones.iter().any(|bone| bone.name == node.name)
+                || node.children.borrow().iter().any(|child| holds(child, bones))
+        }
+        let root_node = self.model.root.as_ref()?;
+        let children = root_node.children.borrow();
+        let node = children
+            .iter()
+            .find(|node| bones.iter().any(|bone| bone.name == node.name))
+            .or_else(|| children.iter().find(|node| holds(node, bones)))?;
+        let bone = bones.iter().enumerate().find(|(_, bone)| bone.name == node.name);
+        Some(Bone {
+            id: bone.map_or(usize::MAX, |(id, _)| id),
+            name: node.name.clone(),
+            current_transform: node.transformation.to_matrix_4(),
+            offset_matrix: bone.map_or(Matrix4::identity(), |(_, bone)| {
+                bone.offset_matrix.to_matrix_4()
+            }),
+            weights: bone.map_or(Vec::new(), |(_, bone)| {
+                bone.weights.iter().map(|w| (w.vertex_id, w.weight)).collect()
+            }),
+            children: self.get_child_bones(node, bones),
+            last_translation: Vector3::zero(),
+        })
     }
 
     pub(super) fn get_child_bones(

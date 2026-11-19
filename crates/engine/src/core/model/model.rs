@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3, Zero};
+use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 use russimp_ng::{
     material::{DataContent, PropertyTypeInfo, TextureType},
     scene::{PostProcess, Scene},
@@ -23,9 +23,8 @@ use super::{
     model_materials::{
         canonical_slot, map_texture_type, maps_by_name, read_image, texture_candidates, upload_map,
     },
-    Bone, Model, ModelBuilder, ModelMesh,
+    Model, ModelBuilder, ModelMesh,
 };
-use crate::core::utils::ToMatrix4;
 
 thread_local! {
     /// Every model's depth-only program (see `depth_pass`): its vertices
@@ -70,7 +69,7 @@ impl Model {
             .to_string();
         Ok(Model {
             model: scene,
-            meshes: HashMap::<String, ModelMesh>::new(),
+            meshes: Vec::new(),
             shader,
             textures: Vec::new(),
             name: super::outline::default_variant_name(std::path::Path::new(full_path)),
@@ -166,29 +165,7 @@ impl Model {
                 .and_then(|c| c.as_ref())
                 .map(|c| c.iter().flat_map(|v| [v.x, v.y]).collect())
                 .unwrap_or_default();
-            let mut root_bone = None;
-            if let Some(root_node) = &self.model.root {
-                for node in root_node.children.borrow().iter() {
-                    for (id, bone) in mesh.bones.iter().enumerate() {
-                        if bone.name != node.name {
-                            continue;
-                        }
-                        root_bone = Some(Bone {
-                            id,
-                            name: bone.name.clone(),
-                            current_transform: node.transformation.to_matrix_4(),
-                            offset_matrix: bone.offset_matrix.to_matrix_4(),
-                            weights: bone
-                                .weights
-                                .iter()
-                                .map(|w| (w.vertex_id, w.weight))
-                                .collect(),
-                            children: self.get_child_bones(node, &mesh.bones),
-                            last_translation: Vector3::zero(),
-                        });
-                    }
-                }
-            }
+            let root_bone = self.find_root_bone(&mesh.bones);
             let mut model_mesh = ModelMesh::new(
                 mesh.vertices
                     .iter()
@@ -207,14 +184,14 @@ impl Model {
                 mesh.material_index as usize,
             );
             model_mesh.buffer_data();
-            self.meshes.insert(mesh.name.clone(), model_mesh);
+            self.meshes.push((mesh.name.clone(), model_mesh));
         }
         self.cull_bounds = self.model_space_bounds();
     }
 
     /// See `cull_bounds`.
     fn model_space_bounds(&self) -> Option<(Point3<f32>, Point3<f32>)> {
-        if self.meshes.values().any(|mesh| mesh.root_bone.is_some()) {
+        if self.meshes.iter().any(|(_, mesh)| mesh.root_bone.is_some()) {
             return None;
         }
         let mut vertices = self.model.meshes.iter().flat_map(|mesh| mesh.vertices.iter());
@@ -333,7 +310,7 @@ impl Model {
                 gl::DepthMask(gl::FALSE);
             }
         }
-        for (name, mesh) in self.meshes.iter() {
+        for (index, (name, mesh)) in self.meshes.iter().enumerate() {
             let shown = match only {
                 Some(only) => only.contains(name),
                 None => self.visible.as_ref().is_none_or(|visible| visible.contains(name)),
@@ -347,7 +324,7 @@ impl Model {
             if let Some(root_bone) = &mesh.root_bone {
                 let collapse = draws_to_screen && !self.hidden_bones.is_empty();
                 let mut cache = self.bone_cache[collapse as usize].borrow_mut();
-                if !cache.contains_key(name) {
+                if !cache.contains_key(&index) {
                     let hidden: &[String] = if collapse { &self.hidden_bones } else { &[] };
                     let bone_transforms = Model::get_bone_transformations(
                         root_bone,
@@ -363,10 +340,10 @@ impl Model {
                             sorted[id] = transform;
                         }
                     }
-                    cache.insert(name.clone(), sorted);
+                    cache.insert(index, sorted);
                 }
                 shader
-                    .set_uniform_mat4_array("boneTransforms", &cache[name]);
+                    .set_uniform_mat4_array("boneTransforms", &cache[&index]);
             } else {
                 // Unskinned mesh: vertices were authored with bone slot 0 + full
                 // weight (see ModelMesh::new), so feed the shader an identity at

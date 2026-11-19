@@ -30,7 +30,10 @@ mod pose;
 
 pub struct Model {
     model: Scene,
-    meshes: HashMap<String, ModelMesh>,
+    /// By name, in file order. Names need not be unique (a glTF mesh with
+    /// several primitives, an FBX mesh split per material): lookups by
+    /// name (variants, parts) take every mesh of that name.
+    meshes: Vec<(String, ModelMesh)>,
     shader: Shader,
     /// Textures grouped by material index. A mesh selects its set via
     /// `ModelMesh::material_index`. Storing them in a single flat map (as the
@@ -56,11 +59,11 @@ pub struct Model {
     /// Drawn as a see-through silhouette of this colour; see
     /// `Model::set_tint`.
     tint: Option<[f32; 4]>,
-    /// Skinning matrices per mesh name, as last uploaded: without (0) and
+    /// Skinning matrices per mesh index, as last uploaded: without (0) and
     /// with (1) the hidden bones collapsed. A frame draws the model in up
     /// to about nine passes with the same pose; emptied when the pose,
     /// the meshes or the hidden bones change.
-    bone_cache: [RefCell<HashMap<String, Vec<Matrix4<f32>>>>; 2],
+    bone_cache: [RefCell<HashMap<usize, Vec<Matrix4<f32>>>>; 2],
     /// Box around every mesh in model space, for frustum culling. `None`
     /// for skinned models, whose bones can move vertices anywhere, and
     /// before `init`.
