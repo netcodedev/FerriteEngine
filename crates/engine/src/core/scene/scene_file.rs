@@ -661,7 +661,7 @@ impl Scene {
                 fs::create_dir_all(dir)?;
             }
         }
-        fs::write(path, self.to_file().to_ron()?)?;
+        crate::core::utils::write_atomically(path, self.to_file().to_ron()?)?;
         Ok(())
     }
 
