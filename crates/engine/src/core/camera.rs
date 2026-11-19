@@ -126,6 +126,11 @@ impl Projection {
 
     pub fn resize(&mut self, event: &glfw::WindowEvent) {
         if let glfw::WindowEvent::FramebufferSize(width, height) = event {
+            // A minimized window's framebuffer is 0 by 0: no aspect at all,
+            // so keep the last one.
+            if *width <= 0 || *height <= 0 {
+                return;
+            }
             self.aspect = *width as f32 / *height as f32;
             self.calc_matrix();
             unsafe {
@@ -338,6 +343,16 @@ mod tests {
         assert_eq!(before, p.get_matrix());
         p.set_aspect(1.0);
         assert_ne!(before, p.get_matrix());
+    }
+
+    #[test]
+    fn a_zero_sized_framebuffer_keeps_the_projection() {
+        let mut p = projection();
+        let before = p.get_matrix();
+        for (w, h) in [(0, 0), (0, 900), (1600, 0)] {
+            p.resize(&glfw::WindowEvent::FramebufferSize(w, h));
+            assert_eq!(before, p.get_matrix());
+        }
     }
 
     #[test]

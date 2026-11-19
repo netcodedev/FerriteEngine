@@ -21,8 +21,8 @@ impl Application {
         crate::core::diagnostics::install(title);
         let window = Window::with_decorations(width, height, title, decorated);
 
-        TextRenderer::resize(width, height);
-        PlaneRenderer::resize(width, height);
+        TextRenderer::resize(window.width, window.height);
+        PlaneRenderer::resize(window.width, window.height);
 
         Self {
             window,
@@ -51,6 +51,9 @@ impl Application {
             for layer in &mut self.layers {
                 layer.on_update(&self.window, self.window.calculate_frametime());
             }
+            // Vertex arrays dropped this frame (text meshes of a rebuilt
+            // UI, unloaded models), whatever the scene holds.
+            crate::core::renderer::shader::delete_released_vertex_arrays();
 
             self.window.swap_buffers();
             crate::core::diagnostics::end_frame();
