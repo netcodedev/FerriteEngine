@@ -23,4 +23,8 @@ pub struct Entity {
     /// Runtime-generated entities (terrain chunks, …) that are rebuilt by
     /// their owner. They are neither saved nor listed in the editor.
     transient: bool,
+    /// Not drawn (nor its children), e.g. a player sitting in a vehicle
+    /// without a sitting animation. Its overlays (menus, HUD) still are.
+    /// Not saved.
+    hidden: bool,
 }

@@ -19,7 +19,17 @@ impl Entity {
             rotation: Quaternion::new(1.0, 0.0, 0.0, 0.0),
             scale: Vector3::new(1.0, 1.0, 1.0),
             transient: false,
+            hidden: false,
         }
+    }
+
+    /// See the field `hidden`.
+    pub fn set_hidden(&mut self, hidden: bool) {
+        self.hidden = hidden;
+    }
+
+    pub fn is_hidden(&self) -> bool {
+        self.hidden
     }
 
     pub fn set_transient(&mut self, transient: bool) {
@@ -133,6 +143,9 @@ impl Entity {
         view_projection: &Matrix4<f32>,
         parent_transform: Matrix4<f32>,
     ) {
+        if self.hidden {
+            return;
+        }
         let transform = parent_transform * self.local_transform();
         for component in self.components.iter() {
             component.render(scene, self, view_projection, &transform);
@@ -149,6 +162,9 @@ impl Entity {
         view_projection: &Matrix4<f32>,
         parent_transform: Matrix4<f32>,
     ) {
+        if self.hidden {
+            return;
+        }
         let transform = parent_transform * self.local_transform();
         for component in self.components.iter() {
             component.render_transparent(scene, self, view_projection, &transform);
