@@ -24,7 +24,8 @@ pub struct AnimationGraph {
 
 pub struct State {
     name: String,
-    animations: HashMap<String, Animation>,
+    /// In file order: with `sync_animations` the first one leads.
+    animations: Vec<Animation>,
     animation_times: HashMap<String, f32>,
     animation_cycled: HashMap<String, bool>,
     sync_animations: bool,
