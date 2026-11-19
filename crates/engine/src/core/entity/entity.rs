@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Vector3};
 
 use crate::core::{
@@ -7,6 +9,15 @@ use crate::core::{
 };
 
 use super::{component::Component, Entity, EntityHandle};
+
+/// Entities already warned about by `Entity::drawable`.
+static NON_FINITE_WARNED: Mutex<Vec<EntityHandle>> = Mutex::new(Vec::new());
+
+/// Whether every entry of `m` is a finite number.
+pub fn is_finite_matrix(m: &Matrix4<f32>) -> bool {
+    let entries: &[f32; 16] = m.as_ref();
+    entries.iter().all(|v| v.is_finite())
+}
 
 impl Entity {
     pub fn new(name: &str) -> Self {
@@ -125,6 +136,30 @@ impl Entity {
             * Matrix4::from_nonuniform_scale(self.scale.x, self.scale.y, self.scale.z)
     }
 
+    /// Whether the entity (and its children) can be drawn with its world
+    /// `transform`. Not when it holds a NaN or an infinity, e.g. from a
+    /// physics body that blew up: shaders fed such positions compute
+    /// garbage indices, and some drivers hang on that long enough for
+    /// Windows to reset the GPU. Warns once per entity.
+    fn drawable(&self, transform: &Matrix4<f32>) -> bool {
+        if is_finite_matrix(transform) {
+            return true;
+        }
+        let mut warned = NON_FINITE_WARNED.lock().unwrap_or_else(|e| e.into_inner());
+        if !warned.contains(&self.id) {
+            warned.push(self.id);
+            log::warn!(
+                "Entity \"{}\" has a non-finite transform (position {:?}, rotation {:?}, scale {:?}); \
+                 it is not drawn until that is fixed",
+                self.get_name(),
+                self.position,
+                self.rotation,
+                self.scale,
+            );
+        }
+        false
+    }
+
     pub fn update(&mut self, scene: &mut Scene, delta_time: f64) {
         for i in 0..self.components.len() {
             let mut component = self.components.remove(i);
@@ -147,6 +182,9 @@ impl Entity {
             return;
         }
         let transform = parent_transform * self.local_transform();
+        if !self.drawable(&transform) {
+            return;
+        }
         for component in self.components.iter() {
             component.render(scene, self, view_projection, &transform);
         }
@@ -166,6 +204,9 @@ impl Entity {
             return;
         }
         let transform = parent_transform * self.local_transform();
+        if !self.drawable(&transform) {
+            return;
+        }
         for component in self.components.iter() {
             component.render_transparent(scene, self, view_projection, &transform);
         }
@@ -423,6 +464,18 @@ mod tests {
         assert!((m.w.z - 3.0).abs() < 1e-5);
         // The diagonal carries the uniform scale of 2.
         assert!((m.x.x - 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn entities_with_a_non_finite_transform_are_not_drawable() {
+        let mut e = Entity::new("Blown up");
+        assert!(e.drawable(&e.local_transform()));
+        e.set_local_position(Point3::new(f32::NAN, 0.0, 0.0));
+        assert!(!e.drawable(&e.local_transform()));
+        // Warned once, still not drawable afterwards.
+        assert!(!e.drawable(&e.local_transform()));
+        e.set_local_position(Point3::new(0.0, f32::INFINITY, 0.0));
+        assert!(!is_finite_matrix(&e.local_transform()));
     }
 
     #[test]
