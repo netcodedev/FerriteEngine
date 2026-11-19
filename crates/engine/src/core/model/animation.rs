@@ -17,6 +17,16 @@ fn yaw_of(rotation: Quaternion<f32>) -> f32 {
     forward.x.atan2(forward.z)
 }
 
+/// A file's ticks per second; files that do not say give 0, taken as 25
+/// (as `outline` does).
+fn ticks_per_second(given: f64) -> f32 {
+    if given > 0.0 && given.is_finite() {
+        given as f32
+    } else {
+        25.0
+    }
+}
+
 /// The first node, breadth first, that `is_channel`.
 fn topmost(root: &Rc<Node>, is_channel: &dyn Fn(&str) -> bool) -> Option<String> {
     let mut queue = std::collections::VecDeque::from([root.clone()]);
@@ -39,7 +49,7 @@ impl Animation {
         Animation {
             name: animation.name.clone(),
             duration: animation.duration as f32,
-            ticks_per_second: animation.ticks_per_second as f32,
+            ticks_per_second: ticks_per_second(animation.ticks_per_second),
             channels,
             root_channel: None,
         }
@@ -86,7 +96,7 @@ impl Animation {
             println!("Cycle completed");
             pose.cycle_completed = true;
         }
-        let sample_time = time % self.duration;
+        let sample_time = self.wrap_time(time);
         for (bone_id, channel) in &self.channels {
             pose.add_transform(bone_id.to_string(), channel.sample(sample_time));
         }
@@ -117,7 +127,7 @@ impl Animation {
     /// `root_yaw_change`).
     pub fn sample_without_root_yaw(&self, time: f32) -> Pose {
         let mut pose = self.sample(time);
-        if let (Some(root), Some(yaw)) = (&self.root_channel, self.root_yaw(time % self.duration)) {
+        if let (Some(root), Some(yaw)) = (&self.root_channel, self.root_yaw(self.wrap_time(time))) {
             if let Some(transform) = pose.transforms.get_mut(root) {
                 transform.rotation = Quaternion::from_angle_y(Rad(-yaw)) * transform.rotation;
             }
@@ -126,7 +136,21 @@ impl Animation {
     }
 
     pub fn get_progression(&self, time: f32) -> f32 {
-        time % self.duration / self.duration
+        if self.duration > 0.0 {
+            self.wrap_time(time) / self.duration
+        } else {
+            0.0
+        }
+    }
+
+    /// `time` (ticks) within one loop of the clip. A clip of no length (a
+    /// single pose) is always at its start.
+    pub fn wrap_time(&self, time: f32) -> f32 {
+        if self.duration > 0.0 {
+            time % self.duration
+        } else {
+            0.0
+        }
     }
 
     pub fn set_name(&mut self, name: &str) {
@@ -173,6 +197,18 @@ mod tests {
         assert!(yaw.abs() < 0.5, "{yaw}");
         let turned = yaw_of(clip.sample(5.0).transforms["rig:Hips"].rotation).to_degrees();
         assert!((turned - 45.0).abs() < 0.5, "{turned}");
+    }
+
+    #[test]
+    fn a_clip_of_no_length_stays_at_its_start() {
+        let mut clip = turn();
+        clip.duration = 0.0;
+        assert_eq!(clip.wrap_time(3.0), 0.0);
+        assert_eq!(clip.get_progression(3.0), 0.0);
+        let yaw = yaw_of(clip.sample_without_root_yaw(3.0).transforms["rig:Hips"].rotation);
+        assert!(yaw.is_finite());
+        assert_eq!(ticks_per_second(0.0), 25.0);
+        assert_eq!(ticks_per_second(30.0), 30.0);
     }
 
     #[test]

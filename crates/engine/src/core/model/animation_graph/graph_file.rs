@@ -372,6 +372,17 @@ impl AnimationGraph {
             state.sync_animations(def.sync);
             state.root_rotation(def.root_rotation);
             for t in file.transitions.iter().filter(|t| t.from == def.name) {
+                // A transition into nothing would leave the graph in no
+                // state, frozen for good.
+                if file.state(&t.to).is_none() {
+                    log::warn!(
+                        "animation graph: transition from '{}' to '{}' skipped, there is no state '{}'",
+                        t.from,
+                        t.to,
+                        t.to
+                    );
+                    continue;
+                }
                 state.add_transition(&t.to, t.conditions.clone(), t.blend.max(0.001));
             }
             if def.name == file.default_state {
@@ -403,6 +414,20 @@ mod tests {
             }],
             transitions: Vec::new(),
         }
+    }
+
+    #[test]
+    fn transitions_to_missing_states_are_skipped() {
+        let mut file = graph(Vec::new());
+        file.transitions.push(TransitionDef {
+            from: "idle".into(),
+            to: "nowhere".into(),
+            blend: 0.2,
+            conditions: Vec::new(),
+        });
+        let mut graph = AnimationGraph::from_file(&file, &mut ClipCache::new()).unwrap();
+        graph.update(0.1);
+        assert_eq!(graph.current_state(), "idle");
     }
 
     #[test]
