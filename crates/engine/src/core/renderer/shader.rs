@@ -10,6 +10,26 @@ pub struct Shader {
     locations: RefCell<HashMap<String, GLint>>,
 }
 
+impl Drop for Shader {
+    /// Delete the program. Every model has one of its own, and models come
+    /// and go (streamed in, rebuilt on every script reload): kept, their
+    /// programs piled up in the driver, a few hundred KB of memory each.
+    /// Only while a GL context is current: shaders in thread-locals are
+    /// dropped when the thread ends, after the window and its context are
+    /// gone.
+    fn drop(&mut self) {
+        if self.id == 0 || crate::core::headless::is_headless() {
+            return;
+        }
+        if unsafe { glfw::ffi::glfwGetCurrentContext() }.is_null() {
+            return;
+        }
+        unsafe {
+            gl::DeleteProgram(self.id);
+        }
+    }
+}
+
 pub struct DynamicVertexArray<T> {
     id: GLuint,
     vbo: GLuint,

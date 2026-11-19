@@ -11,12 +11,17 @@
 //! falling tree, say) may still be alive. Script components are rebuilt
 //! from their parameters with the new code (`Scene::rebuild_scripts`);
 //! a component that is not a script keeps running the code it was made
-//! with.
+//! with. The old library's statics stay too: caches in them must be
+//! emptied with `on_unload`, or every reload keeps another copy.
 
 mod library;
 pub(crate) mod parameters;
 
-use std::{borrow::Cow, collections::BTreeMap, sync::RwLock};
+use std::{
+    borrow::Cow,
+    collections::BTreeMap,
+    sync::{Mutex, RwLock},
+};
 
 use cgmath::{Matrix4, Point3, Vector3};
 use glfw::{Glfw, Window, WindowEvent};
@@ -328,10 +333,39 @@ static REGISTRY: RwLock<ScriptRegistry> = RwLock::new(ScriptRegistry {
 });
 
 /// Make the scripts of `registry` the ones scenes are built with,
-/// replacing all before.
+/// replacing all before. What the scripts before registered with
+/// `on_unload` is run now.
 pub fn install(registry: ScriptRegistry) {
     *REGISTRY.write().unwrap() = registry;
     crate::terrain::generators::changed();
+    run_unload();
+}
+
+static UNLOAD: Mutex<Vec<fn()>> = Mutex::new(Vec::new());
+
+/// Run `release` when the scripts are reloaded, on the thread that loads
+/// them (the GL thread in the editor), for the caches a script keeps in
+/// statics or thread-locals: plans of a whole world, models, textures.
+///
+/// An old script library stays loaded (see the module's docs), and with it
+/// every static of it: without this, each reload keeps the caches of the
+/// scripts before it for good. Registering the same function again does
+/// nothing; one registered again after its run (old code still running)
+/// runs on the next reload.
+pub fn on_unload(release: fn()) {
+    let mut unload = UNLOAD.lock().unwrap_or_else(|e| e.into_inner());
+    if !unload.iter().any(|&f| f as usize == release as usize) {
+        unload.push(release);
+    }
+}
+
+fn run_unload() {
+    // Taken first: a release may register again (or drop something that
+    // does), which locks the list.
+    let unload = std::mem::take(&mut *UNLOAD.lock().unwrap_or_else(|e| e.into_inner()));
+    for release in unload {
+        release();
+    }
 }
 
 /// The world named `name` the scripts offer.
@@ -506,6 +540,26 @@ mod tests {
         assert!(scene.find_entity("nobody").is_none());
         scene.find_entity_mut("plain").unwrap().set_name("renamed".into());
         assert!(scene.find_entity("renamed").is_some());
+    }
+
+    static RELEASED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    fn release() {
+        RELEASED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[test]
+    fn what_the_scripts_registered_to_unload_runs_once_on_the_next_install() {
+        use std::sync::atomic::Ordering;
+        let _guard = TEST_REGISTRY.lock().unwrap();
+        on_unload(release);
+        on_unload(release);
+        assert_eq!(RELEASED.load(Ordering::SeqCst), 0);
+        install(registry());
+        assert_eq!(RELEASED.load(Ordering::SeqCst), 1);
+        // Not again: the caches it empties were not filled since.
+        install(ScriptRegistry::default());
+        assert_eq!(RELEASED.load(Ordering::SeqCst), 1);
     }
 
     /// Tests that install a registry take turns.
