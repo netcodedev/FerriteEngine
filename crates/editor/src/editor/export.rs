@@ -2,7 +2,7 @@
 //! in the background, with its progress shown in the status line.
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::mpsc::{self, Receiver},
 };
 
@@ -14,6 +14,21 @@ use ferrite::core::{
 enum Event {
     Progress(String),
     Done(Result<PathBuf, String>),
+}
+
+/// The project folders an export copies (as `ferrite::core::export` does).
+const COPIED_FOLDERS: [&str; 3] = ["assets", "animations", "scenes"];
+
+/// The folder of `project_dir` an export copies that `out` lies in, if any:
+/// exporting there would copy the export into itself, endlessly.
+pub fn copied_folder_containing(project_dir: &Path, out: &Path) -> Option<&'static str> {
+    let out = out.canonicalize().ok()?;
+    COPIED_FOLDERS.into_iter().find(|folder| {
+        project_dir
+            .join(folder)
+            .canonicalize()
+            .is_ok_and(|copied| out.starts_with(copied))
+    })
 }
 
 #[derive(Default)]
@@ -72,5 +87,23 @@ impl Exporter {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_export_into_a_copied_folder_is_found() {
+        let dir = std::env::temp_dir().join(format!("ferrite-export-into-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets/models")).unwrap();
+        std::fs::create_dir_all(dir.join("builds")).unwrap();
+        assert_eq!(copied_folder_containing(&dir, &dir.join("assets")), Some("assets"));
+        assert_eq!(copied_folder_containing(&dir, &dir.join("assets/models")), Some("assets"));
+        assert_eq!(copied_folder_containing(&dir, &dir.join("builds")), None);
+        assert_eq!(copied_folder_containing(&dir, &dir), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

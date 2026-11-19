@@ -87,9 +87,16 @@ pub enum Command {
     Open(PathBuf),
     Save,
     SaveAsDialog,
-    SaveAs(PathBuf),
+    /// Save the scene to this path, then run `then` (only if it was saved).
+    SaveAs {
+        path: PathBuf,
+        then: Option<Box<Command>>,
+    },
     /// Run `then` once unsaved changes are saved or discarded.
     ConfirmDiscard(Box<Command>),
+    /// Save whatever `then` would lose (or leave out), then run it; nothing
+    /// runs if a save fails or is cancelled.
+    SaveFirst(Box<Command>),
     Play,
     Stop,
     AddEntity {
@@ -107,6 +114,8 @@ pub enum Command {
     /// Let the user choose a folder and export the game for a platform
     /// into it.
     ExportGame(ferrite::core::export::Platform),
+    /// The same, without asking about unsaved edits first.
+    ExportAnyway(ferrite::core::export::Platform),
     /// Let the user choose a model asset for a scatter layer of this
     /// entity's terrain. Without a layer index a new layer is added.
     PickScatterAsset {
@@ -207,6 +216,9 @@ pub struct EditorState {
     pub project_name: String,
     pub scene_path: Option<PathBuf>,
     pub dirty: bool,
+    /// Counts the times the scene was replaced (opened, new, play mode
+    /// stopped), so panels bound to its entities rebuild.
+    pub scene_generation: u64,
     status: Option<(String, Instant)>,
     /// The latest status message, kept after it fades from the screen (for
     /// tools asking what happened, e.g. over the MCP bridge).
@@ -261,6 +273,7 @@ impl EditorState {
             project_name: String::new(),
             scene_path: None,
             dirty: false,
+            scene_generation: 0,
             status: None,
             last_status: None,
             scripts_message: None,

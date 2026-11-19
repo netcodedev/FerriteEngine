@@ -22,7 +22,7 @@ use crate::editor::{
     asset_editor::AssetEdit,
     clip_editor::{self, ClipRequest},
     dialogs,
-    export::Exporter,
+    export::{self, Exporter},
     Command, GizmoMode, Mode, Workspace,
 };
 use crate::new_script::new_script_file;
@@ -113,31 +113,69 @@ impl EditorLayer {
                     .borrow_mut()
                     .set_status(format!("Could not open {}: {e}", path.display())),
             },
+            // The scene in play mode is the game's, not the one to save.
+            Command::Save | Command::SaveAsDialog | Command::SaveAs { .. } | Command::SaveFirst(_)
+                if mode == Mode::Play =>
+            {
+                self.state
+                    .borrow_mut()
+                    .set_status("Stop play mode before saving");
+            }
             Command::Save => {
-                if mode == Mode::Play {
-                    self.state
-                        .borrow_mut()
-                        .set_status("Stop play mode before saving");
-                    return;
-                }
                 let path = self.state.borrow().scene_path.clone();
                 match path {
-                    Some(path) => self.save(path),
-                    None => dialogs::save_as(&self.state),
+                    Some(path) => {
+                        self.save(path);
+                    }
+                    None => dialogs::save_as(&self.state, None),
                 }
             }
-            Command::SaveAsDialog => dialogs::save_as(&self.state),
-            Command::SaveAs(path) => self.save(path),
+            Command::SaveAsDialog => dialogs::save_as(&self.state, None),
+            Command::SaveAs { path, then } => {
+                if self.save(path) {
+                    if let Some(then) = then {
+                        self.state.borrow_mut().push(*then);
+                    }
+                }
+            }
             Command::ConfirmDiscard(then) => {
-                let (scene_dirty, graph_dirty) = {
-                    let s = self.state.borrow();
-                    (s.dirty, s.anim.dirty && matches!(*then, Command::Quit))
-                };
-                if scene_dirty || graph_dirty {
-                    dialogs::confirm_discard(&self.state, *then, graph_dirty);
+                let unsaved = self.unsaved_for(&then);
+                if unsaved.any() {
+                    dialogs::confirm_discard(&self.state, *then, unsaved, None);
                 } else {
                     self.state.borrow_mut().push(*then);
                 }
+            }
+            Command::SaveFirst(then) => {
+                let unsaved = self.unsaved_for(&then);
+                if unsaved.graph {
+                    self.run(Command::SaveGraph);
+                    if self.state.borrow().anim.dirty {
+                        return;
+                    }
+                }
+                if unsaved.asset {
+                    self.run(Command::SaveAsset);
+                    if self.unsaved_for(&then).asset {
+                        return;
+                    }
+                }
+                if unsaved.scene {
+                    let path = self.state.borrow().scene_path.clone();
+                    match path {
+                        Some(path) => {
+                            if !self.save(path) {
+                                return;
+                            }
+                        }
+                        // Goes on once the user picked where to save it.
+                        None => {
+                            dialogs::save_as(&self.state, Some(*then));
+                            return;
+                        }
+                    }
+                }
+                self.state.borrow_mut().push(*then);
             }
             Command::Play => {
                 if mode == Mode::Play {
@@ -148,6 +186,7 @@ impl EditorLayer {
                 }
                 log::info!("Play mode started");
                 self.play_snapshot = Some(self.scene.to_file());
+                self.dirty_before_play = self.state.borrow().dirty;
                 self.scene.set_editor_camera(None);
                 self.scene.set_physics_enabled(true);
                 self.state.borrow_mut().mode = Mode::Play;
@@ -168,7 +207,10 @@ impl EditorLayer {
                 ferrite::core::net::disconnect();
                 if let Some(snapshot) = self.play_snapshot.take() {
                     match Scene::from_file(&snapshot) {
-                        Ok(scene) => self.replace_scene(scene),
+                        Ok(scene) => {
+                            self.replace_scene(scene);
+                            self.state.borrow_mut().dirty = self.dirty_before_play;
+                        }
                         Err(e) => self
                             .state
                             .borrow_mut()
@@ -223,10 +265,30 @@ impl EditorLayer {
                 }
             }
             Command::ExportGame(platform) => {
+                // The export packs what is on disk.
+                let unsaved = self.unsaved_for(&Command::ExportGame(platform));
+                if unsaved.any() && !self.exporter.is_running() {
+                    dialogs::confirm_discard(
+                        &self.state,
+                        Command::ExportGame(platform),
+                        unsaved,
+                        Some(("Export anyway", Command::ExportAnyway(platform))),
+                    );
+                } else {
+                    self.run(Command::ExportAnyway(platform));
+                }
+            }
+            Command::ExportAnyway(platform) => {
                 if self.exporter.is_running() {
                     self.state.borrow_mut().set_status("An export is already running");
                 } else if let Some(out) = Exporter::pick_folder() {
-                    self.exporter.start(self.project.clone(), out, platform);
+                    match export::copied_folder_containing(self.project.dir(), &out) {
+                        Some(folder) => self.state.borrow_mut().set_status(format!(
+                            "Export into a folder outside the project's {folder}/: \
+                             the export copies that folder"
+                        )),
+                        None => self.exporter.start(self.project.clone(), out, platform),
+                    }
                 }
             }
             Command::RefreshAssets => {
@@ -549,6 +611,32 @@ impl EditorLayer {
                 anim.selection = AnimSelection::None;
                 anim.touch_structure();
             }
+        }
+    }
+
+    /// What `then` would lose (quitting) or leave out (an export) of the
+    /// edits not saved yet.
+    fn unsaved_for(&self, then: &Command) -> dialogs::Unsaved {
+        let state = self.state.borrow();
+        let graph = state.anim.dirty;
+        let asset = state.asset_edit.as_ref().is_some_and(|edit| edit.dirty);
+        match then {
+            Command::Quit | Command::ExportGame(_) => dialogs::Unsaved {
+                scene: state.dirty,
+                graph,
+                asset,
+            },
+            // Switching graphs only replaces the open graph.
+            Command::EditAnimationGraph(_) => dialogs::Unsaved {
+                graph,
+                ..Default::default()
+            },
+            // Opening another scene keeps the graph and asset edits in
+            // memory.
+            _ => dialogs::Unsaved {
+                scene: state.dirty,
+                ..Default::default()
+            },
         }
     }
 

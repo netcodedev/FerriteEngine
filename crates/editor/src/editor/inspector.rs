@@ -48,6 +48,9 @@ struct Signature {
     /// Per component its name and its properties (name, read-only).
     components: Vec<(String, Vec<(Cow<'static, str>, bool)>)>,
     width: i32,
+    /// `EditorState::scene_generation`: the bindings point into the scene
+    /// they were built for.
+    generation: u64,
 }
 
 enum Field {
@@ -189,6 +192,7 @@ impl InspectorPanel {
             entity: id.filter(|id| scene.get_entity(id).is_some()),
             components,
             width: 0,
+            generation: 0,
         }
     }
 
@@ -268,14 +272,22 @@ impl InspectorPanel {
         });
 
         // One section per component, with a remove action in its header.
+        // Indices shift once one is removed: until the panel is rebuilt, a
+        // second click (two in one frame) removes nothing.
+        let removed = std::rc::Rc::new(std::cell::Cell::new(false));
         for (index, component) in entity.components().iter().enumerate() {
             let display = component.display_name();
             let mut section = self.section(&display, component_icon(&display), width);
             let remove_state = self.state.clone();
+            let removed = removed.clone();
             let mut remove = Button::new(
                 Position::default(),
                 Size::new(24.0, 24.0),
-                Box::new(move |_| send(&remove_state, Command::RemoveComponent(id, index))),
+                Box::new(move |_| {
+                    if !removed.replace(true) {
+                        send(&remove_state, Command::RemoveComponent(id, index));
+                    }
+                }),
             );
             remove.set_style(ButtonStyle::Danger);
             remove.set_icon(icons::TRASH);
@@ -738,9 +750,9 @@ fn display_value(value: &PropertyValue) -> String {
 
 impl UIElement for InspectorPanel {
     fn update(&mut self, scene: &mut Scene) {
-        let (rect, selected) = {
+        let (rect, selected, generation) = {
             let state = self.state.borrow();
-            (state.layout.inspector, state.selected())
+            (state.layout.inspector, state.selected(), state.scene_generation)
         };
         self.panel.set_size(Size::new(rect.w, rect.h));
         self.panel.set_position(Position::new(rect.x, rect.y, 0.0));
@@ -754,6 +766,7 @@ impl UIElement for InspectorPanel {
 
         let mut signature = Self::signature(scene, selected);
         signature.width = rect.w as i32;
+        signature.generation = generation;
         if self.signature.as_ref() != Some(&signature) {
             self.rebuild(scene, &signature);
             self.body.set_z_index(2.0);

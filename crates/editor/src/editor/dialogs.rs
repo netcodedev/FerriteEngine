@@ -298,7 +298,8 @@ fn button_row(buttons: Vec<Box<dyn UIElement>>) -> Box<dyn UIElement> {
     row
 }
 
-pub fn save_as(state: &Shared) {
+/// Ask where to save the scene. `then` runs once it is saved.
+pub fn save_as(state: &Shared, then: Option<Command>) {
     let current = state
         .borrow()
         .scene_path
@@ -325,8 +326,18 @@ pub fn save_as(state: &Shared) {
                     if !text.ends_with(".ron") {
                         text.push_str(".ron");
                     }
-                    send(&save_state, Command::SaveAs(PathBuf::from(text)));
-                    save_open.write(false);
+                    let path = PathBuf::from(text);
+                    let then = then.clone().map(Box::new);
+                    let current = save_state.borrow().scene_path.clone();
+                    let replaces_another = path.exists()
+                        && !current.is_some_and(|current| same_file(&current, &path));
+                    if replaces_another {
+                        // Replaces this popup with the question.
+                        confirm_overwrite(&save_state, path, then);
+                    } else {
+                        send(&save_state, Command::SaveAs { path, then });
+                        save_open.write(false);
+                    }
                 }),
             ),
             UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
@@ -380,45 +391,120 @@ pub fn open(state: &Shared) {
     show(state, "Open scene", open_flag, children);
 }
 
-pub fn confirm_discard(state: &Shared, then: Command, includes_graph: bool) {
+/// Whether two paths name the same file (`a` may be relative, `b` absolute).
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b
+        || matches!(
+            (a.canonicalize(), b.canonicalize()),
+            (Ok(a), Ok(b)) if a == b
+        )
+}
+
+/// `path` exists already and is not the open scene: replace it?
+fn confirm_overwrite(state: &Shared, path: PathBuf, then: Option<Box<Command>>) {
     let open_flag = DataSource::new(true);
-    let discard_state = state.clone();
-    let discard_open = open_flag.clone();
+    let replace_state = state.clone();
+    let replace_open = open_flag.clone();
+    let cancel_open = open_flag.clone();
+    let children: Vec<Box<dyn UIElement>> = vec![
+        UI::label(&format!("{} exists already.", path.display()), 14.0),
+        UI::label("Replace it with this scene?", 14.0),
+        button_row(vec![
+            UI::button(
+                "Replace",
+                Box::new(move |_| {
+                    send(
+                        &replace_state,
+                        Command::SaveAs {
+                            path: path.clone(),
+                            then: then.clone(),
+                        },
+                    );
+                    replace_open.write(false);
+                }),
+            ),
+            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+        ]),
+    ];
+    show(state, "Replace scene?", open_flag, children);
+}
+
+/// What has not been saved yet.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Unsaved {
+    pub scene: bool,
+    pub graph: bool,
+    pub asset: bool,
+}
+
+impl Unsaved {
+    pub fn any(&self) -> bool {
+        self.scene || self.graph || self.asset
+    }
+
+    fn describe(&self) -> String {
+        let parts: Vec<&str> = [
+            (self.scene, "the scene"),
+            (self.graph, "the animation graph"),
+            (self.asset, "the edited asset"),
+        ]
+        .into_iter()
+        .filter_map(|(unsaved, what)| unsaved.then_some(what))
+        .collect();
+        let list = match parts.as_slice() {
+            [] => "nothing".to_string(),
+            [one] => one.to_string(),
+            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        };
+        format!("There are unsaved changes in {list}.")
+    }
+}
+
+/// Unsaved changes stand in the way of `then`: save them first, discard
+/// them, or cancel. With `go_on`, its button replaces "Discard" and runs its
+/// command with the changes kept (an export leaves them out).
+pub fn confirm_discard(
+    state: &Shared,
+    then: Command,
+    unsaved: Unsaved,
+    go_on: Option<(&str, Command)>,
+) {
+    let open_flag = DataSource::new(true);
     let save_state = state.clone();
     let save_open = open_flag.clone();
     let save_then = then.clone();
     let cancel_open = open_flag.clone();
-    let children: Vec<Box<dyn UIElement>> = vec![
-        UI::label(
-            if includes_graph {
-                "There are unsaved changes (scene or animation graph)."
-            } else {
-                "The scene has unsaved changes."
-            },
-            14.0,
+    let other_state = state.clone();
+    let other_open = open_flag.clone();
+    let other = match go_on {
+        Some((label, command)) => UI::button(
+            label,
+            Box::new(move |_| {
+                send(&other_state, command.clone());
+                other_open.write(false);
+            }),
         ),
+        None => UI::button(
+            "Discard",
+            Box::new(move |_| {
+                other_state.borrow_mut().dirty = false;
+                send(&other_state, then.clone());
+                other_open.write(false);
+            }),
+        ),
+    };
+    let children: Vec<Box<dyn UIElement>> = vec![
+        UI::label(&unsaved.describe(), 14.0),
         button_row(vec![
             UI::button(
                 "Save first",
                 Box::new(move |_| {
-                    if save_state.borrow().dirty {
-                        send(&save_state, Command::Save);
-                    }
-                    if includes_graph {
-                        send(&save_state, Command::SaveGraph);
-                    }
-                    send(&save_state, save_then.clone());
+                    // Runs `then` only once everything is saved.
+                    send(&save_state, Command::SaveFirst(Box::new(save_then.clone())));
                     save_open.write(false);
                 }),
             ),
-            UI::button(
-                "Discard",
-                Box::new(move |_| {
-                    discard_state.borrow_mut().dirty = false;
-                    send(&discard_state, then.clone());
-                    discard_open.write(false);
-                }),
-            ),
+            other,
             UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
         ]),
     ];
@@ -437,8 +523,8 @@ pub fn confirm_graph_switch(state: &Shared, current: &str, then: Command) {
             UI::button(
                 "Save first",
                 Box::new(move |_| {
-                    send(&save_state, Command::SaveGraph);
-                    send(&save_state, save_then.clone());
+                    // Switches only once the graph is saved.
+                    send(&save_state, Command::SaveFirst(Box::new(save_then.clone())));
                     save_open.write(false);
                 }),
             ),
@@ -553,4 +639,29 @@ impl UIElement for ModalHost {
         &self.size
     }
     fn set_z_index(&mut self, _z_index: f32) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsaved_changes_are_named() {
+        let scene = Unsaved {
+            scene: true,
+            ..Default::default()
+        };
+        assert!(scene.any());
+        assert!(!Unsaved::default().any());
+        assert_eq!(scene.describe(), "There are unsaved changes in the scene.");
+        let all = Unsaved {
+            scene: true,
+            graph: true,
+            asset: true,
+        };
+        assert_eq!(
+            all.describe(),
+            "There are unsaved changes in the scene, the animation graph and the edited asset."
+        );
+    }
 }
