@@ -347,6 +347,13 @@ impl Viewport {
                 let Some(ray) = self.ray(scene, rect, self.cursor.0, self.cursor.1) else {
                     return ViewportAction::Consumed;
                 };
+                // The gizmo mode or the selection may have changed since the
+                // cursor last moved: look at what is under it now.
+                self.hover_axis = selected.and_then(|id| {
+                    let center = world_position(scene, &id)?;
+                    let axes = gizmo_axes(scene, &id, gizmo)?;
+                    self.hit_gizmo(&ray, center, axes, gizmo)
+                });
                 if let (Some(id), Some(handle)) = (selected, self.hover_axis) {
                     let size = world_position(scene, &id).map_or(1.0, |c| self.gizmo_size(c));
                     if let Some(drag) = begin_drag(scene, id, handle, gizmo, &ray, size) {

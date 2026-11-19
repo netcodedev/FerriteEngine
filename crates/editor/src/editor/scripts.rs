@@ -41,45 +41,62 @@ fn engine_stamp() -> EngineStamp {
     }
 }
 
-/// The `.note.gnu.build-id` of an ELF64 little-endian file.
+/// The `.note.gnu.build-id` of an ELF64 little-endian file. `None` for
+/// anything else, including a file that is broken or half written (the
+/// engine being relinked right now).
 fn elf_build_id(path: &Path) -> Option<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(path).ok()?;
-    let mut read_at = |offset: u64, len: usize| -> Option<Vec<u8>> {
-        let mut buffer = vec![0; len];
+    let file_len = file.metadata().ok()?.len();
+    let mut read_at = |offset: u64, len: u64| -> Option<Vec<u8>> {
+        // Sizes come from the file: never more than it holds.
+        if offset.checked_add(len)? > file_len {
+            return None;
+        }
+        let mut buffer = vec![0; usize::try_from(len).ok()?];
         file.seek(SeekFrom::Start(offset)).ok()?;
         file.read_exact(&mut buffer).ok()?;
         Some(buffer)
     };
-    let u16_at = |b: &[u8], i: usize| u16::from_le_bytes([b[i], b[i + 1]]) as usize;
-    let u32_at = |b: &[u8], i: usize| u32::from_le_bytes(b[i..i + 4].try_into().unwrap()) as usize;
-    let u64_at = |b: &[u8], i: usize| u64::from_le_bytes(b[i..i + 8].try_into().unwrap());
+    let u16_at = |b: &[u8], i: usize| -> Option<usize> {
+        Some(u16::from_le_bytes(b.get(i..i + 2)?.try_into().ok()?) as usize)
+    };
+    let u32_at = |b: &[u8], i: usize| -> Option<usize> {
+        Some(u32::from_le_bytes(b.get(i..i + 4)?.try_into().ok()?) as usize)
+    };
+    let u64_at = |b: &[u8], i: usize| -> Option<u64> {
+        Some(u64::from_le_bytes(b.get(i..i + 8)?.try_into().ok()?))
+    };
 
     let header = read_at(0, 64)?;
     if &header[..4] != b"\x7fELF" || header[4] != 2 || header[5] != 1 {
         return None;
     }
     let (sh_offset, sh_size, sh_count, names_index) = (
-        u64_at(&header, 0x28),
-        u16_at(&header, 0x3a),
-        u16_at(&header, 0x3c),
-        u16_at(&header, 0x3e),
+        u64_at(&header, 0x28)?,
+        u16_at(&header, 0x3a)?,
+        u16_at(&header, 0x3c)?,
+        u16_at(&header, 0x3e)?,
     );
-    let sections = read_at(sh_offset, sh_size * sh_count)?;
+    // An ELF64 section header is 0x40 bytes.
+    if sh_size < 0x40 || names_index >= sh_count {
+        return None;
+    }
+    let sections = read_at(sh_offset, (sh_size * sh_count) as u64)?;
     let section = |i: usize| &sections[i * sh_size..(i + 1) * sh_size];
     let names_section = section(names_index);
-    let names = read_at(u64_at(names_section, 0x18), u64_at(names_section, 0x20) as usize)?;
+    let names = read_at(u64_at(names_section, 0x18)?, u64_at(names_section, 0x20)?)?;
     for i in 0..sh_count {
         let sh = section(i);
-        let name_start = u32_at(sh, 0);
-        let name_end = names[name_start..].iter().position(|&b| b == 0)? + name_start;
+        let name_start = u32_at(sh, 0)?;
+        let name_end = names.get(name_start..)?.iter().position(|&b| b == 0)? + name_start;
         if &names[name_start..name_end] != b".note.gnu.build-id" {
             continue;
         }
-        let note = read_at(u64_at(sh, 0x18), u64_at(sh, 0x20) as usize)?;
-        let (name_size, desc_size) = (u32_at(&note, 0), u32_at(&note, 4));
+        let note = read_at(u64_at(sh, 0x18)?, u64_at(sh, 0x20)?)?;
+        let (name_size, desc_size) = (u32_at(&note, 0)?, u32_at(&note, 4)?);
         let desc_start = 12 + name_size.div_ceil(4) * 4;
-        return note.get(desc_start..desc_start + desc_size).map(<[u8]>::to_vec);
+        return note.get(desc_start..desc_start.checked_add(desc_size)?).map(<[u8]>::to_vec);
     }
     None
 }
@@ -198,8 +215,11 @@ fn newest_change(dir: &Path) -> Option<SystemTime> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return newest;
     };
-    for path in entries.flatten().map(|e| e.path()) {
-        let time = if path.is_dir() {
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // Not followed into linked folders: a link back up would never end.
+        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        let time = if is_dir {
             if path.file_name().is_some_and(|n| n == "target") {
                 continue;
             }
@@ -223,5 +243,39 @@ mod tests {
         let id = elf_build_id(&exe).expect("no build id");
         assert!(id.len() >= 16);
         assert_eq!(elf_build_id(Path::new("Cargo.toml")), None);
+    }
+
+    #[test]
+    fn a_broken_elf_file_has_no_build_id() {
+        let exe = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+        let dir = std::env::temp_dir().join(format!("ferrite-elf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("broken.so");
+        // Cut off (half written).
+        std::fs::write(&path, &exe[..200]).unwrap();
+        assert_eq!(elf_build_id(&path), None);
+        // Nonsense in the header: section names index past the sections,
+        // and section headers too small.
+        let mut header = exe[..64].to_vec();
+        header[0x3e..0x40].copy_from_slice(&u16::MAX.to_le_bytes());
+        std::fs::write(&path, &header).unwrap();
+        assert_eq!(elf_build_id(&path), None);
+        header[0x3a..0x3c].copy_from_slice(&4u16.to_le_bytes());
+        header[0x3e..0x40].copy_from_slice(&0u16.to_le_bytes());
+        std::fs::write(&path, &header).unwrap();
+        assert_eq!(elf_build_id(&path), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_back_up_the_scripts_folder_is_not_followed() {
+        let dir = std::env::temp_dir().join(format!("ferrite-scripts-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("inner")).unwrap();
+        std::fs::write(dir.join("inner/a.rs"), "").unwrap();
+        std::os::unix::fs::symlink(&dir, dir.join("inner/up")).unwrap();
+        assert!(newest_change(&dir).is_some());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

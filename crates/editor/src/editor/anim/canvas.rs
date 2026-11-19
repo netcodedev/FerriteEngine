@@ -49,8 +49,9 @@ struct NodeVisual {
 
 enum Drag {
     Pan { last: (f32, f32) },
-    Move { index: usize, grab: (f32, f32), moved: bool },
-    Link { from: usize },
+    /// States by name: the Delete shortcut may remove one during the drag.
+    Move { name: String, grab: (f32, f32), moved: bool },
+    Link { from: String },
 }
 
 pub struct NodeCanvas {
@@ -661,7 +662,7 @@ impl UIElement for NodeCanvas {
         draw_lines(window, &highlighted, color3(theme::ACCENT), 3);
         if let Some(Drag::Link { from }) = &self.drag {
             let state = self.state.borrow();
-            if let Some(def) = state.anim.file.states.get(*from) {
+            if let Some(def) = state.anim.file.state(from) {
                 let start = self.handle_center(&self.node_rect(def.position));
                 draw_lines(window, &arrow(start, self.cursor, head), color3(theme::ACCENT_HOVER), 2);
             }
@@ -733,14 +734,14 @@ impl UIElement for NodeCanvas {
                         *last = (x, y);
                         return true;
                     }
-                    Some(Drag::Move { index, grab, moved }) => {
+                    Some(Drag::Move { name, grab, moved }) => {
                         if (x - previous.0).abs() + (y - previous.1).abs() > 0.0 {
                             *moved = true;
                         }
-                        let (index, grab) = (*index, *grab);
+                        let (name, grab) = (name.clone(), *grab);
                         let g = self.to_graph((x, y));
                         let mut s = self.state.borrow_mut();
-                        if let Some(def) = s.anim.file.states.get_mut(index) {
+                        if let Some(def) = s.anim.file.states.iter_mut().find(|def| def.name == name) {
                             // Snap to a quarter grid for tidy layouts.
                             let snap = GRID * 0.25;
                             def.position = (
@@ -781,8 +782,11 @@ impl UIElement for NodeCanvas {
                 self.last_click = Some(now);
 
                 if let Some(i) = self.handle_at(x, y) {
-                    self.drag = Some(Drag::Link { from: i });
-                    return true;
+                    let from = self.state.borrow().anim.file.states.get(i).map(|def| def.name.clone());
+                    if let Some(from) = from {
+                        self.drag = Some(Drag::Link { from });
+                        return true;
+                    }
                 }
                 if let Some(i) = self.node_at(x, y) {
                     // Layout lookups borrow the state too: compute first.
@@ -791,9 +795,9 @@ impl UIElement for NodeCanvas {
                     let def = &s.anim.file.states[i];
                     let grab = (g.0 - def.position.0, g.1 - def.position.1);
                     let name = def.name.clone();
-                    s.anim.selection = AnimSelection::State(name);
+                    s.anim.selection = AnimSelection::State(name.clone());
                     drop(s);
-                    self.drag = Some(Drag::Move { index: i, grab, moved: false });
+                    self.drag = Some(Drag::Move { name, grab, moved: false });
                     return true;
                 }
                 if let Some(t) = self.transition_at(x, y) {
@@ -834,12 +838,17 @@ impl UIElement for NodeCanvas {
                 let Some(drag) = self.drag.take() else {
                     return false;
                 };
-                if let Drag::Link { from } = drag {
+                if let Drag::Link { from: from_name } = drag {
                     let (x, y) = self.cursor;
-                    if let Some(to) = self.node_at(x, y).filter(|to| *to != from) {
-                        let mut s = self.state.borrow_mut();
-                        let from_name = s.anim.file.states[from].name.clone();
-                        let to_name = s.anim.file.states[to].name.clone();
+                    let to = self.node_at(x, y);
+                    let mut s = self.state.borrow_mut();
+                    let to_name = to
+                        .and_then(|to| s.anim.file.states.get(to))
+                        .map(|def| def.name.clone())
+                        .filter(|to_name| *to_name != from_name);
+                    // The state it started from may have been deleted.
+                    let from_exists = s.anim.file.state(&from_name).is_some();
+                    if let Some(to_name) = to_name.filter(|_| from_exists) {
                         let existing = s
                             .anim
                             .file
