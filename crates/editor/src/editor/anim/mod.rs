@@ -97,11 +97,9 @@ impl AnimEditor {
     }
 
     pub fn reload(&mut self) -> Result<(), String> {
-        let file = if self.path.exists() {
-            AnimGraphFile::load(&self.path).map_err(|e| e.to_string())?
-        } else {
-            player_graph_file()
-        };
+        // Like opening it: assets resolved, and only the player graph falls
+        // back to the built-in one.
+        let file = load_graph_file(&self.path.to_string_lossy()).map_err(|e| e.to_string())?;
         self.file = file;
         self.dirty = false;
         self.selection = AnimSelection::None;

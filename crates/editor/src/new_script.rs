@@ -2,6 +2,22 @@
 
 use std::path::Path;
 
+/// Type names a script cannot have: the template's `use ferrite::prelude::*`
+/// and Rust's own prelude bring these in, and a struct of the same name
+/// would hide them (the template's `update` would no longer compile, and
+/// with it no script of the project). `Self` is a keyword.
+const TAKEN_NAMES: &[&str] = &[
+    // ferrite::prelude
+    "Component", "Property", "PropertyValue", "Entity", "Scene", "Behaviour", "Script", "Deg",
+    "EuclideanSpace", "InnerSpace", "Matrix4", "Point3", "Quaternion", "Rad", "Rotation3",
+    "Vector3", "Zero", "Action", "Key", "MouseButton", "WindowEvent", "Deserialize", "Serialize",
+    // Rust's prelude and keywords
+    "Self", "Default", "Option", "Some", "None", "Result", "Ok", "Err", "String", "Vec", "Box",
+    "Clone", "Copy", "Send", "Sync", "Sized", "Drop", "Fn", "FnMut", "FnOnce", "Iterator",
+    "IntoIterator", "Extend", "ToString", "ToOwned", "PartialEq", "Eq", "PartialOrd", "Ord",
+    "From", "Into", "TryFrom", "TryInto", "AsRef", "AsMut",
+];
+
 /// Write a new script named `name` (`rotator`, `Rotator`, `my rotator` all
 /// give a struct `Rotator`, file `rotator.rs`) into `folder` from a
 /// template. Returns the file name.
@@ -24,6 +40,11 @@ pub(crate) fn new_script_file(folder: &Path, name: &str) -> Result<String, Strin
                 .unwrap_or_default()
         })
         .collect();
+    if TAKEN_NAMES.contains(&type_name.as_str()) {
+        return Err(format!(
+            "'{type_name}' is a name scripts already use for something else; pick another"
+        ));
+    }
     let file_name = format!(
         "{}.rs",
         words.iter().map(|w| w.to_lowercase()).collect::<Vec<_>>().join("_")
@@ -94,6 +115,10 @@ mod tests {
         assert_eq!(new_script_file(&dir, "door opener").unwrap(), "door_opener.rs");
         assert!(new_script_file(&dir, "my rotator").is_err(), "already exists");
         assert!(new_script_file(&dir, "!!").is_err());
+        // Would hide the prelude's types and break every script's build.
+        assert!(new_script_file(&dir, "scene").is_err());
+        assert!(new_script_file(&dir, "self").is_err());
+        assert!(!dir.join("scene.rs").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

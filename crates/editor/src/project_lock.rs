@@ -103,6 +103,29 @@ fn stale(owner: u32, beat: u64, now: u64, alive: &dyn Fn(u32) -> Option<bool>) -
     }
 }
 
+/// Take away the stale lock at `path`, which said `seen` when it was
+/// judged stale. Another editor starting at the same time may have taken it
+/// over already: its fresh lock is left in place, and `Err` names it.
+fn take_away(path: &Path, pid: u32, seen: Option<(u32, u64)>) -> Result<(), u32> {
+    // Moved aside first, so what is removed is exactly what was looked at.
+    let aside = path.with_file_name(format!("{LOCK_FILE}.{pid}"));
+    let _ = fs::remove_file(&aside);
+    if fs::rename(path, &aside).is_err() {
+        // Gone already: whoever took it away tries to lock, as do we.
+        return Ok(());
+    }
+    let moved = read(&aside);
+    if moved == seen {
+        let _ = fs::remove_file(&aside);
+        return Ok(());
+    }
+    // Locked anew meanwhile: put it back (without replacing a lock that
+    // came in between).
+    let _ = fs::hard_link(&aside, path);
+    let _ = fs::remove_file(&aside);
+    Err(moved.map_or(0, |(owner, _)| owner))
+}
+
 impl ProjectLock {
     /// Lock the project in `dir` for this process.
     pub fn acquire(dir: &Path) -> Result<Self, LockError> {
@@ -128,7 +151,8 @@ impl ProjectLock {
                     });
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let (owner, beat) = read(&path).unwrap_or((0, 0));
+                    let seen = read(&path);
+                    let (owner, beat) = seen.unwrap_or((0, 0));
                     if owner == pid {
                         // Ours already (opened again after going back).
                         return Ok(Self {
@@ -140,7 +164,7 @@ impl ProjectLock {
                     if owner != 0 && !stale(owner, beat, seconds(now), alive) {
                         return Err(LockError::Held { pid: owner });
                     }
-                    let _ = fs::remove_file(&path);
+                    take_away(&path, pid, seen).map_err(|owner| LockError::Held { pid: owner })?;
                 }
                 Err(e) => return Err(LockError::Io(e.to_string())),
             }
@@ -265,6 +289,24 @@ mod tests {
         assert_eq!(read(&dir.join(LOCK_FILE)).map(|(pid, _)| pid), Some(200));
         drop(new);
         assert!(!dir.join(LOCK_FILE).exists());
+    }
+
+    #[test]
+    fn a_stale_lock_taken_over_meanwhile_is_left_to_its_new_owner() {
+        let dir = folder("race");
+        let path = dir.join(LOCK_FILE);
+        // Editor 100 crashed; 200 and 300 start together and both see its
+        // lock as stale.
+        std::mem::forget(ProjectLock::acquire_as(&dir, 100, now(), &|_| Some(true)).unwrap());
+        let seen = read(&path);
+        // 300 is quicker and locks the project.
+        let first = ProjectLock::acquire_as(&dir, 300, now(), &|pid| Some(pid != 100)).unwrap();
+        // 200 must not remove 300's lock.
+        assert_eq!(take_away(&path, 200, seen), Err(300));
+        assert_eq!(read(&path).map(|(pid, _)| pid), Some(300));
+        assert!(!dir.join(format!("{LOCK_FILE}.200")).exists());
+        drop(first);
+        assert!(!path.exists());
     }
 
     #[test]
