@@ -84,30 +84,44 @@ layout(std430, binding = 4) readonly buffer LightClusterIndices {
 
 // The lights to go through at `P`: `count` of them, from `first` in
 // `clusterLights`, or (first < 0) the first `count` of `lights`.
+//
+// Hardened against a non-finite `P` (a NaN from a broken transform): every
+// test below is written so that NaN takes the safe branch, the cell is
+// clamped into the grid and the count to `MAX_LIGHTS`. Without that, an
+// undefined cell index read a count from outside the buffer and the light
+// loops ran for billions of steps, long enough for Windows to reset the
+// GPU driver (TDR).
 ivec2 lightsAt(vec3 P) {
-    ivec2 all = ivec2(-1, lightCount);
+    ivec2 all = ivec2(-1, clamp(lightCount, 0, MAX_LIGHTS));
     if (lightCount <= 0 || clusterDims.w != 1) {
         return all;
     }
     vec3 v = (clusterView * vec4(P, 1.0)).xyz;
     float depth = -v.z;
-    if (depth <= 0.0) {
+    if (!(depth > 0.0)) {
         return all;
     }
     vec2 ndc = clusterProjection.xy * v.xy / depth;
     float slice = log(max(depth, clusterProjection.z) / clusterProjection.z) / clusterProjection.w;
-    if (any(greaterThan(abs(ndc), vec2(1.0))) || slice > 1.0) {
+    if (!(abs(ndc.x) <= 1.0 && abs(ndc.y) <= 1.0 && slice <= 1.0)) {
         return all;
     }
-    ivec3 dims = clusterDims.xyz;
-    ivec3 cell = min(ivec3(vec3(ndc * 0.5 + 0.5, slice) * vec3(dims)), dims - 1);
-    uvec2 range = clusterRanges[(cell.z * dims.y + cell.y) * dims.x + cell.x];
-    return ivec2(range);
+    ivec3 dims = max(clusterDims.xyz, ivec3(1));
+    ivec3 cell = clamp(ivec3(vec3(ndc * 0.5 + 0.5, slice) * vec3(dims)), ivec3(0), dims - 1);
+    int index = (cell.z * dims.y + cell.y) * dims.x + cell.x;
+    if (index < 0 || index >= clusterRanges.length()) {
+        return all;
+    }
+    uvec2 range = clusterRanges[index];
+    int first = int(min(range.x, uint(clusterLights.length())));
+    int count = int(min(range.y, uint(MAX_LIGHTS)));
+    return ivec2(first, min(count, clusterLights.length() - first));
 }
 
-// The `k`th light of what `lightsAt` gave, as an index into `lights`.
+// The `k`th light of what `lightsAt` gave, as an index into `lights`
+// (callers skip one at or past `lightCount`).
 int lightAt(ivec2 list, int k) {
-    return list.x < 0 ? k : int(clusterLights[list.x + k]);
+    return list.x < 0 ? k : int(min(clusterLights[list.x + k], uint(MAX_LIGHTS)));
 }
 
 // Shadow cube maps of point and spot lights (`light::shadow`), one cube

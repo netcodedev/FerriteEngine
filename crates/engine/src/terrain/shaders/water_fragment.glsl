@@ -229,7 +229,7 @@ vec4 screenSky(vec3 R) {
 // into a streak by the waves (GGX, like the sun), behind their shadows.
 vec3 lampReflections(vec3 N, vec3 V, float NdotV, float roughness) {
     vec3 sum = vec3(0.0);
-    for (int i = 0; i < lightCount; ++i) {
+    for (int i = 0; i < min(lightCount, MAX_LIGHTS); ++i) {
         Light l = lights[i];
         int kind = int(l.directionKind.w + 0.5);
         vec3 L;
