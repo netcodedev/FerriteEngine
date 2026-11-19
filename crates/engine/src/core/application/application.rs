@@ -16,6 +16,9 @@ impl Application {
         // stderr shows errors unless RUST_LOG says otherwise; the editor's
         // console keeps more (see `logging`).
         crate::core::logging::init("error");
+        // A log file, crash reports and the GPU's details (see
+        // `diagnostics`), so a crash on a player's machine leaves a trace.
+        crate::core::diagnostics::install(title);
         let window = Window::with_decorations(width, height, title, decorated);
 
         TextRenderer::resize(width, height);
@@ -50,6 +53,7 @@ impl Application {
             }
 
             self.window.swap_buffers();
+            crate::core::diagnostics::end_frame();
             // No layer took the game's request to end: it ends.
             if super::take_quit_request() {
                 break;

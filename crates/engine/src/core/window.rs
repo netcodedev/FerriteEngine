@@ -28,8 +28,24 @@ impl Window {
         // appears empty while the application is still starting.
         glfw.window_hint(glfw::WindowHint::Visible(false));
 
+        // GL debug output only when asked for: it costs frame time.
+        let debug = crate::core::diagnostics::gl_debug_requested();
+        glfw.window_hint(glfw::WindowHint::OpenGlDebugContext(debug));
+        // A context that tells about a GPU reset (a TDR on Windows) instead
+        // of leaving the game to crash in the driver; see `diagnostics`.
+        glfw.window_hint(glfw::WindowHint::ContextRobustness(
+            glfw::ContextRobustnessHint::LoseContextOnReset,
+        ));
         let (mut window, events) = glfw
             .create_window(width, height, title, glfw::WindowMode::Windowed)
+            .or_else(|| {
+                // Not every driver offers it: the same without.
+                log::info!("no robust GL context offered; GPU resets will go unnoticed");
+                glfw.window_hint(glfw::WindowHint::ContextRobustness(
+                    glfw::ContextRobustnessHint::NoRobustness,
+                ));
+                glfw.create_window(width, height, title, glfw::WindowMode::Windowed)
+            })
             .expect("Fenster konnte nicht erstellt werden");
 
         window.make_current();
@@ -53,6 +69,7 @@ impl Window {
         unsafe {
             gl::Enable(gl::MULTISAMPLE);
         }
+        crate::core::diagnostics::context_created(&mut glfw, debug);
 
         Self {
             window,
