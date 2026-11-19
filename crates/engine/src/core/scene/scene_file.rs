@@ -197,8 +197,8 @@ pub enum ComponentData {
     /// with the data it is built from.
     Script {
         name: String,
-        #[serde(default = "unit_value")]
-        data: ron::Value,
+        #[serde(default)]
+        data: script::ScriptData,
     },
 }
 
@@ -260,7 +260,7 @@ impl ComponentData {
     pub fn script(name: &str) -> Self {
         ComponentData::Script {
             name: name.to_string(),
-            data: ron::Value::Unit,
+            data: script::ScriptData::default(),
         }
     }
 

@@ -12,8 +12,24 @@ pub fn module_name(file: &Path) -> Option<String> {
         .next()
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         && stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-    (valid && stem != "lib" && stem != "mod" && stem != "register").then(|| stem.to_string())
+    (valid && !RESERVED.contains(&stem)).then(|| stem.to_string())
 }
+
+/// Names a module of the scripts crate cannot have: Rust's keywords (`pub
+/// mod move;` does not compile), the crates the generated code names, and
+/// the files the crate has itself.
+const RESERVED: &[&str] = &[
+    // The crate's own files and the generated `register`.
+    "lib", "mod", "register", "scan",
+    // Crates the scripts reach by name.
+    "ferrite", "ferrite_dylib", "core", "std", "alloc", "crate", "self", "super", "Self",
+    // Keywords, strict and reserved (2021 and 2024 editions).
+    "as", "async", "await", "break", "const", "continue", "dyn", "else", "enum", "extern",
+    "false", "fn", "for", "gen", "if", "impl", "in", "let", "loop", "match", "move", "mut",
+    "pub", "ref", "return", "static", "struct", "trait", "true", "type", "unsafe", "use",
+    "where", "while", "abstract", "become", "box", "do", "final", "macro", "override", "priv",
+    "try", "typeof", "unsized", "virtual", "yield", "_",
+];
 
 /// A folder as a module name, if it is one: `landscape/` (holding a
 /// `mod.rs`) → `landscape`.
@@ -125,5 +141,10 @@ mod tests {
         assert_eq!(module_name(Path::new("a/tree_felling.rs")).as_deref(), Some("tree_felling"));
         assert_eq!(module_name(Path::new("a/2d-thing.rs")), None);
         assert_eq!(module_name(Path::new("a/lib.rs")), None);
+        assert_eq!(module_name(Path::new("a/move.rs")), None);
+        assert_eq!(module_name(Path::new("a/type.rs")), None);
+        assert_eq!(module_name(Path::new("a/ferrite.rs")), None);
+        assert_eq!(module_name(Path::new("a/std.rs")), None);
+        assert_eq!(module_name(Path::new("a/movement.rs")).as_deref(), Some("movement"));
     }
 }
