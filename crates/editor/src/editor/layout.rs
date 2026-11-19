@@ -88,6 +88,38 @@ impl Default for PanelSizes {
     }
 }
 
+impl PanelSizes {
+    /// These sizes with values no splitter could produce (negative, NaN,
+    /// from a hand-edited project file) replaced, so every panel can still
+    /// be seen and dragged.
+    pub fn sanitized(self) -> Self {
+        let default = Self::default();
+        let size = |value: f32, fallback: f32, min: f32| {
+            if value.is_finite() {
+                value.max(min)
+            } else {
+                fallback
+            }
+        };
+        let share = |value: f32, fallback: f32| {
+            if value.is_finite() {
+                value.clamp(0.0, 1.0)
+            } else {
+                fallback
+            }
+        };
+        Self {
+            side: size(self.side, default.side, MIN_COLUMN),
+            top_share: share(self.top_share, default.top_share),
+            stats: size(self.stats, default.stats, MIN_COLUMN),
+            preview: size(self.preview, default.preview, MIN_COLUMN),
+            right_share: share(self.right_share, default.right_share),
+            assets: size(self.assets, default.assets, MIN_PANEL_HEIGHT),
+            console_share: share(self.console_share, default.console_share),
+        }
+    }
+}
+
 /// What occupies the right-hand column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RightColumn {
@@ -246,6 +278,32 @@ mod tests {
         stats: true,
         widgets: false,
     };
+
+    #[test]
+    fn sanitized_sizes_keep_every_panel_reachable() {
+        let bad = PanelSizes {
+            side: -50.0,
+            top_share: f32::NAN,
+            stats: f32::INFINITY,
+            preview: 10.0,
+            right_share: 3.0,
+            assets: -50.0,
+            console_share: -1.0,
+        }
+        .sanitized();
+        let default = PanelSizes::default();
+        assert_eq!(bad.side, MIN_COLUMN);
+        assert_eq!(bad.top_share, default.top_share);
+        assert_eq!(bad.stats, default.stats);
+        assert_eq!(bad.preview, MIN_COLUMN);
+        assert_eq!(bad.right_share, 1.0);
+        assert_eq!(bad.assets, MIN_PANEL_HEIGHT);
+        assert_eq!(bad.console_share, 0.0);
+        // Sizes a splitter makes are kept.
+        assert_eq!(default.sanitized(), default);
+        let layout = Layout::compute(1280.0, 720.0, PANELS, true, true, &bad);
+        assert!(layout.assets.h > 0.0 && layout.hierarchy.h > 0.0 && layout.hierarchy.w > 0.0);
+    }
 
     #[test]
     fn asset_browser_sits_below_the_viewport() {
