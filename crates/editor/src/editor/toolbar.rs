@@ -48,6 +48,8 @@ pub struct Toolbar {
     play_button: Button,
     status_icon: Text,
     status: Text,
+    /// Where the camera is (world x, y, z), beside the transform buttons.
+    coords: Text,
     /// A spinner beside the status while the terrain is busy (planning the
     /// world, loading chunks), and since when it turns.
     spinner: Vec<Plane>,
@@ -179,6 +181,7 @@ impl Toolbar {
             play_button,
             status_icon: theme::icon(icons::INFO, 14.0, theme::TEXT_DIM),
             status: theme::text("", theme::FONT_SIZE_SMALL + 0.5, theme::TEXT_MUTED),
+            coords: theme::text("", theme::FONT_SIZE_SMALL + 0.5, theme::TEXT_DIM),
             spinner: (0..SPINNER_DOTS)
                 .map(|_| {
                     PlaneBuilder::new()
@@ -280,6 +283,12 @@ impl UIElement for Toolbar {
                 x += widget.get_size().width + 4.0;
             }
         }
+        // The camera's place, to the metre.
+        let eye = scene.get_active_camera().map(|c| c.get_camera().get_eye_position());
+        self.coords.set_content(&eye.map_or(String::new(), |p| format!("X {:.0}   Y {:.0}   Z {:.0}", p.x, p.y, p.z)));
+        let cy = rect.y + theme::center_y(&self.coords, rect.h);
+        self.coords.prepare_render_at(Position::new(x + 12.0, cy, 2.0));
+        let coords_end = x + 12.0 + self.coords.measure_width();
         let editing = mode == Mode::Edit;
         self.move_button
             .set_active(gizmo == GizmoMode::Translate && editing);
@@ -295,7 +304,7 @@ impl UIElement for Toolbar {
             .set_style(if editing { ButtonStyle::Primary } else { ButtonStyle::Danger });
         self.play_button.set_active(!editing);
         let play_w = self.play_button.get_size().width;
-        let play_x = (viewport.x + viewport.w * 0.5 - play_w * 0.5).max(x + 16.0);
+        let play_x = (viewport.x + viewport.w * 0.5 - play_w * 0.5).max(coords_end + 16.0);
         self.play_button.set_offset(Offset { x: play_x, y });
 
         // What the terrain is still busy with, unless something else is
@@ -345,6 +354,7 @@ impl UIElement for Toolbar {
         for widget in self.widgets().into_iter() {
             widget.render();
         }
+        self.coords.render();
         self.status_icon.render();
         self.status.render();
         if self.spinning {
