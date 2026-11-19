@@ -32,7 +32,7 @@ use super::{
     chunk::scatter_spots,
     columns::{ColumnMap, COLUMNS_GLSL},
     horizon::{self, HeightGrid, SINK},
-    scatter::{impostor::FRAMES, pick_variant_index, ScatterModel, ScatterSpec},
+    scatter::{impostor::FRAMES, pick_variant_index, spot_key, Scatter, ScatterModel, ScatterSpec},
     shaders::HAZE_GLSL,
     source::TerrainSource,
     CHUNK_SIZE,
@@ -94,8 +94,15 @@ fn keep_draw(x: f32, z: f32, salt: u64) -> f32 {
 
 /// The models of `layers` as far as `heights` reaches, on its ground
 /// (sunk with it, see `horizon::SINK`), thinned with distance (see
-/// `DENSE_REACH`). The rows of columns are shared out among threads.
-fn place(source: &dyn TerrainSource, heights: &HeightGrid, layers: &[Layer]) -> Placed {
+/// `DENSE_REACH`), leaving out the instances taken out (`removed`, see
+/// `Scatter::removed_spots`). The rows of columns are shared out among
+/// threads.
+fn place(
+    source: &dyn TerrainSource,
+    heights: &HeightGrid,
+    layers: &[Layer],
+    removed: &HashSet<(u64, [i32; 2])>,
+) -> Placed {
     let centre = heights.centre();
     let size = CHUNK_SIZE as f64;
     let reach = horizon::reach();
@@ -114,6 +121,9 @@ fn place(source: &dyn TerrainSource, heights: &HeightGrid, layers: &[Layer]) -> 
                     let (dx, dz) = (px as f64 - centre[0], pz as f64 - centre[1]);
                     let (kept, scale) = thinning(dx.hypot(dz));
                     if kept < 1.0 && keep_draw(px, pz, layer.salt) >= kept {
+                        continue;
+                    }
+                    if !removed.is_empty() && removed.contains(&(layer.salt, spot_key(px, pz))) {
                         continue;
                     }
                     let Some(height) = heights.height(px as f64, pz as f64) else {
@@ -162,11 +172,15 @@ fn place(source: &dyn TerrainSource, heights: &HeightGrid, layers: &[Layer]) -> 
 struct Key {
     heights: Arc<HeightGrid>,
     layers: Vec<Layer>,
+    /// `Scatter::removed_count`: placed again when an instance is taken.
+    removed: usize,
 }
 
 impl PartialEq for Key {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.heights, &other.heights) && self.layers == other.layers
+        Arc::ptr_eq(&self.heights, &other.heights)
+            && self.layers == other.layers
+            && self.removed == other.removed
     }
 }
 
@@ -228,9 +242,10 @@ impl FarScatter {
         self.batches.iter().map(|b| b.count as usize).sum()
     }
 
-    /// Place the models of `specs` on the horizon's ground `heights` (if
-    /// that changed, or the layers did), and take up what was placed.
-    pub fn update(&mut self, source: &Arc<dyn TerrainSource>, heights: Option<&Arc<HeightGrid>>, specs: &[ScatterSpec]) {
+    /// Place the models of `scatter` on the horizon's ground `heights` (if
+    /// that changed, or the layers or what was taken out did), and take up
+    /// what was placed.
+    pub fn update(&mut self, source: &Arc<dyn TerrainSource>, heights: Option<&Arc<HeightGrid>>, scatter: &Scatter) {
         if let Some((_, _, rx)) = &self.pending {
             if let Ok(placed) = rx.try_recv() {
                 let (key, specs, _) = self.pending.take().expect("pending");
@@ -241,9 +256,11 @@ impl FarScatter {
         let Some(heights) = heights else {
             return;
         };
+        let specs = scatter.specs();
         let wanted = Key {
             heights: heights.clone(),
             layers: specs.iter().map(Layer::of).collect(),
+            removed: scatter.removed_count(),
         };
         if self.made.as_ref() == Some(&wanted) || self.pending.as_ref().is_some_and(|(key, _, _)| *key == wanted) {
             return;
@@ -255,15 +272,15 @@ impl FarScatter {
             return;
         }
         let (tx, rx) = mpsc::channel();
-        let (source, job) = (source.clone(), wanted.clone());
+        let (source, job, removed) = (source.clone(), wanted.clone(), scatter.removed_spots());
         std::thread::spawn(move || {
             let started = std::time::Instant::now();
-            let placed = place(&*source, &job.heights, &job.layers);
+            let placed = place(&*source, &job.heights, &job.layers, &removed);
             let count: usize = placed.iter().flatten().map(Vec::len).sum();
             log::debug!("far scatter: {count} models placed in {:.0} ms", started.elapsed().as_secs_f64() * 1000.0);
             let _ = tx.send(placed);
         });
-        self.pending = Some((wanted, specs.to_vec(), rx));
+        self.pending = Some((wanted, specs, rx));
     }
 
     /// The chunks of the columns `planted` (around the camera at `eye`)
@@ -344,6 +361,11 @@ impl FarScatter {
         let Some(shader) = self.shader.as_ref().filter(|_| !self.batches.is_empty()) else {
             return;
         };
+        // Picture the models first: baking binds textures of its own (on
+        // unit 2 too, where `planted` goes) and leaves them bound.
+        for batch in &self.batches {
+            batch.model.impostors();
+        }
         shader.bind();
         lighting.apply(shader);
         shader.set_uniform_mat4("viewProjection", view_projection);
@@ -417,7 +439,7 @@ mod tests {
             attempts: 30,
             variants: 3,
         };
-        let placed = place(&*source, &built.heights, &[layer.clone()]);
+        let placed = place(&*source, &built.heights, &[layer.clone()], &HashSet::new());
         let all: Vec<[f32; 5]> = placed[0].iter().flatten().copied().collect();
         assert!(all.len() > 10_000, "{}", all.len());
         let far = all.iter().map(|m| m[0].hypot(m[2])).fold(0.0f32, f32::max);
@@ -439,5 +461,28 @@ mod tests {
         for m in in_column {
             assert!(near.contains(&(m[0], m[2])));
         }
+    }
+
+    #[test]
+    fn instances_taken_out_are_not_drawn_far_away() {
+        let source = Hills::create(3, HillsSettings::default());
+        let built = horizon::build(&*source, [0.0, 0.0]);
+        let layer = Layer {
+            tag: String::new(),
+            salt: 77,
+            attempts: 30,
+            variants: 1,
+        };
+        let spots = |placed: &Placed| -> Vec<(f32, f32)> {
+            placed[0][0].iter().map(|m| (m[0], m[2])).collect()
+        };
+        let before = spots(&place(&*source, &built.heights, &[layer.clone()], &HashSet::new()));
+        let taken = before[before.len() / 2];
+        // Felled where its chunk planted it: same spot, the chunk's height.
+        let mut scatter = Scatter::new(Vec::new());
+        scatter.mark_removed(77, Point3::new(taken.0, 12.345, taken.1));
+        let after = spots(&place(&*source, &built.heights, &[layer], &scatter.removed_spots()));
+        assert_eq!(after.len(), before.len() - 1);
+        assert!(!after.contains(&taken));
     }
 }
