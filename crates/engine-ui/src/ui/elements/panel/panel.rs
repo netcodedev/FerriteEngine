@@ -257,10 +257,9 @@ impl UIElement for Panel {
                 }
                 if self.is_dragging {
                     if let Some((start_x, start_y)) = self.drag_position {
-                        let offset = (
-                            x - start_x - self.region.offset.x,
-                            y - start_y - self.region.offset.y,
-                        );
+                        // `drag_position` follows the cursor, so the
+                        // change since the last event is the whole delta.
+                        let offset = (x - start_x, y - start_y);
                         self.region.position.x += offset.0;
                         self.region.position.y += offset.1;
                         self.drag_position = Some((x, y));
@@ -270,6 +269,10 @@ impl UIElement for Panel {
                 }
             }
             _ => (),
+        }
+        // Hidden content of a collapsed panel takes no input.
+        if self.is_collapsible && !self.is_open {
+            return false;
         }
         self.content.handle_events(scene, window, glfw, event)
     }
