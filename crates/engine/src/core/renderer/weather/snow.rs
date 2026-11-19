@@ -129,48 +129,63 @@ impl SnowTrails {
         let dt = self.last_update.elapsed().as_secs_f32().min(1.0);
         self.last_update = Instant::now();
 
-        let (from, to) = (self.current, 1 - self.current);
         let shader = &self.shader;
         shader.bind();
         shader.set_uniform_1i("previous", 0);
-        shader.set_uniform_2i("shift", shift[0], shift[1]);
-        shader.set_uniform_1f("refill", snowfall * dt / REFILL_SECONDS);
         shader.set_uniform_2f("origin", origin[0] as f32 * texel, origin[1] as f32 * texel);
         shader.set_uniform_1f("texel", texel);
-        let footprints = &footprints[..footprints.len().min(MAX_FOOTPRINTS)];
-        shader.set_uniform_1i("stampCount", footprints.len() as i32);
-        for (i, footprint) in footprints.iter().enumerate() {
-            let forward = if footprint.forward.magnitude2() > 1e-8 {
-                footprint.forward.normalize()
+        // The shader takes `MAX_FOOTPRINTS` at a time: one step per batch,
+        // the first also moving the map and filling it in.
+        let batches: Vec<&[Footprint]> = if footprints.is_empty() {
+            vec![&[]]
+        } else {
+            footprints.chunks(MAX_FOOTPRINTS).collect()
+        };
+        for (n, footprints) in batches.into_iter().enumerate() {
+            let (from, to) = (self.current, 1 - self.current);
+            let (shift, refill) = if n == 0 {
+                (shift, snowfall * dt / REFILL_SECONDS)
             } else {
-                cgmath::Vector2::new(0.0, 1.0)
+                ([0, 0], 0.0)
             };
-            shader.set_uniform_4f(
-                &format!("stamps[{i}]"),
-                footprint.position.x,
-                footprint.position.z,
-                forward.x,
-                forward.y,
-            );
-            shader.set_uniform_1f(&format!("stampLength[{i}]"), footprint.length);
+            shader.set_uniform_2i("shift", shift[0], shift[1]);
+            shader.set_uniform_1f("refill", refill);
+            shader.set_uniform_1i("stampCount", footprints.len() as i32);
+            for (i, footprint) in footprints.iter().enumerate() {
+                let forward = if footprint.forward.magnitude2() > 1e-8 {
+                    footprint.forward.normalize()
+                } else {
+                    cgmath::Vector2::new(0.0, 1.0)
+                };
+                shader.set_uniform_4f(
+                    &format!("stamps[{i}]"),
+                    footprint.position.x,
+                    footprint.position.z,
+                    forward.x,
+                    forward.y,
+                );
+                shader.set_uniform_1f(&format!("stampLength[{i}]"), footprint.length);
+            }
+            unsafe {
+                gl::BindFramebuffer(gl::FRAMEBUFFER, self.targets[to].framebuffer);
+                gl::Viewport(0, 0, SIZE, SIZE);
+                gl::Disable(gl::DEPTH_TEST);
+                gl::Disable(gl::BLEND);
+                gl::ActiveTexture(gl::TEXTURE0);
+                gl::BindTexture(gl::TEXTURE_2D, self.targets[from].texture);
+                gl::BindVertexArray(self.vao);
+                gl::DrawArrays(gl::TRIANGLES, 0, 3);
+                gl::BindVertexArray(0);
+            }
+            self.current = to;
         }
         unsafe {
-            gl::BindFramebuffer(gl::FRAMEBUFFER, self.targets[to].framebuffer);
-            gl::Viewport(0, 0, SIZE, SIZE);
-            gl::Disable(gl::DEPTH_TEST);
-            gl::Disable(gl::BLEND);
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, self.targets[from].texture);
-            gl::BindVertexArray(self.vao);
-            gl::DrawArrays(gl::TRIANGLES, 0, 3);
-            gl::BindVertexArray(0);
-            gl::BindTexture(gl::TEXTURE_2D, self.targets[to].texture);
+            gl::BindTexture(gl::TEXTURE_2D, self.targets[self.current].texture);
             gl::GenerateMipmap(gl::TEXTURE_2D);
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::Enable(gl::DEPTH_TEST);
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
         }
-        self.current = to;
     }
 
     /// World x, z of the map's corner and the metres it spans.
