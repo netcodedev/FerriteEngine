@@ -76,6 +76,34 @@ impl Scene {
             light_shadows: RefCell::new(None),
             shadow_planner: RefCell::new(ShadowPlanner::default()),
             deferred: Vec::new(),
+            generation: {
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
+        }
+    }
+
+    /// Run `update` on every root entity in order, each taken out of the
+    /// scene while it runs. The update may remove, add or move root entities,
+    /// or replace the whole scene: the entity goes back in front of the one
+    /// that followed it, wherever that is now, so none is skipped and the
+    /// loop never steps past the end. After the scene was replaced, the
+    /// entity belonged to the old one and is dropped with it.
+    fn update_roots(&mut self, mut update: impl FnMut(&mut Entity, &mut Scene)) {
+        let generation = self.generation;
+        let mut i = 0;
+        while i < self.entities.len() {
+            let next = self.entities.get(i + 1).map(|entity| entity.id);
+            let mut entity = self.entities.remove(i);
+            update(&mut entity, self);
+            if self.generation != generation {
+                return;
+            }
+            let at = next
+                .and_then(|id| self.entities.iter().position(|entity| entity.id == id))
+                .unwrap_or(i.min(self.entities.len()));
+            self.entities.insert(at, entity);
+            i = at + 1;
         }
     }
 
@@ -355,11 +383,7 @@ impl Scene {
     /// the scene presentable (see `Component::update_in_editor`).
     pub fn update_in_editor(&mut self, delta_time: f64) {
         self.physics_engine.paused_frame();
-        for i in 0..self.entities.len() {
-            let mut entity = self.entities.remove(i);
-            entity.update_in_editor(self, delta_time);
-            self.entities.insert(i, entity);
-        }
+        self.update_roots(|entity, scene| entity.update_in_editor(scene, delta_time));
         self.run_deferred();
     }
 
@@ -405,11 +429,7 @@ impl Scene {
         } else {
             self.physics_engine.paused_frame();
         }
-        for i in 0..self.entities.len() {
-            let mut entity = self.entities.remove(i);
-            entity.update(self, delta_time);
-            self.entities.insert(i, entity);
-        }
+        self.update_roots(|entity, scene| entity.update(scene, delta_time));
         self.run_deferred();
     }
 
@@ -1179,5 +1199,70 @@ impl Scene {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scene_with(names: &[&str]) -> (Scene, Vec<EntityHandle>) {
+        crate::core::headless::enable();
+        let mut scene = Scene::new();
+        let ids = names
+            .iter()
+            .map(|name| {
+                let entity = Entity::new(name);
+                let id = entity.id;
+                scene.add_entity(entity);
+                id
+            })
+            .collect();
+        (scene, ids)
+    }
+
+    fn names(scene: &Scene) -> Vec<String> {
+        scene.get_entities().iter().map(Entity::get_name).collect()
+    }
+
+    #[test]
+    fn an_update_that_removes_an_earlier_root_skips_none_and_does_not_panic() {
+        let (mut scene, ids) = scene_with(&["a", "b", "c", "d"]);
+        let mut updated = Vec::new();
+        scene.update_roots(|entity, scene| {
+            updated.push(entity.get_name());
+            if entity.id == ids[1] {
+                assert!(scene.remove_entity(&ids[0]));
+            }
+        });
+        assert_eq!(updated, ["a", "b", "c", "d"]);
+        assert_eq!(names(&scene), ["b", "c", "d"]);
+    }
+
+    #[test]
+    fn an_update_that_removes_a_later_root_does_not_panic() {
+        let (mut scene, ids) = scene_with(&["a", "b", "c"]);
+        let mut updated = Vec::new();
+        scene.update_roots(|entity, scene| {
+            updated.push(entity.get_name());
+            if entity.id == ids[0] {
+                assert!(scene.remove_entity(&ids[2]));
+            }
+        });
+        assert_eq!(updated, ["a", "b"]);
+        assert_eq!(names(&scene), ["a", "b"]);
+    }
+
+    #[test]
+    fn an_update_that_replaces_the_scene_leaves_the_new_one_alone() {
+        let (mut scene, _) = scene_with(&["a", "b"]);
+        let mut updated = Vec::new();
+        scene.update_roots(|entity, scene| {
+            updated.push(entity.get_name());
+            let (other, _) = scene_with(&["x"]);
+            scene.replace_with(other);
+        });
+        assert_eq!(updated, ["a"]);
+        assert_eq!(names(&scene), ["x"]);
     }
 }
