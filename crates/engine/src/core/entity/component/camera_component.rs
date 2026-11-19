@@ -88,6 +88,7 @@ impl Component for CameraComponent {
             far: self.projection.get_zfar(),
             speed: self.camera_controller.get_speed(),
             free: self.camera_controller.is_free,
+            sensitivity: self.camera_controller.get_sensitivity(),
         })
     }
 

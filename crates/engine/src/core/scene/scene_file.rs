@@ -95,6 +95,9 @@ pub enum ComponentData {
         /// controller) drives it. Missing in older scenes: off.
         #[serde(default)]
         free: bool,
+        /// Mouse look speed. Missing in older scenes: the default.
+        #[serde(default = "default_look_sensitivity")]
+        sensitivity: f32,
     },
     SkyLight {
         time_of_day: f32,
@@ -327,6 +330,7 @@ impl ComponentData {
             far: 20000.0,
             speed: 10.0,
             free: true,
+            sensitivity: crate::core::camera::DEFAULT_MOUSE_SENSITIVITY,
         }
     }
 
@@ -434,12 +438,13 @@ impl ComponentData {
                 far,
                 speed,
                 free,
+                sensitivity,
             } => {
                 let camera = Camera::new(*position, Deg(*yaw_deg), Deg(*pitch_deg));
                 // The real aspect is applied every frame by whoever renders.
                 let projection = Projection::new(1280, 720, Deg(*fov_deg), *near, *far);
                 let mut controller =
-                    CameraController::new(*speed, crate::core::camera::DEFAULT_MOUSE_SENSITIVITY);
+                    CameraController::new(*speed, *sensitivity);
                 controller.is_free = *free;
                 entity.add_component(CameraComponent::new(camera, projection, controller));
             }
@@ -800,6 +805,7 @@ pub fn default_scene_file() -> SceneFile {
                     far: 1000.0,
                     speed: 10.0,
                     free: false,
+                    sensitivity: crate::core::camera::DEFAULT_MOUSE_SENSITIVITY,
                 }],
             ),
             entity("skylight", [0.0; 3], vec![ComponentData::default_sky_light()]),
@@ -809,11 +815,32 @@ pub fn default_scene_file() -> SceneFile {
     }
 }
 
+fn default_look_sensitivity() -> f32 {
+    crate::core::camera::DEFAULT_MOUSE_SENSITIVITY
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::assets::AssetId;
     use crate::core::entity::component::Component;
+
+    #[test]
+    fn camera_look_sensitivity_survives_save_and_load() {
+        let mut entity = Entity::new("camera");
+        let mut data = ComponentData::default_camera();
+        if let ComponentData::Camera { sensitivity, .. } = &mut data {
+            *sensitivity = 0.05;
+        }
+        data.attach(&mut entity);
+        let saved = entity.get_component::<crate::core::entity::component::camera_component::CameraComponent>()
+            .and_then(|c| c.to_data());
+        assert!(matches!(saved, Some(ComponentData::Camera { sensitivity, .. }) if sensitivity == 0.05));
+        // Scenes saved before the field existed get the default.
+        let old = "Camera(position: (0.0, 0.0, 0.0), yaw_deg: 0.0, pitch_deg: 0.0, fov_deg: 64.0, near: 0.1, far: 1000.0, speed: 10.0)";
+        let parsed: ComponentData = ron::from_str(old).unwrap();
+        assert!(matches!(parsed, ComponentData::Camera { sensitivity, .. } if sensitivity == crate::core::camera::DEFAULT_MOUSE_SENSITIVITY));
+    }
 
     #[test]
     fn the_starter_scene_parses_and_has_a_free_camera_sky_and_terrain() {
