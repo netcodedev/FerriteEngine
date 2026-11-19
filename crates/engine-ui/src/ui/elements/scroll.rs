@@ -61,6 +61,12 @@ impl ScrollArea {
         let base = &self.region.position + &self.region.offset;
         self.frame.set_position(base);
         self.stencil.set_position(&base + (1.0, 1.0));
+        self.content_height = self.gap
+            + self.children.values().map(|child| child.get_size().height + self.gap).sum::<f32>();
+        // Content that shrank (a section folded up) must not leave the view
+        // scrolled past its end.
+        let view = self.region.size.height;
+        self.scroll_y = self.scroll_y.clamp(0.0, (self.content_height - view).max(0.0));
         let mut y = self.gap - self.scroll_y;
         for child in self.children.values_mut() {
             child.set_offset(Offset {
@@ -69,9 +75,7 @@ impl ScrollArea {
             });
             y += child.get_size().height + self.gap;
         }
-        self.content_height = y + self.scroll_y;
 
-        let view = self.region.size.height;
         if self.content_height > view + 1.0 {
             let ratio = view / self.content_height;
             let thumb_h = (view * ratio).max(24.0);
@@ -243,5 +247,30 @@ impl UIElement for ScrollArea {
         for c in self.children.values_mut() {
             c.set_z_index(z_index + 2.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_that_shrinks_scrolls_the_view_back() {
+        let mut area = ScrollArea::new(Position::default(), Size::new(200.0, 100.0));
+        for _ in 0..10 {
+            area.add_child(Box::new(ScrollArea::new(Position::default(), Size::new(100.0, 50.0))));
+        }
+        area.layout();
+        // Scrolled to the end: 4 + 10 * 54 high, 100 of it in view.
+        area.scroll_y = 444.0;
+        area.layout();
+        assert_eq!(area.scroll_y, 444.0);
+        // Two children left: 112 high, so 12 is as far as it goes.
+        let keep: Vec<UIElementHandle> = area.children.keys().take(2).cloned().collect();
+        area.children.retain(|handle, _| keep.contains(handle));
+        area.layout();
+        assert_eq!(area.scroll_y, 12.0);
+        let first = area.children.values().next().unwrap();
+        assert_eq!(first.get_offset().y, 4.0 - 12.0);
     }
 }

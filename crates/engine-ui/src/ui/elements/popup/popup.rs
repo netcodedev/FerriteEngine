@@ -83,6 +83,8 @@ impl UIElement for Popup {
         }
         PlaneRenderer::render(&self.background);
         self.panel.render();
+        // Open dropdown lists, menus and tooltips inside the popup.
+        self.panel.render_overlay();
         unsafe {
             gl::DepthMask(gl::TRUE);
             gl::Enable(gl::DEPTH_TEST);
