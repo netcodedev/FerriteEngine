@@ -82,6 +82,10 @@ fn with_overlay(draw: impl FnOnce(&Shader)) {
             gl::BindVertexArray(*vao);
         }
         shader.bind();
+        // Samplers of different types on one unit make every draw fail
+        // (GL 4.6 §7.10), even the one not sampled: each its own unit.
+        shader.set_uniform_1i("image", 0);
+        shader.set_uniform_1i("layers", 1);
         draw(shader);
         unsafe {
             gl::BindVertexArray(0);
@@ -95,7 +99,6 @@ fn with_overlay(draw: impl FnOnce(&Shader)) {
 pub fn draw_ambient_occlusion(texture: GLuint) {
     with_overlay(|shader| unsafe {
         shader.set_uniform_1i("mode", 0);
-        shader.set_uniform_1i("image", 0);
         gl::ActiveTexture(gl::TEXTURE0);
         gl::BindTexture(gl::TEXTURE_2D, texture);
         gl::DrawArrays(gl::TRIANGLES, 0, 3);
@@ -117,8 +120,7 @@ pub fn draw_shadow_cascades(texture: GLuint, cascades: usize) {
     let side = ((w - gap * (cascades as GLint + 1)) / cascades as GLint).min(h / 3).max(16);
     with_overlay(|shader| unsafe {
         shader.set_uniform_1i("mode", 1);
-        shader.set_uniform_1i("layers", 0);
-        gl::ActiveTexture(gl::TEXTURE0);
+        gl::ActiveTexture(gl::TEXTURE1);
         gl::BindTexture(gl::TEXTURE_2D_ARRAY, texture);
         // The depths themselves, not compared.
         gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_COMPARE_MODE, gl::NONE as GLint);

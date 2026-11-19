@@ -33,6 +33,9 @@ pub struct TextRenderer {
     height: u32,
     /// The size the shader's projection was last set for.
     projection_for: Option<(u32, u32)>,
+    /// Per texel row of the atlas, how far right glyphs have been written
+    /// since it was last cleared (see `TextRenderer::rect_for`).
+    written: Vec<u32>,
 }
 
 pub struct Text {
@@ -48,6 +51,8 @@ pub struct Text {
     pub mesh: TextMesh,
     pub max_x: i32,
     pub max_y: i32,
+    /// The glyph atlas generation the mesh was built in.
+    atlas: u64,
 }
 
 pub struct TextMesh {
