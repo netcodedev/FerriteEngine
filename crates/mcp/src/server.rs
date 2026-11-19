@@ -13,7 +13,10 @@ use std::{
 use serde_json::{json, Value};
 
 use crate::{
-    protocol::{error_code, tool_result, Request, Response, MCP_PROTOCOL_VERSION},
+    protocol::{
+        error_code, tool_result, Request, Response, MCP_PROTOCOL_VERSION,
+        SUPPORTED_PROTOCOL_VERSIONS,
+    },
     tools::{catalog, dispatch, list_json, State},
 };
 
@@ -25,13 +28,14 @@ pub fn run(project_dir: PathBuf) -> std::io::Result<()> {
     let mut stdout = stdout.lock();
     let state = State::new(project_dir);
 
-    for line in stdin.lock().lines() {
-        let line = line?;
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
+    let mut stdin = stdin.lock();
+    let mut bytes = Vec::new();
+    loop {
+        bytes.clear();
+        if stdin.read_until(b'\n', &mut bytes)? == 0 {
+            break;
         }
-        if let Some(reply) = handle_line(&state, line) {
+        if let Some(reply) = handle_bytes(&state, &bytes) {
             writeln!(stdout, "{reply}")?;
             stdout.flush()?;
         }
@@ -39,14 +43,42 @@ pub fn run(project_dir: PathBuf) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Handle one raw line. A line that is not UTF-8 gets a parse error instead
+/// of ending the session.
+fn handle_bytes(state: &State, bytes: &[u8]) -> Option<String> {
+    match std::str::from_utf8(bytes) {
+        Ok(line) => {
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+            handle_line(state, line)
+        }
+        Err(e) => {
+            let resp = Response::error(Value::Null, error_code::PARSE_ERROR, e.to_string());
+            serde_json::to_string(&resp).ok()
+        }
+    }
+}
+
 /// Handle one line: returns `Some(json)` for a request we have an answer
 /// to, `None` for a notification or a malformed message we drop silently.
 pub fn handle_line(state: &State, line: &str) -> Option<String> {
-    let req: Request = match serde_json::from_str(line) {
-        Ok(r) => r,
+    let value: Value = match serde_json::from_str(line) {
+        Ok(v) => v,
         Err(e) => {
             // A parse error with no id: answer with id `null`, as JSON-RPC asks.
             let resp = Response::error(Value::Null, error_code::PARSE_ERROR, e.to_string());
+            return Some(serde_json::to_string(&resp).ok()?);
+        }
+    };
+    // Valid JSON of the wrong shape: Invalid Request, with the id when there
+    // is one, so the client can match the answer to its call.
+    let raw_id = value.get("id").cloned().unwrap_or(Value::Null);
+    let req: Request = match serde_json::from_value(value) {
+        Ok(r) => r,
+        Err(e) => {
+            let resp = Response::error(raw_id, error_code::INVALID_REQUEST, e.to_string());
             return Some(serde_json::to_string(&resp).ok()?);
         }
     };
@@ -66,7 +98,7 @@ fn handle_request(state: &State, method: &str, params: Value, id: Value) -> Resp
         "initialize" => Response::ok(
             id,
             json!({
-                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "protocolVersion": protocol_version(&params),
                 "capabilities": {
                     "tools": { "listChanged": false }
                 },
@@ -85,6 +117,16 @@ fn handle_request(state: &State, method: &str, params: Value, id: Value) -> Resp
             format!("method not found: {other}"),
         ),
     }
+}
+
+/// The client's protocol version when this server supports it, else ours.
+fn protocol_version(params: &Value) -> &'static str {
+    let asked = params.get("protocolVersion").and_then(Value::as_str);
+    SUPPORTED_PROTOCOL_VERSIONS
+        .iter()
+        .copied()
+        .find(|v| Some(*v) == asked)
+        .unwrap_or(MCP_PROTOCOL_VERSION)
 }
 
 fn call_tool(state: &State, params: Value, id: Value) -> Response {
@@ -239,6 +281,45 @@ mod tests {
         let (state, _dir) = tmp_project("malformed");
         let resp = parse_response(&handle_line(&state, "not valid json").unwrap());
         assert_eq!(resp["error"]["code"], Value::from(error_code::PARSE_ERROR));
+    }
+
+    #[test]
+    fn a_wrongly_shaped_request_is_invalid_and_keeps_its_id() {
+        let (state, _dir) = tmp_project("invalid");
+        for line in [
+            r#"{"id":7,"method":"tools/list"}"#,
+            r#"{"jsonrpc":"2.0","id":7,"method":5}"#,
+        ] {
+            let resp = parse_response(&handle_line(&state, line).unwrap());
+            assert_eq!(resp["id"], Value::from(7), "{line}");
+            assert_eq!(resp["error"]["code"], Value::from(error_code::INVALID_REQUEST));
+        }
+        let resp = parse_response(&handle_line(&state, "[1, 2]").unwrap());
+        assert_eq!(resp["id"], Value::Null);
+        assert_eq!(resp["error"]["code"], Value::from(error_code::INVALID_REQUEST));
+    }
+
+    #[test]
+    fn a_line_that_is_not_utf8_gets_a_parse_error() {
+        let (state, _dir) = tmp_project("utf8");
+        let resp = parse_response(&handle_bytes(&state, b"{\"id\":1,\xff}\n").unwrap());
+        assert_eq!(resp["error"]["code"], Value::from(error_code::PARSE_ERROR));
+        assert!(handle_bytes(&state, b"  \r\n").is_none());
+    }
+
+    #[test]
+    fn initialize_echoes_a_supported_client_version() {
+        let (state, _dir) = tmp_project("version");
+        let ask = |version: &str| {
+            let line = format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"{version}"}}}}"#
+            );
+            parse_response(&handle_line(&state, &line).unwrap())["result"]["protocolVersion"]
+                .clone()
+        };
+        assert_eq!(ask("2024-11-05"), "2024-11-05");
+        assert_eq!(ask("2025-03-26"), "2025-03-26");
+        assert_eq!(ask("1999-01-01"), MCP_PROTOCOL_VERSION);
     }
 
     #[test]
