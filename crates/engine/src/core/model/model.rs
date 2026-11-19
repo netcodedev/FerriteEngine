@@ -151,6 +151,7 @@ impl Model {
 
             self.textures.push(per_material);
         }
+        self.apply_gltf_factors();
         for mesh in &self.model.meshes {
             // UVs must come from THIS mesh's first channel — using a single
             // shared `texture_coords` derived from `meshes[0]` (as the code
@@ -254,6 +255,32 @@ impl Model {
         parent_transform: &Matrix4<f32>,
         camera_projection: &Matrix4<f32>,
     ) {
+        self.render_filtered(None, self.tint, lighting, parent_transform, camera_projection);
+    }
+
+    /// Draw only the `meshes` named (see `variant_meshes`), tinted as
+    /// `set_tint` would (`None`: as they are). For a model whose parts are
+    /// drawn each with its own transform, e.g. a vehicle's wheels, from
+    /// one loaded model.
+    pub fn render_meshes(
+        &self,
+        meshes: &std::collections::HashSet<String>,
+        tint: Option<[f32; 4]>,
+        lighting: &Lighting,
+        parent_transform: &Matrix4<f32>,
+        camera_projection: &Matrix4<f32>,
+    ) {
+        self.render_filtered(Some(meshes), tint, lighting, parent_transform, camera_projection);
+    }
+
+    fn render_filtered(
+        &self,
+        only: Option<&std::collections::HashSet<String>>,
+        tint: Option<[f32; 4]>,
+        lighting: &Lighting,
+        parent_transform: &Matrix4<f32>,
+        camera_projection: &Matrix4<f32>,
+    ) {
         let model_transform = parent_transform
             * Matrix4::from_translation(self.position.to_vec())
             * Matrix4::from_scale(self.scale);
@@ -266,19 +293,22 @@ impl Model {
         }
         // A tinted model writes no depth: nothing to draw in a depth pass.
         let depth_only = depth_pass::is_active();
-        if depth_only && self.tint.is_some() {
+        if depth_only && tint.is_some() {
             return;
         }
         DEPTH_SHADER.with(|depth_shader| {
             let shader = if depth_only { depth_shader } else { &self.shader };
-            self.draw_meshes(shader, depth_only, lighting, parent_transform, camera_projection);
+            self.draw_meshes(shader, depth_only, only, tint, lighting, parent_transform, camera_projection);
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_meshes(
         &self,
         shader: &Shader,
         depth_only: bool,
+        only: Option<&std::collections::HashSet<String>>,
+        tint: Option<[f32; 4]>,
         lighting: &Lighting,
         parent_transform: &Matrix4<f32>,
         camera_projection: &Matrix4<f32>,
@@ -293,10 +323,10 @@ impl Model {
         let draws_to_screen = hdr::draws_to_view() || ssao::in_depth_pass();
         shader
             .set_uniform_mat4("viewProjection", &camera_projection);
-        let [r, g, b, a] = self.tint.unwrap_or([1.0; 4]);
-        shader.set_uniform_1i("useTint", self.tint.is_some() as i32);
+        let [r, g, b, a] = tint.unwrap_or([1.0; 4]);
+        shader.set_uniform_1i("useTint", tint.is_some() as i32);
         shader.set_uniform_4f("tint", r, g, b, a);
-        if self.tint.is_some() {
+        if tint.is_some() {
             unsafe {
                 gl::Enable(gl::BLEND);
                 gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
@@ -304,7 +334,11 @@ impl Model {
             }
         }
         for (name, mesh) in self.meshes.iter() {
-            if self.visible.as_ref().is_some_and(|visible| !visible.contains(name)) {
+            let shown = match only {
+                Some(only) => only.contains(name),
+                None => self.visible.as_ref().is_none_or(|visible| visible.contains(name)),
+            };
+            if !shown {
                 continue;
             }
             if !mesh.is_buffered() {
@@ -349,7 +383,7 @@ impl Model {
             );
             unsafe { gl::Enable(gl::CULL_FACE) };
         }
-        if self.tint.is_some() {
+        if tint.is_some() {
             unsafe {
                 gl::DepthMask(gl::TRUE);
                 gl::Disable(gl::BLEND);
