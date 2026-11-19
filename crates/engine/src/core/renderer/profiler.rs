@@ -97,6 +97,7 @@ pub fn begin_frame() {
 
 /// The commands from here to the next mark (or the end) belong to `pass`.
 pub fn mark(pass: Pass) {
+    crate::core::diagnostics::mark_pass(pass.label());
     with(|profiler| profiler.mark(Some(pass)));
 }
 

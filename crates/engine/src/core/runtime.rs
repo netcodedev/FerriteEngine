@@ -114,6 +114,8 @@ pub fn run_player(scripts: Scripts) {
                 Some(address) => net::set_join_on_start(address),
                 None => exit_with("--connect needs an address".into()),
             },
+            // Read by `diagnostics::gl_debug_requested`.
+            "--gl-debug" => {}
             _ => project_arg = Some(PathBuf::from(arg)),
         }
     }

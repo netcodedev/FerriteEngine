@@ -1,6 +1,7 @@
 pub mod application;
 pub mod assets;
 pub mod camera;
+pub mod diagnostics;
 pub mod entity;
 pub mod export;
 pub mod headless;

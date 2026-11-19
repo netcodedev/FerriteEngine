@@ -6,9 +6,14 @@
 //! The history keeps debug messages and above from Ferrite's own crates and
 //! the scripts, and info and above from everything else, whatever `RUST_LOG`
 //! says: the console has its own level filter.
+//!
+//! Once `set_file` is given one, the same messages also go to a log file
+//! (see `diagnostics`), so a player's run can be read after the fact.
 
 use std::{
     collections::VecDeque,
+    fs::File,
+    io::{LineWriter, Write},
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
@@ -97,6 +102,9 @@ struct Logger {
 
 static LOGGER: OnceLock<Logger> = OnceLock::new();
 
+/// Where kept messages are written as well, line by line (see `set_file`).
+static FILE: Mutex<Option<LineWriter<File>>> = Mutex::new(None);
+
 impl Log for Logger {
     fn enabled(&self, metadata: &Metadata) -> bool {
         kept(metadata.level(), metadata.target()) || self.stderr.enabled(metadata)
@@ -116,12 +124,16 @@ impl Log for Logger {
             target: record.target().to_owned(),
             message: record.args().to_string(),
         };
+        write_to_file(&entry);
         let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
         push(&mut history, entry);
     }
 
     fn flush(&self) {
         self.stderr.flush();
+        if let Some(file) = FILE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            let _ = file.flush();
+        }
     }
 }
 
@@ -132,6 +144,42 @@ fn push(history: &mut History, mut entry: LogEntry) {
         history.entries.pop_front();
     }
     history.entries.push_back(entry);
+}
+
+/// One message as a line of the log file:
+/// `[   12.345s WARN  terrain::stream] message`.
+pub fn format_line(entry: &LogEntry) -> String {
+    format!(
+        "[{:>10.3}s {:<5} {}] {}",
+        entry.time.as_secs_f64(),
+        entry.level,
+        entry.short_target(),
+        entry.message
+    )
+}
+
+fn write_to_file(entry: &LogEntry) {
+    let mut file = FILE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(file) = file.as_mut() {
+        // A line writer flushes every line: a hard crash right after a
+        // message (a driver taking the process down) still leaves it in
+        // the file.
+        let _ = writeln!(file, "{}", format_line(entry));
+    }
+}
+
+/// Write every kept message from now on to `file` as well (`None`: stop).
+pub fn set_file(file: Option<File>) {
+    *FILE.lock().unwrap_or_else(|e| e.into_inner()) = file.map(LineWriter::new);
+}
+
+/// Write `text` to the log file as it is, e.g. a block of system
+/// information (nothing without a file).
+pub fn write_raw(text: &str) {
+    if let Some(file) = FILE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        let _ = writeln!(file, "{text}");
+        let _ = file.flush();
+    }
 }
 
 /// Install the logger. `default_filter` is what stderr shows when
@@ -237,6 +285,13 @@ mod tests {
         assert!(!kept(Level::Trace, "ferrite_scripts::player"));
         assert!(kept(Level::Info, "renet"));
         assert!(!kept(Level::Debug, "renet"));
+    }
+
+    #[test]
+    fn file_lines_carry_time_level_and_short_target() {
+        let mut e = entry(Level::Warn, "ferrite::terrain::stream", "slow chunk");
+        e.time = Duration::from_millis(12_345);
+        assert_eq!(format_line(&e), "[    12.345s WARN  terrain::stream] slow chunk");
     }
 
     #[test]
