@@ -13,7 +13,7 @@ use cgmath::{Matrix4, SquareMatrix};
 use gl::types::*;
 use serde::{Deserialize, Serialize};
 
-use super::shader::Shader;
+use super::{light::light::clamp_finite, shader::Shader};
 
 /// Texture unit the occlusion is bound to while the scene is shaded.
 pub const SSAO_UNIT: u32 = 14;
@@ -46,11 +46,11 @@ impl AmbientOcclusionSettings {
     pub const INTENSITY_RANGE: (f32, f32) = (0.25, 4.0);
 
     pub fn set_radius(&mut self, radius: f32) {
-        self.radius = radius.clamp(Self::RADIUS_RANGE.0, Self::RADIUS_RANGE.1);
+        self.radius = clamp_finite(radius, Self::RADIUS_RANGE, 1.0);
     }
 
     pub fn set_intensity(&mut self, intensity: f32) {
-        self.intensity = intensity.clamp(Self::INTENSITY_RANGE.0, Self::INTENSITY_RANGE.1);
+        self.intensity = clamp_finite(intensity, Self::INTENSITY_RANGE, 1.5);
     }
 }
 

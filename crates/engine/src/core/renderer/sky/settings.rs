@@ -3,6 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::renderer::light::light::clamp_finite;
+
 /// Form of the low cloud layer. The sky varies it a little from region to
 /// region, so a cumulus sky still has some flatter and taller clouds.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -78,11 +80,11 @@ impl Default for CloudSettings {
 
 impl CloudSettings {
     pub fn set_altocumulus(&mut self, amount: f32) {
-        self.altocumulus = amount.clamp(0.0, 1.0);
+        self.altocumulus = clamp_finite(amount, (0.0, 1.0), 0.15);
     }
 
     pub fn set_cirrus(&mut self, amount: f32) {
-        self.cirrus = amount.clamp(0.0, 1.0);
+        self.cirrus = clamp_finite(amount, (0.0, 1.0), 0.35);
     }
 
     /// Copy every field through its setter, so out of range values (from a

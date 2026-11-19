@@ -33,7 +33,7 @@ use cgmath::{Matrix4, Vector2, Vector3};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 
-use super::{shader::Shader, texture::Texture};
+use super::{light::light::clamp_finite, shader::Shader, texture::Texture};
 use exposure::SkyExposure;
 use precipitation::PrecipitationRenderer;
 use shelter::ShelterMap;
@@ -308,27 +308,27 @@ impl Weather {
     pub const SPELL_RANGE: (f32, f32) = (20.0, 1200.0);
 
     pub fn set_intensity(&mut self, intensity: f32) {
-        self.intensity = intensity.clamp(Self::INTENSITY_RANGE.0, Self::INTENSITY_RANGE.1);
+        self.intensity = clamp_finite(intensity, Self::INTENSITY_RANGE, 0.7);
     }
 
     pub fn set_spell_seconds(&mut self, seconds: f32) {
-        self.spell_seconds = seconds.clamp(Self::SPELL_RANGE.0, Self::SPELL_RANGE.1);
+        self.spell_seconds = clamp_finite(seconds, Self::SPELL_RANGE, 150.0);
     }
 
     pub fn set_wetness(&mut self, wetness: f32) {
-        self.wetness = wetness.clamp(0.0, 1.0);
+        self.wetness = clamp_finite(wetness, (0.0, 1.0), 0.0);
     }
 
     pub fn set_puddles(&mut self, puddles: f32) {
-        self.puddles = puddles.clamp(0.0, 1.0);
+        self.puddles = clamp_finite(puddles, (0.0, 1.0), 0.0);
     }
 
     pub fn set_snow_cover(&mut self, cover: f32) {
-        self.snow_cover = cover.clamp(0.0, 1.0);
+        self.snow_cover = clamp_finite(cover, (0.0, 1.0), 0.0);
     }
 
     pub fn set_snow_depth(&mut self, depth: f32) {
-        self.snow_depth = depth.clamp(0.0, MAX_SNOW_DEPTH);
+        self.snow_depth = clamp_finite(depth, (0.0, MAX_SNOW_DEPTH), 0.0);
     }
 
     /// Copy every field through its setter, so out of range values (from a
@@ -557,6 +557,29 @@ impl WeatherShading {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nan_settings_are_not_kept() {
+        let weather = Weather {
+            intensity: f32::NAN,
+            spell_seconds: f32::NAN,
+            wetness: f32::NAN,
+            puddles: f32::NAN,
+            snow_cover: f32::NAN,
+            snow_depth: f32::NAN,
+            ..Default::default()
+        }
+        .sanitized();
+        let values = [
+            weather.intensity,
+            weather.spell_seconds,
+            weather.wetness,
+            weather.puddles,
+            weather.snow_cover,
+            weather.snow_depth,
+        ];
+        assert!(values.iter().all(|v| v.is_finite()), "{values:?}");
+    }
 
     fn run(weather: &mut Weather, seconds: f32, sun: f32) {
         let mut t = 0.0;

@@ -20,7 +20,7 @@ use std::{
 use gl::types::*;
 use serde::{Deserialize, Serialize};
 
-use super::shader::Shader;
+use super::{light::light::clamp_finite, shader::Shader};
 
 /// Shared GLSL: `tonemap`, `linearToSrgb`.
 pub const TONEMAP_GLSL: &str = include_str!("tonemap.glsl");
@@ -191,22 +191,19 @@ impl HdrSettings {
     pub const BLOOM_THRESHOLD_RANGE: (f32, f32) = (0.0, 10.0);
 
     pub fn set_exposure(&mut self, exposure: f32) {
-        self.exposure = exposure.clamp(Self::EXPOSURE_RANGE.0, Self::EXPOSURE_RANGE.1);
+        self.exposure = clamp_finite(exposure, Self::EXPOSURE_RANGE, 0.0);
     }
 
     pub fn set_adaptation_speed(&mut self, speed: f32) {
-        self.adaptation_speed =
-            speed.clamp(Self::ADAPTATION_SPEED_RANGE.0, Self::ADAPTATION_SPEED_RANGE.1);
+        self.adaptation_speed = clamp_finite(speed, Self::ADAPTATION_SPEED_RANGE, 1.5);
     }
 
     pub fn set_bloom_intensity(&mut self, intensity: f32) {
-        self.bloom_intensity =
-            intensity.clamp(Self::BLOOM_INTENSITY_RANGE.0, Self::BLOOM_INTENSITY_RANGE.1);
+        self.bloom_intensity = clamp_finite(intensity, Self::BLOOM_INTENSITY_RANGE, 0.25);
     }
 
     pub fn set_bloom_threshold(&mut self, threshold: f32) {
-        self.bloom_threshold =
-            threshold.clamp(Self::BLOOM_THRESHOLD_RANGE.0, Self::BLOOM_THRESHOLD_RANGE.1);
+        self.bloom_threshold = clamp_finite(threshold, Self::BLOOM_THRESHOLD_RANGE, 1.0);
     }
 
     /// Copy every field through its setter, so out of range values (from a
@@ -837,6 +834,19 @@ fn destination_samples() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nan_settings_fall_back_to_the_defaults() {
+        let settings = HdrSettings {
+            exposure: f32::NAN,
+            adaptation_speed: f32::NAN,
+            bloom_intensity: f32::NAN,
+            bloom_threshold: f32::NAN,
+            ..HdrSettings::default()
+        }
+        .sanitized();
+        assert_eq!(settings, HdrSettings::default());
+    }
 
     #[test]
     fn tonemappers_round_trip_through_their_names() {
