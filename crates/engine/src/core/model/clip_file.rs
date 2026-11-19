@@ -99,6 +99,25 @@ impl Transform {
         }
     }
 
+    fn is_finite(&self) -> bool {
+        self.translation
+            .iter()
+            .chain(&self.rotation)
+            .chain(&self.scale)
+            .all(|v| v.is_finite())
+    }
+
+    /// The rotation scaled to unit length; none at all without length.
+    fn normalize_rotation(&mut self) {
+        let q = self.quaternion();
+        let q = if q.magnitude2() > 1e-12 {
+            q.normalize()
+        } else {
+            Quaternion::new(1.0, 0.0, 0.0, 0.0)
+        };
+        self.rotation = [q.v.x, q.v.y, q.v.z, q.s];
+    }
+
     pub fn quaternion(&self) -> Quaternion<f32> {
         let [x, y, z, w] = self.rotation;
         Quaternion::new(w, x, y, z)
@@ -181,7 +200,30 @@ impl ClipFile {
             )
             .into());
         }
+        let mut clip = clip;
+        clip.sanitize();
         Ok(clip)
+    }
+
+    /// Make a file edited by hand or merged playable: keys sorted by time,
+    /// keys and rest poses that are no numbers dropped, rotations of unit
+    /// length (others shear or scale the bone).
+    fn sanitize(&mut self) {
+        if !self.duration.is_finite() {
+            self.duration = MIN_DURATION;
+        }
+        for track in &mut self.tracks {
+            track.keys.retain(|key| key.time.is_finite() && key.pose.is_finite());
+            track.keys.sort_by(|a, b| a.time.total_cmp(&b.time));
+            for key in &mut track.keys {
+                key.pose.normalize_rotation();
+            }
+        }
+        self.tracks.retain(|track| !track.keys.is_empty());
+        self.rest.retain(|rest| rest.pose.is_finite());
+        for rest in &mut self.rest {
+            rest.pose.normalize_rotation();
+        }
     }
 
     pub fn save(&self, path: &Path) -> Result<(), Box<dyn Error>> {
@@ -431,5 +473,37 @@ mod tests {
         assert_eq!(clip.key_times(), vec![0.4, 1.8]);
         clip.set_duration(1.0);
         assert_eq!(clip.key_times(), vec![0.4]);
+    }
+
+    #[test]
+    fn loaded_clips_are_sorted_finite_and_of_unit_rotations() {
+        let mut clip = ClipFile::new(None, 2.0);
+        let mut long = turned(0.0);
+        long.rotation = [0.0, 0.7, 0.0, 0.7];
+        let mut broken = turned(0.0);
+        broken.translation[0] = f32::NAN;
+        clip.tracks.push(BoneTrack {
+            bone: "arm".into(),
+            keys: vec![
+                BoneKey { time: 1.5, pose: turned(90.0) },
+                BoneKey { time: 0.5, pose: long },
+                BoneKey { time: 1.0, pose: broken },
+                BoneKey { time: f32::NAN, pose: turned(0.0) },
+            ],
+        });
+        clip.tracks.push(BoneTrack {
+            bone: "leg".into(),
+            keys: vec![BoneKey { time: 0.0, pose: broken }],
+        });
+        clip.rest.push(BonePose { bone: "head".into(), pose: long });
+        clip.sanitize();
+
+        assert_eq!(clip.tracks.len(), 1);
+        let keys = &clip.tracks[0].keys;
+        assert_eq!(keys.iter().map(|k| k.time).collect::<Vec<_>>(), vec![0.5, 1.5]);
+        for pose in [keys[0].pose, clip.rest[0].pose] {
+            assert!((pose.quaternion().magnitude() - 1.0).abs() < 1e-5);
+        }
+        assert!((yaw(&keys[0].pose) - 90.0).abs() < 0.01);
     }
 }

@@ -21,8 +21,9 @@ pub struct AnimationComponent {
     one_shot: Option<OneShot>,
     /// The model's bones as they were before anything moved them (by name
     /// without namespace: full name and transform): bones no clip moves
-    /// go back to it every frame.
-    rest: Option<HashMap<String, (String, LocalTransform)>>,
+    /// go back to it every frame. With the `ModelComponent::generation`
+    /// of the model it was taken from.
+    rest: Option<(u64, HashMap<String, (String, LocalTransform)>)>,
 }
 
 /// Seconds a one-shot clip takes to blend in and out.
@@ -194,23 +195,26 @@ impl Component for AnimationComponent {
     fn update(&mut self, _: &mut Scene, entity: &mut Entity, delta_time: f64) {
         self.animation_graph.update(delta_time as f32);
         let mut pose = self.animation_graph.get_pose();
-        if self.rest.is_none() {
-            self.rest = entity
-                .get_component::<ModelComponent>()
-                .and_then(|model| model.get_model().skeleton())
-                .map(|skeleton| {
-                    skeleton
-                        .joints
-                        .iter()
-                        .map(|joint| {
-                            let base = base_name(&joint.name).to_string();
-                            (base, (joint.name.clone(), LocalTransform::from_matrix(&joint.local)))
-                        })
-                        .collect()
-                });
+        let model = entity.get_component::<ModelComponent>();
+        let generation = model.map(|model| model.generation());
+        // Taken again from a model loaded in place of the one it was taken
+        // from, whose skeleton may differ.
+        if self.rest.as_ref().map(|(taken, _)| *taken) != generation {
+            self.rest = model.and_then(|model| {
+                let skeleton = model.get_model().skeleton()?;
+                let rest = skeleton
+                    .joints
+                    .iter()
+                    .map(|joint| {
+                        let base = base_name(&joint.name).to_string();
+                        (base, (joint.name.clone(), LocalTransform::from_matrix(&joint.local)))
+                    })
+                    .collect();
+                Some((model.generation(), rest))
+            });
         }
         if let Some(pose) = &mut pose {
-            if let Some(rest) = &self.rest {
+            if let Some((_, rest)) = &self.rest {
                 pose.fill_from(rest);
             }
             self.apply_one_shot(pose, entity, delta_time as f32);

@@ -13,6 +13,15 @@ use super::{component::Component, Entity, EntityHandle};
 /// Entities already warned about by `Entity::drawable`.
 static NON_FINITE_WARNED: Mutex<Vec<EntityHandle>> = Mutex::new(Vec::new());
 
+/// Stands in for a component while it updates (see `update_components`).
+struct Updating;
+
+impl Component for Updating {
+    fn update(&mut self, _: &mut Scene, _: &mut Entity, _: f64) {}
+
+    fn handle_event(&mut self, _: &mut glfw::Glfw, _: &mut glfw::Window, _: &glfw::WindowEvent) {}
+}
+
 /// Whether every entry of `m` is a finite number.
 pub fn is_finite_matrix(m: &Matrix4<f32>) -> bool {
     let entries: &[f32; 16] = m.as_ref();
@@ -52,11 +61,9 @@ impl Entity {
     }
 
     pub fn update_in_editor(&mut self, scene: &mut Scene, delta_time: f64) {
-        for i in 0..self.components.len() {
-            let mut component = self.components.remove(i);
-            component.update_in_editor(scene, self, delta_time);
-            self.components.insert(i, component);
-        }
+        self.update_components(|component, entity| {
+            component.update_in_editor(scene, entity, delta_time)
+        });
         for child in self.children.iter_mut() {
             child.update_in_editor(scene, delta_time);
         }
@@ -70,17 +77,50 @@ impl Entity {
         &mut self.components
     }
 
+    /// Run `update` for each component in turn, the component taken out of
+    /// the entity meanwhile (it gets the entity mutably). Its place holds
+    /// a stand-in, so a component that adds or removes others while it
+    /// updates goes back where it belongs, and the rest still update once.
+    fn update_components(&mut self, mut update: impl FnMut(&mut Box<dyn Component>, &mut Entity)) {
+        let mut i = 0;
+        while i < self.components.len() {
+            let mut component = std::mem::replace(&mut self.components[i], Box::new(Updating));
+            update(&mut component, self);
+            // Without its place (taken off: it removed itself) it is dropped.
+            if let Some(slot) = self.components.iter().position(|c| c.as_any().is::<Updating>()) {
+                self.components[slot] = component;
+                i = slot + 1;
+            }
+        }
+    }
+
+    /// Take off the component at `index`. Its physics bodies stay in the
+    /// world: see `remove_component_releasing`.
     pub fn remove_component_at(&mut self, index: usize) -> Option<Box<dyn Component>> {
         (index < self.components.len()).then(|| self.components.remove(index))
     }
 
     /// Take off this entity's own component of type `T`, if it has one.
+    /// Its physics bodies stay in the world: see
+    /// `remove_component_releasing`.
     pub fn remove_component<T: Component>(&mut self) -> Option<Box<dyn Component>> {
         let index = self
             .components
             .iter()
             .position(|c| c.as_any().downcast_ref::<T>().is_some())?;
         Some(self.components.remove(index))
+    }
+
+    /// Like `remove_component`, and release what the component holds
+    /// outside it (`Component::on_remove`): a `RigidBody`'s body and
+    /// colliders leave the physics world with it.
+    pub fn remove_component_releasing<T: Component>(
+        &mut self,
+        physics: &mut PhysicsEngine,
+    ) -> Option<Box<dyn Component>> {
+        let mut component = self.remove_component::<T>()?;
+        component.on_remove(physics);
+        Some(component)
     }
 
     /// Like `get_component`, but never looks into children.
@@ -161,11 +201,7 @@ impl Entity {
     }
 
     pub fn update(&mut self, scene: &mut Scene, delta_time: f64) {
-        for i in 0..self.components.len() {
-            let mut component = self.components.remove(i);
-            component.update(scene, self, delta_time);
-            self.components.insert(i, component);
-        }
+        self.update_components(|component, entity| component.update(scene, entity, delta_time));
 
         for child in self.children.iter_mut() {
             child.update(scene, delta_time);
@@ -491,5 +527,64 @@ mod tests {
         assert!(!e.is_transient());
         e.set_transient(true);
         assert!(e.is_transient());
+    }
+
+    /// Records its name when updated; `Remover` takes off another.
+    struct Named(&'static str);
+
+    impl Component for Named {
+        fn update(&mut self, _: &mut Scene, _: &mut Entity, _: f64) {}
+        fn handle_event(&mut self, _: &mut glfw::Glfw, _: &mut glfw::Window, _: &glfw::WindowEvent) {}
+    }
+
+    struct Remover;
+
+    impl Component for Remover {
+        fn update(&mut self, _: &mut Scene, _: &mut Entity, _: f64) {}
+        fn handle_event(&mut self, _: &mut glfw::Glfw, _: &mut glfw::Window, _: &glfw::WindowEvent) {}
+    }
+
+    fn names(entity: &Entity) -> Vec<&'static str> {
+        entity
+            .components()
+            .iter()
+            .map(|c| c.as_any().downcast_ref::<Named>().map_or("remover", |n| n.0))
+            .collect()
+    }
+
+    /// Update `entity`'s components the way `update` does: the remover
+    /// takes off the component named `target`.
+    fn update_removing(entity: &mut Entity, target: &'static str) -> Vec<&'static str> {
+        let mut updated = Vec::new();
+        entity.update_components(|component, entity| {
+            if let Some(named) = component.as_any().downcast_ref::<Named>() {
+                updated.push(named.0);
+            } else {
+                updated.push("remover");
+                let index = names(entity).iter().position(|n| *n == target).unwrap();
+                entity.remove_component_at(index);
+            }
+        });
+        updated
+    }
+
+    #[test]
+    fn a_component_can_remove_a_later_sibling_while_it_updates() {
+        let mut e = Entity::new("E");
+        e.add_component(Remover);
+        e.add_component(Named("b"));
+        e.add_component(Named("c"));
+        assert_eq!(update_removing(&mut e, "c"), vec!["remover", "b"]);
+        assert_eq!(names(&e), vec!["remover", "b"]);
+    }
+
+    #[test]
+    fn a_component_can_remove_an_earlier_sibling_while_it_updates() {
+        let mut e = Entity::new("E");
+        e.add_component(Named("a"));
+        e.add_component(Remover);
+        e.add_component(Named("c"));
+        assert_eq!(update_removing(&mut e, "a"), vec!["a", "remover", "c"]);
+        assert_eq!(names(&e), vec!["remover", "c"]);
     }
 }

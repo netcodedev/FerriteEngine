@@ -15,6 +15,16 @@ impl ModelMesh {
     ) -> ModelMesh {
         let mut mesh_vertices = Vec::<ModelMeshVertex>::new();
         let vertex_count = vertices.len() / 3;
+        // Vertices only lines or points use have no normal; files without
+        // UVs have none either.
+        let normal = |i: usize| match normals.get(i * 3..i * 3 + 3) {
+            Some(&[x, y, z]) => (x, y, z),
+            _ => (0.0, 1.0, 0.0),
+        };
+        let uv = |i: usize| match texture_coords.get(i * 2..i * 2 + 2) {
+            Some(&[u, v]) => (u, v),
+            _ => (0.0, 0.0),
+        };
         if root_bone.is_none() {
             // Unskinned mesh (e.g. a static prop FBX with no skeleton). The vertex
             // shader still multiplies by `boneTransforms[boneIDs[0]] * weights[0]`,
@@ -25,12 +35,8 @@ impl ModelMesh {
             for i in 0..vertex_count {
                 mesh_vertices.push(ModelMeshVertex {
                     position: (vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]),
-                    normal: (normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]),
-                    texture_coords: if texture_coords.len() >= (i + 1) * 2 {
-                        (texture_coords[i * 2], texture_coords[i * 2 + 1])
-                    } else {
-                        (0.0, 0.0)
-                    },
+                    normal: normal(i),
+                    texture_coords: uv(i),
                     bone_ids: (0, 0, 0, 0),
                     bone_weights: (1.0, 0.0, 0.0, 0.0),
                 });
@@ -39,55 +45,13 @@ impl ModelMesh {
         if let Some(root_bone) = &root_bone {
             let bone_weights = ModelMesh::get_bone_weights(root_bone.clone());
             for i in 0..vertex_count {
-                let weights = &bone_weights[i];
+                let (bone_ids, bone_weights) = vertex_weights(bone_weights.get(i));
                 mesh_vertices.push(ModelMeshVertex {
                     position: (vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]),
-                    normal: (normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]),
-                    texture_coords: (texture_coords[i * 2], texture_coords[i * 2 + 1]),
-                    bone_ids: (
-                        if weights.len() >= 1 {
-                            weights[0].0 as u32
-                        } else {
-                            0
-                        },
-                        if weights.len() >= 2 {
-                            weights[1].0 as u32
-                        } else {
-                            0
-                        },
-                        if weights.len() >= 3 {
-                            weights[2].0 as u32
-                        } else {
-                            0
-                        },
-                        if weights.len() >= 4 {
-                            weights[3].0 as u32
-                        } else {
-                            0
-                        },
-                    ),
-                    bone_weights: (
-                        if weights.len() >= 1 {
-                            weights[0].1
-                        } else {
-                            0.0
-                        },
-                        if weights.len() >= 2 {
-                            weights[1].1
-                        } else {
-                            0.0
-                        },
-                        if weights.len() >= 3 {
-                            weights[2].1
-                        } else {
-                            0.0
-                        },
-                        if weights.len() >= 4 {
-                            weights[3].1
-                        } else {
-                            0.0
-                        },
-                    ),
+                    normal: normal(i),
+                    texture_coords: uv(i),
+                    bone_ids,
+                    bone_weights,
                 });
             }
         }
@@ -102,10 +66,6 @@ impl ModelMesh {
 
     pub fn render(&self, shader: &Shader, position: Matrix4<f32>, scale: Option<f32>) {
         if let Some(vertex_array) = &self.vertex_array {
-            unsafe {
-                gl::Enable(gl::DEPTH_TEST);
-                gl::Enable(gl::CULL_FACE);
-            }
             vertex_array.bind();
             let mut model = position;
             if let Some(scale) = scale {
@@ -120,8 +80,6 @@ impl ModelMesh {
                     std::ptr::null(),
                 );
                 DynamicVertexArray::<ModelMeshVertex>::unbind();
-                gl::Disable(gl::DEPTH_TEST);
-                gl::Disable(gl::CULL_FACE);
             }
         }
     }
@@ -163,6 +121,19 @@ impl ModelMesh {
         }
         bone_weights
     }
+}
+
+/// A skinned vertex's first four bones and weights, from its `weights`
+/// (bone id, weight). A vertex no bone of the skeleton weighs (a partly
+/// skinned mesh) follows bone 0 fully instead of collapsing to the origin.
+fn vertex_weights(weights: Option<&Vec<(usize, f32)>>) -> ((u32, u32, u32, u32), (f32, f32, f32, f32)) {
+    let weights = match weights {
+        Some(weights) if !weights.is_empty() => weights.as_slice(),
+        _ => return ((0, 0, 0, 0), (1.0, 0.0, 0.0, 0.0)),
+    };
+    let id = |n: usize| weights.get(n).map_or(0, |w| w.0 as u32);
+    let weight = |n: usize| weights.get(n).map_or(0.0, |w| w.1);
+    ((id(0), id(1), id(2), id(3)), (weight(0), weight(1), weight(2), weight(3)))
 }
 
 impl VertexAttributes for ModelMeshVertex {
@@ -219,5 +190,35 @@ mod tests {
         let root = bone(0, 0.5, Some(vec![bone(1, 0.25, None)]));
         let weights = &ModelMesh::get_bone_weights(root)[0];
         assert_eq!(weights, &vec![(0, 0.5), (1, 0.25)]);
+    }
+
+    #[test]
+    fn unweighted_vertices_follow_the_first_bone() {
+        assert_eq!(vertex_weights(None), ((0, 0, 0, 0), (1.0, 0.0, 0.0, 0.0)));
+        assert_eq!(vertex_weights(Some(&Vec::new())), ((0, 0, 0, 0), (1.0, 0.0, 0.0, 0.0)));
+        let two = vec![(3, 0.75), (5, 0.25)];
+        assert_eq!(vertex_weights(Some(&two)), ((3, 5, 0, 0), (0.75, 0.25, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn missing_normals_and_uvs_do_not_panic() {
+        // A skinned triangle whose third vertex no bone weighs, without
+        // normals or UVs.
+        let root = Bone {
+            id: 0,
+            name: "root".into(),
+            current_transform: Matrix4::from_scale(1.0),
+            offset_matrix: Matrix4::from_scale(1.0),
+            weights: vec![(0, 1.0), (1, 1.0)],
+            children: None,
+            last_translation: cgmath::Vector3::new(0.0, 0.0, 0.0),
+        };
+        let vertices = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        let mesh = ModelMesh::new(vertices.clone(), vec![0, 1, 2], Vec::new(), Vec::new(), Some(root), 0);
+        assert_eq!(mesh.vertices.len(), 3);
+        assert_eq!(mesh.vertices[2].bone_weights, (1.0, 0.0, 0.0, 0.0));
+        assert_eq!(mesh.vertices[2].normal, (0.0, 1.0, 0.0));
+        let mesh = ModelMesh::new(vertices, vec![0, 1, 2], Vec::new(), Vec::new(), None, 0);
+        assert_eq!(mesh.vertices[1].texture_coords, (0.0, 0.0));
     }
 }

@@ -225,7 +225,11 @@ impl State {
             let cycled = self.animation_cycled.entry(animation.name.clone()).or_insert(false);
             let before = *time;
             *time += delta_time * animation.ticks_per_second;
-            if *time > animation.duration {
+            if animation.duration <= 0.0 {
+                // A single pose: it neither moves nor loops.
+                *time = 0.0;
+                *cycled = false;
+            } else if *time > animation.duration {
                 *cycled = true;
                 *time = *time % animation.duration;
             } else {
@@ -364,5 +368,23 @@ mod tests {
         // ticks (x = 20) and blended half with the lead's x = 0.
         let x = state.get_pose().unwrap().transforms["Hips"].translation.x;
         assert!((x - 10.0).abs() < 1e-3, "{x}");
+    }
+
+    #[test]
+    fn a_clip_of_no_length_keeps_its_time_a_number() {
+        let mut state = State::new("pose");
+        state.root_rotation(true);
+        state.add_animation(Animation {
+            name: "pose".into(),
+            duration: 0.0,
+            ticks_per_second: 25.0,
+            channels: HashMap::new(),
+            root_channel: None,
+        });
+        state.update(0.1);
+        state.update(0.1);
+        assert_eq!(state.animation_times["pose"], 0.0);
+        assert!(state.root_yaw_delta.is_finite());
+        assert!(state.get_pose().is_some());
     }
 }

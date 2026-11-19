@@ -9,6 +9,7 @@ use crate::{
             Entity,
         },
         renderer::{
+            depth_pass, hdr,
             light::skylight::SkyLight,
             line::{Line, LineRenderer},
             text::{Fonts, Text},
@@ -135,6 +136,9 @@ impl Component for DebugController {
         if self.debug_ui && self.show_colliders {
             // Cache trimesh geometry for any colliders we haven't seen yet.
             // Terrain is static so world-space positions are computed once.
+            // Colliders that are gone (unloaded chunks) leave the cache.
+            let colliders = &scene.physics_engine.colliders;
+            self.trimesh_cache.retain(|handle, _| colliders.contains(*handle));
             for (handle, collider) in scene.physics_engine.colliders.iter() {
                 if self.trimesh_cache.contains_key(&handle) {
                     continue;
@@ -288,6 +292,10 @@ impl Component for DebugController {
     }
 
     fn render(&self, scene: &Scene, _: &Entity, view_projection: &Matrix4<f32>, _: &Matrix4<f32>) {
+        // Only into the camera's view: not into shadow maps or depth passes.
+        if !hdr::draws_to_view() || depth_pass::is_active() {
+            return;
+        }
         if self.show_rays {
             if let Some(terrain) = scene.get_component::<Terrain>() {
                 if let Some((line, _)) = &terrain.get_mouse_picker().ray {

@@ -77,6 +77,30 @@ impl Grip {
         }
     }
 
+    /// This grip, or one at its point (`Grip::at`) when its directions give
+    /// no frame (an `along` of zero length, a `facing` along `along`, a
+    /// value that is no number), as a grip set in the editor can.
+    fn usable(&self) -> Grip {
+        let finite = |v: &[f32]| v.iter().all(|x| x.is_finite());
+        let along = Vector3::from(self.along);
+        let facing = Vector3::from(self.facing);
+        let square = along.magnitude2() > 1e-12
+            && (facing - along * (facing.dot(along) / along.magnitude2())).magnitude2() > 1e-12;
+        let point = if finite(&self.point) { self.point } else { [0.0; 3] };
+        if square
+            && finite(&self.along)
+            && finite(&self.facing)
+            && self.roll.is_finite()
+            && finite(&self.point)
+        {
+            return self.clone();
+        }
+        Grip {
+            other_hand: self.other_hand.filter(|p| finite(p)),
+            ..Grip::at(point)
+        }
+    }
+
     /// The facing direction after the roll, square to `along`.
     fn rolled_facing(&self) -> Vector3<f32> {
         let along = Vector3::from(self.along).normalize();
@@ -143,9 +167,15 @@ fn fist(skeleton: &Skeleton, hand: Hand, root: &Matrix4<f32>) -> Option<Fist> {
     let across = positions[index] - positions[pinky];
     let thumb = (across - knuckles * across.dot(knuckles)).normalize();
     let palm = palm_of(hand, thumb, knuckles);
+    let centre = positions[wrist] + knuckles * (length * ALONG_FINGERS) + palm * OUT_OF_PALM;
+    // Joints on top of each other give no directions.
+    let finite = |v: Vector3<f32>| v.x.is_finite() && v.y.is_finite() && v.z.is_finite();
+    if !(finite(thumb) && finite(knuckles) && finite(centre.to_vec())) {
+        return None;
+    }
     Some(Fist {
         hand: wrist,
-        centre: positions[wrist] + knuckles * (length * ALONG_FINGERS) + palm * OUT_OF_PALM,
+        centre,
         thumb,
         knuckles,
         length,
@@ -158,6 +188,13 @@ fn frame(a: Vector3<f32>, b: Vector3<f32>) -> Matrix3<f32> {
     let x = a.normalize();
     let y = (b - x * b.dot(x)).normalize();
     Matrix3::from_cols(x, y, x.cross(y))
+}
+
+/// Whether every entry of `m` is a number: a NaN transform must not reach
+/// the shaders.
+fn is_finite_matrix(m: &Matrix4<f32>) -> bool {
+    let entries: &[f32; 16] = m.as_ref();
+    entries.iter().all(|v| v.is_finite())
 }
 
 /// The rotation without scale of a transform.
@@ -180,7 +217,8 @@ pub fn held_transform(
 ) -> Option<Matrix4<f32>> {
     let skeleton = model.skeleton()?;
     let fist = fist(&skeleton, hand, &model.root_transform(transform))?;
-    Some(place(grip, &fist))
+    let placed = place(&grip.usable(), &fist);
+    is_finite_matrix(&placed).then_some(placed)
 }
 
 fn place(grip: &Grip, fist: &Fist) -> Matrix4<f32> {
@@ -205,6 +243,7 @@ pub fn reach_with_other_hand(
     hand: Hand,
     weight: f32,
 ) {
+    let grip = &grip.usable();
     let Some(other_point) = grip.other_hand else {
         return;
     };
@@ -251,6 +290,9 @@ pub fn reach_with_other_hand(
         return;
     }
     let wrist = positions[chain.end] + (wanted - positions[chain.end]) * weight;
+    if !(wrist.x.is_finite() && wrist.y.is_finite() && wrist.z.is_finite()) {
+        return;
+    }
     skeleton.solve(&chain, inverse_root.transform_point(wrist));
 
     // Then turn the hand so its fist faces that way.
@@ -303,6 +345,32 @@ mod tests {
         let edge = placed.transform_vector(Vector3::unit_z());
         assert!((head - Vector3::unit_y()).magnitude() < 1e-5);
         assert!((edge - Vector3::unit_z()).magnitude() < 1e-5);
+    }
+
+    #[test]
+    fn grips_without_a_frame_fall_back_to_one_at_their_point() {
+        let mut grip = Grip::at([0.1, 0.2, 0.3]);
+        grip.facing = [2.0, 0.0, 0.0]; // along `along`
+        grip.other_hand = Some([0.5, 0.0, 0.0]);
+        let usable = grip.usable();
+        assert_eq!(usable.along, [1.0, 0.0, 0.0]);
+        assert_eq!(usable.facing, [0.0, 1.0, 0.0]);
+        assert_eq!(usable.point, [0.1, 0.2, 0.3]);
+        assert_eq!(usable.other_hand, Some([0.5, 0.0, 0.0]));
+        grip.along = [0.0; 3];
+        grip.facing = [0.0, 0.0, 1.0];
+        assert_eq!(grip.usable().along, [1.0, 0.0, 0.0]);
+        let fine = Grip::at([0.0; 3]);
+        assert_eq!(fine.usable(), fine);
+
+        let fist = Fist {
+            hand: 0,
+            centre: Point3::new(1.0, 2.0, 3.0),
+            thumb: Vector3::unit_y(),
+            knuckles: Vector3::unit_z(),
+            length: 0.1,
+        };
+        assert!(is_finite_matrix(&place(&grip.usable(), &fist)));
     }
 
     #[test]
