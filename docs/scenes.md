@@ -69,7 +69,8 @@ This is the starter scene a new project gets (plus a crate), in
 | `Camera(position, yaw_deg, pitch_deg, fov_deg, near, far, speed, free)` | `free` (default false): flies with WASD and the mouse in play mode |
 | `SkyLight(time_of_day, day_length_seconds, paused, cloud_coverage, …)` | `clouds`, `ambient_occlusion`, `hdr`, `weather`, `global_illumination` are optional |
 | `Light(kind: Point \| Spot \| Directional, color, intensity, range, inner_angle, outer_angle, bounce, enabled, shadows, flicker)` | Every field optional; see [lighting.md](lighting.md) |
-| `Terrain(seed, scatter: [(asset: …, density: …)])` | `density`: placements tried per 100 m × 100 m |
+| `Terrain(seed, generator: "Hills", settings: (…), scatter: [(asset: …, density: …, tag: "…")])` | `generator` (default `"Hills"`): the engine's world or one a script registers; `settings` (optional): that world's settings; per layer `density`: placements tried per 100 m × 100 m, `tag` (optional): what the world makes of the layer (e.g. `"tree"`) |
+| `Tree(params: (…), textures: (bark: …, bark_normal: …, leaves: …, leaves_opacity: …, leaves_normal: …))` | A tree grown from parameters; every `params` field and every texture is optional |
 | `Shape(kind: Cube \| Sphere \| Cylinder, color: (r, g, b))` | sRGB, 0 to 1; one metre across |
 | `Particles(effect: (...))` | Fire, smoke, dust, ...; every field optional, see [particles.md](particles.md) |
 | `Model(asset: …)` | A model asset (its id from the `.asset.ron` file) |
