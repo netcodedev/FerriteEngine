@@ -35,4 +35,7 @@ pub struct Input<T: Clone + ToString> {
     stencil_plane: Plane,
     cursor_plane: Plane,
     selection_plane: Plane,
+    /// Text, width and what is shown of it without focus (see
+    /// `display_text`).
+    display_cache: Option<(String, f32, String)>,
 }

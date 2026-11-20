@@ -13,7 +13,7 @@ use glfw::{
     WindowEvent::{self, CursorPos, MouseButton},
 };
 
-use crate::ui::{element_handle::UIElementHandle, UIElement};
+use crate::ui::{element_handle::UIElementHandle, elements::helpers::ellipsized, UIElement};
 
 struct Option_ {
     label: String,
@@ -38,6 +38,8 @@ pub struct Dropdown {
     button_text: FerriteText,
     chevron: FerriteText,
     menu: Plane,
+    /// Selected index and room the button's label was cut for.
+    shown_for: Option<(u32, f32)>,
 }
 
 impl Dropdown {
@@ -92,6 +94,7 @@ impl Dropdown {
             button_text,
             chevron: theme::icon(icons::CHEVRONS_UP_DOWN, 14.0, theme::TEXT_DIM),
             menu,
+            shown_for: None,
         }
     }
 
@@ -106,19 +109,18 @@ impl UIElement for Dropdown {
         let base = &self.region.position + &self.region.offset;
         self.button.set_position(base);
         // Keep the label clear of the chevron: cut with "…" if needed.
-        let label = self.selected_label().to_owned();
         let room = (self.region.size.width - 8.0 - self.chevron.measure_width() - 14.0).max(0.0);
-        let shown = if self.button_text.measure_str(&label) <= room {
-            label
-        } else {
-            let chars: Vec<char> = label.chars().collect();
-            (0..chars.len())
-                .rev()
-                .map(|keep| chars[..keep].iter().collect::<String>() + "\u{2026}")
-                .find(|candidate| self.button_text.measure_str(candidate) <= room)
-                .unwrap_or_else(|| "\u{2026}".into())
-        };
-        self.button_text.set_content(&shown);
+        let index = self.selected.read();
+        if self.shown_for != Some((index, room)) {
+            let label = self.selected_label();
+            let shown = if self.button_text.measure_str(label) <= room {
+                label.to_owned()
+            } else {
+                ellipsized(label, room, |s| self.button_text.measure_str(s))
+            };
+            self.button_text.set_content(&shown);
+            self.shown_for = Some((index, room));
+        }
         let text_y = theme::center_y(&self.button_text, self.region.size.height);
         self.button_text
             .prepare_render_at(&base + (8.0, text_y, 1.0));
@@ -269,5 +271,32 @@ impl UIElement for Dropdown {
             opt.bg.set_z_index(z_index + 3.0);
             opt.text.set_z_index(z_index + 4.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_button_shows_the_selected_label_cut_to_fit() {
+        ferrite::core::headless::enable();
+        let mut scene = Scene::new();
+        let selected = DataSource::new(0);
+        let long = "an option with a far too long name".to_string();
+        let mut dropdown = Dropdown::new(Position::default(), Size::new(120.0, 24.0), vec![long.clone(), "b".into()], selected.clone());
+        dropdown.update(&mut scene);
+        let cut = dropdown.button_text.content.clone();
+        assert!(cut.ends_with('\u{2026}') && cut.len() < long.len(), "{cut}");
+
+        selected.write(1);
+        dropdown.update(&mut scene);
+        assert_eq!(dropdown.button_text.content, "b");
+        selected.write(0);
+        dropdown.update(&mut scene);
+        assert_eq!(dropdown.button_text.content, cut);
+        dropdown.region.size.width = 400.0;
+        dropdown.update(&mut scene);
+        assert_eq!(dropdown.button_text.content, long);
     }
 }

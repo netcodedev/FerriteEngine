@@ -17,6 +17,8 @@ pub struct Label {
     text: FerriteText,
     /// Longer text is cut with "…".
     max_width: Option<f32>,
+    /// Content and width the shown text was cut for.
+    fitted_for: Option<(String, Option<f32>)>,
 }
 
 impl Label {
@@ -36,6 +38,7 @@ impl Label {
             content,
             source: None,
             max_width: None,
+            fitted_for: None,
         }
     }
 
@@ -51,6 +54,7 @@ impl Label {
 
     pub fn set_font(&mut self, font: Fonts, size: f32) {
         self.text.set_font(font, size);
+        self.fitted_for = None;
     }
 
     /// Dimmed secondary text.
@@ -62,8 +66,19 @@ impl Label {
 
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.content = text.into();
+        self.refit();
+    }
+
+    /// Show the content cut to `max_width`, unless it already is.
+    fn refit(&mut self) {
+        if let Some((content, width)) = &self.fitted_for {
+            if *content == self.content && *width == self.max_width {
+                return;
+            }
+        }
         let shown = self.fitted();
         self.text.set_content(&shown);
+        self.fitted_for = Some((self.content.clone(), self.max_width));
     }
 
     /// Cut the text with "…" where it gets wider than `width`; `None`
@@ -104,8 +119,7 @@ impl UIElement for Label {
         if let Some(src) = &self.source {
             self.content = src.read();
         }
-        let shown = self.fitted();
-        self.text.set_content(&shown);
+        self.refit();
         self.text.prepare_render_at(self.region.get_absolute_position());
         self.region.size = self.text.get_size();
     }
@@ -141,5 +155,39 @@ impl UIElement for Label {
     fn set_z_index(&mut self, z_index: f32) {
         self.region.position.z = z_index;
         self.text.set_z_index(z_index);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_cut_text_follows_content_width_and_font() {
+        ferrite::core::headless::enable();
+        let mut scene = Scene::new();
+        let long = "a rather long label that does not fit";
+        let mut label = Label::new(long, 14.0);
+        label.set_max_width(Some(80.0));
+        label.update(&mut scene);
+        let cut = label.text.content.clone();
+        assert!(cut.ends_with('\u{2026}'), "{cut}");
+
+        label.set_text("short");
+        assert_eq!(label.text.content, "short");
+        label.set_text(long);
+        assert_eq!(label.text.content, cut);
+
+        label.set_max_width(None);
+        label.update(&mut scene);
+        assert_eq!(label.text.content, long);
+
+        label.set_max_width(Some(80.0));
+        label.update(&mut scene);
+        assert_eq!(label.text.content, cut);
+        // A bigger font fits fewer chars.
+        label.set_font(Fonts::Inter, 20.0);
+        label.update(&mut scene);
+        assert!(label.text.content.chars().count() < cut.chars().count());
     }
 }
