@@ -108,6 +108,17 @@ impl ModelMesh {
                 bone_weights[weight.0 as usize].push((bone.id, weight.1));
             }
         }
+        // A vertex holds 4 influences: keep the strongest, summing to 1.
+        for weights in &mut bone_weights {
+            if weights.len() > 4 {
+                weights.sort_by(|a, b| b.1.total_cmp(&a.1));
+                weights.truncate(4);
+                let sum: f32 = weights.iter().map(|w| w.1).sum();
+                if sum > 0.0 {
+                    weights.iter_mut().for_each(|w| w.1 /= sum);
+                }
+            }
+        }
         bone_weights
     }
 }
@@ -139,7 +150,47 @@ impl VertexAttributes for ModelMeshVertex {
 
 #[cfg(test)]
 mod tests {
+    use cgmath::{Matrix4, SquareMatrix, Vector3, Zero};
+
     use super::*;
+
+    fn bone(id: usize, weight: f32, children: Option<Vec<Bone>>) -> Bone {
+        Bone {
+            id,
+            name: format!("b{id}"),
+            offset_matrix: Matrix4::identity(),
+            weights: vec![(0, weight)],
+            children,
+            current_transform: Matrix4::identity(),
+            last_translation: Vector3::zero(),
+        }
+    }
+
+    #[test]
+    fn a_vertex_keeps_its_four_strongest_influences_normalized() {
+        // Six influences on vertex 0, the weakest first in tree order.
+        let leaves = vec![
+            bone(1, 0.05, None),
+            bone(2, 0.3, None),
+            bone(3, 0.2, None),
+            bone(4, 0.1, None),
+            bone(5, 0.25, None),
+        ];
+        let root = bone(0, 0.1, Some(leaves));
+        let weights = &ModelMesh::get_bone_weights(root)[0];
+        let ids: Vec<usize> = weights.iter().map(|w| w.0).collect();
+        assert_eq!(ids, vec![2, 5, 3, 0]);
+        let sum: f32 = weights.iter().map(|w| w.1).sum();
+        assert!((sum - 1.0).abs() < 1e-5, "{sum}");
+        assert!((weights[0].1 - 0.3 / 0.85).abs() < 1e-5);
+    }
+
+    #[test]
+    fn up_to_four_influences_are_kept_as_they_are() {
+        let root = bone(0, 0.5, Some(vec![bone(1, 0.25, None)]));
+        let weights = &ModelMesh::get_bone_weights(root)[0];
+        assert_eq!(weights, &vec![(0, 0.5), (1, 0.25)]);
+    }
 
     #[test]
     fn unweighted_vertices_follow_the_first_bone() {

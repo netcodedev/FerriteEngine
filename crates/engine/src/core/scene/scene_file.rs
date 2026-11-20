@@ -802,7 +802,7 @@ pub fn default_scene_file() -> SceneFile {
                     pitch_deg: 0.0,
                     fov_deg: 64.0,
                     near: 0.1,
-                    far: 1000.0,
+                    far: 20000.0,
                     speed: 10.0,
                     free: false,
                     sensitivity: crate::core::camera::DEFAULT_MOUSE_SENSITIVITY,
@@ -854,6 +854,11 @@ mod tests {
             .iter()
             .any(|c| matches!(c, ComponentData::SkyLight { time_of_day, .. } if *time_of_day > 0.3)));
         assert!(components.iter().any(|c| matches!(c, ComponentData::Terrain { .. })));
+        // Sun shadows, and a camera that sees the terrain's horizon.
+        assert_eq!(file.settings.shadow_map_size, Some((4096, 4096)));
+        assert!(components
+            .iter()
+            .any(|c| matches!(c, ComponentData::Camera { far, .. } if *far >= 20000.0)));
         let mut ids: Vec<u64> = file.entities.iter().map(|e| e.id).collect();
         ids.sort();
         ids.dedup();

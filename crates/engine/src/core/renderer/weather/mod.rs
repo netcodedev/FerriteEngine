@@ -81,8 +81,9 @@ pub struct Footprint {
     pub length: f32,
 }
 
-/// Most footprints taken per frame; must match `MAX_STAMPS` in
-/// `snow_update.glsl`.
+/// Most footprints pressed in one step of the trail map; must match
+/// `MAX_STAMPS` in `snow_update.glsl`. A frame takes up to four times as
+/// many, in several steps.
 pub const MAX_FOOTPRINTS: usize = 32;
 
 /// Leave a footprint in the snow, if there is any. Anything that walks can

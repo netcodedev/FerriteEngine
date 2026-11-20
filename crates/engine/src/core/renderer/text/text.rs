@@ -261,12 +261,11 @@ impl Text {
         let mut last_glyph_id = None;
         for c in text.chars() {
             if c.is_control() {
-                match c {
-                    '\r' => {
-                        caret = point(0.0, caret.y + advance_height);
-                    }
-                    '\n' => {}
-                    _ => {}
+                // A line ends at '\n' ("\r\n" too); other control
+                // characters, '\r' among them, are left out.
+                if c == '\n' {
+                    caret = point(0.0, caret.y + advance_height);
+                    last_glyph_id = None;
                 }
                 continue;
             }

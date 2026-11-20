@@ -208,7 +208,7 @@ impl State {
     pub fn new(name: &str) -> Self {
         State {
             name: name.to_string(),
-            animations: HashMap::new(),
+            animations: Vec::new(),
             animation_times: HashMap::new(),
             animation_cycled: HashMap::new(),
             sync_animations: false,
@@ -220,9 +220,9 @@ impl State {
 
     pub fn update(&mut self, delta_time: f32) {
         let mut turned = 0.0;
-        for (name, animation) in &self.animations {
-            let time = self.animation_times.entry(name.clone()).or_insert(0.0);
-            let cycled = self.animation_cycled.entry(name.clone()).or_insert(false);
+        for animation in &self.animations {
+            let time = self.animation_times.entry(animation.name.clone()).or_insert(0.0);
+            let cycled = self.animation_cycled.entry(animation.name.clone()).or_insert(false);
             let before = *time;
             *time += delta_time * animation.ticks_per_second;
             if animation.duration <= 0.0 {
@@ -247,7 +247,9 @@ impl State {
         let mut final_pose: Option<Pose> = None;
         let mut cycled = false;
         let mut progress = None;
-        for (name, animation) in &self.animations {
+        let mut blended = 0;
+        for animation in &self.animations {
+            let name = &animation.name;
             if let Some(time) = self.animation_times.get(name) {
                 cycled |= *self.animation_cycled.get(name).unwrap();
                 if self.sync_animations && progress.is_none() {
@@ -264,8 +266,10 @@ impl State {
                     animation.sample(sample_time)
                 };
                 new_pose.cycle_completed = cycled;
+                blended += 1;
                 if let Some(pose) = final_pose {
-                    new_pose = pose.interpolate(&new_pose, 0.5);
+                    // The k-th clip weighs 1/k, so all are blended evenly.
+                    new_pose = pose.interpolate(&new_pose, 1.0 / blended as f32);
                     new_pose.cycle_completed = cycled;
                     final_pose = Some(new_pose);
                 } else {
@@ -287,7 +291,10 @@ impl State {
     }
 
     pub fn add_animation(&mut self, animation: Animation) {
-        self.animations.insert(animation.name.clone(), animation);
+        match self.animations.iter_mut().find(|a| a.name == animation.name) {
+            Some(existing) => *existing = animation,
+            None => self.animations.push(animation),
+        }
     }
 
     pub fn add_transition(
@@ -314,9 +321,54 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
+    use crate::core::model::Channel;
+    use cgmath::{Quaternion, Vector3};
+
+    /// A clip that holds the hips at `x` for `duration` ticks.
+    fn hold(name: &str, x: f32, duration: f32) -> Animation {
+        let channel = Channel {
+            bone_id: "Hips".into(),
+            position_keys: vec![(0.0, Vector3::new(x, 0.0, 0.0))],
+            rotation_keys: vec![(0.0, Quaternion::new(1.0, 0.0, 0.0, 0.0))],
+            scaling_keys: vec![(0.0, Vector3::new(1.0, 1.0, 1.0))],
+        };
+        Animation {
+            name: name.into(),
+            duration,
+            ticks_per_second: 1.0,
+            channels: HashMap::from([("Hips".to_string(), channel)]),
+            root_channel: None,
+        }
+    }
+
+    #[test]
+    fn the_clips_of_a_state_are_blended_evenly() {
+        let mut state = State::new("three");
+        state.add_animation(hold("a", 0.0, 10.0));
+        state.add_animation(hold("b", 3.0, 10.0));
+        state.add_animation(hold("c", 6.0, 10.0));
+        state.update(1.0);
+        let pose = state.get_pose().unwrap();
+        let x = pose.transforms["Hips"].translation.x;
+        assert!((x - 3.0).abs() < 1e-4, "{x}");
+    }
+
+    #[test]
+    fn the_first_clip_leads_when_synced() {
+        let mut state = State::new("synced");
+        state.sync_animations(true);
+        state.add_animation(hold("lead", 0.0, 10.0));
+        let mut other = hold("other", 0.0, 40.0);
+        other.channels.get_mut("Hips").unwrap().position_keys =
+            vec![(0.0, Vector3::new(0.0, 0.0, 0.0)), (40.0, Vector3::new(40.0, 0.0, 0.0))];
+        state.add_animation(other);
+        state.update(5.0);
+        // Halfway through the lead, so "other" is sampled at 20 of 40
+        // ticks (x = 20) and blended half with the lead's x = 0.
+        let x = state.get_pose().unwrap().transforms["Hips"].translation.x;
+        assert!((x - 10.0).abs() < 1e-3, "{x}");
+    }
 
     #[test]
     fn a_clip_of_no_length_keeps_its_time_a_number() {

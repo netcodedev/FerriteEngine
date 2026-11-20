@@ -869,7 +869,7 @@ impl Component for Terrain {
             .collect();
         self.loaded.set(eye, &loaded);
         if let Some(source) = &self.source {
-            self.far_scatter.update(source, self.horizon.heights(), &self.scatter.specs());
+            self.far_scatter.update(source, self.horizon.heights(), &self.scatter);
             self.far_scatter.leave_to_chunks(eye, &planted);
         }
         if let Some(camera_component) = scene.get_active_camera() {

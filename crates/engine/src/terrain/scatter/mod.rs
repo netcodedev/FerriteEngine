@@ -187,6 +187,17 @@ impl Scatter {
         self.removed.contains(&(salt, removal_key(position)))
     }
 
+    /// The instances taken out, by layer salt and spot (`[x, z]` to the
+    /// millimetre, see `spot_key`), for the far models (`far_scatter`).
+    pub fn removed_spots(&self) -> HashSet<(u64, [i32; 2])> {
+        self.removed.iter().map(|&(salt, [x, _, z])| (salt, [x, z])).collect()
+    }
+
+    /// How many instances were taken out: changes when one more is.
+    pub fn removed_count(&self) -> usize {
+        self.removed.len()
+    }
+
     /// What every chunk should carry right now, one entry per active layer.
     pub fn specs(&self) -> Vec<ScatterSpec> {
         let mut specs: Vec<ScatterSpec> = Vec::new();
@@ -315,6 +326,12 @@ fn removal_key(position: Point3<f32>) -> [i32; 3] {
         (position.y * 1000.0).round() as i32,
         (position.z * 1000.0).round() as i32,
     ]
+}
+
+/// A spot `(x, z)` as `removed_spots` holds it.
+pub fn spot_key(x: f32, z: f32) -> [i32; 2] {
+    let [x, _, z] = removal_key(Point3::new(x, 0.0, z));
+    [x, z]
 }
 
 fn property_layer(name: &str, prefix: &str) -> Option<usize> {

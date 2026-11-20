@@ -36,7 +36,8 @@ const ACTIONS_HEIGHT: f32 = 30.0;
 pub fn entity_icon(entity: &Entity) -> &'static str {
     let names: Vec<String> = entity.components().iter().map(|c| c.display_name()).collect();
     let has = |name: &str| names.iter().any(|n| n == name);
-    if has("Player controller") {
+    // The player template's marker component (see `ComponentData::Player`).
+    if has("Bone colliders") {
         icons::USER
     } else if has("Camera") {
         icons::CAMERA

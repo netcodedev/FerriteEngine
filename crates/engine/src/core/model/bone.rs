@@ -1,4 +1,4 @@
-use cgmath::Vector3;
+use cgmath::{Transform, Vector3};
 
 use super::{Bone, Pose};
 
@@ -47,9 +47,15 @@ impl Bone {
                 self.current_transform = transform.to_matrix_4();
             }
         }
+        // A root that is not a bone and not animated (a Blender "Armature"
+        // node above the hips) passes the root on to the bones below it.
+        let pass_root = is_root && transform.is_none() && self.id == usize::MAX;
         if let Some(children) = &mut self.children {
             for child in children {
-                child.apply_pose(pose, false);
+                let motion = child.apply_pose(pose, pass_root);
+                if pass_root {
+                    root_motion += self.current_transform.transform_vector(motion);
+                }
             }
         }
         root_motion
