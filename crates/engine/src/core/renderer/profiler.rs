@@ -1,4 +1,4 @@
-//! GPU time per render pass, from `GL_TIMESTAMP` queries: a timestamp is
+//! GPU time per render pass, from timestamp queries: a timestamp is
 //! written where each pass starts and one at the end of the frame, and
 //! the time between two is the pass's. Results are read a few frames
 //! later, when the GPU has them, so the pipeline never waits for them.
@@ -53,7 +53,7 @@ const FRAMES: usize = 4;
 const MARKS: usize = PASSES + 1;
 
 struct Frame {
-    queries: [u32; MARKS],
+    queries: crate::core::gfx::Queries,
     /// Which pass each written timestamp starts (`None`: the frame's end).
     passes: Vec<Option<Pass>>,
     pending: bool,
@@ -126,10 +126,8 @@ impl Profiler {
     fn new() -> Self {
         let frames = (0..FRAMES)
             .map(|_| {
-                let mut queries = [0u32; MARKS];
-                unsafe { gl::GenQueries(MARKS as i32, queries.as_mut_ptr()) };
                 Frame {
-                    queries,
+                    queries: crate::core::gfx::Queries::new(MARKS as u32),
                     passes: Vec::with_capacity(MARKS),
                     pending: false,
                 }
@@ -143,11 +141,7 @@ impl Profiler {
         }
     }
 
-    fn delete(self) {
-        for frame in &self.frames {
-            unsafe { gl::DeleteQueries(MARKS as i32, frame.queries.as_ptr()) };
-        }
-    }
+    fn delete(self) {}
 
     fn collect(&mut self) {
         for index in 0..self.frames.len() {
@@ -155,16 +149,9 @@ impl Profiler {
             if !frame.pending || frame.passes.is_empty() {
                 continue;
             }
-            let last = frame.queries[frame.passes.len() - 1];
-            let mut available = 0;
-            unsafe { gl::GetQueryObjectiv(last, gl::QUERY_RESULT_AVAILABLE, &mut available) };
-            if available == 0 {
+            let Some(stamps) = frame.queries.read_first(frame.passes.len() as u32) else {
                 continue;
-            }
-            let mut stamps = [0u64; MARKS];
-            for (i, stamp) in stamps.iter_mut().enumerate().take(frame.passes.len()) {
-                unsafe { gl::GetQueryObjectui64v(frame.queries[i], gl::QUERY_RESULT, stamp) };
-            }
+            };
             let mut totals = [0.0f32; PASSES];
             for i in 0..frame.passes.len() - 1 {
                 if let Some(pass) = frame.passes[i] {
@@ -209,7 +196,7 @@ impl Profiler {
         if pass.is_some() && frame.passes.last() == Some(&pass) {
             return;
         }
-        unsafe { gl::QueryCounter(frame.queries[frame.passes.len()], gl::TIMESTAMP) };
+        frame.queries.timestamp(frame.passes.len() as u32);
         frame.passes.push(pass);
         if pass.is_none() {
             frame.pending = true;

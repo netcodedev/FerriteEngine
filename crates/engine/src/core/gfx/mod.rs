@@ -665,6 +665,14 @@ impl Queries {
     pub fn read(&self) -> Option<Vec<u64>> {
         device().read_timestamps(self.raw, self.count)
     }
+
+    /// The first `count` timestamps (ns), once the GPU has written them.
+    pub fn read_first(&self, count: u32) -> Option<Vec<u64>> {
+        if count == 0 {
+            return Some(Vec::new());
+        }
+        device().read_timestamps(self.raw, count.min(self.count))
+    }
 }
 
 impl Drop for Queries {

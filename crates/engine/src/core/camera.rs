@@ -133,9 +133,7 @@ impl Projection {
             }
             self.aspect = *width as f32 / *height as f32;
             self.calc_matrix();
-            unsafe {
-                gl::Viewport(0, 0, *width, *height);
-            }
+            crate::core::gfx::set_viewport(crate::core::gfx::Rect::sized(*width as u32, *height as u32));
         }
     }
 
