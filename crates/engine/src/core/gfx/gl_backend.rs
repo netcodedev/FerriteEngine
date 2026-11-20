@@ -41,6 +41,8 @@ pub(super) struct GlDevice {
     locations: RefCell<HashMap<GLuint, HashMap<String, GLint>>>,
     /// Whether `GL_FRAMEBUFFER_SRGB` is on (see `bind_framebuffer`).
     framebuffer_srgb: Cell<bool>,
+    /// Samples of the default framebuffer.
+    window_samples: u32,
 }
 
 struct GlPipeline {
@@ -58,6 +60,14 @@ struct TargetInfo {
 
 impl GlDevice {
     pub(super) fn new() -> Self {
+        let mut samples = 0;
+        unsafe {
+            // The default framebuffer is bound while the context is new.
+            gl::GetIntegerv(gl::SAMPLES, &mut samples);
+            // Cube maps (the lights' shadows) filter across the edges of
+            // their faces, as Vulkan's always do.
+            gl::Enable(gl::TEXTURE_CUBE_MAP_SEAMLESS);
+        }
         GlDevice {
             pipelines: RefCell::new(Vec::new()),
             vertex_arrays: RefCell::new(HashMap::new()),
@@ -73,6 +83,7 @@ impl GlDevice {
             stencil_reference: Cell::new(0),
             locations: RefCell::new(HashMap::new()),
             framebuffer_srgb: Cell::new(false),
+            window_samples: samples.max(1) as u32,
         }
     }
 
@@ -893,6 +904,10 @@ impl Device for GlDevice {
             gl::PixelStorei(gl::PACK_ALIGNMENT, 4);
         }
         pixels
+    }
+
+    fn window_samples(&self) -> u32 {
+        self.window_samples
     }
 
     fn begin_frame(&self) {}
