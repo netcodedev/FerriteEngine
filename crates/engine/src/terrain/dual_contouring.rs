@@ -59,6 +59,13 @@ impl DensityField<'_> {
     /// and triangles facing out of the ground. `None` where the cube holds
     /// no surface.
     pub fn dual_contouring(&self, step: i32, surface: &dyn ChunkSurface) -> Option<(Vec<TerrainVertex>, Vec<u32>)> {
+        let (positions, indices) = self.dual_contouring_shape(step, surface)?;
+        let vertices = positions.into_iter().map(|p| self.painted(p, surface)).collect();
+        Some((vertices, indices))
+    }
+
+    /// `dual_contouring`'s vertex positions and triangles, unpainted.
+    pub fn dual_contouring_shape(&self, step: i32, surface: &dyn ChunkSurface) -> Option<(Vec<[f32; 3]>, Vec<u32>)> {
         let n = CHUNK_SIZE as i32 / step + 3;
         let cells = n - 1;
         let local = |i: i32| (i - 1) * step;
@@ -164,8 +171,7 @@ impl DensityField<'_> {
         if indices.is_empty() {
             return None;
         }
-        let vertices = positions.into_iter().map(|p| self.painted(p, surface)).collect();
-        Some((vertices, indices))
+        Some((positions, indices))
     }
 
     /// The vertex of the cell with its first corner at chunk-local

@@ -15,6 +15,7 @@ use std::{
     collections::HashSet,
     rc::Rc,
     sync::{
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, TryRecvError},
         Arc,
     },
@@ -96,13 +97,14 @@ fn keep_draw(x: f32, z: f32, salt: u64) -> f32 {
 /// (sunk with it, see `horizon::SINK`), thinned with distance (see
 /// `DENSE_REACH`), leaving out the instances taken out (`removed`, see
 /// `Scatter::removed_spots`). The rows of columns are shared out among
-/// threads.
+/// threads. `None` once `cancel` is set (the job was superseded).
 fn place(
     source: &dyn TerrainSource,
     heights: &HeightGrid,
     layers: &[Layer],
     removed: &HashSet<(u64, [i32; 2])>,
-) -> Placed {
+    cancel: &AtomicBool,
+) -> Option<Placed> {
     let centre = heights.centre();
     let size = CHUNK_SIZE as f64;
     let reach = horizon::reach();
@@ -111,6 +113,9 @@ fn place(
     let rows: Vec<i32> = (cz - span..=cz + span).collect();
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, 8);
     let row = |z: i32, out: &mut Placed| {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
         for (layer, slots) in layers.iter().zip(out.iter_mut()) {
             for x in cx - span..=cx + span {
                 let distance = super::streaming::column_distance((x, z), centre[0], centre[1]);
@@ -156,6 +161,9 @@ fn place(
             .collect();
         handles.into_iter().map(|h| h.join().expect("far scatter thread")).collect()
     });
+    if cancel.load(Ordering::Relaxed) {
+        return None;
+    }
     let mut all = empty();
     for part in parts {
         for (layer, slots) in part.into_iter().enumerate() {
@@ -164,7 +172,7 @@ fn place(
             }
         }
     }
-    all
+    Some(all)
 }
 
 /// What the models drawn (or being placed) were placed for.
@@ -206,9 +214,25 @@ impl Drop for Batch {
 }
 
 /// The far models a terrain draws; see the module.
+/// A placement on its thread: what for, and the flag that gives it up.
+struct Pending {
+    key: Key,
+    specs: Vec<ScatterSpec>,
+    placed: Receiver<Option<Placed>>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Pending {
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+}
+
 pub struct FarScatter {
     made: Option<Key>,
-    pending: Option<(Key, Vec<ScatterSpec>, Receiver<Placed>)>,
+    /// One placement at a time: a superseded one is given up, and the
+    /// latest is started once it has stopped.
+    pending: Option<Pending>,
     batches: Vec<Batch>,
     /// The corners of a picture's card, shared by every batch.
     corners: GLuint,
@@ -232,8 +256,16 @@ impl FarScatter {
     /// Forget everything (the world changed).
     pub fn invalidate(&mut self) {
         self.made = None;
+        self.cancel_pending();
         self.pending = None;
         self.batches.clear();
+    }
+
+    /// Give up the placement running, if any (it stops early).
+    fn cancel_pending(&self) {
+        if let Some(pending) = &self.pending {
+            pending.cancel.store(true, Ordering::Relaxed);
+        }
     }
 
     /// How many models are drawn (at most: those near the camera are left
@@ -246,20 +278,25 @@ impl FarScatter {
     /// that changed, or the layers or what was taken out did), and take up
     /// what was placed.
     pub fn update(&mut self, source: &Arc<dyn TerrainSource>, heights: Option<&Arc<HeightGrid>>, scatter: &Scatter) {
-        if let Some((_, _, rx)) = &self.pending {
-            match rx.try_recv() {
+        if let Some(pending) = &self.pending {
+            match pending.placed.try_recv() {
                 Ok(placed) => {
-                    let (key, specs, _) = self.pending.take().expect("pending");
-                    self.upload(&specs, placed);
-                    self.made = Some(key);
+                    let pending = self.pending.take().expect("pending");
+                    // Given up: what came (if anything) is not wanted.
+                    if let Some(placed) = placed.filter(|_| !pending.cancelled()) {
+                        self.upload(&pending.specs, placed);
+                        self.made = Some(pending.key);
+                    }
                 }
                 // Placing panicked (reported by the panic hook): keep
                 // drawing what there is, and try again when the ground or
                 // the layers change.
                 Err(TryRecvError::Disconnected) => {
-                    log::error!("the terrain's far models could not be placed");
-                    let (key, _, _) = self.pending.take().expect("pending");
-                    self.made = Some(key);
+                    let pending = self.pending.take().expect("pending");
+                    if !pending.cancelled() {
+                        log::error!("the terrain's far models could not be placed");
+                        self.made = Some(pending.key);
+                    }
                 }
                 Err(TryRecvError::Empty) => {}
             }
@@ -273,25 +310,46 @@ impl FarScatter {
             layers: specs.iter().map(Layer::of).collect(),
             removed: scatter.removed_count(),
         };
-        if self.made.as_ref() == Some(&wanted) || self.pending.as_ref().is_some_and(|(key, _, _)| *key == wanted) {
+        let running = self.pending.as_ref().filter(|pending| !pending.cancelled());
+        if running.is_some_and(|pending| pending.key == wanted) {
+            return;
+        }
+        if self.made.as_ref() == Some(&wanted) {
+            // What is drawn is what is wanted again.
+            self.cancel_pending();
             return;
         }
         if wanted.layers.is_empty() {
             self.batches.clear();
             self.made = Some(wanted);
+            self.cancel_pending();
             self.pending = None;
             return;
         }
+        if self.pending.is_some() {
+            // Superseded: given up, and the latest is placed once it has
+            // stopped (on a later update).
+            self.cancel_pending();
+            return;
+        }
         let (tx, rx) = mpsc::channel();
-        let (source, job, removed) = (source.clone(), wanted.clone(), scatter.removed_spots());
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (source, job, removed, flag) = (source.clone(), wanted.clone(), scatter.removed_spots(), cancel.clone());
         std::thread::spawn(move || {
             let started = std::time::Instant::now();
-            let placed = place(&*source, &job.heights, &job.layers, &removed);
-            let count: usize = placed.iter().flatten().map(Vec::len).sum();
-            log::debug!("far scatter: {count} models placed in {:.0} ms", started.elapsed().as_secs_f64() * 1000.0);
+            let placed = place(&*source, &job.heights, &job.layers, &removed, &flag);
+            if let Some(placed) = &placed {
+                let count: usize = placed.iter().flatten().map(Vec::len).sum();
+                log::debug!("far scatter: {count} models placed in {:.0} ms", started.elapsed().as_secs_f64() * 1000.0);
+            }
             let _ = tx.send(placed);
         });
-        self.pending = Some((wanted, specs, rx));
+        self.pending = Some(Pending {
+            key: wanted,
+            specs,
+            placed: rx,
+            cancel,
+        });
     }
 
     /// The chunks of the columns `planted` (around the camera at `eye`)
@@ -450,7 +508,7 @@ mod tests {
             attempts: 30,
             variants: 3,
         };
-        let placed = place(&*source, &built.heights, &[layer.clone()], &HashSet::new());
+        let placed = place(&*source, &built.heights, &[layer.clone()], &HashSet::new(), &AtomicBool::new(false)).unwrap();
         let all: Vec<[f32; 5]> = placed[0].iter().flatten().copied().collect();
         assert!(all.len() > 10_000, "{}", all.len());
         let far = all.iter().map(|m| m[0].hypot(m[2])).fold(0.0f32, f32::max);
@@ -475,6 +533,19 @@ mod tests {
     }
 
     #[test]
+    fn a_placement_given_up_places_nothing() {
+        let source = Hills::create(3, HillsSettings::default());
+        let built = horizon::build(&*source, [0.0, 0.0]);
+        let layer = Layer {
+            tag: String::new(),
+            salt: 77,
+            attempts: 30,
+            variants: 1,
+        };
+        assert!(place(&*source, &built.heights, &[layer], &HashSet::new(), &AtomicBool::new(true)).is_none());
+    }
+
+    #[test]
     fn instances_taken_out_are_not_drawn_far_away() {
         let source = Hills::create(3, HillsSettings::default());
         let built = horizon::build(&*source, [0.0, 0.0]);
@@ -487,12 +558,12 @@ mod tests {
         let spots = |placed: &Placed| -> Vec<(f32, f32)> {
             placed[0][0].iter().map(|m| (m[0], m[2])).collect()
         };
-        let before = spots(&place(&*source, &built.heights, &[layer.clone()], &HashSet::new()));
+        let before = spots(&place(&*source, &built.heights, &[layer.clone()], &HashSet::new(), &AtomicBool::new(false)).unwrap());
         let taken = before[before.len() / 2];
         // Felled where its chunk planted it: same spot, the chunk's height.
         let mut scatter = Scatter::new(Vec::new());
         scatter.mark_removed(77, Point3::new(taken.0, 12.345, taken.1));
-        let after = spots(&place(&*source, &built.heights, &[layer], &scatter.removed_spots()));
+        let after = spots(&place(&*source, &built.heights, &[layer], &scatter.removed_spots(), &AtomicBool::new(false)).unwrap());
         assert_eq!(after.len(), before.len() - 1);
         assert!(!after.contains(&taken));
     }

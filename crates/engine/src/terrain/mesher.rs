@@ -126,6 +126,29 @@ pub fn mesh_chunk(surface: &dyn ChunkSurface) -> MeshedChunk {
     MeshedChunk { levels, ground_indices }
 }
 
+/// The finest level of `surface`'s chunk alone, unpainted and without a
+/// skirt: the ground of `mesh_chunk`'s finest level as the collider takes
+/// it, for where nothing is drawn (a server without a GPU). Its vertices
+/// carry their positions only.
+pub fn mesh_collider(surface: &dyn ChunkSurface) -> MeshedChunk {
+    let field = DensityField { field: surface.field() };
+    let shape = (!field.field.is_solid()).then(|| field.mesh_level_shape(1, surface)).flatten();
+    let Some((positions, indices)) = shape else {
+        return MeshedChunk {
+            levels: Vec::new(),
+            ground_indices: 0,
+        };
+    };
+    let vertices = positions
+        .into_iter()
+        .map(|position| TerrainVertex { position, ..TerrainVertex::default() })
+        .collect();
+    MeshedChunk {
+        ground_indices: indices.len(),
+        levels: vec![(vertices, indices)],
+    }
+}
+
 /// The density around one chunk (see `ChunkField`), and what meshing asks
 /// of it between its whole metres.
 pub struct DensityField<'a> {
@@ -250,6 +273,13 @@ impl DensityField<'_> {
     /// fill.
     /// `None` where the cube holds no surface.
     pub fn surface_nets(&self, step: i32, surface: &dyn ChunkSurface) -> Option<(Vec<TerrainVertex>, Vec<u32>)> {
+        let (positions, indices) = self.surface_nets_shape(step)?;
+        let vertices = positions.into_iter().map(|p| self.painted(p, surface)).collect();
+        Some((vertices, indices))
+    }
+
+    /// `surface_nets`'s vertex positions and triangles, unpainted.
+    fn surface_nets_shape(&self, step: i32) -> Option<(Vec<[f32; 3]>, Vec<u32>)> {
         let samples = (CHUNK_SIZE as i32 / step + 3) as u32;
         let shape = RuntimeShape::<u32, 3>::new([samples; 3]);
         let mut sdf = vec![0.0f32; shape.usize()];
@@ -263,15 +293,12 @@ impl DensityField<'_> {
         if buffer.indices.is_empty() {
             return None;
         }
-        let vertices = buffer
+        let positions = buffer
             .positions
             .iter()
-            .map(|p| {
-                let position = self.onto_surface(p.map(|c| (c - 1.0) * step as f32), step as f32);
-                self.painted(position, surface)
-            })
+            .map(|p| self.onto_surface(p.map(|c| (c - 1.0) * step as f32), step as f32))
             .collect();
-        Some((vertices, buffer.indices))
+        Some((positions, buffer.indices))
     }
 
     /// The ground's level of detail `step` (metres between samples), by
@@ -280,6 +307,14 @@ impl DensityField<'_> {
         match Mesher::in_use() {
             Mesher::DualContouring => self.dual_contouring(step, surface),
             Mesher::SurfaceNets => self.surface_nets(step, surface),
+        }
+    }
+
+    /// `mesh_level`'s vertex positions and triangles, unpainted.
+    pub fn mesh_level_shape(&self, step: i32, surface: &dyn ChunkSurface) -> Option<(Vec<[f32; 3]>, Vec<u32>)> {
+        match Mesher::in_use() {
+            Mesher::DualContouring => self.dual_contouring_shape(step, surface),
+            Mesher::SurfaceNets => self.surface_nets_shape(step),
         }
     }
 

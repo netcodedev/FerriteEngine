@@ -10,6 +10,7 @@
 //! like the chunks' water (see `build`), over the ground under it.
 
 use std::sync::{
+    atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver, TryRecvError},
     Arc,
 };
@@ -131,6 +132,12 @@ pub fn reach() -> f64 {
 /// facing up, and the water's (the sea and lakes, flat at their levels)
 /// over the cells where the ground comes near them.
 pub fn build(source: &dyn TerrainSource, centre: [f64; 2]) -> Built {
+    build_unless(source, centre, &AtomicBool::new(false)).expect("not cancelled")
+}
+
+/// `build`, given up (`None`) once `cancel` is set: the camera moved on
+/// before it was done.
+fn build_unless(source: &dyn TerrainSource, centre: [f64; 2], cancel: &AtomicBool) -> Option<Built> {
     let sea = source.sea_level();
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
@@ -148,6 +155,9 @@ pub fn build(source: &dyn TerrainSource, centre: [f64; 2]) -> Built {
         let at = |i: i32| (i - 1 - HALF_CELLS) as f64 * step;
         let mut samples = Vec::with_capacity((side * side) as usize);
         for j in 0..side {
+            if cancel.load(Ordering::Relaxed) {
+                return None;
+            }
             for i in 0..side {
                 let sample = source.horizon_sample(centre[0] + at(i), centre[1] + at(j));
                 samples.push((sample.height, sample.surface, sample.water));
@@ -257,11 +267,11 @@ pub fn build(source: &dyn TerrainSource, centre: [f64; 2]) -> Built {
     }
     river_bands(&source.far_rivers(centre, reach()), &grid, &mut water_vertices, &mut water_indices);
     surface_bands(&source.far_bands(centre, reach()), &grid, &mut vertices, &mut indices);
-    Built {
+    Some(Built {
         ground: (vertices, indices),
         water: (water_vertices, water_indices),
         heights: Arc::new(grid),
-    }
+    })
 }
 
 /// The rivers `pieces` as bands of water lying on the horizon's ground
@@ -442,9 +452,10 @@ pub struct Horizon {
     heights: Option<Arc<HeightGrid>>,
     /// The water beyond the chunks.
     water: Option<ChunkMesh<WaterVertex>>,
-    /// Centre of the mesh drawn, and of the one being made.
+    /// Centre of the mesh drawn, and of the one being made (set its flag
+    /// to give it up).
     centre: Option<[f64; 2]>,
-    pending: Option<([f64; 2], Receiver<Built>)>,
+    pending: Option<([f64; 2], Receiver<Built>, Arc<AtomicBool>)>,
 }
 
 impl Horizon {
@@ -464,19 +475,34 @@ impl Horizon {
         self.heights = None;
         self.water = None;
         self.centre = None;
-        self.pending = None;
+        self.cancel_pending();
     }
 
     /// Make it again where it is (the world finished something it shows,
     /// see `TerrainSource::status`), drawing the one there is meanwhile.
     pub fn refresh(&mut self) {
         self.centre = None;
-        self.pending = None;
+        self.cancel_pending();
+    }
+
+    /// Give up the mesh being made: its thread stops early.
+    fn cancel_pending(&mut self) {
+        if let Some((_, _, cancel)) = self.pending.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Follow the camera at world `(x, z)`.
     pub fn update(&mut self, source: &Arc<dyn TerrainSource>, x: f64, z: f64) {
-        if let Some((centre, rx)) = &self.pending {
+        let snap = |v: f64| (v / CENTRE_STEP).round() * CENTRE_STEP;
+        let wanted = [snap(x), snap(z)];
+        if self.centre == Some(wanted) {
+            // Where the mesh drawn is (again): what is being made for
+            // elsewhere is not needed.
+            self.cancel_pending();
+            return;
+        }
+        if let Some((centre, rx, _)) = &self.pending {
             let received = rx.try_recv();
             if let Err(TryRecvError::Disconnected) = received {
                 // The build panicked (reported by the panic hook): keep
@@ -501,17 +527,23 @@ impl Horizon {
                 self.pending = None;
             }
         }
-        let snap = |v: f64| (v / CENTRE_STEP).round() * CENTRE_STEP;
-        let wanted = [snap(x), snap(z)];
-        let current = self.pending.as_ref().map(|(c, _)| *c).or(self.centre);
-        if current != Some(wanted) {
-            let (tx, rx) = mpsc::channel();
-            let source = source.clone();
-            std::thread::spawn(move || {
-                let _ = tx.send(build(&*source, wanted));
-            });
-            self.pending = Some((wanted, rx));
+        if self.centre == Some(wanted) {
+            return;
         }
+        if self.pending.as_ref().is_some_and(|(c, _, _)| *c == wanted) {
+            return;
+        }
+        // Moved on again: the one being made is given up.
+        self.cancel_pending();
+        let (tx, rx) = mpsc::channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (source, flag) = (source.clone(), cancel.clone());
+        std::thread::spawn(move || {
+            if let Some(built) = build_unless(&*source, wanted, &flag) {
+                let _ = tx.send(built);
+            }
+        });
+        self.pending = Some((wanted, rx, cancel));
     }
 
     pub fn mesh(&self) -> Option<&ChunkMesh<HorizonVertex>> {
@@ -560,5 +592,30 @@ mod tests {
             assert!((mid[1] - 0.5 * (ca + cb)).abs() < 1e-3, "crack at {mid:?}");
         }
         assert!(reach() >= 16000.0);
+    }
+
+    #[test]
+    fn going_back_to_the_centre_drawn_gives_up_the_one_being_made() {
+        use crate::terrain::{hills::{Hills, HillsSettings}, source::TerrainGenerator};
+        // No GL in tests.
+        crate::core::headless::enable();
+        let source: Arc<dyn TerrainSource> = Hills::create(1, HillsSettings::default());
+        let mut horizon = Horizon::new();
+        let start = std::time::Instant::now();
+        while horizon.heights().is_none() && start.elapsed() < std::time::Duration::from_secs(20) {
+            horizon.update(&source, 10.0, 10.0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let drawn = horizon.heights().expect("made").clone();
+        // A step on: made there.
+        horizon.update(&source, CENTRE_STEP, 10.0);
+        let cancel = horizon.pending.as_ref().map(|(_, _, cancel)| cancel.clone()).expect("being made");
+        // And back before it is done: given up, nothing new made.
+        horizon.update(&source, 10.0, 10.0);
+        assert!(horizon.pending.is_none());
+        assert!(cancel.load(Ordering::Relaxed));
+        assert!(Arc::ptr_eq(horizon.heights().unwrap(), &drawn));
+        // A build given up stops with nothing.
+        assert!(build_unless(&*source, [0.0, 0.0], &AtomicBool::new(true)).is_none());
     }
 }

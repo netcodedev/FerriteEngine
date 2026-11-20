@@ -413,6 +413,12 @@ pub fn grow(params: &TreeParams) -> TreeMesh {
         trunk_steps,
         0,
     ));
+    // At least the triangles of the stems grown so far (their bark or
+    // fronds; leaf cards come on top): once past `MAX_TRIANGLES`, the
+    // meshing below stops before any further stem, so those of the last
+    // level (which nothing grows from) are not grown at all, only drawn
+    // for, so the leaves get the same numbers.
+    let mut at_least = stem_triangles(&stems[0], &p);
     // Flared at its foot.
     if let Some(trunk) = stems.first_mut() {
         let n = trunk.radii.len() - 1;
@@ -447,13 +453,6 @@ pub fn grow(params: &TreeParams) -> TreeMesh {
                 if length < 0.05 {
                     continue;
                 }
-                azimuth += golden * (1.0 + 0.1 * random.signed());
-                let side = rotate(perpendicular(tangent), tangent, azimuth);
-                let angle = (p.branch_angle + 8.0 * random.signed()).to_radians();
-                let direction = (tangent * angle.cos() + side * angle.sin()).normalize();
-                let radius = (radius_there * p.branch_radius)
-                    .min(parent_radius * 0.9)
-                    .max(0.004);
                 let steps = match level {
                     1 => 8,
                     2 => 6,
@@ -462,6 +461,21 @@ pub fn grow(params: &TreeParams) -> TreeMesh {
                 // Fronds need more points to curve smoothly.
                 let fronds = p.foliage == Foliage::Fronds && level == p.levels;
                 let steps = if fronds { 12 } else { steps };
+                if at_least > MAX_TRIANGLES && level == p.levels {
+                    // Never meshed: only the numbers it would draw (the
+                    // turn and angle below, three per step of the stem).
+                    for _ in 0..2 + 3 * steps {
+                        random.next();
+                    }
+                    continue;
+                }
+                azimuth += golden * (1.0 + 0.1 * random.signed());
+                let side = rotate(perpendicular(tangent), tangent, azimuth);
+                let angle = (p.branch_angle + 8.0 * random.signed()).to_radians();
+                let direction = (tangent * angle.cos() + side * angle.sin()).normalize();
+                let radius = (radius_there * p.branch_radius)
+                    .min(parent_radius * 0.9)
+                    .max(0.004);
                 stems.push(grow_stem(
                     &mut random,
                     origin,
@@ -474,6 +488,7 @@ pub fn grow(params: &TreeParams) -> TreeMesh {
                     steps,
                     level,
                 ));
+                at_least += stem_triangles(stems.last().expect("just grown"), &p);
             }
         }
         level_start = level_end;
@@ -487,13 +502,7 @@ pub fn grow(params: &TreeParams) -> TreeMesh {
         if frond {
             add_frond(&mut mesh.leaves, stem, p.frond_width);
         } else {
-            let sides = match stem.level {
-                0 => 12,
-                1 => 7,
-                2 => 5,
-                _ => 4,
-            };
-            add_tube(&mut mesh.bark, stem, sides, p.bark_tile, p.trunk_radius);
+            add_tube(&mut mesh.bark, stem, tube_sides(stem.level), p.bark_tile, p.trunk_radius);
         }
         if p.foliage == Foliage::Cards && stem.level == last {
             // On a bare pole only toward its top.
@@ -506,6 +515,28 @@ pub fn grow(params: &TreeParams) -> TreeMesh {
         }
     }
     mesh
+}
+
+/// The triangles `stem`'s bark or frond takes in the mesh (see `grow`),
+/// without its leaf cards.
+fn stem_triangles(stem: &Stem, p: &TreeParams) -> usize {
+    let segments = stem.points.len() - 1;
+    if p.foliage == Foliage::Fronds && stem.level == p.levels && p.levels > 0 {
+        // Two strips of two-sided quads.
+        segments * 2 * 4
+    } else {
+        segments * tube_sides(stem.level) * 2
+    }
+}
+
+/// Sides of the tube round a stem of `level`.
+fn tube_sides(level: u32) -> usize {
+    match level {
+        0 => 12,
+        1 => 7,
+        2 => 5,
+        _ => 4,
+    }
 }
 
 /// A stem from `origin` growing `direction`, `length` long in `steps`,

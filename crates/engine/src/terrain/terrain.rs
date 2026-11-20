@@ -19,6 +19,7 @@ lazy_static! {
 }
 
 use crate::core::{
+    headless,
     entity::{
         component::{Component, Property, PropertyValue},
         Entity,
@@ -421,11 +422,13 @@ impl Terrain {
     /// the camera (see `streaming`). They stop when the streamer is dropped.
     fn start_streaming(source: &Arc<dyn TerrainSource>) -> Streamer<Vec<LoadedChunk>> {
         let source = source.clone();
+        // Without a GPU (a server) only the colliders are made.
+        let drawn = !headless::is_headless();
         Streamer::new(Streamer::<()>::default_workers(), StreamRadius::DEFAULT, move |(x, z), detail| {
             source
                 .vertical_range((x, z), detail)
                 .filter_map(|y| {
-                    let chunk = TerrainChunk::generate(&*source, ChunkCoord::new(x, y, z), detail);
+                    let chunk = TerrainChunk::generate_for(&*source, ChunkCoord::new(x, y, z), detail, drawn);
                     (!chunk.is_empty()).then(|| LoadedChunk::new(chunk))
                 })
                 .collect()
@@ -655,7 +658,8 @@ impl Terrain {
             }
             exposure::world_changed();
         }
-        for (column, chunks) in streamer.receive(UPLOAD_BUDGET) {
+        // Timed around the uploads, which are what takes the time.
+        streamer.receive(UPLOAD_BUDGET, |column, chunks| {
             // Made again in detail: it replaces the chunks there.
             Self::remove_column(scene, entity, column);
             for LoadedChunk { mut chunk, collider } in chunks {
@@ -678,7 +682,7 @@ impl Terrain {
                 entity.add_child(chunk_entity);
                 exposure::world_changed();
             }
-        }
+        });
     }
 
     /// Take the chunks of `column` out (with their colliders and models).
@@ -856,7 +860,10 @@ impl Component for Terrain {
                 self.horizon.refresh();
             }
             self.preparing = preparing;
-            self.horizon.update(&source, eye.x as f64, eye.z as f64);
+            // Nothing is drawn without a GPU (a server): no horizon.
+            if !headless::is_headless() {
+                self.horizon.update(&source, eye.x as f64, eye.z as f64);
+            }
             self.map.update(&source);
             snow_layer::set_water_line(source.sea_level().unwrap_or(NO_WATER_LINE));
         }
@@ -868,7 +875,7 @@ impl Component for Terrain {
             .filter_map(|child| child.get_own_component::<TerrainChunk>().map(TerrainChunk::column))
             .collect();
         self.loaded.set(eye, &loaded);
-        if let Some(source) = &self.source {
+        if let Some(source) = self.source.as_ref().filter(|_| !headless::is_headless()) {
             self.far_scatter.update(source, self.horizon.heights(), &self.scatter);
             self.far_scatter.leave_to_chunks(eye, &planted);
         }
@@ -990,6 +997,8 @@ impl Component for Terrain {
         view_projection: &Matrix4<f32>,
         transform: &Matrix4<f32>,
     ) {
+        // The chunks' scattered models draw after this, in the same pass.
+        ScatterInstances::new_pass();
         let Some(look) = &self.look else {
             return;
         };
@@ -1089,15 +1098,15 @@ impl Component for Terrain {
         // Transparent pass — water and other overlays. Runs after every
         // entity's opaque geometry is in the depth buffer (terrain, player,
         // props), so water correctly depth-tests against all of them.
-        for child in entity.get_children() {
-            if let Some(chunk) = child.get_own_component::<TerrainChunk>() {
-                // The drawn bounds hold the water, which may lie above
-                // the chunk's own box.
-                if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_drawn_bounds()) {
-                    chunk.draw_water(scene, view_projection, parent_transform);
-                }
-            }
-        }
+        // The program and what holds for every chunk are set up once.
+        let chunks = entity.get_children().iter().filter_map(|child| {
+            let chunk = child.get_own_component::<TerrainChunk>()?;
+            // The drawn bounds hold the water, which may lie above the
+            // chunk's own box.
+            let water = chunk.water(parent_transform)?;
+            ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_drawn_bounds()).then_some(water)
+        });
+        water::draw(chunks, scene, view_projection, None);
         // The water beyond the chunks, after theirs (it lies under it where
         // both are).
         let eye = scene.get_active_camera().map(|camera| camera.get_camera().get_eye_position());
@@ -1109,7 +1118,7 @@ impl Component for Terrain {
                 hole: if self.under_ground(eye) { load - HORIZON_HOLE_MARGIN } else { 0.0 },
                 loaded: self.loaded.raw(),
             };
-            water::draw(far_water, scene, view_projection, &Matrix4::from_scale(1.0), Some(far));
+            water::draw([(far_water, Matrix4::from_scale(1.0))], scene, view_projection, Some(far));
         }
     }
 

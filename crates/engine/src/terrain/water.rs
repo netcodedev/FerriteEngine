@@ -312,18 +312,19 @@ fn measure_body(ground: &impl Fn(f32, f32) -> f32, level: f32, x: f32, z: f32) -
     (log_sum / directions.len() as f32).exp()
 }
 
-/// Draw a water surface (a chunk's, or the far water's: see `FarWater`)
-/// with the water program, over the opaque scene.
-pub fn draw(
-    water_mesh: &ChunkMesh<WaterVertex>,
+/// Draw water surfaces (the chunks', or the far water's: see `FarWater`),
+/// each with its model matrix, with the water program over the opaque
+/// scene. What holds for all of them is set up once.
+pub fn draw<'a>(
+    meshes: impl IntoIterator<Item = (&'a ChunkMesh<WaterVertex>, Matrix4<f32>)>,
     scene: &Scene,
     view_projection: &Matrix4<f32>,
-    model: &Matrix4<f32>,
     far: Option<FarWater>,
 ) {
+    let meshes: Vec<_> = meshes.into_iter().filter(|(mesh, _)| mesh.is_buffered()).collect();
     // Skip water when rendering into the shadow-map FBO or the terrain
     // debug FBO.  The scene knows which FBOs allow the transparent pass.
-    if !scene.is_water_render_allowed() || !water_mesh.is_buffered() {
+    if meshes.is_empty() || !scene.is_water_render_allowed() {
         return;
     }
     let depth_capture = scene.is_water_depth_capture();
@@ -395,7 +396,9 @@ pub fn draw(
                 gl::DepthFunc(gl::LESS);
             }
         }
-        water_mesh.render(ws, model, None);
+        for (water_mesh, model) in &meshes {
+            water_mesh.render(ws, model, None);
+        }
         unsafe {
             gl::DepthMask(gl::TRUE);
             gl::DepthFunc(gl::LESS); // restore default
