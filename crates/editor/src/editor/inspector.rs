@@ -654,15 +654,22 @@ impl InspectorPanel {
         let Some(entity) = scene.get_entity_mut(&id) else {
             return edited;
         };
+        // Each component's properties, listed once for all its bindings
+        // (they come one component after another) and again after a write,
+        // which may change the others.
+        let mut listed: Option<(usize, Vec<Property>)> = None;
         for binding in self.properties.iter_mut() {
             let Some(component) = entity.components_mut().get_mut(binding.component) else {
                 continue;
             };
-            let current = component
-                .properties()
-                .into_iter()
-                .find(|p| p.name == binding.name)
-                .map(|p| p.value);
+            if listed.as_ref().map_or(true, |(index, _)| *index != binding.component) {
+                listed = Some((binding.component, component.properties()));
+            }
+            let current = listed
+                .as_ref()
+                .and_then(|(_, properties)| properties.iter().find(|p| p.name == binding.name))
+                .map(|p| p.value.clone());
+            let mut wrote = false;
             let Some(current) = current else {
                 continue;
             };
@@ -673,6 +680,7 @@ impl InspectorPanel {
                         component.set_property(&binding.name, PropertyValue::Float(typed));
                         *last = typed;
                         edited = true;
+                        wrote = true;
                     } else if changed(round3(actual), *last) {
                         source.write(round3(actual));
                         *last = round3(actual);
@@ -684,6 +692,7 @@ impl InspectorPanel {
                         component.set_property(&binding.name, PropertyValue::Int(typed));
                         *last = typed;
                         edited = true;
+                        wrote = true;
                     } else if actual != *last {
                         source.write(actual);
                         *last = actual;
@@ -695,6 +704,7 @@ impl InspectorPanel {
                         component.set_property(&binding.name, PropertyValue::Bool(typed));
                         *last = typed;
                         edited = true;
+                        wrote = true;
                     } else if actual != *last {
                         source.write(actual);
                         *last = actual;
@@ -706,6 +716,7 @@ impl InspectorPanel {
                         component.set_property(&binding.name, PropertyValue::Text(typed.clone()));
                         *last = typed;
                         edited = true;
+                        wrote = true;
                     } else if actual != *last {
                         source.write(actual.clone());
                         *last = actual;
@@ -718,6 +729,7 @@ impl InspectorPanel {
                         if let Some(option) = options.get(typed as usize) {
                             component.set_property(&binding.name, PropertyValue::Text(option.clone()));
                             edited = true;
+                            wrote = true;
                         }
                     } else if let Some(index) = options.iter().position(|o| *o == actual) {
                         if index as u32 != *last {
@@ -733,6 +745,9 @@ impl InspectorPanel {
                     }
                 }
                 _ => {}
+            }
+            if wrote {
+                listed = None;
             }
         }
         edited
