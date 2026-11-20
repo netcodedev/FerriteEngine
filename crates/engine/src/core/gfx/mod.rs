@@ -19,6 +19,8 @@ mod gl_backend;
 pub mod glsl;
 mod null;
 pub mod types;
+#[cfg(feature = "vulkan")]
+mod vulkan;
 
 use std::{
     cell::{Cell, RefCell},
@@ -128,6 +130,14 @@ pub trait Device {
     fn begin_frame(&self);
     /// The frame's commands are done: present the window.
     fn end_frame(&self);
+
+    /// Whether presenting waits for the display. Backends that present
+    /// themselves (not through the window's GL context) switch it here.
+    fn set_vsync(&self, _on: bool) {}
+
+    /// The window is about to close: wait for the GPU and let go of what
+    /// belongs to the window.
+    fn shutdown(&self) {}
 }
 
 /// One level and layer of a texture as a render target attachment.
@@ -275,6 +285,31 @@ pub fn init(device: Box<dyn Device>) {
 /// The OpenGL device, for a window whose context is current.
 pub fn opengl_device() -> Box<dyn Device> {
     Box::new(gl_backend::GlDevice::new())
+}
+
+/// The Vulkan device for a window: `extensions` are the instance
+/// extensions the window system needs, `create_surface` makes the
+/// window's surface from the instance (raw `VkInstance` in, raw
+/// `VkSurfaceKHR` out). The window's size must be set (`set_window_size`)
+/// first.
+#[cfg(feature = "vulkan")]
+pub fn vulkan_device(
+    extensions: &[String],
+    create_surface: &dyn Fn(u64) -> Result<u64, String>,
+    vsync: bool,
+) -> Result<Box<dyn Device>, String> {
+    vulkan::create(extensions, create_surface, vsync)
+}
+
+/// Whether presenting waits for the display, where the backend presents
+/// itself (Vulkan; GL's swap interval belongs to the window).
+pub fn set_vsync(on: bool) {
+    device().set_vsync(on);
+}
+
+/// The window closes: the device lets go of it.
+pub fn shutdown() {
+    device().shutdown();
 }
 
 /// This thread's device; the null device where none was set up
