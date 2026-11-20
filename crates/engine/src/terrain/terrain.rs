@@ -655,7 +655,8 @@ impl Terrain {
             }
             exposure::world_changed();
         }
-        for (column, chunks) in streamer.receive(UPLOAD_BUDGET) {
+        // Timed around the uploads, which are what takes the time.
+        streamer.receive(UPLOAD_BUDGET, |column, chunks| {
             // Made again in detail: it replaces the chunks there.
             Self::remove_column(scene, entity, column);
             for LoadedChunk { mut chunk, collider } in chunks {
@@ -678,7 +679,7 @@ impl Terrain {
                 entity.add_child(chunk_entity);
                 exposure::world_changed();
             }
-        }
+        });
     }
 
     /// Take the chunks of `column` out (with their colliders and models).

@@ -236,11 +236,23 @@ impl<R: Send + 'static> Streamer<R> {
         unload
     }
 
-    /// Columns made since the last call that are still wanted, taken for
-    /// up to `budget` (at least one, if any is ready).
-    pub fn receive(&mut self, budget: Duration) -> Vec<(ColumnKey, R)> {
+    /// Hand the columns made since the last call that are still wanted to
+    /// `take`, one by one, for up to `budget` of time spent in `take` and
+    /// here (at least one, if any is ready). What is left waits in the
+    /// channel for the next call.
+    pub fn receive(&mut self, budget: Duration, mut take: impl FnMut(ColumnKey, R)) {
         let start = Instant::now();
-        let mut out = Vec::new();
+        while let Some((column, result)) = self.next_result() {
+            take(column, result);
+            if start.elapsed() >= budget {
+                break;
+            }
+        }
+    }
+
+    /// The next column made that is still wanted, with its bookkeeping
+    /// done (it counts as loaded from here on).
+    fn next_result(&mut self) -> Option<(ColumnKey, R)> {
         while let Ok(((column, detail), result)) = self.results.try_recv() {
             let Some(&asked) = self.requested.get(&column) else {
                 // Dropped while it was being made.
@@ -264,12 +276,9 @@ impl<R: Send + 'static> Streamer<R> {
             }
             // Delivered again in detail, it replaces what was there.
             self.loaded.insert(column, detail);
-            out.push((column, result));
-            if start.elapsed() >= budget {
-                break;
-            }
+            return Some((column, result));
         }
-        out
+        None
     }
 
     /// Whether `column` is loaded (its result was taken).
@@ -309,7 +318,7 @@ mod tests {
         let start = Instant::now();
         let mut got = Vec::new();
         while got.len() < count && start.elapsed() < Duration::from_secs(10) {
-            got.extend(streamer.receive(Duration::from_secs(1)));
+            streamer.receive(Duration::from_secs(1), |c, r| got.push((c, r)));
             thread::sleep(Duration::from_millis(1));
         }
         got
@@ -350,7 +359,9 @@ mod tests {
         // Nothing more comes for the same place.
         streamer.update(20.0, 30.0);
         thread::sleep(Duration::from_millis(50));
-        assert!(streamer.receive(Duration::from_secs(1)).is_empty());
+        let mut more = 0;
+        streamer.receive(Duration::from_secs(1), |_, _| more += 1);
+        assert_eq!(more, 0);
         assert_eq!(streamer.in_flight(), 0);
     }
 
@@ -375,7 +386,7 @@ mod tests {
         assert!(streamer.update(150.0, 0.0).is_empty());
         let start = Instant::now();
         while streamer.in_flight() > 0 && start.elapsed() < Duration::from_secs(10) {
-            streamer.receive(Duration::from_secs(1));
+            streamer.receive(Duration::from_secs(1), |_, _| {});
             thread::sleep(Duration::from_millis(1));
         }
         // Far away: all columns behind are let go, and only those.
@@ -420,11 +431,42 @@ mod tests {
         assert!(got.iter().all(|(c, _)| *c != (0, 0)));
         let start = Instant::now();
         while streamer.in_flight() > 0 && start.elapsed() < Duration::from_secs(10) {
-            streamer.receive(Duration::from_secs(1));
+            streamer.receive(Duration::from_secs(1), |_, _| {});
             thread::sleep(Duration::from_millis(1));
         }
         assert_eq!(streamer.in_flight(), 0);
         assert!(!streamer.is_loaded((0, 0)));
+    }
+
+    #[test]
+    fn the_budget_counts_the_time_taking_the_columns() {
+        let radius = StreamRadius { load: 300.0, unload: 428.0, detail: 0.0 };
+        let mut streamer = Streamer::new(2, radius, |column, _| column);
+        streamer.update(10.0, 10.0);
+        let expected = within(300.0, 10.0, 10.0);
+        // Let every column be made before taking any.
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(5) {
+            thread::sleep(Duration::from_millis(20));
+            if streamer.shared.queue.lock().unwrap().pending.is_empty() {
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
+        // Taking one is slower than the budget: one per call, the rest
+        // stays for the next calls.
+        let mut got = Vec::new();
+        streamer.receive(Duration::from_millis(1), |c, _| {
+            thread::sleep(Duration::from_millis(5));
+            got.push(c);
+        });
+        assert_eq!(got.len(), 1);
+        while got.len() < expected && start.elapsed() < Duration::from_secs(10) {
+            streamer.receive(Duration::from_secs(1), |c, _| got.push(c));
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(got.len(), expected);
+        assert_eq!(streamer.in_flight(), 0);
     }
 
     #[test]
@@ -443,7 +485,7 @@ mod tests {
         let start = Instant::now();
         let mut again = Vec::new();
         while start.elapsed() < Duration::from_secs(10) && streamer.in_flight() > 0 {
-            again.extend(streamer.receive(Duration::from_secs(1)));
+            streamer.receive(Duration::from_secs(1), |c, r| again.push((c, r)));
             thread::sleep(Duration::from_millis(1));
         }
         for (column, (_, detail)) in &again {
