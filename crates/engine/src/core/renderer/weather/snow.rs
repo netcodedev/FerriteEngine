@@ -9,7 +9,7 @@ use cgmath::{InnerSpace, Point3};
 use gl::types::*;
 
 use super::{Footprint, MAX_FOOTPRINTS, SNOW_TRAIL_UNIT};
-use crate::core::renderer::shader::Shader;
+use crate::core::renderer::{framebuffer, shader::Shader};
 
 /// Texels per side.
 const SIZE: i32 = 1024;
@@ -92,7 +92,7 @@ impl SnowTrails {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as GLint);
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::GenFramebuffers(1, &mut framebuffer);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
             gl::FramebufferTexture2D(
                 gl::FRAMEBUFFER,
                 gl::COLOR_ATTACHMENT0,
@@ -103,7 +103,7 @@ impl SnowTrails {
             gl::DrawBuffer(gl::COLOR_ATTACHMENT0);
             gl::ClearColor(0.0, 0.0, 0.0, 0.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            framebuffer::bind(gl::FRAMEBUFFER, 0);
             gl::BindTexture(gl::TEXTURE_2D, texture);
             gl::GenerateMipmap(gl::TEXTURE_2D);
             gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -167,7 +167,7 @@ impl SnowTrails {
                 shader.set_uniform_1f(&format!("stampLength[{i}]"), footprint.length);
             }
             unsafe {
-                gl::BindFramebuffer(gl::FRAMEBUFFER, self.targets[to].framebuffer);
+                framebuffer::bind(gl::FRAMEBUFFER, self.targets[to].framebuffer);
                 gl::Viewport(0, 0, SIZE, SIZE);
                 gl::Disable(gl::DEPTH_TEST);
                 gl::Disable(gl::BLEND);
@@ -184,7 +184,7 @@ impl SnowTrails {
             gl::GenerateMipmap(gl::TEXTURE_2D);
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::Enable(gl::DEPTH_TEST);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            framebuffer::bind(gl::FRAMEBUFFER, 0);
         }
     }
 
@@ -208,7 +208,7 @@ impl Drop for SnowTrails {
     fn drop(&mut self) {
         unsafe {
             for target in &self.targets {
-                gl::DeleteFramebuffers(1, &target.framebuffer);
+                framebuffer::delete(&[target.framebuffer]);
                 gl::DeleteTextures(1, &target.texture);
             }
             gl::DeleteVertexArrays(1, &self.vao);

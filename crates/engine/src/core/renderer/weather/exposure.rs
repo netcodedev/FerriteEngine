@@ -10,6 +10,7 @@ use cgmath::{ortho, Matrix4, Point3, Vector3};
 use gl::types::*;
 
 use super::{EXPOSURE_UNIT, GROUND_UNIT};
+use crate::core::renderer::framebuffer;
 
 /// Texels per side.
 const SIZE: i32 = 1024;
@@ -80,7 +81,7 @@ fn depth_target() -> (GLuint, GLuint) {
         gl::BindTexture(gl::TEXTURE_2D, 0);
 
         gl::GenFramebuffers(1, &mut framebuffer);
-        gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+        framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
         gl::FramebufferTexture2D(
             gl::FRAMEBUFFER,
             gl::DEPTH_ATTACHMENT,
@@ -90,7 +91,7 @@ fn depth_target() -> (GLuint, GLuint) {
         );
         gl::DrawBuffer(gl::NONE);
         gl::ReadBuffer(gl::NONE);
-        gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        framebuffer::bind(gl::FRAMEBUFFER, 0);
     }
     (framebuffer, depth)
 }
@@ -163,7 +164,7 @@ impl SkyExposure {
             gl::ActiveTexture(gl::TEXTURE0 + EXPOSURE_UNIT);
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, self.framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, self.framebuffer);
             gl::Viewport(0, 0, SIZE, SIZE);
             gl::DepthMask(gl::TRUE);
             gl::Clear(gl::DEPTH_BUFFER_BIT);
@@ -180,7 +181,7 @@ impl SkyExposure {
             gl::ActiveTexture(gl::TEXTURE0 + GROUND_UNIT);
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, self.ground_framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, self.ground_framebuffer);
             gl::Viewport(0, 0, SIZE, SIZE);
             gl::DepthMask(gl::TRUE);
             gl::Clear(gl::DEPTH_BUFFER_BIT);
@@ -200,7 +201,7 @@ impl SkyExposure {
     pub fn end(&self) {
         EXPOSURE_PASS.store(false, Ordering::Relaxed);
         GROUND_PASS.store(false, Ordering::Relaxed);
-        unsafe { gl::BindFramebuffer(gl::FRAMEBUFFER, 0) };
+        unsafe { framebuffer::bind(gl::FRAMEBUFFER, 0) };
     }
 
     /// World to the map's clip space, and the metres its depth spans.
@@ -227,9 +228,9 @@ impl SkyExposure {
 impl Drop for SkyExposure {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteFramebuffers(1, &self.framebuffer);
+            framebuffer::delete(&[self.framebuffer]);
             gl::DeleteTextures(1, &self.depth);
-            gl::DeleteFramebuffers(1, &self.ground_framebuffer);
+            framebuffer::delete(&[self.ground_framebuffer]);
             gl::DeleteTextures(1, &self.ground);
         }
     }
