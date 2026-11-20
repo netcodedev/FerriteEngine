@@ -35,6 +35,10 @@ pub(super) struct GlDevice {
     wireframe: Cell<bool>,
     stencil: Cell<Option<StencilState>>,
     stencil_reference: Cell<u8>,
+    /// Uniform locations looked up so far, by program and name: asking
+    /// the driver (and building a C string for it) is a hot path, as
+    /// uniforms are set per draw.
+    locations: RefCell<HashMap<GLuint, HashMap<String, GLint>>>,
 }
 
 struct GlPipeline {
@@ -62,6 +66,7 @@ impl GlDevice {
             wireframe: Cell::new(false),
             stencil: Cell::new(None),
             stencil_reference: Cell::new(0),
+            locations: RefCell::new(HashMap::new()),
         }
     }
 
@@ -553,6 +558,46 @@ impl Device for GlDevice {
         pipelines.len() as RawId
     }
 
+    fn set_uniform(&self, program: RawId, name: &str, value: UniformValue) {
+        let program = program as GLuint;
+        if program == 0 {
+            return;
+        }
+        let location = {
+            let mut locations = self.locations.borrow_mut();
+            let of_program = locations.entry(program).or_default();
+            match of_program.get(name) {
+                Some(&l) => l,
+                None => {
+                    let l = match CString::new(name) {
+                        Ok(c) => unsafe { gl::GetUniformLocation(program, c.as_ptr()) },
+                        Err(_) => -1,
+                    };
+                    of_program.insert(name.to_owned(), l);
+                    l
+                }
+            }
+        };
+        if location < 0 {
+            return;
+        }
+        unsafe {
+            match value {
+                UniformValue::Int(v) => gl::ProgramUniform1i(program, location, v),
+                UniformValue::Int2([a, b]) => gl::ProgramUniform2i(program, location, a, b),
+                UniformValue::Float(v) => gl::ProgramUniform1f(program, location, v),
+                UniformValue::Float2([a, b]) => gl::ProgramUniform2f(program, location, a, b),
+                UniformValue::Float3([a, b, c]) => gl::ProgramUniform3f(program, location, a, b, c),
+                UniformValue::Float4([a, b, c, d]) => gl::ProgramUniform4f(program, location, a, b, c, d),
+                UniformValue::Mat4(m) => gl::ProgramUniformMatrix4fv(program, location, 1, gl::FALSE, m.as_ptr()),
+                UniformValue::Floats(v) => gl::ProgramUniform1fv(program, location, v.len() as GLsizei, v.as_ptr()),
+                UniformValue::Mat4s(m) => {
+                    gl::ProgramUniformMatrix4fv(program, location, m.len() as GLsizei, gl::FALSE, m.as_ptr() as *const f32)
+                }
+            }
+        }
+    }
+
     fn create_queries(&self, count: u32) -> RawId {
         let mut names = vec![0; count as usize];
         unsafe { gl::CreateQueries(gl::TIMESTAMP, count as GLsizei, names.as_mut_ptr()) };
@@ -603,7 +648,10 @@ impl Device for GlDevice {
                     self.targets.borrow_mut().remove(&(id as GLuint));
                     crate::core::renderer::framebuffer::delete(&[id as GLuint]);
                 }
-                Raw::Program(id) => gl::DeleteProgram(id as GLuint),
+                Raw::Program(id) => {
+                    self.locations.borrow_mut().remove(&(id as GLuint));
+                    gl::DeleteProgram(id as GLuint)
+                }
                 // Pipelines are only state; the slot stays (ids are indices).
                 Raw::Pipeline(_) => {}
                 Raw::Queries(id) => {

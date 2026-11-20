@@ -36,6 +36,7 @@ impl Device for NullDevice {
     fn create_pipeline(&self, _: RawId, _: &PipelineDesc) -> RawId {
         0
     }
+    fn set_uniform(&self, _: RawId, _: &str, _: UniformValue) {}
     fn create_queries(&self, _: u32) -> RawId {
         0
     }

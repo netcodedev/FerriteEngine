@@ -555,3 +555,18 @@ mod tests {
         assert_eq!(BackendKind::parse("metal"), None);
     }
 }
+
+/// A value for a uniform set by name (see `Device::set_uniform`).
+#[derive(Clone, Copy, Debug)]
+pub enum UniformValue<'a> {
+    Int(i32),
+    Int2([i32; 2]),
+    Float(f32),
+    Float2([f32; 2]),
+    Float3([f32; 3]),
+    Float4([f32; 4]),
+    /// Column major.
+    Mat4(&'a [f32; 16]),
+    Floats(&'a [f32]),
+    Mat4s(&'a [[f32; 16]]),
+}

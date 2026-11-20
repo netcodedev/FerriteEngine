@@ -1,6 +1,3 @@
-use cgmath::{Array, Matrix};
-use gl::types::*;
-use std::{cell::RefCell, collections::HashMap, ffi::CString};
 
 use crate::core::gfx::{self, PipelineDesc, StepMode, VertexFormat, VertexLayout};
 
@@ -9,10 +6,6 @@ use crate::core::gfx::{self, PipelineDesc, StepMode, VertexFormat, VertexLayout}
 /// see docs/render-backends.md); the program itself is a `gfx::Program`.
 pub struct Shader {
     program: gfx::Program,
-    /// Uniform locations looked up so far, by name: asking the driver (and
-    /// building a C string for it) on every set is a hot path, as uniforms
-    /// are set per draw.
-    locations: RefCell<HashMap<String, GLint>>,
 }
 
 /// Vertices and (optionally) indices on the GPU, drawn with one layout.
@@ -39,13 +32,12 @@ impl Shader {
         Shader {
             program: gfx::Program::labelled(vertex_source, fragment_source, &label)
                 .unwrap_or_else(gfx::Program::empty),
-            locations: RefCell::new(HashMap::new()),
         }
     }
 
-    /// The GL program name (0 if it failed to build).
-    pub fn id(&self) -> GLuint {
-        self.program.raw() as GLuint
+    /// The backend's name for the program (0 if it failed to build).
+    pub fn id(&self) -> u32 {
+        self.program.raw() as u32
     }
 
     pub fn program(&self) -> &gfx::Program {
@@ -57,8 +49,8 @@ impl Shader {
         self.program.pipeline(desc)
     }
 
-    /// Make this the program uniforms are set on (and drawn with, for code
-    /// not drawing through a pipeline yet).
+    /// Make this the program drawn with by OpenGL code that does not draw
+    /// through a pipeline yet. Uniforms need no binding.
     pub fn bind(&self) {
         if gfx::backend() != gfx::BackendKind::OpenGl {
             return;
@@ -68,123 +60,51 @@ impl Shader {
         }
     }
 
-    /// Location of the uniform `name` (-1 if the program has none, which
-    /// GL ignores on set), asked of the driver once per name.
-    fn location(&self, name: &str) -> GLint {
-        if let Some(&location) = self.locations.borrow().get(name) {
-            return location;
-        }
-        let location = match CString::new(name) {
-            Ok(c_name) => unsafe { gl::GetUniformLocation(self.id(), c_name.as_ptr()) },
-            Err(_) => -1,
-        };
-        self.locations.borrow_mut().insert(name.to_owned(), location);
-        location
+    fn set(&self, name: &str, value: gfx::UniformValue) {
+        gfx::device().set_uniform(self.program.raw(), name, value);
     }
 
     pub fn set_uniform_1fv(&self, name: &str, values: &[f32]) {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        unsafe {
-            let location = self.location(name);
-            gl::Uniform1fv(location, values.len() as GLsizei, values.as_ptr());
-        }
+        self.set(name, gfx::UniformValue::Floats(values));
     }
 
     pub fn set_uniform_mat4(&self, name: &str, matrix: &cgmath::Matrix4<f32>) {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        unsafe {
-            let location = self.location(name);
-            gl::UniformMatrix4fv(location, 1, gl::FALSE, matrix.as_ptr());
-        }
+        let m: &[f32; 16] = matrix.as_ref();
+        self.set(name, gfx::UniformValue::Mat4(m));
     }
 
     pub fn set_uniform_mat4_array(&self, name: &str, matrices: &[cgmath::Matrix4<f32>]) {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        unsafe {
-            let location = self.location(name);
-            gl::UniformMatrix4fv(
-                location,
-                matrices.len() as i32,
-                gl::FALSE,
-                matrices.as_ptr() as *const f32,
-            );
-        }
+        // SAFETY: Matrix4<f32> is 16 f32 in a row (repr(C)).
+        let m = unsafe { std::slice::from_raw_parts(matrices.as_ptr() as *const [f32; 16], matrices.len()) };
+        self.set(name, gfx::UniformValue::Mat4s(m));
     }
 
     pub fn set_uniform_1i(&self, name: &str, value: i32) {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        unsafe {
-            let location = self.location(name);
-            gl::Uniform1i(location, value);
-        }
+        self.set(name, gfx::UniformValue::Int(value));
     }
 
     pub fn set_uniform_1f(&self, name: &str, value: f32) {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        unsafe {
-            let location = self.location(name);
-            gl::Uniform1f(location, value);
-        }
+        self.set(name, gfx::UniformValue::Float(value));
     }
 
     pub fn set_uniform_2i(&self, name: &str, int1: i32, int2: i32) {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        unsafe {
-            let location = self.location(name);
-            gl::Uniform2i(location, int1, int2);
-        }
+        self.set(name, gfx::UniformValue::Int2([int1, int2]));
     }
 
     pub fn set_uniform_2f(&self, name: &str, float1: f32, float2: f32) {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        unsafe {
-            let location = self.location(name);
-            gl::Uniform2f(location, float1, float2);
-        }
+        self.set(name, gfx::UniformValue::Float2([float1, float2]));
     }
 
     pub fn set_uniform_3f(&self, name: &str, float1: f32, float2: f32, float3: f32) {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        unsafe {
-            let location = self.location(name);
-            gl::Uniform3f(location, float1, float2, float3);
-        }
+        self.set(name, gfx::UniformValue::Float3([float1, float2, float3]));
     }
 
     pub fn set_uniform_4f(&self, name: &str, float1: f32, float2: f32, float3: f32, float4: f32) {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        unsafe {
-            let location = self.location(name);
-            gl::Uniform4f(location, float1, float2, float3, float4);
-        }
+        self.set(name, gfx::UniformValue::Float4([float1, float2, float3, float4]));
     }
 
     pub fn set_uniform_3fv(&self, name: &str, value: &cgmath::Vector3<f32>) {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        unsafe {
-            let location = self.location(name);
-            gl::Uniform3fv(location, 1, value.as_ptr());
-        }
+        self.set(name, gfx::UniformValue::Float3([value.x, value.y, value.z]));
     }
 }
 

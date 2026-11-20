@@ -86,6 +86,9 @@ pub trait Device {
     /// failing source lines.
     fn create_program(&self, vertex: &str, fragment: &str, label: &str) -> Result<RawId, String>;
     fn create_pipeline(&self, program: RawId, desc: &PipelineDesc) -> RawId;
+    /// Set the loose uniform `name` (an element `name[i]` too) of
+    /// `program` for the draws that follow.
+    fn set_uniform(&self, program: RawId, name: &str, value: UniformValue);
 
     fn create_queries(&self, count: u32) -> RawId;
     fn write_timestamp(&self, queries: RawId, index: u32);
