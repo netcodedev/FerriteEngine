@@ -40,10 +40,10 @@ impl Application {
         // loading the first scene in between is not a frame.
         self.window.calculate_frametime();
         while !self.window.should_close() {
-            self.window.clear(
-                self.clear_color,
-                gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
-            );
+            use crate::core::gfx;
+            gfx::begin_frame();
+            let (r, g, b, a) = self.clear_color;
+            gfx::begin_window_pass(gfx::Load::Color([r, g, b, a]), gfx::Load::Depth(1.0));
 
             self.window.handle_events(|window, glfw, event| {
                 PlaneRenderer::resize_from_event(&event);
@@ -64,6 +64,9 @@ impl Application {
             // Vertex arrays dropped this frame (text meshes of a rebuilt
             // UI, unloaded models), whatever the scene holds.
             crate::core::renderer::shader::delete_released_vertex_arrays();
+            gfx::end_pass();
+            gfx::collect_garbage();
+            gfx::end_frame();
 
             self.window.swap_buffers();
             crate::core::diagnostics::end_frame();
@@ -108,5 +111,6 @@ impl Drop for Application {
         crate::terrain::scatter::release_gl_resources();
         crate::core::renderer::particles::release_gl_resources();
         crate::core::renderer::run_gl_teardown();
+        crate::core::gfx::collect_garbage();
     }
 }

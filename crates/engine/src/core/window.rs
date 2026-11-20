@@ -73,6 +73,7 @@ impl Window {
             gl::Enable(gl::MULTISAMPLE);
         }
         crate::core::diagnostics::context_created(&mut glfw, debug);
+        crate::core::gfx::init(crate::core::gfx::opengl_device());
 
         // In pixels, which differ from the screen coordinates asked for on
         // scaled displays; no `FramebufferSize` event tells it at first.
@@ -80,6 +81,7 @@ impl Window {
             (w, h) if w > 0 && h > 0 => (w as u32, h as u32),
             _ => (width, height),
         };
+        crate::core::gfx::set_window_size(width, height);
         Self {
             window,
             glfw,
@@ -117,6 +119,7 @@ impl Window {
                 glfw::WindowEvent::FramebufferSize(width, height) => {
                     self.width = width as u32;
                     self.height = height as u32;
+                    crate::core::gfx::set_window_size(self.width, self.height);
                 }
                 _ => {}
             }
@@ -146,23 +149,11 @@ impl Window {
     /// Save the current back buffer (what is about to be presented) as a
     /// PNG. Reads only this window's own framebuffer.
     pub fn save_screenshot(&self, path: &std::path::Path) -> Result<(), image::ImageError> {
+        use crate::core::gfx;
         let (w, h) = (self.width.max(1), self.height.max(1));
-        let mut pixels = vec![0u8; (w * h * 4) as usize];
-        unsafe {
-            gl::PixelStorei(gl::PACK_ALIGNMENT, 1);
-            gl::ReadBuffer(gl::BACK);
-            gl::ReadPixels(
-                0,
-                0,
-                w as i32,
-                h as i32,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                pixels.as_mut_ptr() as *mut _,
-            );
-        }
+        let pixels = gfx::read_pixels(gfx::TargetRef::Window, gfx::Rect::sized(w, h));
         let image = image::RgbaImage::from_raw(w, h, pixels).expect("buffer sized for image");
-        // GL rows start at the bottom.
+        // Rows start at the bottom.
         image::imageops::flip_vertical(&image).save(path)
     }
 

@@ -306,7 +306,7 @@ fn report_shader_error(message: &str) {
 }
 
 /// Appends the source line each info-log message refers to.
-fn annotate_info_log(log: &str, source: &str) -> String {
+pub(crate) fn annotate_info_log(log: &str, source: &str) -> String {
     let source_lines: Vec<&str> = source.lines().collect();
     let mut out = String::new();
     let mut last_shown = None;
