@@ -16,6 +16,8 @@ const MAX_BONE_RADIUS: f32 = 0.08;
 
 pub struct BoneColliders {
     handles: Vec<(RigidBodyHandle, String)>,
+    /// `ModelComponent::generation` of the model the bones were built for.
+    generation: Option<u64>,
     /// Editor toggle: draw the bone capsules as wireframes.
     show: bool,
 }
@@ -27,8 +29,9 @@ impl BoneColliders {
     }
 
     pub fn build(scene: &mut Scene, entity: &Entity) -> Self {
-        let segments = entity
-            .get_component::<ModelComponent>()
+        let model = entity.get_component::<ModelComponent>();
+        let generation = model.map(|mc| mc.generation());
+        let segments = model
             .map(|mc| mc.get_model().get_bone_segments(&Matrix4::identity()))
             .unwrap_or_default();
 
@@ -58,6 +61,7 @@ impl BoneColliders {
 
         Self {
             handles,
+            generation,
             show: false,
         }
     }
@@ -65,6 +69,15 @@ impl BoneColliders {
 
 impl Component for BoneColliders {
     fn update(&mut self, scene: &mut Scene, entity: &mut Entity, _dt: f64) {
+        // Another model was loaded in place of the one the bones were built
+        // for: build them for its skeleton.
+        let generation = entity.get_component::<ModelComponent>().map(|mc| mc.generation());
+        if generation != self.generation {
+            self.on_remove(&mut scene.physics_engine);
+            let show = self.show;
+            *self = Self::build(scene, entity);
+            self.show = show;
+        }
         let entity_transform = Matrix4::from_translation(entity.get_position().to_vec().into())
             * Matrix4::from(entity.get_rotation());
 

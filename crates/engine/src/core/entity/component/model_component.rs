@@ -23,6 +23,8 @@ pub struct ModelComponent {
     model: Model,
     /// `None` for a model that was built in code from a raw file.
     source: Option<Source>,
+    /// Counts the times the model was replaced (`generation`).
+    generation: u64,
 }
 
 impl ModelComponent {
@@ -30,6 +32,7 @@ impl ModelComponent {
         ModelComponent {
             model,
             source: None,
+            generation: 0,
         }
     }
 
@@ -51,6 +54,7 @@ impl ModelComponent {
                 base_scale,
                 revision,
             }),
+            generation: 0,
         })
     }
 
@@ -66,6 +70,13 @@ impl ModelComponent {
         self.model
     }
 
+    /// Changes whenever another model is loaded in place of this one (a
+    /// re-imported asset, another asset): what was taken from the old
+    /// one's skeleton must be taken again.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     /// The asset the model comes from, if it comes from one.
     pub fn asset(&self) -> Option<&AssetRef> {
         self.source.as_ref().map(|source| &source.asset)
@@ -76,6 +87,7 @@ impl ModelComponent {
         let base_scale = self.source.as_ref().map_or(1.0, |source| source.base_scale);
         let (model, revision) = load_model(&asset, base_scale)?;
         self.model = model;
+        self.generation += 1;
         self.source = Some(Source {
             asset,
             base_scale,
@@ -98,6 +110,7 @@ impl ModelComponent {
         match load_model(&source.asset, source.base_scale) {
             Ok((model, revision)) => {
                 self.model = model;
+                self.generation += 1;
                 if let Some(source) = &mut self.source {
                     source.revision = revision;
                 }

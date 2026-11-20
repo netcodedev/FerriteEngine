@@ -27,6 +27,20 @@ use super::{
 };
 use crate::core::utils::ToMatrix4;
 
+/// Length of `boneTransforms` in `vertex.glsl` (its `MAX_BONES`): bones
+/// with a higher index are not uploaded.
+const MAX_BONES: usize = 100;
+
+/// The indices of `faces` that are triangles. Lines and points (an OBJ's
+/// `l`, an FBX's curves and helpers) survive `Triangulate` and are not drawn.
+fn triangle_indices(faces: &[russimp_ng::face::Face]) -> Vec<u32> {
+    faces
+        .iter()
+        .filter(|f| f.0.len() == 3)
+        .flat_map(|f| [f.0[0], f.0[1], f.0[2]])
+        .collect()
+}
+
 thread_local! {
     /// Every model's depth-only program (see `depth_pass`): its vertices
     /// skinned as `vertex.glsl` does, the colour map's cut-out, no light.
@@ -153,6 +167,19 @@ impl Model {
         }
         self.apply_gltf_factors();
         for mesh in &self.model.meshes {
+            let indices = triangle_indices(&mesh.faces);
+            if indices.is_empty() {
+                // Lines or points only: nothing to draw.
+                continue;
+            }
+            if mesh.bones.len() > MAX_BONES {
+                log::warn!(
+                    "model {}: mesh \"{}\" has {} bones, only the first {MAX_BONES} are animated",
+                    self.name,
+                    mesh.name,
+                    mesh.bones.len()
+                );
+            }
             // UVs must come from THIS mesh's first channel — using a single
             // shared `texture_coords` derived from `meshes[0]` (as the code
             // used to) silently fed the wrong UVs to every additional mesh in
@@ -194,10 +221,7 @@ impl Model {
                     .iter()
                     .flat_map(|v| vec![v.x, v.y, v.z])
                     .collect(),
-                mesh.faces
-                    .iter()
-                    .flat_map(|f| vec![f.0[0], f.0[1], f.0[2]])
-                    .collect::<Vec<u32>>(),
+                indices,
                 mesh.normals
                     .iter()
                     .flat_map(|v| vec![v.x, v.y, v.z])
@@ -326,6 +350,14 @@ impl Model {
         let [r, g, b, a] = tint.unwrap_or([1.0; 4]);
         shader.set_uniform_1i("useTint", tint.is_some() as i32);
         shader.set_uniform_4f("tint", r, g, b, a);
+        // Models are drawn depth tested and single-sided; the caller's
+        // state is put back after.
+        let (depth_test_was, cull_face_was) = unsafe {
+            let was = (gl::IsEnabled(gl::DEPTH_TEST), gl::IsEnabled(gl::CULL_FACE));
+            gl::Enable(gl::DEPTH_TEST);
+            gl::Enable(gl::CULL_FACE);
+            was
+        };
         if tint.is_some() {
             unsafe {
                 gl::Enable(gl::BLEND);
@@ -356,7 +388,7 @@ impl Model {
                         None,
                     );
                     let max_id = bone_transforms.iter().map(|(id, _)| *id).max().unwrap_or(0);
-                    let array_size = std::cmp::min(max_id + 1, 100);
+                    let array_size = std::cmp::min(max_id + 1, MAX_BONES);
                     let mut sorted = vec![Matrix4::identity(); array_size];
                     for (id, transform) in bone_transforms {
                         if id < sorted.len() {
@@ -375,18 +407,24 @@ impl Model {
                     .set_uniform_mat4_array("boneTransforms", &vec![Matrix4::identity()]);
             }
             pbr::bind_material(shader, self.textures.get(mesh.material_index));
-            unsafe { gl::Disable(gl::CULL_FACE) };
             mesh.render(
                 shader,
                 parent_transform * Matrix4::from_translation(self.position.to_vec().into()),
                 Some(self.scale),
             );
-            unsafe { gl::Enable(gl::CULL_FACE) };
         }
         if tint.is_some() {
             unsafe {
                 gl::DepthMask(gl::TRUE);
                 gl::Disable(gl::BLEND);
+            }
+        }
+        unsafe {
+            if depth_test_was == gl::FALSE {
+                gl::Disable(gl::DEPTH_TEST);
+            }
+            if cull_face_was == gl::FALSE {
+                gl::Disable(gl::CULL_FACE);
             }
         }
     }
