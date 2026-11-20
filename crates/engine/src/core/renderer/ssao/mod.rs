@@ -10,15 +10,18 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use cgmath::{Matrix4, SquareMatrix};
-use gl::types::*;
 use serde::{Deserialize, Serialize};
 
-use super::{framebuffer, light::light::clamp_finite, shader::Shader};
+use super::{light::light::clamp_finite, shader::Shader};
+use crate::core::gfx::{self, Format, Rect, SamplerDesc, TargetRef, TextureDesc};
 
 /// Texture unit the occlusion is bound to while the scene is shaded.
 pub const SSAO_UNIT: u32 = 14;
 /// Samples per pixel; must match `SAMPLES` in `ssao.glsl`.
 const SAMPLES: usize = 16;
+/// How the depth and the occlusion are read: texel for texel, clamped at
+/// the edges.
+const SAMPLER: SamplerDesc = SamplerDesc::NEAREST_CLAMP;
 
 /// Tunables of the occlusion, kept with the sky light.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -67,102 +70,71 @@ pub fn in_depth_pass() -> bool {
 pub struct Ssao {
     occlusion_shader: Shader,
     blur_shader: Shader,
-    vao: GLuint,
-    vbo: GLuint,
+    /// Fullscreen triangle strip.
+    quad: gfx::Buffer,
     targets: Option<Targets>,
+}
+
+/// A texture with a render target drawing into it.
+struct Image {
+    texture: gfx::Texture,
+    target: gfx::RenderTarget,
+}
+
+impl Image {
+    fn new(width: i32, height: i32, format: Format) -> Self {
+        let texture = gfx::Texture::new(TextureDesc::d2(format, width as u32, height as u32));
+        let attachment = texture.attachment(0, None);
+        let target = if format.is_depth() {
+            gfx::RenderTarget::new(&[], Some(attachment))
+        } else {
+            gfx::RenderTarget::new(&[attachment], None)
+        };
+        Self { texture, target }
+    }
 }
 
 /// The offscreen images, as big as the viewport.
 struct Targets {
     width: i32,
     height: i32,
-    depth_framebuffer: GLuint,
-    depth: GLuint,
-    occlusion_framebuffer: GLuint,
-    occlusion: GLuint,
-    blur_framebuffer: GLuint,
-    blurred: GLuint,
+    /// As the HDR view's depth, so it can be copied from there.
+    depth: Image,
+    occlusion: Image,
+    blurred: Image,
 }
 
 impl Targets {
     fn new(width: i32, height: i32) -> Self {
-        unsafe {
-            // As the HDR view's depth, so it can be copied from there.
-            let depth = texture(
-                width,
-                height,
-                gl::DEPTH24_STENCIL8,
-                gl::DEPTH_STENCIL,
-                gl::UNSIGNED_INT_24_8,
-            );
-            let occlusion = texture(width, height, gl::R8, gl::RED, gl::UNSIGNED_BYTE);
-            let blurred = texture(width, height, gl::R8, gl::RED, gl::UNSIGNED_BYTE);
-            let depth_framebuffer = framebuffer(gl::DEPTH_STENCIL_ATTACHMENT, depth);
-            gl::DrawBuffer(gl::NONE);
-            gl::ReadBuffer(gl::NONE);
-            let occlusion_framebuffer = framebuffer(gl::COLOR_ATTACHMENT0, occlusion);
-            let blur_framebuffer = framebuffer(gl::COLOR_ATTACHMENT0, blurred);
-            framebuffer::bind(gl::FRAMEBUFFER, 0);
-            Self {
-                width,
-                height,
-                depth_framebuffer,
-                depth,
-                occlusion_framebuffer,
-                occlusion,
-                blur_framebuffer,
-                blurred,
-            }
+        Self {
+            width,
+            height,
+            depth: Image::new(width, height, Format::Depth24Stencil8),
+            occlusion: Image::new(width, height, Format::R8),
+            blurred: Image::new(width, height, Format::R8),
         }
+    }
+
+    /// A pass drawing into `image`, contents kept.
+    fn begin(&self, image: &Image) {
+        gfx::begin_pass(
+            image.target.reference(),
+            (self.width as u32, self.height as u32),
+            gfx::Load::Keep,
+            gfx::Load::Keep,
+        );
     }
 }
 
-impl Drop for Targets {
-    fn drop(&mut self) {
-        unsafe {
-            let framebuffers = [
-                self.depth_framebuffer,
-                self.occlusion_framebuffer,
-                self.blur_framebuffer,
-            ];
-            framebuffer::delete(&framebuffers);
-            let textures = [self.depth, self.occlusion, self.blurred];
-            gl::DeleteTextures(textures.len() as GLsizei, textures.as_ptr());
-        }
+/// The state the occlusion passes draw with: the fullscreen strip, no
+/// depth, no blending.
+fn pass_pipeline() -> gfx::PipelineDesc {
+    gfx::PipelineDesc {
+        vertex_layouts: vec![gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[gfx::VertexFormat::F32x2])],
+        topology: gfx::Topology::TriangleStrip,
+        depth: gfx::DepthState::OFF,
+        ..Default::default()
     }
-}
-
-/// A texture sampled texel for texel, at the edges clamped.
-unsafe fn texture(width: i32, height: i32, internal: GLenum, format: GLenum, kind: GLenum) -> GLuint {
-    let mut id = 0;
-    gl::GenTextures(1, &mut id);
-    gl::BindTexture(gl::TEXTURE_2D, id);
-    gl::TexImage2D(
-        gl::TEXTURE_2D,
-        0,
-        internal as GLint,
-        width,
-        height,
-        0,
-        format,
-        kind,
-        std::ptr::null(),
-    );
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as GLint);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as GLint);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as GLint);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as GLint);
-    gl::BindTexture(gl::TEXTURE_2D, 0);
-    id
-}
-
-/// A framebuffer drawing into `texture`; left bound.
-unsafe fn framebuffer(attachment: GLenum, texture: GLuint) -> GLuint {
-    let mut id = 0;
-    gl::GenFramebuffers(1, &mut id);
-    framebuffer::bind(gl::FRAMEBUFFER, id);
-    gl::FramebufferTexture2D(gl::FRAMEBUFFER, attachment, gl::TEXTURE_2D, texture, 0);
-    id
 }
 
 impl Ssao {
@@ -171,66 +143,44 @@ impl Ssao {
         let occlusion_shader = Shader::new(vertex, include_str!("ssao.glsl"));
         let blur_shader = Shader::new(vertex, include_str!("blur.glsl"));
 
+        // Uniforms that never change, set on the program once.
         occlusion_shader.bind();
         for (i, sample) in sample_kernel().iter().enumerate() {
             occlusion_shader.set_uniform_3f(&format!("kernel[{i}]"), sample[0], sample[1], sample[2]);
         }
 
-        // Fullscreen triangle strip.
         let vertices: [f32; 8] = [-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
-        let (mut vao, mut vbo) = (0, 0);
-        unsafe {
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut vbo);
-            gl::BindVertexArray(vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                std::mem::size_of_val(&vertices) as GLsizeiptr,
-                vertices.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-            gl::VertexAttribPointer(
-                0,
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                2 * std::mem::size_of::<f32>() as GLsizei,
-                std::ptr::null(),
-            );
-            gl::EnableVertexAttribArray(0);
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-            gl::UseProgram(0);
-        }
+        let quad = gfx::Buffer::from_slice(gfx::BufferUsage::VERTEX, gfx::BufferMemory::Static, &vertices);
         Self {
             occlusion_shader,
             blur_shader,
-            vao,
-            vbo,
+            quad,
             targets: None,
         }
     }
 
-    /// Draw depth only into the bound target (the HDR view, cleared): the
-    /// opaque scene from the camera goes in after this, cheaply (the lit
-    /// shaders take their shadow pass path), and stays there as the depth
-    /// the shading pass tests against, so each pixel is shaded once. Then
-    /// call `take_depth`.
+    /// Draw depth only into the current target (the HDR view, cleared):
+    /// the opaque scene from the camera goes in after this, cheaply (the
+    /// lit shaders take their shadow pass path), and stays there as the
+    /// depth the shading pass tests against, so each pixel is shaded once.
+    /// Then call `take_depth`.
     pub fn begin_depth_pass(&mut self) {
-        unsafe {
-            gl::ColorMask(gl::FALSE, gl::FALSE, gl::FALSE, gl::FALSE);
-            gl::DepthMask(gl::TRUE);
-            gl::Enable(gl::DEPTH_TEST);
-            gl::DepthFunc(gl::LESS);
-        }
+        // No colour, depth tested `LESS` and written: the state code that
+        // does not draw through pipelines yet finds (pipelines drawn in
+        // the pass get it from the `DepthPass` overrides).
+        let desc = gfx::PipelineDesc {
+            color_write: false,
+            depth: gfx::DepthState::LESS,
+            ..pass_pipeline()
+        };
+        gfx::set_pipeline(self.occlusion_shader.pipeline(&desc));
         DEPTH_PASS.store(true, Ordering::Relaxed);
     }
 
-    /// End the depth pass and copy the depth of `framebuffer` (`width` ×
-    /// `height`, depth and stencil as `DEPTH24_STENCIL8`, possibly
-    /// multisampled) for `resolve`. Leaves `framebuffer` bound.
-    pub fn take_depth(&mut self, framebuffer: GLuint, width: i32, height: i32) {
+    /// End the depth pass and copy the depth of `target` (`width` ×
+    /// `height`, depth and stencil as `Depth24Stencil8`, possibly
+    /// multisampled) for `resolve`. The pass on `target` goes on.
+    pub fn take_depth(&mut self, target: TargetRef, width: i32, height: i32) {
         DEPTH_PASS.store(false, Ordering::Relaxed);
         let (width, height) = (width.max(1), height.max(1));
         if self
@@ -242,102 +192,68 @@ impl Ssao {
             self.targets = Some(Targets::new(width, height));
         }
         let targets = self.targets.as_ref().expect("just created");
-        unsafe {
-            gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
-            framebuffer::bind(gl::READ_FRAMEBUFFER, framebuffer);
-            framebuffer::bind(gl::DRAW_FRAMEBUFFER, targets.depth_framebuffer);
-            gl::BlitFramebuffer(
-                0,
-                0,
-                width,
-                height,
-                0,
-                0,
-                width,
-                height,
-                gl::DEPTH_BUFFER_BIT,
-                gl::NEAREST,
-            );
-            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
-        }
+        let rect = Rect::sized(width as u32, height as u32);
+        gfx::blit(target, rect, targets.depth.target.reference(), rect, gfx::Planes::DEPTH, false);
     }
 
-    /// Work out the occlusion from the depth taken by `take_depth`
-    /// and blur it. Leaves the framebuffer unbound and the viewport for the
-    /// caller to restore.
+    /// Work out the occlusion from the depth taken by `take_depth` and
+    /// blur it, in passes of their own: the pass running before goes on
+    /// after, with its viewport over all of its target.
     pub fn resolve(&self, projection: &Matrix4<f32>, settings: &AmbientOcclusionSettings) {
         DEPTH_PASS.store(false, Ordering::Relaxed);
         let Some(targets) = &self.targets else {
             return;
         };
         let inverse = projection.invert().unwrap_or_else(Matrix4::identity);
-        unsafe {
-            gl::Disable(gl::DEPTH_TEST);
-            gl::DepthMask(gl::FALSE);
-            gl::Disable(gl::BLEND);
-            gl::BindVertexArray(self.vao);
 
-            framebuffer::bind(gl::FRAMEBUFFER, targets.occlusion_framebuffer);
-            let shader = &self.occlusion_shader;
-            shader.bind();
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, targets.depth);
-            shader.set_uniform_1i("depthMap", 0);
-            shader.set_uniform_mat4("projection", projection);
-            shader.set_uniform_mat4("inverseProjection", &inverse);
-            shader.set_uniform_1f("radius", settings.radius);
-            shader.set_uniform_1f("intensity", settings.intensity);
-            gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
+        targets.begin(&targets.occlusion);
+        let shader = &self.occlusion_shader;
+        gfx::set_pipeline(shader.pipeline(&pass_pipeline()));
+        gfx::bind_texture(0, &targets.depth.texture, &SAMPLER);
+        shader.set_uniform_1i("depthMap", 0);
+        shader.set_uniform_mat4("projection", projection);
+        shader.set_uniform_mat4("inverseProjection", &inverse);
+        shader.set_uniform_1f("radius", settings.radius);
+        shader.set_uniform_1f("intensity", settings.intensity);
+        self.draw_quad();
+        gfx::end_pass();
 
-            framebuffer::bind(gl::FRAMEBUFFER, targets.blur_framebuffer);
-            let shader = &self.blur_shader;
-            shader.bind();
-            gl::ActiveTexture(gl::TEXTURE1);
-            gl::BindTexture(gl::TEXTURE_2D, targets.occlusion);
-            shader.set_uniform_1i("depthMap", 0);
-            shader.set_uniform_1i("occlusionMap", 1);
-            shader.set_uniform_mat4("inverseProjection", &inverse);
-            gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
+        targets.begin(&targets.blurred);
+        let shader = &self.blur_shader;
+        gfx::set_pipeline(shader.pipeline(&pass_pipeline()));
+        gfx::bind_texture(1, &targets.occlusion.texture, &SAMPLER);
+        shader.set_uniform_1i("depthMap", 0);
+        shader.set_uniform_1i("occlusionMap", 1);
+        shader.set_uniform_mat4("inverseProjection", &inverse);
+        self.draw_quad();
+        gfx::end_pass();
 
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::BindVertexArray(0);
-            gl::UseProgram(0);
-            framebuffer::bind(gl::FRAMEBUFFER, 0);
-            gl::DepthMask(gl::TRUE);
-            gl::Enable(gl::DEPTH_TEST);
-        }
+        gfx::unbind_texture(1, gfx::TextureKind::D2);
+        gfx::unbind_texture(0, gfx::TextureKind::D2);
+    }
+
+    /// Draw the fullscreen strip with the pipeline set.
+    fn draw_quad(&self) {
+        gfx::set_vertex_buffer(0, &self.quad, 0, 8);
+        gfx::draw(0, 4);
     }
 
     /// Bind the blurred occlusion to `SSAO_UNIT` for the shading pass.
     pub fn bind_result(&self) {
         if let Some(targets) = &self.targets {
-            unsafe {
-                gl::ActiveTexture(gl::TEXTURE0 + SSAO_UNIT);
-                gl::BindTexture(gl::TEXTURE_2D, targets.blurred);
-                gl::ActiveTexture(gl::TEXTURE0);
-            }
+            gfx::bind_texture(SSAO_UNIT, &targets.blurred.texture, &SAMPLER);
         }
     }
 
-    /// The depth taken by `take_depth` (the opaque scene from the camera).
-    pub fn depth_texture(&self) -> Option<GLuint> {
-        self.targets.as_ref().map(|t| t.depth)
+    /// Raw id of the depth taken by `take_depth` (the opaque scene from
+    /// the camera), read texel for texel.
+    pub fn depth_texture(&self) -> Option<gfx::RawId> {
+        self.targets.as_ref().map(|t| t.depth.texture.raw())
     }
 
-    /// The blurred occlusion, for debug views.
-    pub fn result_texture(&self) -> Option<GLuint> {
-        self.targets.as_ref().map(|t| t.blurred)
-    }
-}
-
-impl Drop for Ssao {
-    fn drop(&mut self) {
-        unsafe {
-            gl::DeleteBuffers(1, &self.vbo);
-            gl::DeleteVertexArrays(1, &self.vao);
-        }
+    /// Raw id (GL name) of the blurred occlusion, for debug views.
+    pub fn result_texture(&self) -> Option<u32> {
+        self.targets.as_ref().map(|t| t.blurred.texture.raw() as u32)
     }
 }
 

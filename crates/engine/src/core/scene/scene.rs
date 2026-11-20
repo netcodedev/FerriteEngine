@@ -584,8 +584,8 @@ impl Scene {
                 .get_component::<SkyLight>()
                 .map(|skylight| *skylight.ambient_occlusion())
                 .filter(|settings| settings.enabled);
-            let depth_prepass = match (ambient_occlusion, hdr.view_framebuffer()) {
-                (Some(settings), Some((framebuffer, width, height))) => {
+            let depth_prepass = match (ambient_occlusion, hdr.view_target()) {
+                (Some(settings), Some((target, width, height))) => {
                     let mut ssao = self.ssao.borrow_mut();
                     let ssao = ssao.get_or_insert_with(Ssao::new);
                     ssao.begin_depth_pass();
@@ -597,10 +597,9 @@ impl Scene {
                     // draws it.
                     self.render_snow_layer(&view_projection, false);
                     drop(depth_only);
-                    ssao.take_depth(framebuffer, width, height);
+                    ssao.take_depth(target, width, height);
                     ssao.resolve(&camera.get_projection().get_matrix(), &settings);
                     ssao.bind_result();
-                    hdr.rebind();
                     self.ambient_occlusion_origin.set(Some([0, 0]));
                     true
                 }

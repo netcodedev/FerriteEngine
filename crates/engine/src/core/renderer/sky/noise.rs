@@ -3,9 +3,9 @@
 //! with one filtered lookup, where it used to hash the eight corners of its
 //! cell (see `cloud_field.glsl`).
 
-use std::cell::Cell;
+use std::cell::RefCell;
 
-use gl::types::{GLint, GLsizei, GLuint};
+use crate::core::gfx::{self, Format, Rect, SamplerDesc, TextureDesc, TextureKind, UploadFormat};
 
 /// Lattice points along each side; must match `CLOUD_NOISE_SIZE` in
 /// `cloud_field.glsl`.
@@ -13,9 +13,12 @@ pub const SIZE: usize = 128;
 /// Texture unit the lattice stays bound to; must match the `binding` of
 /// `cloudNoise` in `cloud_field.glsl`.
 pub const UNIT: u32 = 17;
+/// Linear between lattice points (the shader bends the position in the
+/// cell by the hermite curve first), repeating.
+const SAMPLER: SamplerDesc = SamplerDesc::LINEAR_REPEAT;
 
 thread_local! {
-    static TEXTURE: Cell<GLuint> = const { Cell::new(0) };
+    static TEXTURE: RefCell<Option<gfx::Texture>> = const { RefCell::new(None) };
 }
 
 /// `cloudHash13` of `cloud_field.glsl`: a value in 0..1 for lattice point `p`.
@@ -44,47 +47,24 @@ fn lattice() -> Vec<u16> {
 /// Bind the lattice to `UNIT`, made on first use. Call before drawing with
 /// a shader that includes `cloud_field.glsl`.
 pub fn bind() {
-    if crate::core::headless::is_headless() {
+    if !gfx::is_drawing() {
         return;
     }
-    let mut texture = TEXTURE.with(Cell::get);
-    unsafe {
-        gl::ActiveTexture(gl::TEXTURE0 + UNIT);
-        if texture == 0 {
-            gl::GenTextures(1, &mut texture);
-            gl::BindTexture(gl::TEXTURE_3D, texture);
-            let values = lattice();
-            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 2);
-            gl::TexImage3D(
-                gl::TEXTURE_3D,
-                0,
-                gl::R16 as GLint,
-                SIZE as GLsizei,
-                SIZE as GLsizei,
-                SIZE as GLsizei,
-                0,
-                gl::RED,
-                gl::UNSIGNED_SHORT,
-                values.as_ptr() as *const _,
-            );
-            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
-            // Linear between lattice points: the shader bends the position
-            // in the cell by the hermite curve first.
-            for (name, value) in [
-                (gl::TEXTURE_MIN_FILTER, gl::LINEAR),
-                (gl::TEXTURE_MAG_FILTER, gl::LINEAR),
-                (gl::TEXTURE_WRAP_S, gl::REPEAT),
-                (gl::TEXTURE_WRAP_T, gl::REPEAT),
-                (gl::TEXTURE_WRAP_R, gl::REPEAT),
-            ] {
-                gl::TexParameteri(gl::TEXTURE_3D, name, value as GLint);
-            }
-            TEXTURE.with(|t| t.set(texture));
-        } else {
-            gl::BindTexture(gl::TEXTURE_3D, texture);
-        }
-        gl::ActiveTexture(gl::TEXTURE0);
-    }
+    TEXTURE.with(|texture| {
+        let mut texture = texture.borrow_mut();
+        let texture = texture.get_or_insert_with(|| {
+            let size = SIZE as u32;
+            let desc = TextureDesc {
+                kind: TextureKind::D3,
+                layers: size,
+                ..TextureDesc::d2(Format::R16, size, size)
+            };
+            let texture = gfx::Texture::new(desc);
+            texture.write(0, Rect::sized(size, size), 0, size, UploadFormat::R16, gfx::as_bytes(&lattice()));
+            texture
+        });
+        gfx::bind_texture(UNIT, texture, &SAMPLER);
+    });
 }
 
 #[cfg(test)]
