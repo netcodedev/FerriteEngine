@@ -1,6 +1,9 @@
 # Render backends: plan
 
-Status: plan (2026-11-20), work on branch `feat/render-backends`.
+Status (2026-11-20, branch `feat/render-backends`): stage A and B done
+(only window/context creation and GL diagnostics still call GL outside
+`core/gfx/gl_backend.rs`); stage C done in the form described under C
+below; stage D in progress.
 
 Goal: the engine renders through a backend-agnostic layer (`gfx`) with two
 backends, the existing OpenGL renderer and a new Vulkan one (`ash`),
@@ -81,8 +84,8 @@ An inventory of the GL use (2026-11-20):
    creates a `VkPipeline` (with a pipeline cache). Viewport and scissor
    are dynamic. Stencil ops for the UI clipping are part of the desc.
 
-5. **Binding model: four fixed sets**, so GL and Vulkan see the same
-   layout:
+5. **Binding model** (planned as four sets; built as one push set, see
+   stage C):
    - set 0 *frame*: frame UBO (camera, sun/moon, clouds, weather, SSAO,
      exposure…), lights UBO, cluster buffers, shadow maps, SSAO result,
      weather maps, cloud noise, loaded-columns map.
@@ -172,12 +175,20 @@ outside `core/gfx/backend/gl` calls `gl::`. Explicit `PassDesc`
 replaces the global pass flags.
 
 ### C. Uniform blocks and SPIR-V
-Move every program to the set layout above: frame/pass/material UBOs,
-push constants, explicit locations for all varyings and outputs,
-`gl_VertexIndex`/`gl_InstanceIndex` via macros, no implicit-LOD
-sampling in vertex stages. Remove the `set_uniform_*` shim. Add
-`shaderc` and the test that builds every shader to SPIR-V (engine
-shaders and the demo's terrain shader).
+As built (it differs from the first plan, for less risk and an
+unchanged GL baseline): the GLSL sources stay as they are, and the GL
+backend compiles them as before. For Vulkan, `gfx::glsl` rewrites a
+program's two stages together: all loose uniforms of both stages
+become one std140 block (`FerriteParams`) whose layout it computes, so
+the by-name setters (`Device::set_uniform`, which the GL backend does
+with `glProgramUniform*`) write into it; loose samplers get bindings,
+mapped at draw time to the texture bound on the unit the program set
+for them; buffer blocks keep their slot. Everything is in descriptor
+set 0, filled with push descriptors (one push set per pipeline is all
+Vulkan allows; 32 descriptors are enough). `FERRITE_SHADER_DUMP=<dir>`
+writes every program's sources; an ignored test rewrites and compiles
+them all with `glslc` for Vulkan 1.3. Hand-designed per-frame/per-pass
+blocks and push constants remain an optimisation for later.
 
 ### D. Vulkan backend
 Instance/device (with validation layers in debug builds), swapchain,
