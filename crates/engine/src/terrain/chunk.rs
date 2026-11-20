@@ -177,20 +177,12 @@ impl TerrainChunk {
         if self.meshes.is_empty() {
             return Vec::new();
         }
-        let floor = self.coord.floor();
-        let ceiling = floor + CHUNK_SIZE_FLOAT;
-        let mut out = Vec::new();
-        for (x, z, grow, yaw) in scatter_spots((self.coord.x, self.coord.z), salt, attempts) {
-            let y = source.surface_height(x as f64, z as f64);
-            if y < floor || y >= ceiling {
-                continue;
-            }
-            if grow >= source.scatter_chance(tag, x as f64, y, z as f64) {
-                continue;
-            }
-            out.push((x, y, z, yaw));
-        }
-        out
+        scatter_points_at(source, self.coord, tag, salt, attempts)
+    }
+
+    /// Whether the chunk holds any ground (models stand only on that).
+    pub fn has_ground(&self) -> bool {
+        !self.meshes.is_empty()
     }
 
     pub fn get_bounds(&self) -> ChunkBounds {
@@ -436,6 +428,32 @@ mod tests {
             assert!(ChunkCoord::containing(x as f64, y as f64, z as f64) == coord);
         }
     }
+}
+
+/// Where a scatter layer (`tag`, `salt`, `attempts`) grows models in the
+/// chunk at `coord` with ground: world position and turn. Safe to run off
+/// the main thread (see `terrain::planting`).
+pub fn scatter_points_at(
+    source: &dyn TerrainSource,
+    coord: ChunkCoord,
+    tag: &str,
+    salt: u64,
+    attempts: u32,
+) -> Vec<(f32, f32, f32, f32)> {
+    let floor = coord.floor();
+    let ceiling = floor + CHUNK_SIZE_FLOAT;
+    let mut out = Vec::new();
+    for (x, z, grow, yaw) in scatter_spots((coord.x, coord.z), salt, attempts) {
+        let y = source.surface_height(x as f64, z as f64);
+        if y < floor || y >= ceiling {
+            continue;
+        }
+        if grow >= source.scatter_chance(tag, x as f64, y, z as f64) {
+            continue;
+        }
+        out.push((x, y, z, yaw));
+    }
+    out
 }
 
 /// The spots a scatter layer with `salt` tries on the chunk square

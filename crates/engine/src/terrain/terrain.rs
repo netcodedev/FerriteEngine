@@ -247,6 +247,8 @@ pub struct Terrain {
     /// what it prepared (roads, say).
     preparing: bool,
     /// Loads the chunks around the camera (see `streaming`).
+    /// Scatter points worked out off the main thread.
+    planting: super::planting::Planting,
     streamer: Option<Streamer<Vec<LoadedChunk>>>,
     look: Option<Look>,
     mouse_picker: MousePicker,
@@ -339,6 +341,7 @@ impl Terrain {
             far_scatter: FarScatter::new(),
             loaded: ColumnMap::new(),
             preparing: false,
+            planting: super::planting::Planting::new(),
             streamer: None,
             look: None,
             mouse_picker: MousePicker::new(),
@@ -458,6 +461,7 @@ impl Terrain {
     /// make the world again from the current generator, seed and settings.
     fn regenerate(&mut self, scene: &mut Scene, entity: &mut Entity) {
         self.streamer = None;
+        self.planting.reset();
         let children = entity.get_children_mut();
         let mut index = 0;
         while index < children.len() {
@@ -714,12 +718,13 @@ impl Terrain {
     ///
     /// Returns the columns whose every chunk carries every layer's models:
     /// the far models leave those to them (see `far_scatter`).
-    fn sync_scatter(&self, scene: &mut Scene, entity: &mut Entity) -> HashSet<ColumnKey> {
+    fn sync_scatter(&mut self, scene: &mut Scene, entity: &mut Entity) -> HashSet<ColumnKey> {
         let mut planted_columns = HashSet::new();
         let mut unplanted_columns = HashSet::new();
-        let Some(source) = &self.source else {
+        let Some(source) = self.source.clone() else {
             return planted_columns;
         };
+        self.planting.receive();
         let specs = self.scatter.specs();
         let mut planted = 0;
         for chunk_entity in entity.get_children_mut() {
@@ -759,7 +764,16 @@ impl Terrain {
                 let Some(chunk) = chunk_entity.get_own_component::<TerrainChunk>() else {
                     break;
                 };
-                let mut points = chunk.scatter_points(&**source, &spec.tag, spec.salt, spec.attempts);
+                // Worked out by the planting workers; a chunk without
+                // ground grows nothing.
+                let mut points = if chunk.has_ground() {
+                    match self.planting.take(&source, chunk.coord(), &spec.tag, spec.salt, spec.attempts) {
+                        Some(points) => points,
+                        None => continue,
+                    }
+                } else {
+                    Vec::new()
+                };
                 points.retain(|&(x, y, z, _)| {
                     !self.scatter.is_removed(spec.salt, Point3::new(x, y, z))
                 });
@@ -775,6 +789,12 @@ impl Terrain {
             }
         }
         planted_columns.retain(|column| !unplanted_columns.contains(column));
+        let loaded: HashSet<ChunkCoord> = entity
+            .get_children()
+            .iter()
+            .filter_map(|c| c.get_own_component::<TerrainChunk>().map(TerrainChunk::coord))
+            .collect();
+        self.planting.retain(|coord| loaded.contains(&coord));
         planted_columns
     }
 
