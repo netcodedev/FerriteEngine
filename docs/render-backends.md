@@ -197,6 +197,24 @@ implementation, pipeline cache, timestamps, readback, present with the
 flip. Then pass by pass to parity with GL, comparing screenshots.
 Editor statistics show the backend and its GPU/CPU frame times.
 
+As built (`core/gfx/vulkan`, feature `vulkan`, `FERRITE_RENDERER=vulkan`;
+GL stays the default and is fallen back to when Vulkan cannot start):
+- Commands are recorded in call order into one command buffer per frame;
+  rendering begins lazily at the first draw or clear of a pass and is
+  ended by copies, blits, readback, texture uploads and layout changes of
+  sampled textures. Buffer uploads go into a command buffer of their own
+  that runs before the frame's. Every rendering begin and transfer is
+  preceded by a global memory barrier (to be made finer).
+- Multisampled depth is resolved by a render pass that only resolves
+  (sample 0), as copies and blits cannot read it.
+- GLSL varyings are linked by name in the SPIR-V (shaderc numbers each
+  stage on its own); `gl_Position` is invariant; multisampling uses GL's
+  sample positions (`VK_EXT_sample_locations`).
+- `FERRITE_VK_VALIDATION=1` (default in debug builds) turns the
+  validation layer on; its messages go to the log.
+- Left over against GL: alpha-tested foliage covers slightly fewer pixels
+  (isolated pixels across tree crowns), cause not found yet.
+
 ## Verification
 
 - `cargo test` (engine, scripts) green at every commit.
