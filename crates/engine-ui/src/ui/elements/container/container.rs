@@ -73,9 +73,11 @@ impl UIElement for Container {
                     if offset != *child.get_offset() {
                         child.set_offset(offset);
                     }
+                    // Updated before it is measured, so this frame's size
+                    // places the next child.
+                    child.update(scene);
                     x_offset += child.get_size().width + self.gap;
                     max_h = max_h.max(child.get_size().height);
-                    child.update(scene);
                 }
                 self.region.size.width = x_offset;
                 self.region.size.height = max_h + self.gap * 2.0;
@@ -91,9 +93,9 @@ impl UIElement for Container {
                     if offset != *child.get_offset() {
                         child.set_offset(offset);
                     }
+                    child.update(scene);
                     y_offset += child.get_size().height + self.gap;
                     max_w = max_w.max(child.get_size().width);
-                    child.update(scene);
                 }
                 self.region.size.height = y_offset;
                 self.region.size.width = self.region.size.width.max(max_w + self.gap * 2.0);
@@ -101,9 +103,6 @@ impl UIElement for Container {
                     self.region.size.height -= self.gap;
                 }
             }
-        }
-        for child in self.children.values_mut() {
-            child.update(scene);
         }
     }
 
@@ -255,5 +254,34 @@ impl UIElement for Container {
         for child in self.children.values_mut() {
             child.set_z_index(z_index + 1.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ui::{UIElement, UI};
+    use ferrite::core::{primitives::Offset, scene::Scene};
+
+    #[test]
+    fn nested_containers_settle_in_one_update() {
+        ferrite::core::headless::enable();
+        let mut scene = Scene::new();
+        let mut outer = UI::container_vertical();
+        for row in 0..3 {
+            let mut columns = UI::container_horizontal();
+            for column in 0..3 {
+                let mut cell = UI::container_vertical();
+                cell.add_child(UI::label(&"text ".repeat(row + column + 1), 14.0));
+                cell.add_child(UI::button("Button", Box::new(|_| {})));
+                columns.add_child(cell);
+            }
+            outer.add_child(columns);
+        }
+        outer.set_offset(Offset { x: 10.0, y: 20.0 });
+        outer.update(&mut scene);
+        let size = *outer.get_size();
+        outer.update(&mut scene);
+        assert_eq!(*outer.get_size(), size, "a second update changes nothing");
+        assert!(size.width > 0.0 && size.height > 0.0);
     }
 }
