@@ -16,6 +16,7 @@
 //! the ranges onto sets 2, 1, 0 and 3.
 
 mod gl_backend;
+pub mod glsl;
 mod null;
 pub mod types;
 
@@ -558,6 +559,7 @@ impl Program {
     }
 
     pub fn labelled(vertex: &str, fragment: &str, label: &str) -> Option<Self> {
+        dump_program(vertex, fragment, label);
         match device().create_program(vertex, fragment, label) {
             Ok(raw) => Some(Program { raw }),
             Err(message) => {
@@ -625,6 +627,24 @@ impl Pipeline {
     pub fn is_valid(&self) -> bool {
         self.raw != 0
     }
+}
+
+/// With `FERRITE_SHADER_DUMP=<dir>`, every program's sources are written
+/// there (one pair per distinct program), for checking them offline (see
+/// `glsl`).
+fn dump_program(vertex: &str, fragment: &str, label: &str) {
+    let Ok(dir) = std::env::var("FERRITE_SHADER_DUMP") else {
+        return;
+    };
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (vertex, fragment).hash(&mut hasher);
+    let name = format!("{:016x}", hasher.finish());
+    let dir = std::path::Path::new(&dir);
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(dir.join(format!("{name}.vert")), vertex);
+    let _ = std::fs::write(dir.join(format!("{name}.frag")), fragment);
+    let _ = std::fs::write(dir.join(format!("{name}.label")), label);
 }
 
 /// Report a shader error once per distinct message.
