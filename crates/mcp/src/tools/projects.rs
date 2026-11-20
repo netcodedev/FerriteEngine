@@ -54,8 +54,13 @@ pub(super) fn create_project(state: &State, args: Value) -> Result<Value, String
         let folder = dir.join(folder);
         std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
     }
+    // Never replace a scene that is already there (say, of a project whose
+    // .fp file went missing).
     let scene = dir.join(STARTER_SCENE_PATH);
-    std::fs::write(&scene, STARTER_SCENE).map_err(|e| format!("{}: {e}", scene.display()))?;
+    let kept_scene = scene.exists();
+    if !kept_scene {
+        std::fs::write(&scene, STARTER_SCENE).map_err(|e| format!("{}: {e}", scene.display()))?;
+    }
     let fp = dir.join(format!("{name}.{PROJECT_EXTENSION}"));
     let text = format!(
         "(\n    version: 1,\n    name: {},\n    startup_scene: Some(\"{STARTER_SCENE_PATH}\"),\n)\n",
@@ -78,6 +83,11 @@ pub(super) fn create_project(state: &State, args: Value) -> Result<Value, String
     Ok(json!({
         "project": fp.display().to_string(),
         "startup_scene": STARTER_SCENE_PATH,
+        "starter_scene": if kept_scene {
+            "kept the scene already at that path"
+        } else {
+            "written"
+        },
         "player_assets": player_assets,
         "now_working_on": state.dir().display().to_string(),
         "editor": format!("cargo run -p ferrite-editor -- {}", dir.display()),
@@ -139,11 +149,15 @@ pub(super) fn set_startup_scene(state: &State, args: Value) -> Result<Value, Str
     if !full.is_file() {
         return Err(format!("no scene at {}", full.display()));
     }
-    let rel = scene
-        .trim_start_matches("./")
-        .trim_start_matches("scenes/")
-        .to_string();
-    project.file.startup_scene = Some(format!("scenes/{rel}"));
+    // Store the very file that was checked, relative to the project.
+    let rel = full
+        .strip_prefix(project.dir())
+        .map_err(|_| format!("{} is not in the project", full.display()))?;
+    let rel: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    project.file.startup_scene = Some(rel.join("/"));
     project.save()?;
     Ok(json!({"startup_scene": project.file.startup_scene}))
 }

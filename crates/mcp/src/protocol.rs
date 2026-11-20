@@ -16,6 +16,10 @@ pub const JSONRPC_VERSION: &str = "2.0";
 /// know, else ours.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
+/// Every protocol version this server can speak: it only uses features
+/// that exist in all of them.
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Request {
     pub jsonrpc: String,

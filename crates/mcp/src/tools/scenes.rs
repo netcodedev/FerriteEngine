@@ -170,6 +170,10 @@ pub(super) fn add_component(state: &State, args: Value) -> Result<Value, String>
     if !found {
         return Err(format!("no entity {id}"));
     }
+    // Valid on its own is not enough (a `#![enable(..)]` prefix is not
+    // valid inside the file): check the whole file before it is written.
+    ron::from_str::<ron::Value>(&scene.to_ron()?)
+        .map_err(|e| format!("bad RON: the scene would not load with it: {e}"))?;
     scene.save(&path)?;
     Ok(json!({"added_to": id}))
 }

@@ -171,22 +171,57 @@ pub fn component_label(raw: &str) -> String {
     }
 }
 
-/// Full path to `scenes/<rel>` under `project_dir`, rejecting traversal
-/// and absolute paths.
+/// Full path to `scenes/<rel>` under `project_dir`, rejecting traversal,
+/// absolute paths, drive prefixes and symlinks that lead out of `scenes/`.
 pub fn scene_path(project_dir: &Path, rel: &str) -> Result<PathBuf, String> {
+    use std::path::Component;
     let rel = rel.trim_start_matches("./");
     let rel = rel.strip_prefix("scenes/").unwrap_or(rel);
     let candidate = PathBuf::from(rel);
-    if candidate.is_absolute() {
-        return Err("scene path must be relative to scenes/".into());
-    }
     if candidate
         .components()
-        .any(|c| matches!(c, std::path::Component::ParentDir))
+        .any(|c| matches!(c, Component::ParentDir))
     {
         return Err("scene path may not contain '..'".into());
     }
-    Ok(project_dir.join("scenes").join(candidate))
+    // Anything but plain names (a root, or a drive prefix such as `C:`,
+    // which `join` would put in place of the project) leaves the project.
+    if !candidate
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+    {
+        return Err("scene path must be relative to scenes/".into());
+    }
+    let scenes = project_dir.join("scenes");
+    let full = scenes.join(candidate);
+    stays_inside(&scenes, &full)?;
+    Ok(full)
+}
+
+/// Fail if `path`, with symlinks resolved as far as it exists on disk, is
+/// not inside `base`.
+fn stays_inside(base: &Path, path: &Path) -> Result<(), String> {
+    let Ok(base) = base.canonicalize() else {
+        // No folder yet, so nothing in it can point elsewhere.
+        return Ok(());
+    };
+    // The deepest part that exists (a dangling link counts, and then fails
+    // to resolve below).
+    let mut existing = path;
+    while fs::symlink_metadata(existing).is_err() {
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => return Ok(()),
+        }
+    }
+    let resolved = existing
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", existing.display()))?;
+    if resolved.starts_with(&base) {
+        Ok(())
+    } else {
+        Err("scene path leads out of scenes/".into())
+    }
 }
 
 /// A fresh, non-zero id; a time-salted counter.
@@ -495,6 +530,17 @@ fn parse_string(raw: &str) -> Result<String, String> {
                 Some('r') => out.push('\r'),
                 Some('\\') => out.push('\\'),
                 Some('"') => out.push('"'),
+                Some('0') => out.push('\0'),
+                // `\u{fe0f}`, as ron writes chars `escape_debug` escapes.
+                Some('u') if chars.clone().next() == Some('{') => {
+                    chars.next();
+                    let hex: String = chars.by_ref().take_while(|c| *c != '}').collect();
+                    let c = u32::from_str_radix(&hex, 16)
+                        .ok()
+                        .and_then(char::from_u32)
+                        .ok_or_else(|| format!("bad escape \\u{{{hex}}}"))?;
+                    out.push(c);
+                }
                 Some(other) => out.push(other),
                 None => return Err("bad escape".into()),
             }
@@ -599,6 +645,12 @@ fn write_entity(out: &mut String, e: &EntityData, indent: usize) {
             out.push_str(&"    ".repeat(indent + 2));
             out.push_str(c);
             if i + 1 < e.components.len() {
+                // A `//` comment at the end would swallow a comma on the
+                // same line, so it goes on the next one.
+                if c.contains("//") {
+                    out.push('\n');
+                    out.push_str(&"    ".repeat(indent + 2));
+                }
                 out.push(',');
             }
             out.push('\n');
@@ -772,6 +824,60 @@ mod tests {
         assert!(scene_path(root, "/etc/passwd").is_err());
         let ok = scene_path(root, "scenes/level1.ron").unwrap();
         assert!(ok.ends_with("scenes/level1.ron"));
+        #[cfg(windows)]
+        assert!(scene_path(root, "C:evil.ron").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scene_path_rejects_symlinks_out_of_scenes() {
+        let dir = std::env::temp_dir().join(format!("ferrite-mcp-link-{}", fresh_id()));
+        let outside = dir.join("outside");
+        fs::create_dir_all(dir.join("project/scenes/sub")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("project/scenes/out")).unwrap();
+        let project = dir.join("project");
+        assert!(scene_path(&project, "out/evil.ron").is_err());
+        assert!(scene_path(&project, "out").is_err());
+        assert!(scene_path(&project, "sub/new.ron").is_ok());
+        assert!(scene_path(&project, "new.ron").is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn names_with_escaped_chars_survive_a_rewrite() {
+        // What ron writes for "❤️ lamp" plus a combining accent.
+        let text = "(version: 1, entities: [(id: 1, name: \"\u{2764}\\u{fe0f} lamp e\\u{301}\\'\", \
+                    position: (0.0, 0.0, 0.0), rotation: (1.0, 0.0, 0.0, 0.0), components: [], children: [])])";
+        let scene = SceneFile::from_ron(text).unwrap();
+        let expected = "\u{2764}\u{fe0f} lamp e\u{301}'";
+        assert_eq!(scene.entities[0].name, expected);
+        let again = SceneFile::from_ron(&scene.to_ron().unwrap()).unwrap();
+        assert_eq!(again.entities[0].name, expected);
+        // And what ron itself reads back from our file.
+        let name: String = ron::from_str(&quote(expected)).unwrap();
+        assert_eq!(name, expected);
+    }
+
+    #[test]
+    fn a_trailing_comment_does_not_swallow_the_comma() {
+        let mut scene = SceneFile::empty();
+        scene
+            .add(
+                EntityData {
+                    components: vec![
+                        "Light(intensity: 8.0) // warm".to_string(),
+                        "DebugController".to_string(),
+                    ],
+                    ..leaf(1, "Lamp")
+                },
+                None,
+            )
+            .unwrap();
+        let text = scene.to_ron().unwrap();
+        ron::from_str::<ron::Value>(&text).unwrap();
+        let back = SceneFile::from_ron(&text).unwrap();
+        assert_eq!(back.entities[0].components.len(), 2);
     }
 
     #[test]

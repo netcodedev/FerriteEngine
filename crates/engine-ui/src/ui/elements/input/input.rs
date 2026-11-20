@@ -15,7 +15,7 @@ use glfw::{
     WindowEvent::{self, Char, CursorPos, MouseButton},
 };
 
-use crate::ui::{element_handle::UIElementHandle, theme, UIElement};
+use crate::ui::{element_handle::UIElementHandle, focus, theme, UIElement};
 
 use super::{Input, TextEdit};
 
@@ -93,6 +93,8 @@ impl<T: Clone + ToString + FromStr> Input<T> {
     }
 
     fn focus(&mut self) {
+        // Taken again on every click: a press handled by `UI` releases it.
+        focus::take(&self.handle);
         if !self.is_focused {
             self.is_focused = true;
             // Editing always starts from the full, untruncated value.
@@ -103,6 +105,7 @@ impl<T: Clone + ToString + FromStr> Input<T> {
     }
 
     fn blur(&mut self) {
+        focus::release(&self.handle);
         self.is_focused = false;
         self.dragging = false;
         if let Some(text) = self.source_text() {
@@ -120,7 +123,18 @@ impl<T: Clone + ToString + FromStr> Input<T> {
     }
 
     pub fn set_handle(&mut self, handle: UIElementHandle) {
+        if self.is_focused && focus::owns(&self.handle) {
+            focus::take(&handle);
+        }
         self.handle = handle;
+    }
+
+    /// Blur if another element took focus, or a click elsewhere released
+    /// it, while this field did not see the press.
+    fn drop_stale_focus(&mut self) {
+        if self.is_focused && !focus::owns(&self.handle) {
+            self.blur();
+        }
     }
 
     pub fn set_size(&mut self, size: Size) {
@@ -151,6 +165,13 @@ impl<T: Clone + ToString + FromStr> Input<T> {
             }
         }
         best.0
+    }
+
+    /// Index of the char whose box contains window x coordinate `x`.
+    fn char_at(&self, x: f32) -> usize {
+        char_index_at(self.edit.text(), x - self.text_origin_x(), |s| {
+            self.text.measure_str(s)
+        })
     }
 
     /// The text as shown without focus: cut with "…" if it does not fit.
@@ -218,6 +239,7 @@ impl<T: Clone + ToString + FromStr> Input<T> {
 
 impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
     fn update(&mut self, _scene: &mut Scene) {
+        self.drop_stale_focus();
         // While focused the typed text is authoritative: it may be a value
         // that does not parse yet ("-", "1."), so the bound source must not
         // replace it until editing ends.
@@ -311,6 +333,11 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
         _: &mut glfw::Glfw,
         event: &WindowEvent,
     ) -> bool {
+        // A press is handled below: it focuses or blurs this field anyway,
+        // and must keep the typed text when it lands inside.
+        if !matches!(event, MouseButton(glfw::MouseButton::Button1, Press, _)) {
+            self.drop_stale_focus();
+        }
         match event {
             MouseButton(glfw::MouseButton::Button1, Press, mods) => {
                 let (x, y) = window.get_cursor_pos();
@@ -325,7 +352,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 let now = Instant::now();
                 let clicks = match self.last_click {
                     Some((t, n)) if now.duration_since(t).as_secs_f32() < MULTI_CLICK_SECONDS => {
-                        n + 1
+                        n.saturating_add(1)
                     }
                     _ => 1,
                 };
@@ -337,7 +364,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                             .set_cursor(index, mods.contains(Modifiers::Shift));
                         self.dragging = true;
                     }
-                    2 => self.edit.select_word_at(index.saturating_sub(1)),
+                    2 => self.edit.select_word_at(self.char_at(x)),
                     _ => self.edit.select_all(),
                 }
                 self.reset_blink();
@@ -437,5 +464,40 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
         self.selection_plane.set_z_index(z_index + 1.0);
         self.text.set_z_index(z_index + 1.0);
         self.cursor_plane.set_z_index(z_index + 2.0);
+    }
+}
+
+/// Index of the char of `text` whose box contains `local` (measured from the
+/// text's left edge); `measure` gives the width of a prefix. Left of the
+/// text is char 0, right of it is the char count.
+fn char_index_at(text: &str, local: f32, measure: impl Fn(&str) -> f32) -> usize {
+    let mut prefix = String::new();
+    for (i, c) in text.chars().enumerate() {
+        prefix.push(c);
+        if local < measure(&prefix) {
+            return i;
+        }
+    }
+    text.chars().count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::char_index_at;
+
+    fn mono(s: &str) -> f32 {
+        s.chars().count() as f32 * 10.0
+    }
+
+    #[test]
+    fn char_index_is_the_char_under_x() {
+        let text = "hello world";
+        // 'w' spans 60..70: both halves of it hit 'w', not the space.
+        assert_eq!(char_index_at(text, 61.0, mono), 6);
+        assert_eq!(char_index_at(text, 69.0, mono), 6);
+        assert_eq!(char_index_at(text, 59.0, mono), 5);
+        assert_eq!(char_index_at(text, -5.0, mono), 0);
+        assert_eq!(char_index_at(text, 500.0, mono), 11);
+        assert_eq!(char_index_at("aüb", 15.0, mono), 1);
     }
 }
