@@ -13,7 +13,7 @@ use cgmath::{Matrix4, SquareMatrix};
 use gl::types::*;
 use serde::{Deserialize, Serialize};
 
-use super::{light::light::clamp_finite, shader::Shader};
+use super::{framebuffer, light::light::clamp_finite, shader::Shader};
 
 /// Texture unit the occlusion is bound to while the scene is shaded.
 pub const SSAO_UNIT: u32 = 14;
@@ -102,7 +102,7 @@ impl Targets {
             gl::ReadBuffer(gl::NONE);
             let occlusion_framebuffer = framebuffer(gl::COLOR_ATTACHMENT0, occlusion);
             let blur_framebuffer = framebuffer(gl::COLOR_ATTACHMENT0, blurred);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            framebuffer::bind(gl::FRAMEBUFFER, 0);
             Self {
                 width,
                 height,
@@ -125,7 +125,7 @@ impl Drop for Targets {
                 self.occlusion_framebuffer,
                 self.blur_framebuffer,
             ];
-            gl::DeleteFramebuffers(framebuffers.len() as GLsizei, framebuffers.as_ptr());
+            framebuffer::delete(&framebuffers);
             let textures = [self.depth, self.occlusion, self.blurred];
             gl::DeleteTextures(textures.len() as GLsizei, textures.as_ptr());
         }
@@ -160,7 +160,7 @@ unsafe fn texture(width: i32, height: i32, internal: GLenum, format: GLenum, kin
 unsafe fn framebuffer(attachment: GLenum, texture: GLuint) -> GLuint {
     let mut id = 0;
     gl::GenFramebuffers(1, &mut id);
-    gl::BindFramebuffer(gl::FRAMEBUFFER, id);
+    framebuffer::bind(gl::FRAMEBUFFER, id);
     gl::FramebufferTexture2D(gl::FRAMEBUFFER, attachment, gl::TEXTURE_2D, texture, 0);
     id
 }
@@ -244,8 +244,8 @@ impl Ssao {
         let targets = self.targets.as_ref().expect("just created");
         unsafe {
             gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
-            gl::BindFramebuffer(gl::READ_FRAMEBUFFER, framebuffer);
-            gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, targets.depth_framebuffer);
+            framebuffer::bind(gl::READ_FRAMEBUFFER, framebuffer);
+            framebuffer::bind(gl::DRAW_FRAMEBUFFER, targets.depth_framebuffer);
             gl::BlitFramebuffer(
                 0,
                 0,
@@ -258,7 +258,7 @@ impl Ssao {
                 gl::DEPTH_BUFFER_BIT,
                 gl::NEAREST,
             );
-            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
         }
     }
 
@@ -277,7 +277,7 @@ impl Ssao {
             gl::Disable(gl::BLEND);
             gl::BindVertexArray(self.vao);
 
-            gl::BindFramebuffer(gl::FRAMEBUFFER, targets.occlusion_framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, targets.occlusion_framebuffer);
             let shader = &self.occlusion_shader;
             shader.bind();
             gl::ActiveTexture(gl::TEXTURE0);
@@ -289,7 +289,7 @@ impl Ssao {
             shader.set_uniform_1f("intensity", settings.intensity);
             gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
 
-            gl::BindFramebuffer(gl::FRAMEBUFFER, targets.blur_framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, targets.blur_framebuffer);
             let shader = &self.blur_shader;
             shader.bind();
             gl::ActiveTexture(gl::TEXTURE1);
@@ -304,7 +304,7 @@ impl Ssao {
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::BindVertexArray(0);
             gl::UseProgram(0);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            framebuffer::bind(gl::FRAMEBUFFER, 0);
             gl::DepthMask(gl::TRUE);
             gl::Enable(gl::DEPTH_TEST);
         }

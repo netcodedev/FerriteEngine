@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use super::CloudSettings;
-use crate::core::renderer::shader::Shader;
+use crate::core::renderer::{framebuffer, shader::Shader};
 
 const COMMON_GLSL: &str = include_str!("common.glsl");
 const CLOUD_FIELD_GLSL: &str = super::CLOUD_FIELD_GLSL;
@@ -109,7 +109,7 @@ impl CloudTarget {
             gl::BindTexture(gl::TEXTURE_2D, 0);
 
             gl::GenFramebuffers(1, &mut framebuffer);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
             gl::FramebufferTexture2D(
                 gl::FRAMEBUFFER,
                 gl::COLOR_ATTACHMENT0,
@@ -131,7 +131,7 @@ impl CloudTarget {
 impl Drop for CloudTarget {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteFramebuffers(1, &self.framebuffer);
+            framebuffer::delete(&[self.framebuffer]);
             gl::DeleteTextures(1, &self.texture);
         }
     }
@@ -255,8 +255,7 @@ impl SkyRenderer {
             // Where the sky goes, to come back to after the cloud pass.
             let mut viewport = [0; 4];
             gl::GetIntegerv(gl::VIEWPORT, viewport.as_mut_ptr());
-            let mut framebuffer = 0;
-            gl::GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut framebuffer);
+            let framebuffer = framebuffer::bound_draw();
 
             // Cloud pass, into the reduced-size target.
             let width = (viewport[2] / CLOUD_DOWNSCALE).max(1);
@@ -293,7 +292,7 @@ impl SkyRenderer {
                     Some(previous) => {
                         // A quarter of the texels, fresh.
                         let [x, y] = PHASES[p.frame % PHASES.len()];
-                        gl::BindFramebuffer(gl::FRAMEBUFFER, p.fresh.framebuffer);
+                        framebuffer::bind(gl::FRAMEBUFFER, p.fresh.framebuffer);
                         gl::Viewport(0, 0, p.fresh.width, p.fresh.height);
                         r.cloud_shader.bind();
                         r.cloud_shader.set_uniform_1i("reproject", 1);
@@ -301,7 +300,7 @@ impl SkyRenderer {
                         gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
 
                         // The rest from the frame before.
-                        gl::BindFramebuffer(gl::FRAMEBUFFER, output.framebuffer);
+                        framebuffer::bind(gl::FRAMEBUFFER, output.framebuffer);
                         gl::Viewport(0, 0, width, height);
                         let shader = &r.reproject_shader;
                         set_uniforms(shader);
@@ -322,7 +321,7 @@ impl SkyRenderer {
                     }
                     None => {
                         // Nothing to build on yet: all of them.
-                        gl::BindFramebuffer(gl::FRAMEBUFFER, output.framebuffer);
+                        framebuffer::bind(gl::FRAMEBUFFER, output.framebuffer);
                         gl::Viewport(0, 0, width, height);
                         gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
                     }
@@ -343,7 +342,7 @@ impl SkyRenderer {
                     r.clouds = Some(CloudTarget::new(width, height));
                 }
                 let clouds = r.clouds.as_ref().expect("just created");
-                gl::BindFramebuffer(gl::FRAMEBUFFER, clouds.framebuffer);
+                framebuffer::bind(gl::FRAMEBUFFER, clouds.framebuffer);
                 gl::Viewport(0, 0, width, height);
                 r.cloud_shader.bind();
                 gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
@@ -351,7 +350,7 @@ impl SkyRenderer {
             };
 
             // The sky itself, with the clouds blended in.
-            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer as GLuint);
+            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
             gl::Viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
             set_uniforms(&r.shader);
             if scene_depth.is_some() {

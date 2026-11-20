@@ -56,6 +56,14 @@ thread_local! {
         include_str!("vertex.glsl"),
         depth_pass::ALPHA_TEST_FRAGMENT,
     );
+    /// Every model's colour program: one for all of them (compiling the
+    /// PBR shader per model took seconds for a level of shapes). What
+    /// differs per model (transforms, bones, tint, material) is set on
+    /// every draw.
+    static COLOR_SHADER: Shader = Shader::new(
+        include_str!("vertex.glsl"),
+        &pbr::fragment_source(include_str!("fragment.glsl")),
+    );
 }
 
 impl Model {
@@ -81,10 +89,8 @@ impl Model {
                 PostProcess::FlipUVs,
             ],
         )?;
-        let shader = Shader::new(
-            include_str!("vertex.glsl"),
-            &pbr::fragment_source(include_str!("fragment.glsl")),
-        );
+        // Compiled with the first model, as each model's own program was.
+        COLOR_SHADER.with(|_| ());
         let model_dir = std::path::Path::new(full_path)
             .parent()
             .and_then(|p| p.to_str())
@@ -93,8 +99,8 @@ impl Model {
         Ok(Model {
             model: scene,
             meshes: Vec::new(),
-            shader,
             textures: Vec::new(),
+            shared_textures: Vec::new(),
             name: super::outline::default_variant_name(std::path::Path::new(full_path)),
             model_dir,
             position: position.into(),
@@ -112,6 +118,10 @@ impl Model {
         self.pose_changed();
         let materials = &self.model.materials;
         self.textures = Vec::with_capacity(materials.len());
+        self.shared_textures.clear();
+        // Texture files by path and colour space, as uploaded: materials
+        // often share one (an atlas), which is then read and uploaded once.
+        let mut loaded: HashMap<(String, bool), usize> = HashMap::new();
         for material in materials {
             let mut per_material: HashMap<TextureType, Texture> = HashMap::new();
 
@@ -150,8 +160,13 @@ impl Model {
                 let PropertyTypeInfo::String(raw_path) = &property.data else {
                     continue;
                 };
-                if let Some(texture) = Self::load_external_texture(raw_path, &self.model_dir, &slot)
-                {
+                if let Some(texture) = Self::load_external_texture(
+                    raw_path,
+                    &self.model_dir,
+                    &slot,
+                    &mut loaded,
+                    &mut self.shared_textures,
+                ) {
                     per_material.insert(slot, texture);
                 }
             }
@@ -249,15 +264,28 @@ impl Model {
     /// (`C:\Users\...\bark.png`) or paths relative to the original asset
     /// folder. We only have the file name to work with at runtime, so try a
     /// few reasonable locations next to where models live in this project.
+    /// A file uploaded before for the same colour space (in `loaded`, an
+    /// index into `owners`) is shared instead of read again.
     fn load_external_texture(
         raw_path: &str,
         model_dir: &str,
         slot: &TextureType,
+        loaded: &mut HashMap<(String, bool), usize>,
+        owners: &mut Vec<Texture>,
     ) -> Option<Texture> {
-        texture_candidates(raw_path, model_dir)
-            .iter()
-            .find_map(|candidate| read_image(std::path::Path::new(candidate)))
-            .map(|image| upload_map(image, slot))
+        let srgb = *slot == TextureType::Diffuse;
+        texture_candidates(raw_path, model_dir).into_iter().find_map(|candidate| {
+            let key = (candidate, srgb);
+            if let Some(&index) = loaded.get(&key) {
+                return Some(owners[index].share());
+            }
+            let image = read_image(std::path::Path::new(&key.0))?;
+            let texture = upload_map(image, slot);
+            let shared = texture.share();
+            loaded.insert(key, owners.len());
+            owners.push(texture);
+            Some(shared)
+        })
     }
 
     pub fn render(
@@ -307,8 +335,8 @@ impl Model {
         if depth_only && tint.is_some() {
             return;
         }
-        DEPTH_SHADER.with(|depth_shader| {
-            let shader = if depth_only { depth_shader } else { &self.shader };
+        let shader = if depth_only { &DEPTH_SHADER } else { &COLOR_SHADER };
+        shader.with(|shader| {
             self.draw_meshes(shader, depth_only, only, tint, lighting, parent_transform, camera_projection);
         });
     }
@@ -584,6 +612,38 @@ fn ray_triangle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_texture_file_several_materials_use_is_loaded_once() {
+        crate::core::headless::enable();
+        let temp = crate::core::assets::database::tests::TempDir::new("shared-texture");
+        crate::core::assets::test_models::write_png(&temp.0.join("atlas.png"));
+        crate::core::assets::test_models::write_png(&temp.0.join("bumps.png"));
+        let mut mtl = String::new();
+        let mut obj = String::from("mtllib props.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\nvt 0 0\n");
+        for (i, name) in ["bark", "leaves", "stone"].iter().enumerate() {
+            mtl += &format!("newmtl {name}\nmap_Kd atlas.png\n");
+            if i == 2 {
+                // The same file as data (linear): a texture of its own.
+                mtl += "map_Bump atlas.png\nmap_Ks bumps.png\n";
+            }
+            obj += &format!("o part{i}\nusemtl {name}\nf 1/1 2/1 3/1\nf 2/1 4/1 3/1\n");
+        }
+        std::fs::write(temp.0.join("props.mtl"), mtl).unwrap();
+        std::fs::write(temp.0.join("props.obj"), obj).unwrap();
+
+        let mut model = Model::from_file(temp.0.join("props.obj").to_str().unwrap(), (0.0, 0.0, 0.0)).unwrap();
+        model.init();
+        // atlas.png as colour, atlas.png as normals, bumps.png.
+        assert_eq!(model.shared_textures.len(), 3);
+        for name in ["bark", "leaves", "stone"] {
+            let index = (0..model.material_count())
+                .find(|&i| model.material_name_at(i).as_deref() == Some(name))
+                .expect(name);
+            let maps = model.material_textures(index).unwrap();
+            assert!(maps.contains_key(&TextureType::Diffuse), "{name}");
+        }
+    }
 
     #[test]
     fn textures_are_looked_for_relative_to_the_model_first() {

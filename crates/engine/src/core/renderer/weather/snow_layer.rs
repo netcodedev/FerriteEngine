@@ -69,7 +69,24 @@ pub struct SnowLayer {
     vao: GLuint,
     vbo: GLuint,
     ebo: GLuint,
-    index_count: i32,
+    /// Indices of the whole grid, at the start of the index buffer.
+    full_count: i32,
+    /// Indices of the grid without its middle (`in_hole`), after them.
+    ring_count: i32,
+}
+
+/// Cells (on each axis) of a ring that the next finer ring always covers,
+/// wherever the two lie: the fragment shader discards all of their
+/// fragments, so they are left out of the mesh. The finer ring's centre
+/// is at most one spacing off this ring's (`ring`), and it takes over
+/// within `finerHalf` (`CELLS / 4 - 1/4` spacings) of it: from
+/// `CELLS / 2 + 1 - CELLS / 4 + 1/4` on, up to `CELLS / 2 - 1 + CELLS / 4 - 1/4`.
+/// There the ring does not morph yet (that starts at 0.7 of its reach).
+fn in_hole(cell: i32) -> bool {
+    let quarter = CELLS / 4;
+    let first = CELLS / 2 + 1 - quarter + 1;
+    let last = CELLS / 2 - 1 + quarter - 2;
+    (first..=last).contains(&cell)
 }
 
 /// Centre (x, z) of ring `level` around `eye`, and metres between its
@@ -104,19 +121,28 @@ impl SnowLayer {
                 vertices.push(z as f32);
             }
         }
-        let mut indices: Vec<u32> = Vec::with_capacity((CELLS * CELLS * 6) as usize);
-        for z in 0..CELLS {
-            for x in 0..CELLS {
-                let i = (z * side + x) as u32;
-                let (right, down) = (i + 1, i + side as u32);
-                // Diagonals alternate, so morphed cells stay symmetric.
-                if (x + z) % 2 == 0 {
-                    indices.extend_from_slice(&[i, down, right, right, down, down + 1]);
-                } else {
-                    indices.extend_from_slice(&[i, down, down + 1, i, down + 1, right]);
+        // The whole grid (the finest ring), then the same without its
+        // middle (the others, where the finer ring draws instead), each
+        // in the same order.
+        let mut indices: Vec<u32> = Vec::with_capacity((CELLS * CELLS * 12) as usize);
+        for skip_hole in [false, true] {
+            for z in 0..CELLS {
+                for x in 0..CELLS {
+                    if skip_hole && in_hole(x) && in_hole(z) {
+                        continue;
+                    }
+                    let i = (z * side + x) as u32;
+                    let (right, down) = (i + 1, i + side as u32);
+                    // Diagonals alternate, so morphed cells stay symmetric.
+                    if (x + z) % 2 == 0 {
+                        indices.extend_from_slice(&[i, down, right, right, down, down + 1]);
+                    } else {
+                        indices.extend_from_slice(&[i, down, down + 1, i, down + 1, right]);
+                    }
                 }
             }
         }
+        let full_count = (CELLS * CELLS * 6) as i32;
         let (mut vao, mut vbo, mut ebo) = (0, 0, 0);
         unsafe {
             gl::GenVertexArrays(1, &mut vao);
@@ -146,7 +172,8 @@ impl SnowLayer {
             vao,
             vbo,
             ebo,
-            index_count: indices.len() as i32,
+            full_count,
+            ring_count: indices.len() as i32 - full_count,
         }
     }
 
@@ -204,12 +231,19 @@ impl SnowLayer {
                 let half = CELLS as f32 * 0.5 * finer_spacing - finer_spacing * 0.5;
                 shader.set_uniform_1f("finerHalf", half);
             }
+            // The finest ring whole; the others without the middle the
+            // finer one covers.
+            let (count, first) = if level == 0 {
+                (self.full_count, 0)
+            } else {
+                (self.ring_count, self.full_count as usize)
+            };
             unsafe {
                 gl::DrawElements(
                     gl::TRIANGLES,
-                    self.index_count,
+                    count,
                     gl::UNSIGNED_INT,
-                    std::ptr::null(),
+                    (first * std::mem::size_of::<u32>()) as *const _,
                 );
             }
         }
@@ -230,6 +264,33 @@ impl Drop for SnowLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cells_left_out_of_a_ring_lie_where_the_finer_ring_draws() {
+        let hole: Vec<i32> = (0..CELLS).filter(|&c| in_hole(c)).collect();
+        assert_eq!(hole.len(), 60);
+        for step in 0..2000 {
+            let t = step as f32 * 0.137;
+            let eye = Point3::new(t * 3.1 - 900.0, 0.0, 450.0 - t * 1.7);
+            for level in 1..LEVELS {
+                let (center, spacing) = ring(level, eye);
+                let (finer, finer_spacing) = ring(level - 1, eye);
+                // As `render` sets `finerHalf`.
+                let half = CELLS as f32 * 0.5 * finer_spacing - finer_spacing * 0.5;
+                for axis in 0..2 {
+                    // A cell's corners, as `snow_layer_vertex.glsl` places
+                    // them (no morph this close).
+                    for corner in [hole[0], hole[hole.len() - 1] + 1] {
+                        let p = center[axis] + (corner as f32 - CELLS as f32 * 0.5) * spacing;
+                        assert!((p - finer[axis]).abs() < half - 0.5 * spacing, "level {level} eye {eye:?}");
+                    }
+                    let reach = CELLS as f32 * 0.5 * spacing;
+                    let far = (hole[hole.len() - 1] + 1) as f32 - CELLS as f32 * 0.5;
+                    assert!(far.abs() * spacing + (center[axis] - [eye.x, eye.z][axis]).abs() < 0.7 * reach);
+                }
+            }
+        }
+    }
 
     #[test]
     fn rings_sit_on_their_coarser_neighbours_grid() {

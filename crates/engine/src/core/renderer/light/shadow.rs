@@ -18,6 +18,7 @@
 use cgmath::{perspective, Deg, InnerSpace, Matrix4, Point3, Vector3};
 
 use super::light::{LightKind, LightSource};
+use crate::core::renderer::framebuffer;
 
 /// Most lights with shadows per frame; must match `MAX_SHADOWED_LIGHTS`
 /// in `pbr/lighting.glsl` only in that layers above it never appear.
@@ -212,10 +213,10 @@ impl LightShadowMaps {
             gl::Enable(gl::TEXTURE_CUBE_MAP_SEAMLESS);
 
             gl::GenFramebuffers(1, &mut framebuffer);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
             gl::DrawBuffer(gl::NONE);
             gl::ReadBuffer(gl::NONE);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            framebuffer::bind(gl::FRAMEBUFFER, 0);
         }
         Self {
             texture,
@@ -226,7 +227,7 @@ impl LightShadowMaps {
     /// Draw into `face` of `layer`'s cube from now on, cleared.
     pub fn begin_face(&self, layer: u32, face: usize) {
         unsafe {
-            gl::BindFramebuffer(gl::FRAMEBUFFER, self.framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, self.framebuffer);
             gl::FramebufferTextureLayer(
                 gl::FRAMEBUFFER,
                 gl::DEPTH_ATTACHMENT,
@@ -264,7 +265,7 @@ impl LightShadowMaps {
 impl Drop for LightShadowMaps {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteFramebuffers(1, &self.framebuffer);
+            framebuffer::delete(&[self.framebuffer]);
             gl::DeleteTextures(1, &self.texture);
         }
     }

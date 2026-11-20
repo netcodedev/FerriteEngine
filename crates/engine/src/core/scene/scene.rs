@@ -12,7 +12,7 @@ use crate::core::{
     },
     physics::{collider_debug, physics_engine::PhysicsEngine, rigidbody::RigidBody},
     renderer::{
-        framebuffer::{CascadedShadowMap, FrameBuffer, ShadowFrameBuffer},
+        framebuffer::{self, CascadedShadowMap, FrameBuffer, ShadowFrameBuffer},
         line::{Line, LineRenderer},
         plane::PlaneRenderer,
         text::TextRenderer,
@@ -418,18 +418,7 @@ impl Scene {
     /// dedicated water-debug FBO only.  All other FBOs (shadow map,
     /// terrain-debug) should skip the transparent water pass.
     pub fn is_water_render_allowed(&self) -> bool {
-        let mut bound: gl::types::GLint = 0;
-        unsafe { gl::GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut bound); }
-        let bound = bound as u32;
-        if hdr::draws_to_view() {
-            return true;
-        }
-        if let Some(wfbo) = &self.water_debug_fbo {
-            if bound == wfbo.get_id() {
-                return true;
-            }
-        }
-        false
+        hdr::draws_to_view() || self.is_water_depth_capture()
     }
 
     /// Returns true when rendering into the water depth-capture FBO.
@@ -437,9 +426,7 @@ impl Scene {
     /// GL_ALWAYS) instead of blending colour, so the depth texture shows
     /// exactly where the water surface sits in clip-space.
     pub fn is_water_depth_capture(&self) -> bool {
-        let mut bound: gl::types::GLint = 0;
-        unsafe { gl::GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut bound); }
-        let bound = bound as u32;
+        let bound = framebuffer::bound_draw();
         self.water_debug_fbo
             .as_ref()
             .map_or(false, |fbo| fbo.get_id() == bound)

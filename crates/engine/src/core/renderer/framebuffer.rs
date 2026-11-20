@@ -1,4 +1,57 @@
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use gl::types::{GLenum, GLuint};
+
 use super::texture::Texture;
+
+/// `BOUND_DRAW` before anything is known: the next `bound_draw` asks GL.
+const UNKNOWN: u32 = u32::MAX;
+
+/// GL name of the draw framebuffer the engine bound last (see `bind`), so
+/// passes can tell where they draw without asking the driver: a
+/// `glGetIntegerv` waits for a threaded driver to catch up, and the bound
+/// target is asked for on every lit draw.
+static BOUND_DRAW: AtomicU32 = AtomicU32::new(UNKNOWN);
+
+/// Bind `framebuffer` to `target` (`FRAMEBUFFER`, `DRAW_FRAMEBUFFER` or
+/// `READ_FRAMEBUFFER`) and remember the draw one. The engine binds its
+/// framebuffers only through this, so `bound_draw` stays right.
+pub unsafe fn bind(target: GLenum, framebuffer: GLuint) {
+    gl::BindFramebuffer(target, framebuffer);
+    if target != gl::READ_FRAMEBUFFER {
+        BOUND_DRAW.store(framebuffer, Ordering::Relaxed);
+    }
+}
+
+/// Delete `framebuffers`. One of them still bound for drawing leaves the
+/// default framebuffer bound, as GL does.
+pub unsafe fn delete(framebuffers: &[GLuint]) {
+    gl::DeleteFramebuffers(framebuffers.len() as gl::types::GLsizei, framebuffers.as_ptr());
+    let bound = BOUND_DRAW.load(Ordering::Relaxed);
+    if bound != UNKNOWN && bound != 0 && framebuffers.contains(&bound) {
+        BOUND_DRAW.store(0, Ordering::Relaxed);
+    }
+}
+
+/// The framebuffer bound for drawing now. Asks GL only while it is not
+/// known (before the engine bound one, or after `forget_bound`).
+pub fn bound_draw() -> GLuint {
+    let bound = BOUND_DRAW.load(Ordering::Relaxed);
+    if bound != UNKNOWN {
+        return bound;
+    }
+    let mut queried = 0;
+    unsafe { gl::GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut queried) };
+    let queried = queried as GLuint;
+    BOUND_DRAW.store(queried, Ordering::Relaxed);
+    queried
+}
+
+/// Code that binds framebuffers past `bind` (another library on the same
+/// context) calls this after, so the next `bound_draw` asks GL again.
+pub fn forget_bound() {
+    BOUND_DRAW.store(UNKNOWN, Ordering::Relaxed);
+}
 
 pub struct FrameBuffer {
     id: u32,
@@ -13,7 +66,7 @@ impl FrameBuffer {
         let mut id = 0;
         unsafe {
             gl::GenFramebuffers(1, &mut id);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, id);
+            bind(gl::FRAMEBUFFER, id);
             gl::DrawBuffer(gl::COLOR_ATTACHMENT0);
         }
         Self {
@@ -60,7 +113,7 @@ impl FrameBuffer {
     pub fn bind(&self) {
         unsafe {
             gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, self.id);
+            bind(gl::FRAMEBUFFER, self.id);
             gl::Viewport(0, 0, self.width as i32, self.height as i32);
         }
         if let Some(texture) = &self.depth_texture {
@@ -70,7 +123,7 @@ impl FrameBuffer {
 
     pub fn unbind() {
         unsafe {
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            bind(gl::FRAMEBUFFER, 0);
         }
     }
 
@@ -99,7 +152,7 @@ impl FrameBuffer {
 impl Drop for FrameBuffer {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteFramebuffers(1, &self.id);
+            delete(&[self.id]);
         }
     }
 }
@@ -152,10 +205,10 @@ impl CascadedShadowMap {
         let mut id = 0;
         unsafe {
             gl::GenFramebuffers(1, &mut id);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, id);
+            bind(gl::FRAMEBUFFER, id);
             gl::DrawBuffer(gl::NONE);
             gl::ReadBuffer(gl::NONE);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            bind(gl::FRAMEBUFFER, 0);
         }
         Self { id, size, texture }
     }
@@ -163,7 +216,7 @@ impl CascadedShadowMap {
     /// Draw into the depth layer of `cascade` from now on.
     pub fn bind_cascade(&self, cascade: u32) {
         unsafe {
-            gl::BindFramebuffer(gl::FRAMEBUFFER, self.id);
+            bind(gl::FRAMEBUFFER, self.id);
             gl::FramebufferTextureLayer(
                 gl::FRAMEBUFFER,
                 gl::DEPTH_ATTACHMENT,
@@ -183,7 +236,66 @@ impl CascadedShadowMap {
 impl Drop for CascadedShadowMap {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteFramebuffers(1, &self.id);
+            delete(&[self.id]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_bound_draw_framebuffer_is_kept_track_of() {
+        // GL calls do nothing from here on (no context in tests).
+        crate::core::window::disconnect_gl();
+        unsafe {
+            bind(gl::FRAMEBUFFER, 5);
+            assert_eq!(bound_draw(), 5);
+            // Reading from another one leaves where it draws.
+            bind(gl::READ_FRAMEBUFFER, 7);
+            assert_eq!(bound_draw(), 5);
+            bind(gl::DRAW_FRAMEBUFFER, 9);
+            assert_eq!(bound_draw(), 9);
+            delete(&[3, 5]);
+            assert_eq!(bound_draw(), 9);
+            // Deleting the bound one leaves the window's bound, as in GL.
+            delete(&[4, 9]);
+            assert_eq!(bound_draw(), 0);
+            bind(gl::FRAMEBUFFER, 2);
+        }
+        forget_bound();
+        // Unknown: asked from GL (which answers nothing here).
+        assert_eq!(bound_draw(), 0);
+    }
+
+    /// Framebuffers bound past `bind` would leave `bound_draw` wrong, and
+    /// lit draws would shade for the wrong target.
+    #[test]
+    fn framebuffers_are_bound_only_through_bind() {
+        // The impostor bake binds back what it found before it returns;
+        // the window's test only deletes with GL disconnected.
+        let allowed = ["framebuffer.rs", "impostor.rs", "window.rs"];
+        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut stack = vec![crates];
+        let mut offenders = Vec::new();
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                if path.is_dir() {
+                    if name != "target" && !name.starts_with('.') {
+                        stack.push(path);
+                    }
+                } else if name.ends_with(".rs") && !allowed.contains(&name.as_str()) {
+                    let text = std::fs::read_to_string(&path).unwrap_or_default();
+                    if text.contains("gl::BindFramebuffer(") || text.contains("gl::DeleteFramebuffers(") {
+                        offenders.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+        assert!(offenders.is_empty(), "use renderer::framebuffer::bind/delete in {offenders:?}");
     }
 }

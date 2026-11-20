@@ -11,8 +11,8 @@ pub struct Shader {
 }
 
 impl Drop for Shader {
-    /// Delete the program. Every model has one of its own, and models come
-    /// and go (streamed in, rebuilt on every script reload): kept, their
+    /// Delete the program. Renderers that own one come and go (streamed
+    /// in, rebuilt on every script reload): kept, their
     /// programs piled up in the driver, a few hundred KB of memory each.
     /// Only while a GL context is current: shaders in thread-locals are
     /// dropped when the thread ends, after the window and its context are

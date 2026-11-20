@@ -5,12 +5,14 @@ layout (location = 1) in vec2 tex_coords;
 
 uniform mat4 projection;
 uniform vec4 color;
+// Where the text is: its mesh lies at the origin.
+uniform vec3 offset;
 
 out vec2 v_tex_coords;
 out vec4 v_color;
 
 void main() {
-    gl_Position = projection * vec4(position, 1.0);
+    gl_Position = projection * vec4(position + offset, 1.0);
     v_tex_coords = tex_coords;
     v_color = color;
 }

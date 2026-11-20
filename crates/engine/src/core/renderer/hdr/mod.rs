@@ -20,7 +20,7 @@ use std::{
 use gl::types::*;
 use serde::{Deserialize, Serialize};
 
-use super::{light::light::clamp_finite, shader::Shader};
+use super::{framebuffer, light::light::clamp_finite, shader::Shader};
 
 /// Shared GLSL: `tonemap`, `linearToSrgb`.
 pub const TONEMAP_GLSL: &str = include_str!("tonemap.glsl");
@@ -56,10 +56,10 @@ const BLOOM_KNEE: f32 = 0.5;
 /// it, 0 otherwise.
 static VIEW_FRAMEBUFFER: AtomicU32 = AtomicU32::new(0);
 
+/// The bound draw framebuffer, as the engine keeps track of it (no
+/// `glGet`: this is asked on every lit draw).
 fn bound_draw_framebuffer() -> u32 {
-    let mut bound = 0;
-    unsafe { gl::GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut bound) };
-    bound as u32
+    framebuffer::bound_draw()
 }
 
 /// GL names of the resolved colour and depth textures holding the opaque
@@ -249,7 +249,7 @@ impl Target {
             gl::BindTexture(gl::TEXTURE_2D, 0);
 
             gl::GenFramebuffers(1, &mut framebuffer);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
             gl::FramebufferTexture2D(
                 gl::FRAMEBUFFER,
                 gl::COLOR_ATTACHMENT0,
@@ -268,7 +268,7 @@ impl Target {
     }
 
     unsafe fn bind(&self) {
-        gl::BindFramebuffer(gl::FRAMEBUFFER, self.framebuffer);
+        framebuffer::bind(gl::FRAMEBUFFER, self.framebuffer);
         gl::Viewport(0, 0, self.width, self.height);
     }
 }
@@ -276,7 +276,7 @@ impl Target {
 impl Drop for Target {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteFramebuffers(1, &self.framebuffer);
+            framebuffer::delete(&[self.framebuffer]);
             gl::DeleteTextures(1, &self.texture);
         }
     }
@@ -323,7 +323,7 @@ impl ViewTargets {
             gl::BindRenderbuffer(gl::RENDERBUFFER, 0);
 
             gl::GenFramebuffers(1, &mut framebuffer);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
             gl::FramebufferRenderbuffer(
                 gl::FRAMEBUFFER,
                 gl::COLOR_ATTACHMENT0,
@@ -354,7 +354,7 @@ impl ViewTargets {
             gl::BindTexture(gl::TEXTURE_2D, 0);
 
             gl::GenFramebuffers(1, &mut resolve_framebuffer);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, resolve_framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, resolve_framebuffer);
             gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color, 0);
             gl::FramebufferTexture2D(
                 gl::FRAMEBUFFER,
@@ -365,7 +365,7 @@ impl ViewTargets {
             );
             gl::DrawBuffer(gl::COLOR_ATTACHMENT0);
             check_framebuffer("HDR resolve");
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            framebuffer::bind(gl::FRAMEBUFFER, 0);
         }
 
         let mut bloom = Vec::new();
@@ -394,8 +394,8 @@ impl ViewTargets {
 impl Drop for ViewTargets {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteFramebuffers(1, &self.framebuffer);
-            gl::DeleteFramebuffers(1, &self.resolve_framebuffer);
+            framebuffer::delete(&[self.framebuffer]);
+            framebuffer::delete(&[self.resolve_framebuffer]);
             gl::DeleteRenderbuffers(1, &self.color_buffer);
             gl::DeleteRenderbuffers(1, &self.depth_buffer);
             gl::DeleteTextures(1, &self.color);
@@ -495,7 +495,7 @@ impl Hdr {
                 gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
             }
             gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            framebuffer::bind(gl::FRAMEBUFFER, 0);
             gl::UseProgram(0);
         }
 
@@ -523,11 +523,10 @@ impl Hdr {
     /// positions in it are relative to the viewport's corner.
     pub fn begin(&mut self) {
         let mut viewport = [0; 4];
-        let mut framebuffer = 0;
+        let framebuffer = framebuffer::bound_draw();
         let mut clear = [0.0f32; 4];
         unsafe {
             gl::GetIntegerv(gl::VIEWPORT, viewport.as_mut_ptr());
-            gl::GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut framebuffer);
             gl::GetFloatv(gl::COLOR_CLEAR_VALUE, clear.as_mut_ptr());
         }
         let (width, height) = (viewport[2].max(1), viewport[3].max(1));
@@ -542,11 +541,11 @@ impl Hdr {
         }
         let view = self.view.as_ref().expect("just created");
         self.destination = Some(Destination {
-            framebuffer: framebuffer as GLuint,
+            framebuffer,
             viewport,
         });
         unsafe {
-            gl::BindFramebuffer(gl::FRAMEBUFFER, view.framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, view.framebuffer);
             gl::Viewport(0, 0, width, height);
             // The window's clear colour is display colour; the target
             // holds linear light.
@@ -572,7 +571,7 @@ impl Hdr {
     pub fn rebind(&self) {
         if let Some((framebuffer, width, height)) = self.view_framebuffer() {
             unsafe {
-                gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+                framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
                 gl::Viewport(0, 0, width, height);
             }
         }
@@ -589,8 +588,8 @@ impl Hdr {
             return;
         }
         unsafe {
-            gl::BindFramebuffer(gl::READ_FRAMEBUFFER, view.framebuffer);
-            gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, view.resolve_framebuffer);
+            framebuffer::bind(gl::READ_FRAMEBUFFER, view.framebuffer);
+            framebuffer::bind(gl::DRAW_FRAMEBUFFER, view.resolve_framebuffer);
             gl::BlitFramebuffer(
                 0,
                 0,
@@ -603,7 +602,7 @@ impl Hdr {
                 gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
                 gl::NEAREST,
             );
-            gl::BindFramebuffer(gl::FRAMEBUFFER, view.framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, view.framebuffer);
         }
         OPAQUE_COLOR.store(view.color, Ordering::Relaxed);
         OPAQUE_DEPTH.store(view.depth, Ordering::Relaxed);
@@ -632,8 +631,8 @@ impl Hdr {
 
         unsafe {
             // Resolve the samples. Depth has to be resolved with NEAREST.
-            gl::BindFramebuffer(gl::READ_FRAMEBUFFER, view.framebuffer);
-            gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, view.resolve_framebuffer);
+            framebuffer::bind(gl::READ_FRAMEBUFFER, view.framebuffer);
+            framebuffer::bind(gl::DRAW_FRAMEBUFFER, view.resolve_framebuffer);
             gl::BlitFramebuffer(
                 0,
                 0,
@@ -646,7 +645,7 @@ impl Hdr {
                 gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
                 gl::NEAREST,
             );
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            framebuffer::bind(gl::FRAMEBUFFER, 0);
 
             gl::Disable(gl::DEPTH_TEST);
             gl::DepthMask(gl::FALSE);
@@ -677,7 +676,7 @@ impl Hdr {
         }
 
         unsafe {
-            gl::BindFramebuffer(gl::FRAMEBUFFER, destination.framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, destination.framebuffer);
             let [x, y, w, h] = destination.viewport;
             gl::Viewport(x, y, w, h);
             // The depth goes along, whatever is in the window already.

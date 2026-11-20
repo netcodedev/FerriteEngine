@@ -120,15 +120,14 @@ impl Text {
     }
 
     pub fn prepare_render_at(&mut self, position: Position) {
-        let (x, y, z) = (position.x as i32, position.y as i32, position.z as i32);
-        if self.x == x && self.y == y && self.z == z && self.atlas == TextRenderer::atlas_generation()
-        {
-            return;
+        // The mesh lies at the origin and is moved when drawn: moving the
+        // text does not build it again.
+        self.x = position.x as i32;
+        self.y = position.y as i32;
+        self.z = position.z as i32;
+        if self.atlas != TextRenderer::atlas_generation() {
+            self.layout(TextRenderer::get_size().0);
         }
-        self.x = x;
-        self.y = y;
-        self.z = z;
-        self.layout(TextRenderer::get_size().0);
     }
 
     pub fn set_content(&mut self, content: &str) {
@@ -140,13 +139,9 @@ impl Text {
         self.layout(TextRenderer::get_size().0);
     }
 
+    /// Where the text is drawn in depth; the glyphs stay as they are.
     pub fn set_z_index(&mut self, z_index: f32) {
-        if self.z == z_index as i32 {
-            return;
-        }
         self.z = z_index as i32;
-        self.dirty = true;
-        self.layout(TextRenderer::get_size().0);
     }
 
     pub fn get_size(&self) -> Size {
@@ -200,6 +195,7 @@ impl Text {
         // Measured fresh each time so the size shrinks with shorter content.
         self.max_x = 0;
         self.max_y = 0;
+        // At the origin: `render` moves it to (x, y, z).
         let vertices: Vec<TextVertex> = self
             .glyphs
             .iter()
@@ -211,41 +207,19 @@ impl Text {
                 if self.max_y < screen_rect.max.y as i32 {
                     self.max_y = screen_rect.max.y as i32;
                 }
-                let gl_rect = Rect {
-                    min: point(
-                        screen_rect.min.x as f32 + self.x as f32,
-                        screen_rect.min.y as f32 + self.y as f32,
-                    ),
-                    max: point(
-                        screen_rect.max.x as f32 + self.x as f32,
-                        screen_rect.max.y as f32 + self.y as f32,
-                    ),
+                let (min_x, min_y) = (screen_rect.min.x as f32, screen_rect.min.y as f32);
+                let (max_x, max_y) = (screen_rect.max.x as f32, screen_rect.max.y as f32);
+                let vertex = |x: f32, y: f32, u: f32, v: f32| TextVertex {
+                    position: (x, y, 0.0),
+                    texture_coords: (u, v),
                 };
-                vec![
-                    TextVertex {
-                        position: (gl_rect.min.x, gl_rect.max.y, self.z as f32),
-                        texture_coords: (uv_rect.min.x, uv_rect.max.y),
-                    },
-                    TextVertex {
-                        position: (gl_rect.min.x, gl_rect.min.y, self.z as f32),
-                        texture_coords: (uv_rect.min.x, uv_rect.min.y),
-                    },
-                    TextVertex {
-                        position: (gl_rect.max.x, gl_rect.min.y, self.z as f32),
-                        texture_coords: (uv_rect.max.x, uv_rect.min.y),
-                    },
-                    TextVertex {
-                        position: (gl_rect.max.x, gl_rect.min.y, self.z as f32),
-                        texture_coords: (uv_rect.max.x, uv_rect.min.y),
-                    },
-                    TextVertex {
-                        position: (gl_rect.max.x, gl_rect.max.y, self.z as f32),
-                        texture_coords: (uv_rect.max.x, uv_rect.max.y),
-                    },
-                    TextVertex {
-                        position: (gl_rect.min.x, gl_rect.max.y, self.z as f32),
-                        texture_coords: (uv_rect.min.x, uv_rect.max.y),
-                    },
+                [
+                    vertex(min_x, max_y, uv_rect.min.x, uv_rect.max.y),
+                    vertex(min_x, min_y, uv_rect.min.x, uv_rect.min.y),
+                    vertex(max_x, min_y, uv_rect.max.x, uv_rect.min.y),
+                    vertex(max_x, min_y, uv_rect.max.x, uv_rect.min.y),
+                    vertex(max_x, max_y, uv_rect.max.x, uv_rect.max.y),
+                    vertex(min_x, max_y, uv_rect.min.x, uv_rect.max.y),
                 ]
             })
             .collect();
@@ -353,6 +327,9 @@ impl TextRenderer {
         }
         let (r, g, b, a) = text.color;
         renderer.shader.set_uniform_4f("color", r, g, b, a);
+        renderer
+            .shader
+            .set_uniform_3f("offset", text.x as f32, text.y as f32, text.z as f32);
 
         unsafe {
             // draw text

@@ -9,7 +9,7 @@
 use gl::types::*;
 
 use super::{exposure::SkyExposure, SHELTER_UNIT};
-use crate::core::renderer::shader::Shader;
+use crate::core::renderer::{framebuffer, shader::Shader};
 
 /// Texels per side: four exposure map texels each (about 63 cm).
 const SIZE: i32 = 256;
@@ -113,7 +113,7 @@ impl ShelterMap {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as GLint);
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::GenFramebuffers(1, &mut framebuffer);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
             gl::FramebufferTexture2D(
                 gl::FRAMEBUFFER,
                 gl::COLOR_ATTACHMENT0,
@@ -125,7 +125,7 @@ impl ShelterMap {
             // Open everywhere until the first update.
             gl::ClearColor(1.0, 1.0, 1.0, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            framebuffer::bind(gl::FRAMEBUFFER, 0);
         }
         Target { framebuffer, texture }
     }
@@ -141,7 +141,7 @@ impl ShelterMap {
             gl::BindVertexArray(self.vao);
 
             // The open share, into the second target.
-            gl::BindFramebuffer(gl::FRAMEBUFFER, self.targets[1].framebuffer);
+            framebuffer::bind(gl::FRAMEBUFFER, self.targets[1].framebuffer);
             self.open.bind();
             self.open.set_uniform_1i("exposureMap", 0);
             self.open.set_uniform_1i("groundMap", 1);
@@ -158,7 +158,7 @@ impl ShelterMap {
             self.blur.bind();
             self.blur.set_uniform_1i("source", 0);
             for (from, to, direction) in [(1, 0, (1, 0)), (0, 1, (0, 1))] {
-                gl::BindFramebuffer(gl::FRAMEBUFFER, self.targets[to].framebuffer);
+                framebuffer::bind(gl::FRAMEBUFFER, self.targets[to].framebuffer);
                 self.blur.set_uniform_2i("direction", direction.0, direction.1);
                 gl::BindTexture(gl::TEXTURE_2D, self.targets[from].texture);
                 gl::DrawArrays(gl::TRIANGLES, 0, 3);
@@ -166,7 +166,7 @@ impl ShelterMap {
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::BindVertexArray(0);
             gl::Enable(gl::DEPTH_TEST);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            framebuffer::bind(gl::FRAMEBUFFER, 0);
         }
     }
 
@@ -184,7 +184,7 @@ impl Drop for ShelterMap {
     fn drop(&mut self) {
         unsafe {
             for target in &self.targets {
-                gl::DeleteFramebuffers(1, &target.framebuffer);
+                framebuffer::delete(&[target.framebuffer]);
                 gl::DeleteTextures(1, &target.texture);
             }
             gl::DeleteVertexArrays(1, &self.vao);
