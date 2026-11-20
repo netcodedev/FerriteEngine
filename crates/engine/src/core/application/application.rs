@@ -41,6 +41,7 @@ impl Application {
         self.window.calculate_frametime();
         while !self.window.should_close() {
             use crate::core::gfx;
+            let frame_start = std::time::Instant::now();
             gfx::begin_frame();
             let (r, g, b, a) = self.clear_color;
             gfx::begin_window_pass(gfx::Load::Color([r, g, b, a]), gfx::Load::Depth(1.0));
@@ -69,6 +70,7 @@ impl Application {
             gfx::end_frame();
 
             self.window.swap_buffers();
+            crate::core::spike_probe::end_frame(frame_start.elapsed());
             crate::core::diagnostics::end_frame();
             // No layer took the game's request to end: it ends.
             if super::take_quit_request() {

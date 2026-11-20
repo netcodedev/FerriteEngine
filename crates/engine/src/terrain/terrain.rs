@@ -645,6 +645,8 @@ impl Terrain {
     /// the chunks of those the workers have made since the last frame (for
     /// up to `UPLOAD_BUDGET`).
     fn stream(&mut self, scene: &mut Scene, entity: &mut Entity, eye: Point3<f32>) {
+        let t0 = std::time::Instant::now();
+        let _probe = StreamProbe(t0);
         let Some(streamer) = &mut self.streamer else {
             return;
         };
@@ -1215,5 +1217,13 @@ mod world_map_tests {
         map.wanted = true;
         map.update(&source);
         assert!(map.pending.is_some());
+    }
+}
+
+/// Spike probe (see `core::spike_probe`).
+struct StreamProbe(std::time::Instant);
+impl Drop for StreamProbe {
+    fn drop(&mut self) {
+        crate::core::spike_probe::add(&crate::core::spike_probe::STREAM_US, self.0);
     }
 }

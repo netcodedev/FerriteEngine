@@ -438,6 +438,7 @@ impl Scene {
     }
 
     pub fn update(&mut self, delta_time: f64) {
+        let _probe = Probe(std::time::Instant::now(), &crate::core::spike_probe::UPDATE_US);
         self.physics_engine.begin_frame();
         // Messages in and out, and the other players where they are, before
         // anything moves.
@@ -452,6 +453,7 @@ impl Scene {
     }
 
     pub fn render(&self, window: &Window) {
+        let _probe = Probe(std::time::Instant::now(), &crate::core::spike_probe::RENDER_US);
         // 2D overlays drawn by components (menus, HUD) lay out in the
         // viewport's pixels, as the cursor they get does (see
         // `handle_event`), not stretched from the whole window into it.
@@ -1330,5 +1332,13 @@ mod tests {
         });
         assert_eq!(updated, ["a", "b", "c"]);
         assert_eq!(names(&scene), ["a", "b", "c"]);
+    }
+}
+
+/// Spike probe (see `core::spike_probe`): adds its lifetime to a counter.
+struct Probe(std::time::Instant, &'static std::sync::atomic::AtomicU64);
+impl Drop for Probe {
+    fn drop(&mut self) {
+        crate::core::spike_probe::add(self.1, self.0);
     }
 }

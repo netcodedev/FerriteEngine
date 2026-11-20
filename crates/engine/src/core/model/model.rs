@@ -90,19 +90,26 @@ impl Model {
                 PostProcess::FlipUVs,
             ],
         )?;
-        // Compiled with the first model, as each model's own program was.
-        COLOR_SHADER.with(|_| ());
         let model_dir = std::path::Path::new(full_path)
             .parent()
             .and_then(|p| p.to_str())
             .unwrap_or("assets/models")
             .to_string();
-        Ok(Model {
+        let name = super::outline::default_variant_name(std::path::Path::new(full_path));
+        Ok(Self::from_scene(scene, name, model_dir, position))
+    }
+
+    /// A model of an assimp scene made some other way (see `generated`):
+    /// `name` as a file's stem, maps looked for next to it in `model_dir`.
+    pub(super) fn from_scene<P: Into<Point3<f32>>>(scene: Scene, name: String, model_dir: String, position: P) -> Model {
+        // Compiled with the first model, as each model's own program was.
+        COLOR_SHADER.with(|_| ());
+        Model {
             model: scene,
             meshes: Vec::new(),
             textures: Vec::new(),
             shared_textures: Vec::new(),
-            name: super::outline::default_variant_name(std::path::Path::new(full_path)),
+            name,
             model_dir,
             position: position.into(),
             scale: 0.01,
@@ -112,7 +119,7 @@ impl Model {
             bone_cache: Default::default(),
             pose_revision: next_pose_revision(),
             cull_bounds: None,
-        })
+        }
     }
 
     pub fn init(&mut self) {

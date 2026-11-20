@@ -5,6 +5,7 @@ pub mod diagnostics;
 pub mod entity;
 pub mod export;
 pub mod gfx;
+pub mod spike_probe;
 pub mod headless;
 pub mod logging;
 pub mod mcp_bridge;
