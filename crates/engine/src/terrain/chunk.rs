@@ -44,8 +44,19 @@ impl TerrainChunk {
     /// The chunk at `coord` of the world `source`, in full `detail` (with
     /// caves and the like) or not.
     pub fn generate(source: &dyn TerrainSource, coord: ChunkCoord, detail: bool) -> Self {
+        Self::generate_for(source, coord, detail, true)
+    }
+
+    /// `generate`, or, unless `drawn`, only what collides (where nothing
+    /// is drawn: a server without a GPU): the finest level's ground,
+    /// unpainted and without its skirt, and no water.
+    pub fn generate_for(source: &dyn TerrainSource, coord: ChunkCoord, detail: bool, drawn: bool) -> Self {
         let surface = source.chunk(coord, detail);
-        let meshed = mesher::mesh_chunk(&*surface);
+        let meshed = if drawn {
+            mesher::mesh_chunk(&*surface)
+        } else {
+            mesher::mesh_collider(&*surface)
+        };
         let lowest = (surface.field().min_height / CHUNK_SIZE_FLOAT).floor() as i32;
         drop(surface);
         let mut chunk = Self {
@@ -66,7 +77,7 @@ impl TerrainChunk {
         // The lowest chunk of the column (the one holding its lowest
         // ground) has the water over it, whatever the water's height, so
         // exactly one chunk of a column has it.
-        if coord.y == lowest {
+        if drawn && coord.y == lowest {
             chunk.water_mesh = chunk.generate_water_mesh(source);
         }
         chunk.drawn_bounds = chunk.measure_drawn_bounds();
@@ -386,6 +397,24 @@ mod tests {
             }
         }
         assert!(b.max.1 - b.min.1 < CHUNK_SIZE as i32, "{b:?}");
+    }
+
+    #[test]
+    fn a_chunk_not_drawn_collides_as_a_drawn_one_does() {
+        let source = hills();
+        let coord = ground_chunk(&source, 0, 0);
+        let drawn = TerrainChunk::generate(&*source, coord, true);
+        let bare = TerrainChunk::generate_for(&*source, coord, true, false);
+        let (dv, di) = drawn.collision_mesh();
+        let (bv, bi) = bare.collision_mesh();
+        assert!(!di.is_empty());
+        // The drawn one's skirt follows its ground's vertices (no triangle
+        // of the collider uses those).
+        assert_eq!(dv[..bv.len()], bv[..]);
+        assert_eq!(di, bi);
+        // Nothing but that.
+        assert_eq!(bare.levels().0.len(), 1);
+        assert!(bare.water_mesh.is_none());
     }
 
     #[test]

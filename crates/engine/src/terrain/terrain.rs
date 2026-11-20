@@ -19,6 +19,7 @@ lazy_static! {
 }
 
 use crate::core::{
+    headless,
     entity::{
         component::{Component, Property, PropertyValue},
         Entity,
@@ -421,11 +422,13 @@ impl Terrain {
     /// the camera (see `streaming`). They stop when the streamer is dropped.
     fn start_streaming(source: &Arc<dyn TerrainSource>) -> Streamer<Vec<LoadedChunk>> {
         let source = source.clone();
+        // Without a GPU (a server) only the colliders are made.
+        let drawn = !headless::is_headless();
         Streamer::new(Streamer::<()>::default_workers(), StreamRadius::DEFAULT, move |(x, z), detail| {
             source
                 .vertical_range((x, z), detail)
                 .filter_map(|y| {
-                    let chunk = TerrainChunk::generate(&*source, ChunkCoord::new(x, y, z), detail);
+                    let chunk = TerrainChunk::generate_for(&*source, ChunkCoord::new(x, y, z), detail, drawn);
                     (!chunk.is_empty()).then(|| LoadedChunk::new(chunk))
                 })
                 .collect()
@@ -857,7 +860,10 @@ impl Component for Terrain {
                 self.horizon.refresh();
             }
             self.preparing = preparing;
-            self.horizon.update(&source, eye.x as f64, eye.z as f64);
+            // Nothing is drawn without a GPU (a server): no horizon.
+            if !headless::is_headless() {
+                self.horizon.update(&source, eye.x as f64, eye.z as f64);
+            }
             self.map.update(&source);
             snow_layer::set_water_line(source.sea_level().unwrap_or(NO_WATER_LINE));
         }
@@ -869,7 +875,7 @@ impl Component for Terrain {
             .filter_map(|child| child.get_own_component::<TerrainChunk>().map(TerrainChunk::column))
             .collect();
         self.loaded.set(eye, &loaded);
-        if let Some(source) = &self.source {
+        if let Some(source) = self.source.as_ref().filter(|_| !headless::is_headless()) {
             self.far_scatter.update(source, self.horizon.heights(), &self.scatter);
             self.far_scatter.leave_to_chunks(eye, &planted);
         }
