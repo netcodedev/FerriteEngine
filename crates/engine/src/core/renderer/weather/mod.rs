@@ -281,7 +281,7 @@ pub struct WeatherShading {
 }
 
 /// Where the weather maps lie while the scene is shaded.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WeatherMaps {
     /// World to the exposure map's clip space, and the metres its depth
     /// range spans.

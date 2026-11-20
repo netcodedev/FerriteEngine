@@ -607,6 +607,8 @@ impl Drop for RenderTarget {
 /// A linked program (vertex + fragment stage).
 pub struct Program {
     raw: RawId,
+    /// Unique among every program made (a backend may reuse raw ids).
+    serial: u64,
     /// The pipelines made of it so far: a program has few, so comparing
     /// is quicker than hashing.
     pipelines: RefCell<Vec<(PipelineDesc, RawId)>>,
@@ -623,7 +625,7 @@ impl Program {
     pub fn labelled(vertex: &str, fragment: &str, label: &str) -> Option<Self> {
         dump_program(vertex, fragment, label);
         match device().create_program(vertex, fragment, label) {
-            Ok(raw) => Some(Program { raw, pipelines: RefCell::new(Vec::new()) }),
+            Ok(raw) => Some(Program { raw, serial: next_program_serial(), pipelines: RefCell::new(Vec::new()) }),
             Err(message) => {
                 report_shader_error(&message);
                 None
@@ -633,11 +635,16 @@ impl Program {
 
     /// A program that draws nothing (the null device's).
     pub fn empty() -> Self {
-        Program { raw: 0, pipelines: RefCell::new(Vec::new()) }
+        Program { raw: 0, serial: next_program_serial(), pipelines: RefCell::new(Vec::new()) }
     }
 
     pub fn raw(&self) -> RawId {
         self.raw
+    }
+
+    /// A number no other program ever had (for caches keyed by program).
+    pub fn serial(&self) -> u64 {
+        self.serial
     }
 
     /// The pipeline of this program with `desc`, made once and kept.
@@ -652,6 +659,11 @@ impl Program {
         self.pipelines.borrow_mut().push((*desc, raw));
         Pipeline { raw, program: self.raw }
     }
+}
+
+fn next_program_serial() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Drop for Program {
