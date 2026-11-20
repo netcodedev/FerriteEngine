@@ -473,6 +473,7 @@ impl Viewport {
         rect: Rect,
         selected: Option<EntityHandle>,
     ) {
+        let mut batch = LineBatch::new();
         for (id, transform, light) in collect_lights(scene) {
             let s = light.settings();
             let center = Point3::from_vec(transform.w.truncate());
@@ -506,9 +507,14 @@ impl Viewport {
                     LightKind::Directional => arrow_lines(center, dir, self.gizmo_size(center) * 2.5),
                 });
             }
-            let width = if is_selected { 2 } else { 1 };
-            render_thick_lines(vp, &lines, color, rect, width);
+            if is_selected {
+                batch.flush(vp, rect);
+                render_thick_lines(vp, &lines, color, rect, 2);
+            } else {
+                batch.add(vp, rect, lines, color);
+            }
         }
+        batch.flush(vp, rect);
     }
 }
 
@@ -522,6 +528,7 @@ impl Viewport {
         rect: Rect,
         selected: Option<EntityHandle>,
     ) {
+        let mut batch = LineBatch::new();
         for (id, transform, emitter) in collect_components::<ParticleEmitter>(scene) {
             let e = emitter.effect();
             let center = Point3::from_vec(transform.w.truncate());
@@ -561,9 +568,14 @@ impl Viewport {
                     lines.extend(arrow_lines(center, d.normalize(), self.gizmo_size(center) * 1.5));
                 }
             }
-            let width = if is_selected { 2 } else { 1 };
-            render_thick_lines(vp, &lines, color, rect, width);
+            if is_selected {
+                batch.flush(vp, rect);
+                render_thick_lines(vp, &lines, color, rect, 2);
+            } else {
+                batch.add(vp, rect, lines, color);
+            }
         }
+        batch.flush(vp, rect);
     }
 }
 
