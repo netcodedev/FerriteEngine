@@ -339,52 +339,67 @@ impl Skeleton {
     pub fn default_chains(&self) -> Vec<IkChain> {
         let positions = self.positions();
         let forward = self.forward(&positions);
-        let mut chains = Vec::new();
-        for (end, joint) in self.joints.iter().enumerate() {
-            let name = normalized(&joint.name);
-            let label = base_name(&joint.name).to_string();
-            let limb = if ends_with_part(&name, "foot") {
-                Some(forward)
-            } else if ends_with_part(&name, "hand") {
-                // Elbows bend back and a little down.
-                Some((-forward - Vector3::unit_y() * 0.3).normalize())
-            } else {
-                None
-            };
-            if let Some(pole) = limb {
-                let Some(mid) = self.bone_parent(end) else { continue };
-                let Some(upper) = self.bone_parent(mid) else { continue };
-                chains.push(IkChain {
-                    label,
-                    end,
-                    kind: ChainKind::TwoBone { upper, mid },
-                    pole,
-                });
-            } else if ends_with_part(&name, "head") {
-                // The neck and spine bones above the hips bend for it.
-                let mut joints = Vec::new();
-                let mut current = self.bone_parent(end);
-                while let Some(j) = current {
-                    let n = normalized(&self.joints[j].name);
-                    if !(n.contains("neck") || n.contains("spine") || n.contains("chest")) {
-                        break;
-                    }
-                    joints.push(j);
-                    current = self.bone_parent(j);
+        (0..self.joints.len())
+            .filter_map(|end| self.chain_at(end, forward))
+            .collect()
+    }
+
+    /// The chain of `default_chains` that ends in `end`, if there is one,
+    /// without making the others.
+    pub fn chain_ending_at(&self, end: usize) -> Option<IkChain> {
+        let positions = self.positions();
+        let forward = self.forward(&positions);
+        self.chain_at(end, forward)
+    }
+
+    /// The chain ending in the joint `end`, if it is a foot, hand or head,
+    /// for a character facing `forward`.
+    fn chain_at(&self, end: usize, forward: Vector3<f32>) -> Option<IkChain> {
+        let joint = &self.joints[end];
+        let name = normalized(&joint.name);
+        let label = base_name(&joint.name).to_string();
+        let limb = if ends_with_part(&name, "foot") {
+            Some(forward)
+        } else if ends_with_part(&name, "hand") {
+            // Elbows bend back and a little down.
+            Some((-forward - Vector3::unit_y() * 0.3).normalize())
+        } else {
+            None
+        };
+        if let Some(pole) = limb {
+            let mid = self.bone_parent(end)?;
+            let upper = self.bone_parent(mid)?;
+            Some(IkChain {
+                label,
+                end,
+                kind: ChainKind::TwoBone { upper, mid },
+                pole,
+            })
+        } else if ends_with_part(&name, "head") {
+            // The neck and spine bones above the hips bend for it.
+            let mut joints = Vec::new();
+            let mut current = self.bone_parent(end);
+            while let Some(j) = current {
+                let n = normalized(&self.joints[j].name);
+                if !(n.contains("neck") || n.contains("spine") || n.contains("chest")) {
+                    break;
                 }
-                if joints.is_empty() {
-                    continue;
-                }
-                joints.reverse();
-                chains.push(IkChain {
-                    label,
-                    end,
-                    kind: ChainKind::Ccd { joints },
-                    pole: forward,
-                });
+                joints.push(j);
+                current = self.bone_parent(j);
             }
+            if joints.is_empty() {
+                return None;
+            }
+            joints.reverse();
+            Some(IkChain {
+                label,
+                end,
+                kind: ChainKind::Ccd { joints },
+                pole: forward,
+            })
+        } else {
+            None
         }
-        chains
     }
 
     /// Joint positions with the model's root transform applied.

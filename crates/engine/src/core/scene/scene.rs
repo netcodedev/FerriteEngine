@@ -85,25 +85,51 @@ impl Scene {
 
     /// Run `update` on every root entity in order, each taken out of the
     /// scene while it runs. The update may remove, add or move root entities,
-    /// or replace the whole scene: the entity goes back in front of the one
-    /// that followed it, wherever that is now, so none is skipped and the
-    /// loop never steps past the end. After the scene was replaced, the
-    /// entity belonged to the old one and is dropped with it.
+    /// or replace the whole scene: the entity goes back where it was taken
+    /// from, wherever that is now, so none is skipped and the loop never
+    /// steps past the end. After the scene was replaced, the entity belonged
+    /// to the old one and is dropped with it.
+    ///
+    /// While it runs, an empty placeholder holds its place (transient and
+    /// hidden: neither saved, listed nor drawn, and without components or
+    /// children), so taking it out and putting it back costs a swap instead
+    /// of moving every later root twice.
     fn update_roots(&mut self, mut update: impl FnMut(&mut Entity, &mut Scene)) {
+        fn placeholder() -> Entity {
+            let mut placeholder = Entity::new("");
+            placeholder.set_transient(true);
+            placeholder.set_hidden(true);
+            placeholder
+        }
         let generation = self.generation;
+        let mut spare = placeholder();
         let mut i = 0;
         while i < self.entities.len() {
-            let next = self.entities.get(i + 1).map(|entity| entity.id);
-            let mut entity = self.entities.remove(i);
+            let held = spare.id;
+            let mut entity = std::mem::replace(&mut self.entities[i], spare);
             update(&mut entity, self);
             if self.generation != generation {
                 return;
             }
-            let at = next
-                .and_then(|id| self.entities.iter().position(|entity| entity.id == id))
-                .unwrap_or(i.min(self.entities.len()));
-            self.entities.insert(at, entity);
-            i = at + 1;
+            let found = if self.entities.get(i).is_some_and(|e| e.id == held) {
+                Some(i)
+            } else {
+                self.entities.iter().position(|e| e.id == held)
+            };
+            i = match found {
+                Some(at) => {
+                    spare = std::mem::replace(&mut self.entities[at], entity);
+                    at + 1
+                }
+                // The update took the placeholder out itself (with a sweep
+                // over all roots, say): the entity goes where it was.
+                None => {
+                    let at = i.min(self.entities.len());
+                    self.entities.insert(at, entity);
+                    spare = placeholder();
+                    at + 1
+                }
+            };
         }
     }
 
@@ -1264,5 +1290,68 @@ mod tests {
         });
         assert_eq!(updated, ["a"]);
         assert_eq!(names(&scene), ["x"]);
+    }
+
+    #[test]
+    fn roots_are_updated_in_order_and_stay_in_order() {
+        let (mut scene, ids) = scene_with(&["a", "b", "c", "d"]);
+        let mut updated = Vec::new();
+        scene.update_roots(|entity, scene| {
+            updated.push(entity.get_name());
+            // Out of the scene while it runs.
+            assert!(scene.get_entity(&entity.id).is_none());
+            // What stands in for it is neither saved nor found.
+            assert_eq!(scene.to_file().entities.len(), 3);
+            assert!(scene.find_entity(&entity.get_name()).is_none());
+        });
+        assert_eq!(updated, ["a", "b", "c", "d"]);
+        assert_eq!(names(&scene), ["a", "b", "c", "d"]);
+        let after: Vec<_> = scene.get_entities().iter().map(|e| e.id).collect();
+        assert_eq!(after, ids);
+    }
+
+    #[test]
+    fn an_update_that_adds_roots_updates_them_after_the_others() {
+        let (mut scene, _) = scene_with(&["a", "b"]);
+        let mut updated = Vec::new();
+        scene.update_roots(|entity, scene| {
+            updated.push(entity.get_name());
+            if entity.get_name() == "a" {
+                scene.add_entity(Entity::new("new"));
+            }
+        });
+        assert_eq!(updated, ["a", "b", "new"]);
+        assert_eq!(names(&scene), ["a", "b", "new"]);
+    }
+
+    #[test]
+    fn an_update_that_moves_a_later_root_to_the_end_skips_none() {
+        let (mut scene, ids) = scene_with(&["a", "b", "c", "d"]);
+        let mut updated = Vec::new();
+        scene.update_roots(|entity, scene| {
+            updated.push(entity.get_name());
+            if entity.id == ids[0] {
+                let b = scene.take_entity(&ids[1]).unwrap();
+                scene.add_entity(b);
+            }
+        });
+        assert_eq!(updated, ["a", "c", "d", "b"]);
+        assert_eq!(names(&scene), ["a", "c", "d", "b"]);
+    }
+
+    #[test]
+    fn an_update_that_sweeps_out_its_own_place_puts_the_entity_back() {
+        let (mut scene, _) = scene_with(&["a", "b", "c"]);
+        let mut updated = Vec::new();
+        scene.update_roots(|entity, scene| {
+            updated.push(entity.get_name());
+            if entity.get_name() == "a" {
+                // Drops everything transient at the root, the place of `a`
+                // among them.
+                scene.get_entities_mut().retain(|e| !e.is_transient());
+            }
+        });
+        assert_eq!(updated, ["a", "b", "c"]);
+        assert_eq!(names(&scene), ["a", "b", "c"]);
     }
 }

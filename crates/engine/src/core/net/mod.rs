@@ -38,7 +38,10 @@ use std::{
     fs::File,
     path::{Path, PathBuf},
     net::{SocketAddr, ToSocketAddrs, UdpSocket},
-    sync::{LazyLock, Mutex, MutexGuard},
+    sync::{
+        mpsc::{self, Receiver, TryRecvError},
+        LazyLock, Mutex, MutexGuard,
+    },
     time::{Duration, Instant, SystemTime},
 };
 
@@ -188,14 +191,53 @@ impl RequestBudget {
 
 struct Client {
     client: RenetClient,
-    transport: NetcodeClientTransport,
+    link: Link,
     id: ClientId,
+    /// When the connection was made (after the lookup), for the timeout.
     started: Instant,
     /// Latest state of the other players.
     players: HashMap<ClientId, PlayerState>,
     left: Vec<ClientId>,
     /// Arrived, not carried out yet.
     welcome: Option<Welcome>,
+}
+
+/// How a client reaches its server.
+enum Link {
+    /// The server's name is being looked up on another thread (a name
+    /// server can take seconds to answer); the connection is made on the
+    /// first update after it is known.
+    Lookup {
+        address: Receiver<Result<SocketAddr, String>>,
+        socket: Option<UdpSocket>,
+        user_data: [u8; renet_netcode::NETCODE_USER_DATA_BYTES],
+    },
+    Ready(NetcodeClientTransport),
+}
+
+impl Client {
+    /// Make the connection once the lookup has the server's address.
+    /// `Ok(false)` while it is still looked up.
+    fn finish_lookup(&mut self) -> Result<bool, String> {
+        let Link::Lookup {
+            address,
+            socket,
+            user_data,
+        } = &mut self.link
+        else {
+            return Ok(true);
+        };
+        let server_addr = match address.try_recv() {
+            Ok(found) => found?,
+            Err(TryRecvError::Empty) => return Ok(false),
+            Err(TryRecvError::Disconnected) => return Err("the address lookup failed".into()),
+        };
+        let socket = socket.take().ok_or("the address lookup failed")?;
+        let transport = client_transport(self.id, *user_data, server_addr, socket)?;
+        self.link = Link::Ready(transport);
+        self.started = Instant::now();
+        Ok(true)
+    }
 }
 
 /// What the server said when this client joined, to be carried out on the
@@ -371,8 +413,34 @@ fn claim_player_key(dir: &Path) -> Option<(u64, File)> {
     None
 }
 
+/// The IPv4 address of `with_port` ("host:port"); `address` names it in
+/// errors. Asks a name server unless the host is an IP address.
+fn resolve(address: &str, with_port: &str) -> Result<SocketAddr, String> {
+    with_port
+        .to_socket_addrs()
+        .map_err(|e| format!("{address}: {e}"))?
+        .find(SocketAddr::is_ipv4)
+        .ok_or_else(|| format!("{address}: no IPv4 address"))
+}
+
+fn client_transport(
+    id: ClientId,
+    user_data: [u8; renet_netcode::NETCODE_USER_DATA_BYTES],
+    server_addr: SocketAddr,
+    socket: UdpSocket,
+) -> Result<NetcodeClientTransport, String> {
+    let authentication = ClientAuthentication::Unsecure {
+        protocol_id: PROTOCOL_ID,
+        client_id: id,
+        server_addr,
+        user_data: Some(user_data),
+    };
+    NetcodeClientTransport::new(now(), authentication, socket).map_err(|e| e.to_string())
+}
+
 /// Connect to the server at `address` ("host" or "host:port"). Returns at
-/// once; `status` tells when it is connected.
+/// once; `status` tells when it is connected. A host name is looked up
+/// meanwhile (`status` is `Connecting`, and `Failed` if it is unknown).
 pub fn connect(address: &str) -> Result<(), String> {
     let address = address.trim();
     let with_port = if address.contains(':') {
@@ -380,28 +448,45 @@ pub fn connect(address: &str) -> Result<(), String> {
     } else {
         format!("{address}:{DEFAULT_PORT}")
     };
-    let server_addr = with_port
-        .to_socket_addrs()
-        .map_err(|e| format!("{address}: {e}"))?
-        .find(SocketAddr::is_ipv4)
-        .ok_or_else(|| format!("{address}: no IPv4 address"))?;
+    // Numbers need no name server: those, and what is not an address at
+    // all, are answered at once. A host name is looked up on another thread.
+    let named = with_port.parse::<SocketAddr>().is_err()
+        && with_port
+            .rsplit_once(':')
+            .is_some_and(|(_, port)| port.parse::<u16>().is_ok());
+    let looked_up = if named {
+        None
+    } else {
+        Some(resolve(address, &with_port)?)
+    };
     let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
     let id = now().as_nanos() as u64 ^ (std::process::id() as u64) << 32;
     // Who this player is travels with the connection request.
     let mut user_data = [0u8; renet_netcode::NETCODE_USER_DATA_BYTES];
     user_data[..8].copy_from_slice(&player_key().to_le_bytes());
-    let authentication = ClientAuthentication::Unsecure {
-        protocol_id: PROTOCOL_ID,
-        client_id: id,
-        server_addr,
-        user_data: Some(user_data),
+    let link = match looked_up {
+        Some(server_addr) => Link::Ready(client_transport(id, user_data, server_addr, socket)?),
+        None => {
+            let (found, lookup) = mpsc::channel();
+            let name = address.to_string();
+            std::thread::Builder::new()
+                .name("net lookup".into())
+                .spawn(move || {
+                    // Nobody listens any more once connecting was given up.
+                    let _ = found.send(resolve(&name, &with_port));
+                })
+                .map_err(|e| e.to_string())?;
+            Link::Lookup {
+                address: lookup,
+                socket: Some(socket),
+                user_data,
+            }
+        }
     };
-    let transport =
-        NetcodeClientTransport::new(now(), authentication, socket).map_err(|e| e.to_string())?;
     let mut net = net();
     net.role = Role::Client(Box::new(Client {
         client: RenetClient::new(connection_config()),
-        transport,
+        link,
         id,
         started: Instant::now(),
         players: HashMap::new(),
@@ -422,7 +507,9 @@ pub fn disconnect() {
     let mut net = net();
     match &mut net.role {
         Role::Client(client) => {
-            client.transport.disconnect();
+            if let Link::Ready(transport) = &mut client.link {
+                transport.disconnect();
+            }
         }
         Role::Server(server) => {
             server.transport.disconnect_all(&mut server.server);
@@ -1028,8 +1115,16 @@ fn update_client(
     elapsed: Duration,
     own: Option<PlayerState>,
 ) -> Option<String> {
+    match client.finish_lookup() {
+        Ok(true) => {}
+        Ok(false) => return None,
+        Err(reason) => return Some(reason),
+    }
+    let Link::Ready(transport) = &mut client.link else {
+        return None;
+    };
     client.client.update(elapsed);
-    if let Err(e) = client.transport.update(elapsed, &mut client.client) {
+    if let Err(e) = transport.update(elapsed, &mut client.client) {
         return Some(format!("connection lost: {e}"));
     }
     if client.client.is_disconnected() {
@@ -1041,10 +1136,10 @@ fn update_client(
     }
     if !client.client.is_connected() {
         if client.started.elapsed() > CONNECT_TIMEOUT {
-            client.transport.disconnect();
+            transport.disconnect();
             return Some("the server did not answer".into());
         }
-        let _ = client.transport.send_packets(&mut client.client);
+        let _ = transport.send_packets(&mut client.client);
         return None;
     }
     for lane in [DefaultChannel::ReliableOrdered, DefaultChannel::Unreliable] {
@@ -1079,7 +1174,7 @@ fn update_client(
             .client
             .send_message(DefaultChannel::Unreliable, encode(&ToServer::State(state)));
     }
-    if let Err(e) = client.transport.send_packets(&mut client.client) {
+    if let Err(e) = transport.send_packets(&mut client.client) {
         return Some(format!("connection lost: {e}"));
     }
     None
@@ -1194,6 +1289,68 @@ mod tests {
         // The same again once the games ended.
         assert_eq!(claim_player_key(&dir).unwrap().0, first);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A client still looking up its server, with the lookup's answer
+    /// sent through the returned sender.
+    fn looking_up() -> (Client, mpsc::Sender<Result<SocketAddr, String>>) {
+        let (found, address) = mpsc::channel();
+        let client = Client {
+            client: RenetClient::new(connection_config()),
+            link: Link::Lookup {
+                address,
+                socket: Some(UdpSocket::bind("127.0.0.1:0").unwrap()),
+                user_data: [0; renet_netcode::NETCODE_USER_DATA_BYTES],
+            },
+            id: 1,
+            started: Instant::now(),
+            players: HashMap::new(),
+            left: Vec::new(),
+            welcome: None,
+        };
+        (client, found)
+    }
+
+    #[test]
+    fn a_client_waits_for_the_lookup_without_blocking_and_then_connects() {
+        let (mut client, found) = looking_up();
+        let mut events = HashMap::new();
+        // A slow name server.
+        let answer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            found.send(Ok(SocketAddr::from(([127, 0, 0, 1], 9)))).unwrap();
+        });
+        let start = Instant::now();
+        assert_eq!(update_client(&mut client, &mut events, Duration::ZERO, None), None);
+        assert!(start.elapsed() < Duration::from_millis(100));
+        assert!(matches!(client.link, Link::Lookup { .. }));
+        answer.join().unwrap();
+        assert_eq!(update_client(&mut client, &mut events, Duration::ZERO, None), None);
+        assert!(matches!(client.link, Link::Ready(_)));
+        // The connection's time starts once it is made.
+        assert!(client.started >= start + Duration::from_millis(200));
+    }
+
+    #[test]
+    fn a_failed_lookup_ends_connecting_with_its_reason() {
+        let (mut client, found) = looking_up();
+        found.send(Err("nowhere: unknown".into())).unwrap();
+        let failure = update_client(&mut client, &mut HashMap::new(), Duration::ZERO, None);
+        assert_eq!(failure.as_deref(), Some("nowhere: unknown"));
+
+        let (mut client, found) = looking_up();
+        drop(found);
+        let failure = update_client(&mut client, &mut HashMap::new(), Duration::ZERO, None);
+        assert!(failure.is_some());
+    }
+
+    #[test]
+    fn ip_addresses_are_resolved_without_a_name_server() {
+        assert_eq!(
+            resolve("10.0.0.2", "10.0.0.2:7777"),
+            Ok(SocketAddr::from(([10, 0, 0, 2], 7777)))
+        );
+        assert!(resolve("host:x", "host:x").is_err());
     }
 
     fn offline_requests_are_events_at_once() {

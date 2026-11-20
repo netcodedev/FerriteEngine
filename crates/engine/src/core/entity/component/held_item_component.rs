@@ -17,7 +17,7 @@ use glfw::{Glfw, WindowEvent};
 use crate::core::{
     assets::{self, AssetRef},
     entity::Entity,
-    model::grip::{self, Grip},
+    model::grip::{self, Grip, HeldPlacement},
     scene::Scene,
 };
 
@@ -32,6 +32,8 @@ pub struct HeldItem {
     hand: Hand,
     /// How much the other hand holds the second grip: 0 not, 1 fully.
     other_hand_weight: f32,
+    /// Where it is held, worked out once for the passes of a frame.
+    placement: HeldPlacement,
 }
 
 /// The grip set on `asset`, or one at the model's origin.
@@ -50,6 +52,7 @@ impl HeldItem {
             grip: grip_of(asset),
             hand,
             other_hand_weight: 1.0,
+            placement: HeldPlacement::default(),
         })
     }
 
@@ -102,7 +105,8 @@ impl Component for HeldItem {
             return;
         };
         if let Some(placed) =
-            grip::held_transform(model.get_model(), parent_transform, &self.grip, self.hand)
+            self.placement
+                .get(model.get_model(), parent_transform, &self.grip, self.hand)
         {
             self.model.render(scene, entity, view_projection, &placed);
         }
