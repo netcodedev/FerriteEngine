@@ -14,4 +14,7 @@ pub struct Texture {
 
 pub struct TextureRenderer {
     shader: Shader,
+    /// The unit square quads are drawn from (0 without GL).
+    vao: GLuint,
+    vbo: GLuint,
 }

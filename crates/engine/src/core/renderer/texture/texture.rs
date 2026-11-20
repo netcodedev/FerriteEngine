@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use gl::types::{GLint, GLsizei, GLsizeiptr, GLvoid};
+use gl::types::{GLint, GLsizei, GLsizeiptr};
 
 use super::{Shader, Texture, TextureRenderer};
 
@@ -330,7 +330,36 @@ impl Drop for Texture {
 impl TextureRenderer {
     pub fn new() -> Self {
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
-        Self { shader }
+        let mut vao = 0;
+        let mut vbo = 0;
+        if !crate::core::headless::is_headless() {
+            // The unit square every quad is drawn from (see `vertex.glsl`).
+            let corners: [f32; 12] = [0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0];
+            unsafe {
+                gl::GenVertexArrays(1, &mut vao);
+                gl::BindVertexArray(vao);
+                gl::GenBuffers(1, &mut vbo);
+                gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+                gl::BufferData(
+                    gl::ARRAY_BUFFER,
+                    std::mem::size_of_val(&corners) as GLsizeiptr,
+                    corners.as_ptr() as *const _,
+                    gl::STATIC_DRAW,
+                );
+                gl::VertexAttribPointer(
+                    0,
+                    2,
+                    gl::FLOAT,
+                    gl::FALSE,
+                    2 * std::mem::size_of::<f32>() as GLsizei,
+                    std::ptr::null(),
+                );
+                gl::EnableVertexAttribArray(0);
+                gl::BindVertexArray(0);
+                gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+            }
+        }
+        Self { shader, vao, vbo }
     }
 
     pub fn render_depth(&self, texture: &Texture, x: f32, y: f32, w: f32, h: f32) {
@@ -347,68 +376,41 @@ impl TextureRenderer {
     }
 
     fn render_inner(&self, texture: &Texture, x: f32, y: f32, w: f32, h: f32, is_depth: bool) {
-        // Standard UV layout: (0,0) = bottom-left, (1,1) = top-right.
-        #[rustfmt::skip]
-        let vertices: Vec<f32> = vec![
-            x,       y,       0.0, 0.0,
-            x + w,   y,       1.0, 0.0,
-            x + w,   y + h,   1.0, 1.0,
-            x,       y + h,   0.0, 1.0,
-        ];
-        let indices = vec![0, 1, 2, 2, 3, 0];
-
-        let mut vba = 0;
-        let mut vbo = 0;
-        let mut ebo = 0;
+        if self.vao == 0 {
+            return;
+        }
         unsafe {
-            gl::GenVertexArrays(1, &mut vba);
-            gl::BindVertexArray(vba);
-            gl::GenBuffers(1, &mut vbo);
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (vertices.len() * std::mem::size_of::<f32>()) as GLsizeiptr,
-                vertices.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-            gl::GenBuffers(1, &mut ebo);
-            gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ebo);
-            gl::BufferData(
-                gl::ELEMENT_ARRAY_BUFFER,
-                (indices.len() * std::mem::size_of::<u32>()) as GLsizeiptr,
-                indices.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-            gl::VertexAttribPointer(
-                0,
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                4 * std::mem::size_of::<f32>() as GLsizei as GLsizei,
-                std::ptr::null(),
-            );
-            gl::EnableVertexAttribArray(0);
-            gl::VertexAttribPointer(
-                1,
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                4 * std::mem::size_of::<f32>() as GLsizei,
-                (2 * std::mem::size_of::<f32>()) as *const GLvoid,
-            );
-            gl::EnableVertexAttribArray(1);
+            gl::BindVertexArray(self.vao);
             gl::ActiveTexture(gl::TEXTURE0);
             texture.bind();
             self.shader.bind();
+            // Standard UV layout: (0,0) = bottom-left, (1,1) = top-right.
+            self.shader.set_uniform_4f("rect", x, y, w, h);
             self.shader.set_uniform_1i("isDepth", if is_depth { 1 } else { 0 });
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             gl::Enable(gl::BLEND);
             gl::Disable(gl::DEPTH_TEST);
-            gl::DrawElements(gl::TRIANGLES, 6, gl::UNSIGNED_INT, std::ptr::null());
+            gl::DrawArrays(gl::TRIANGLES, 0, 6);
             gl::Disable(gl::BLEND);
-            gl::DeleteBuffers(1, &vbo);
-            gl::DeleteBuffers(1, &ebo);
-            gl::DeleteVertexArrays(1, &vba);
+            // As the quad's own (deleted) objects used to leave it.
+            gl::BindVertexArray(0);
+            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+        }
+    }
+}
+
+impl Drop for TextureRenderer {
+    fn drop(&mut self) {
+        if self.vao == 0 || crate::core::headless::is_headless() {
+            return;
+        }
+        // Not once the context is gone (a renderer kept until exit).
+        if unsafe { glfw::ffi::glfwGetCurrentContext() }.is_null() {
+            return;
+        }
+        unsafe {
+            gl::DeleteBuffers(1, &self.vbo);
+            gl::DeleteVertexArrays(1, &self.vao);
         }
     }
 }
