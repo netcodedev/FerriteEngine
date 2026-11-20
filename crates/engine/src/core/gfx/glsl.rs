@@ -60,6 +60,9 @@ pub struct Sampler {
     pub binding: u32,
     /// The texture unit it is fixed to, when the source gave it one.
     pub fixed_unit: Option<u32>,
+    /// Its GLSL type (`sampler2D`, `sampler2DArrayShadow`, …): what kind
+    /// of texture it reads.
+    pub ty: String,
 }
 
 /// A buffer block (uniform or storage) and where it went.
@@ -289,7 +292,7 @@ pub fn to_vulkan(vertex: &str, fragment: &str) -> Result<VulkanProgram, String> 
                     continue;
                 }
                 let binding = d.binding.unwrap_or(0);
-                samplers.push(Sampler { name: d.name.clone(), binding, fixed_unit: d.binding });
+                samplers.push(Sampler { name: d.name.clone(), binding, fixed_unit: d.binding, ty: d.ty.clone() });
                 continue;
             }
             if params.iter().any(|p| p.name == d.name) {
@@ -517,6 +520,7 @@ void main() { color = texture(image, uv) * float(mode) + vec4(offset, 1.0); }
         assert_eq!((image.binding, image.fixed_unit), (0, None));
         let noise = p.sampler("noise").unwrap();
         assert_eq!(noise.fixed_unit, Some(17));
+        assert_eq!((image.ty.as_str(), noise.ty.as_str()), ("sampler2D", "sampler3D"));
         assert!(p.fragment.contains("layout(set = 0, binding = 0) uniform sampler2D image;"));
         assert!(p.fragment.contains("layout(set = 0, binding = 17) uniform sampler3D noise;"));
         assert!(p.fragment.contains("layout(std140, set = 0, binding = 33) uniform Lights"), "{}", p.fragment);
