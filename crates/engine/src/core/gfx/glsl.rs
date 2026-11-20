@@ -66,7 +66,7 @@ pub struct Sampler {
 }
 
 /// A buffer block (uniform or storage) and where it went.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BufferBlock {
     pub slot: u32,
     pub storage: bool,

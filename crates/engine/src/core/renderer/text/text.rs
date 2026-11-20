@@ -304,7 +304,7 @@ impl TextRenderer {
         let mut renderer = RENDERER.lock().unwrap();
         // Text is filled in the wireframe view too.
         let desc = gfx::PipelineDesc {
-            vertex_layouts: vec![DynamicVertexArray::<TextVertex>::layout()],
+            vertex_layouts: crate::core::gfx::Layouts::of(&[DynamicVertexArray::<TextVertex>::layout()]),
             depth: gfx::DepthState::LESS,
             blend: Some(gfx::BlendState::ALPHA),
             polygon: gfx::PolygonMode::Solid,

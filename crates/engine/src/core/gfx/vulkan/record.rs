@@ -127,10 +127,11 @@ impl State {
         };
         let (load, clear) = color_load(pass.color);
         let mut color_infos = Vec::new();
-        let mut formats = Vec::new();
-        for a in &colors {
+        let mut formats: ColorFormats = ([vk::Format::UNDEFINED; MAX_COLORS], 0);
+        for a in colors.iter().take(MAX_COLORS) {
             let view = self.attachment_view(a.texture, a.mip, a.layer);
-            formats.push(self.textures[&a.texture].format);
+            formats.0[formats.1 as usize] = self.textures[&a.texture].format;
+            formats.1 += 1;
             color_infos.push(
                 vk::RenderingAttachmentInfo::default()
                     .image_view(view)
@@ -183,12 +184,17 @@ impl State {
         true
     }
 
-    /// The textures of the current pass's target.
-    fn pass_textures(&self) -> Vec<RawId> {
+    /// Whether `texture` is an attachment of the current pass's target.
+    pub(super) fn is_attached(&self, texture: RawId) -> bool {
         self.pass
-            .and_then(|p| self.attachments(p.target))
-            .map(|(c, d)| c.iter().chain(d.iter()).map(|a| a.texture).collect())
-            .unwrap_or_default()
+            .and_then(|p| match p.target {
+                TargetRef::Window => self.window.as_ref().map(|w| texture == w.color || texture == w.depth),
+                TargetRef::Target(id) => self
+                    .targets
+                    .get(&id)
+                    .map(|(c, d)| c.iter().chain(d.iter()).any(|a| a.texture == texture)),
+            })
+            .unwrap_or(false)
     }
 
     /// The scissor (or the whole target) within the target.
@@ -233,8 +239,8 @@ impl State {
         let Some(entry) = self.pipeline.and_then(|p| self.pipelines.get(&p)) else {
             return;
         };
-        let (program, vao, layouts) = (entry.program, entry.vao, entry.desc.vertex_layouts.clone());
-        let Some(desc) = self.resolved.clone() else {
+        let (program, vao, layouts, missing) = (entry.program, entry.vao, entry.desc.vertex_layouts, entry.missing);
+        let Some(desc) = self.resolved else {
             return;
         };
         if self.pass.is_none() {
@@ -244,16 +250,22 @@ impl State {
         if !self.programs.contains_key(&program) {
             return;
         }
-        let attached = self.pass_textures();
-        let images = self.sampler_bindings(program, &attached);
-        let mut sampled: Vec<RawId> = images.iter().map(|i| i.3).collect();
+        let mut images = std::mem::take(&mut self.scratch_images);
+        self.sampler_bindings(program, &mut images);
+        let mut sampled = std::mem::take(&mut self.scratch_sampled);
+        sampled.clear();
+        sampled.extend(images.iter().map(|i| i.3));
         sampled.sort_unstable();
         sampled.dedup();
-        if !self.ensure_rendering(&sampled) {
+        let ready = self.ensure_rendering(&sampled);
+        self.scratch_sampled = sampled;
+        if !ready {
+            self.scratch_images = images;
             return;
         }
         let line = self.line;
         let Some(pipeline) = self.vk_pipeline(program, &desc, line) else {
+            self.scratch_images = images;
             return;
         };
         let cmd = self.cmd();
@@ -264,39 +276,42 @@ impl State {
         self.apply_dynamic_state();
 
         // Vertex buffers, by slot; a slot nothing is bound to reads zeros.
-        let bindings = self.vaos[vao].clone();
-        let mut buffers = Vec::new();
-        let mut offsets = Vec::new();
-        let mut strides = Vec::new();
+        let vertex = self.vaos[vao].vertex;
+        let index_id = self.vaos[vao].index;
+        let mut buffers = [vk::Buffer::null(); Layouts::MAX + 1];
+        let mut offsets = [0u64; Layouts::MAX + 1];
+        let mut strides = [0u64; Layouts::MAX + 1];
+        let mut n = 0;
         for slot in 0..layouts.len() {
-            let bound = bindings.vertex.get(slot).copied().flatten();
+            let bound = vertex.get(slot).copied().flatten();
             let found = bound.and_then(|(id, offset, stride)| self.use_buffer(id).map(|(b, _)| (b, offset, stride)));
             let (b, o, s) = match found {
                 Some((b, o, s)) => (b, o as u64, s as u64),
                 None => (self.use_buffer(self.dummy_buffer).map_or(vk::Buffer::null(), |b| b.0), 0, 0),
             };
-            buffers.push(b);
-            offsets.push(o);
-            strides.push(s);
+            buffers[n] = b;
+            offsets[n] = o;
+            strides[n] = s;
+            n += 1;
         }
-        if !self.missing_inputs(program, &layouts).is_empty() {
-            let b = self.use_buffer(self.default_attribute).map_or(vk::Buffer::null(), |b| b.0);
-            buffers.push(b);
-            offsets.push(0);
-            strides.push(0);
+        if missing {
+            buffers[n] = self.use_buffer(self.default_attribute).map_or(vk::Buffer::null(), |b| b.0);
+            n += 1;
         }
-        if !buffers.is_empty() {
+        if n > 0 {
             unsafe {
-                self.gpu.device.cmd_bind_vertex_buffers2(cmd, 0, &buffers, &offsets, None, Some(&strides));
+                self.gpu.device.cmd_bind_vertex_buffers2(cmd, 0, &buffers[..n], &offsets[..n], None, Some(&strides[..n]));
             }
         }
-        if !self.push_descriptors(program, &images) {
+        let pushed = self.push_descriptors(program, &images);
+        self.scratch_images = images;
+        if !pushed {
             return;
         }
         unsafe {
             match indexed {
                 Some(base_vertex) => {
-                    let Some(index) = bindings.index.and_then(|id| self.use_buffer(id)) else {
+                    let Some(index) = index_id.and_then(|id| self.use_buffer(id)) else {
                         self.warn_once("an indexed draw without an index buffer is skipped".into());
                         return;
                     };

@@ -411,7 +411,7 @@ impl FarScatter {
         // Cards facing the camera, drawn as the ground is (`LEQUAL`: the
         // depth may be drawn already), from both sides.
         let desc = gfx::PipelineDesc {
-            vertex_layouts: vec![corner_layout(), instance_layout()],
+            vertex_layouts: crate::core::gfx::Layouts::of(&[corner_layout(), instance_layout()]),
             topology: gfx::Topology::TriangleStrip,
             depth: gfx::DepthState::LEQUAL,
             ..Default::default()

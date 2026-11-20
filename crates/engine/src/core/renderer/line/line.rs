@@ -59,7 +59,7 @@ impl LineRenderer {
         let renderer = &mut *renderer;
         // On top: no depth test (which writes no depth either).
         let desc = gfx::PipelineDesc {
-            vertex_layouts: vec![layout()],
+            vertex_layouts: crate::core::gfx::Layouts::of(&[layout()]),
             topology: gfx::Topology::Lines,
             depth: if always_on_top { gfx::DepthState::OFF } else { gfx::DepthState::LESS },
             ..Default::default()

@@ -1018,7 +1018,7 @@ impl Component for Terrain {
             }
         };
         let ground = gfx::PipelineDesc {
-            vertex_layouts: vec![DynamicVertexArray::<super::mesher::TerrainVertex>::layout()],
+            vertex_layouts: crate::core::gfx::Layouts::of(&[DynamicVertexArray::<super::mesher::TerrainVertex>::layout()]),
             depth: gfx::DepthState::LESS,
             cull: gfx::Cull::Back,
             ..Default::default()

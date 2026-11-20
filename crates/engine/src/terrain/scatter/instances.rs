@@ -506,7 +506,7 @@ impl ScatterInstances {
             let shader = &*shader;
             // LEQUAL: the scene's depth may already be drawn.
             let desc = gfx::PipelineDesc {
-                vertex_layouts: vec![vertex_layout(), instance_layout()],
+                vertex_layouts: crate::core::gfx::Layouts::of(&[vertex_layout(), instance_layout()]),
                 depth: gfx::DepthState::LEQUAL,
                 ..Default::default()
             };

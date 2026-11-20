@@ -146,7 +146,7 @@ pub(super) fn draw(
         renderer.upload(scratch);
         let shader = &renderer.shader;
         let desc = gfx::PipelineDesc {
-            vertex_layouts: vec![instance_layout()],
+            vertex_layouts: crate::core::gfx::Layouts::of(&[instance_layout()]),
             depth: gfx::DepthState::READ,
             blend: Some(if additive { gfx::BlendState::ADDITIVE } else { gfx::BlendState::PREMULTIPLIED }),
             ..Default::default()

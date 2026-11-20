@@ -126,7 +126,7 @@ lazy_static! {
 /// blending, depth as given.
 fn pipeline(depth: gfx::DepthState) -> gfx::PipelineDesc {
     gfx::PipelineDesc {
-        vertex_layouts: vec![gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[gfx::VertexFormat::F32x2])],
+        vertex_layouts: crate::core::gfx::Layouts::of(&[gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[gfx::VertexFormat::F32x2])]),
         topology: gfx::Topology::TriangleStrip,
         depth,
         ..Default::default()

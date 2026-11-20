@@ -347,7 +347,7 @@ impl State {
                     layers: array,
                     layouts: vec![vk::ImageLayout::UNDEFINED; (mips * array) as usize],
                     view,
-                    attachment_views: HashMap::new(),
+                    attachment_views: FxHashMap::default(),
                 },
             );
             id

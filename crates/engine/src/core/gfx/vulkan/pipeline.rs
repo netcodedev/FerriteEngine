@@ -140,7 +140,7 @@ impl State {
             }
             return;
         }
-        let Some(param) = p.reflect.param(base).cloned() else {
+        let Some(param) = p.reflect.param(base).map(|q| glsl::Param { name: String::new(), ..*q }) else {
             return;
         };
         if index >= param.count {
@@ -248,8 +248,8 @@ impl State {
 
     /// The pipeline for `desc` drawing into the current rendering.
     pub(super) fn vk_pipeline(&mut self, program: RawId, desc: &PipelineDesc, line: bool) -> Option<vk::Pipeline> {
-        let (colors, depth, stencil, samples) = self.rendering_key.clone();
-        let key = PipelineKey { program, desc: desc.clone(), line, colors, depth, stencil, samples };
+        let (colors, depth, stencil, samples) = self.rendering_key;
+        let key = PipelineKey { program, desc: *desc, line, colors, depth, stencil, samples };
         if let Some(&p) = self.vk_pipelines.get(&key) {
             return Some(p);
         }
@@ -364,8 +364,8 @@ impl State {
             depth_stencil = depth_stencil.stencil_test_enable(true).front(op(&s)).back(op(&s));
         }
         let write_mask = if desc.color_write { vk::ColorComponentFlags::RGBA } else { vk::ColorComponentFlags::empty() };
-        let blend_attachments: Vec<_> = key
-            .colors
+        let color_formats = &key.colors.0[..key.colors.1 as usize];
+        let blend_attachments: Vec<_> = color_formats
             .iter()
             .map(|_| {
                 let mut a = vk::PipelineColorBlendAttachmentState::default().color_write_mask(write_mask);
@@ -391,7 +391,7 @@ impl State {
         ];
         let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
         let mut rendering = vk::PipelineRenderingCreateInfo::default()
-            .color_attachment_formats(&key.colors)
+            .color_attachment_formats(color_formats)
             .depth_attachment_format(key.depth)
             .stencil_attachment_format(if key.stencil { key.depth } else { vk::Format::UNDEFINED });
         let info = vk::GraphicsPipelineCreateInfo::default()
@@ -419,28 +419,21 @@ impl State {
         }
     }
 
-    /// For each sampler of `program`: binding, view, sampler and the
-    /// texture read (a stand-in where nothing fitting is bound).
-    pub(super) fn sampler_bindings(
-        &mut self,
-        program: RawId,
-        attached: &[RawId],
-    ) -> Vec<(u32, vk::ImageView, vk::Sampler, RawId)> {
+    /// For each sampler of `program`, into `out`: binding, view, sampler
+    /// and the texture read (a stand-in where nothing fitting is bound).
+    pub(super) fn sampler_bindings(&mut self, program: RawId, out: &mut Vec<ImageBinding>) {
+        out.clear();
         let Some(p) = self.programs.get(&program) else {
-            return Vec::new();
+            return;
         };
-        let wanted: Vec<(u32, u32, TextureKind, bool)> = p
-            .reflect
-            .samplers
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                let (kind, shadow) = p.sampler_kinds[i];
-                (s.binding, s.fixed_unit.unwrap_or(p.units[i]), kind, shadow)
-            })
-            .collect();
-        let mut out = Vec::with_capacity(wanted.len());
-        for (binding, unit, kind, shadow) in wanted {
+        let count = p.reflect.samplers.len();
+        for i in 0..count {
+            let Some(p) = self.programs.get(&program) else {
+                return;
+            };
+            let s = &p.reflect.samplers[i];
+            let (kind, shadow) = p.sampler_kinds[i];
+            let (binding, unit) = (s.binding, s.fixed_unit.unwrap_or(p.units[i]));
             let (mut texture, sampler) = self.units.get(&(unit, kind)).copied().unwrap_or((0, 0));
             let fits = self.textures.get(&texture).is_some_and(|t| {
                 t.desc.kind == kind
@@ -448,8 +441,9 @@ impl State {
                     && t.view != vk::ImageView::null()
                     && (!shadow || t.desc.format.is_depth())
             });
-            if !fits || attached.contains(&texture) {
-                if attached.contains(&texture) {
+            let attached = texture != 0 && self.is_attached(texture);
+            if !fits || attached {
+                if attached {
                     self.warn_once("a texture drawn into is also sampled; a stand-in is read".into());
                 }
                 texture = self.dummy_textures[&(kind, shadow)];
@@ -464,16 +458,15 @@ impl State {
             let vk_sampler = self.sampler_for(&desc);
             out.push((binding, self.textures[&texture].view, vk_sampler, texture));
         }
-        out
     }
 
     /// Push the program's descriptors: `images` from `sampler_bindings`,
     /// the bound buffers, the params block.
-    pub(super) fn push_descriptors(&mut self, program: RawId, images: &[(u32, vk::ImageView, vk::Sampler, RawId)]) -> bool {
+    pub(super) fn push_descriptors(&mut self, program: RawId, images: &[ImageBinding]) -> bool {
         let Some(p) = self.programs.get(&program) else {
             return false;
         };
-        let blocks = p.buffers.clone();
+        let block_count = p.buffers.len();
         let (params_size, layout) = (p.reflect.params_size as u64, p.layout);
         let serial = self.serial;
         // The params, uploaded once per change and frame.
@@ -495,8 +488,9 @@ impl State {
             None
         };
         let max_uniform = self.gpu.props.limits.max_uniform_buffer_range as u64;
-        let mut buffer_infos = Vec::new();
-        for b in &blocks {
+        let mut buffer_infos = Vec::with_capacity(block_count + 1);
+        for i in 0..block_count {
+            let b = self.programs[&program].buffers[i];
             let bound = if b.storage { self.storage_buffers.get(&b.slot) } else { self.uniform_buffers.get(&b.slot) }.copied();
             let found = bound.and_then(|(id, offset, size)| self.use_buffer(id).map(|(buf, total)| (buf, offset, size, total)));
             let (buffer, offset, size, total) = match found {
@@ -532,6 +526,22 @@ impl State {
                 )
             })
             .collect();
+        // The same descriptors as pushed last, with the same layout: they
+        // are still there.
+        let mut key = std::mem::take(&mut self.scratch_push);
+        key.clear();
+        key.push(vk::Handle::as_raw(layout));
+        for (binding, info) in &image_infos {
+            key.extend([*binding as u64, vk::Handle::as_raw(info.image_view), vk::Handle::as_raw(info.sampler)]);
+        }
+        for (binding, _, info) in &buffer_infos {
+            key.extend([*binding as u64, vk::Handle::as_raw(info.buffer), info.offset, info.range]);
+        }
+        if key == self.last_push {
+            self.scratch_push = key;
+            return true;
+        }
+        self.scratch_push = std::mem::replace(&mut self.last_push, key);
         let mut writes = Vec::with_capacity(image_infos.len() + buffer_infos.len());
         for (binding, info) in &image_infos {
             writes.push(

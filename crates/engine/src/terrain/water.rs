@@ -332,7 +332,7 @@ pub fn draw<'a>(
         // under it itself; alpha only fades it out where it thins to
         // nothing at the shore.
         let desc = gfx::PipelineDesc {
-            vertex_layouts: vec![DynamicVertexArray::<WaterVertex>::layout()],
+            vertex_layouts: crate::core::gfx::Layouts::of(&[DynamicVertexArray::<WaterVertex>::layout()]),
             depth: if depth_capture { gfx::DepthState::LESS.func(gfx::CompareFunc::Always) } else { gfx::DepthState::LESS },
             blend: (!depth_capture).then_some(gfx::BlendState::ALPHA),
             ..Default::default()

@@ -15,6 +15,7 @@
 //! to the frame, 32–39 to the draw. A backend with descriptor sets maps
 //! the ranges onto sets 2, 1, 0 and 3.
 
+pub mod fx;
 mod gl_backend;
 pub mod glsl;
 mod null;
@@ -24,7 +25,6 @@ mod vulkan;
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
         Mutex,
@@ -32,6 +32,7 @@ use std::{
 };
 
 pub use types::*;
+use fx::FxHashMap;
 
 /// A backend's name for one of its objects. 0 is never a live object.
 pub type RawId = u64;
@@ -164,8 +165,8 @@ thread_local! {
     static WINDOW_SIZE: Cell<(u32, u32)> = const { Cell::new((1, 1)) };
     static WINDOW_CLEAR: Cell<[f32; 4]> = const { Cell::new([0.0, 0.0, 0.0, 1.0]) };
     static VIEWPORT: Cell<Rect> = const { Cell::new(Rect { x: 0, y: 0, width: 1, height: 1 }) };
-    static PIPELINES: RefCell<HashMap<(RawId, PipelineDesc), RawId>> = RefCell::new(HashMap::new());
-    static SAMPLERS: RefCell<HashMap<SamplerDesc, RawId>> = RefCell::new(HashMap::new());
+    static PIPELINES: RefCell<FxHashMap<(RawId, PipelineDesc), RawId>> = RefCell::new(FxHashMap::default());
+    static SAMPLERS: RefCell<FxHashMap<SamplerDesc, RawId>> = RefCell::new(FxHashMap::default());
 }
 
 /// GPU objects dropped since the last frame, possibly on other threads.

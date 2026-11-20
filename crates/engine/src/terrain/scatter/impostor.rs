@@ -91,7 +91,7 @@ pub(super) fn bake(variant: &ModelVariant) -> Impostor {
     // The tier's submeshes, as the instances draw them (without the
     // instance attributes).
     let desc = gfx::PipelineDesc {
-        vertex_layouts: vec![vertex_layout()],
+        vertex_layouts: crate::core::gfx::Layouts::of(&[vertex_layout()]),
         depth: gfx::DepthState::LESS,
         ..Default::default()
     };

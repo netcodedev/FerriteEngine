@@ -30,7 +30,6 @@ mod spirv;
 
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
     mem::ManuallyDrop,
 };
 
@@ -38,6 +37,7 @@ use ash::vk;
 use gpu_allocator::vulkan::{Allocation, Allocator};
 
 use super::*;
+use super::fx::{FxHashMap, FxHashSet};
 use context::{Gpu, Swapchain};
 
 /// Frames recorded or executing at once.
@@ -105,7 +105,7 @@ struct Tex {
     /// The view shaders sample (null for multisampled textures).
     view: vk::ImageView,
     /// Views for render target attachments, by mip and layer.
-    attachment_views: HashMap<(u32, Option<u32>), vk::ImageView>,
+    attachment_views: FxHashMap<(u32, Option<u32>), vk::ImageView>,
 }
 
 struct Prog {
@@ -133,7 +133,17 @@ struct PipeEntry {
     program: RawId,
     desc: PipelineDesc,
     vao: usize,
+    /// Whether some vertex input of the program no layout feeds (it
+    /// reads the default attribute).
+    missing: bool,
 }
+
+/// Colour attachment formats of a rendering (at most `MAX_COLORS`).
+const MAX_COLORS: usize = 4;
+type ColorFormats = ([vk::Format; MAX_COLORS], u8);
+
+/// A sampler binding of a draw: binding, view, sampler, texture.
+type ImageBinding = (u32, vk::ImageView, vk::Sampler, RawId);
 
 /// GL's vertex array object: what is bound for one set of vertex layouts.
 #[derive(Default, Clone)]
@@ -142,12 +152,12 @@ struct Vao {
     index: Option<RawId>,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct PipelineKey {
     program: RawId,
     desc: PipelineDesc,
     line: bool,
-    colors: Vec<vk::Format>,
+    colors: ColorFormats,
     depth: vk::Format,
     stencil: bool,
     samples: u32,
@@ -190,29 +200,29 @@ struct State {
     completed: u64,
     retired: Vec<(u64, Retired)>,
     /// Dynamic buffer storage freed, kept for reuse: by size.
-    spare: HashMap<usize, Vec<(vk::Buffer, Allocation)>>,
+    spare: FxHashMap<usize, Vec<(vk::Buffer, Allocation)>>,
     next_id: RawId,
-    buffers: HashMap<RawId, Buf>,
-    textures: HashMap<RawId, Tex>,
-    samplers: HashMap<RawId, (SamplerDesc, vk::Sampler)>,
-    sampler_variants: HashMap<SamplerDesc, vk::Sampler>,
-    targets: HashMap<RawId, (Vec<Attachment>, Option<Attachment>)>,
-    programs: HashMap<RawId, Prog>,
-    pipelines: HashMap<RawId, PipeEntry>,
-    vk_pipelines: HashMap<PipelineKey, vk::Pipeline>,
+    buffers: FxHashMap<RawId, Buf>,
+    textures: FxHashMap<RawId, Tex>,
+    samplers: FxHashMap<RawId, (SamplerDesc, vk::Sampler)>,
+    sampler_variants: FxHashMap<SamplerDesc, vk::Sampler>,
+    targets: FxHashMap<RawId, (Vec<Attachment>, Option<Attachment>)>,
+    programs: FxHashMap<RawId, Prog>,
+    pipelines: FxHashMap<RawId, PipeEntry>,
+    vk_pipelines: FxHashMap<PipelineKey, vk::Pipeline>,
     pipeline_cache: vk::PipelineCache,
     vaos: Vec<Vao>,
-    vao_index: HashMap<Vec<VertexLayout>, usize>,
-    queries: HashMap<RawId, QuerySet>,
+    vao_index: FxHashMap<Layouts, usize>,
+    queries: FxHashMap<RawId, QuerySet>,
     /// Buffers written by the upload commands since their last barrier.
-    upload_dirty: HashSet<vk::Buffer>,
+    upload_dirty: FxHashSet<vk::Buffer>,
     compiler: Option<shaderc::Compiler>,
 
     // Recording.
     pass: Option<Pass>,
     rendering: bool,
     /// Formats and samples of the rendering going on.
-    rendering_key: (Vec<vk::Format>, vk::Format, bool, u32),
+    rendering_key: (ColorFormats, vk::Format, bool, u32),
     render_extent: (u32, u32),
     render_layers: u32,
     viewport: Rect,
@@ -223,17 +233,25 @@ struct State {
     line: bool,
     stencil_reference: u8,
     bound_pipeline: vk::Pipeline,
-    units: HashMap<(u32, TextureKind), (RawId, RawId)>,
-    uniform_buffers: HashMap<u32, (RawId, usize, usize)>,
-    storage_buffers: HashMap<u32, (RawId, usize, usize)>,
+    units: FxHashMap<(u32, TextureKind), (RawId, RawId)>,
+    uniform_buffers: FxHashMap<u32, (RawId, usize, usize)>,
+    storage_buffers: FxHashMap<u32, (RawId, usize, usize)>,
     index_type: vk::IndexType,
 
     // Stand-ins for what a draw reads but nothing was bound for.
-    dummy_textures: HashMap<(TextureKind, bool), RawId>,
+    dummy_textures: FxHashMap<(TextureKind, bool), RawId>,
     dummy_buffer: RawId,
     /// Zeros with w = 1, for vertex inputs no buffer feeds.
     default_attribute: RawId,
-    warned: HashSet<String>,
+    warned: FxHashSet<String>,
+
+    // Scratch reused by every draw (no allocation per draw).
+    scratch_images: Vec<ImageBinding>,
+    scratch_sampled: Vec<RawId>,
+    scratch_push: Vec<u64>,
+    /// What was pushed last (layout and descriptors, see
+    /// `push_descriptors`): an identical push is left out.
+    last_push: Vec<u64>,
 }
 
 impl State {
@@ -328,6 +346,7 @@ impl State {
         self.global_barrier(self.upload_cmd());
         self.upload_dirty.clear();
         self.bound_pipeline = vk::Pipeline::null();
+        self.last_push.clear();
         self.dynamic_dirty = true;
         self.rendering = false;
     }
@@ -483,25 +502,25 @@ pub(super) fn create(
         serial: 1,
         completed: 0,
         retired: Vec::new(),
-        spare: HashMap::new(),
+        spare: FxHashMap::default(),
         next_id: 0,
-        buffers: HashMap::new(),
-        textures: HashMap::new(),
-        samplers: HashMap::new(),
-        sampler_variants: HashMap::new(),
-        targets: HashMap::new(),
-        programs: HashMap::new(),
-        pipelines: HashMap::new(),
-        vk_pipelines: HashMap::new(),
+        buffers: FxHashMap::default(),
+        textures: FxHashMap::default(),
+        samplers: FxHashMap::default(),
+        sampler_variants: FxHashMap::default(),
+        targets: FxHashMap::default(),
+        programs: FxHashMap::default(),
+        pipelines: FxHashMap::default(),
+        vk_pipelines: FxHashMap::default(),
         pipeline_cache,
         vaos: vec![Vao::default()],
-        vao_index: HashMap::new(),
-        queries: HashMap::new(),
-        upload_dirty: HashSet::new(),
+        vao_index: FxHashMap::default(),
+        queries: FxHashMap::default(),
+        upload_dirty: FxHashSet::default(),
         compiler: Some(compiler),
         pass: None,
         rendering: false,
-        rendering_key: (Vec::new(), vk::Format::UNDEFINED, false, 1),
+        rendering_key: (([vk::Format::UNDEFINED; MAX_COLORS], 0), vk::Format::UNDEFINED, false, 1),
         render_extent: (1, 1),
         render_layers: 1,
         viewport: Rect::sized(1, 1),
@@ -512,14 +531,18 @@ pub(super) fn create(
         line: false,
         stencil_reference: 0,
         bound_pipeline: vk::Pipeline::null(),
-        units: HashMap::new(),
-        uniform_buffers: HashMap::new(),
-        storage_buffers: HashMap::new(),
+        units: FxHashMap::default(),
+        uniform_buffers: FxHashMap::default(),
+        storage_buffers: FxHashMap::default(),
         index_type: vk::IndexType::UINT32,
-        dummy_textures: HashMap::new(),
+        dummy_textures: FxHashMap::default(),
         dummy_buffer: 0,
         default_attribute: 0,
-        warned: HashSet::new(),
+        warned: FxHashSet::default(),
+        scratch_images: Vec::new(),
+        scratch_sampled: Vec::new(),
+        scratch_push: Vec::new(),
+        last_push: Vec::new(),
     };
     state.begin_commands();
     state.create_dummies();
@@ -623,7 +646,8 @@ impl Device for VkDevice {
                 }
             };
             let id = s.id();
-            s.pipelines.insert(id, PipeEntry { program, desc: desc.clone(), vao });
+            let missing = !s.missing_inputs(program, &desc.vertex_layouts).is_empty();
+            s.pipelines.insert(id, PipeEntry { program, desc: *desc, vao, missing });
             id
         })
     }

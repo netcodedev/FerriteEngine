@@ -321,29 +321,77 @@ pub struct VertexAttribute {
     pub offset: u32,
 }
 
-/// One vertex buffer slot of a pipeline.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// One vertex buffer slot of a pipeline. Its attributes are interned
+/// (made once per distinct list, kept for the program's life), so a
+/// layout is a small copyable value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct VertexLayout {
     pub stride: u32,
     pub step: StepMode,
-    pub attributes: Vec<VertexAttribute>,
+    pub attributes: &'static [VertexAttribute],
+}
+
+impl Default for VertexLayout {
+    fn default() -> Self {
+        VertexLayout { stride: 0, step: StepMode::Vertex, attributes: &[] }
+    }
+}
+
+/// The interned copy of `attributes`.
+fn intern(attributes: &[VertexAttribute]) -> &'static [VertexAttribute] {
+    use std::sync::Mutex;
+    static INTERNED: Mutex<Vec<&'static [VertexAttribute]>> = Mutex::new(Vec::new());
+    let mut interned = INTERNED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(found) = interned.iter().find(|a| **a == attributes) {
+        return found;
+    }
+    let leaked: &'static [VertexAttribute] = Box::leak(attributes.to_vec().into_boxed_slice());
+    interned.push(leaked);
+    leaked
 }
 
 impl VertexLayout {
+    pub fn new(stride: u32, step: StepMode, attributes: &[VertexAttribute]) -> Self {
+        VertexLayout { stride, step, attributes: intern(attributes) }
+    }
+
     /// Interleaved attributes at consecutive locations from `first`, in
     /// the order given, packed without gaps.
     pub fn packed(first: u32, step: StepMode, formats: &[VertexFormat]) -> Self {
         let mut offset = 0;
-        let attributes = formats
-            .iter()
-            .enumerate()
-            .map(|(i, &format)| {
-                let attribute = VertexAttribute { location: first + i as u32, format, offset };
-                offset += format.size();
-                attribute
-            })
-            .collect();
-        VertexLayout { stride: offset, step, attributes }
+        let mut attributes = [VertexAttribute { location: 0, format: VertexFormat::F32, offset: 0 }; 16];
+        let n = formats.len().min(16);
+        for (i, &format) in formats.iter().take(n).enumerate() {
+            attributes[i] = VertexAttribute { location: first + i as u32, format, offset };
+            offset += format.size();
+        }
+        VertexLayout::new(offset, step, &attributes[..n])
+    }
+}
+
+/// The vertex buffer slots of a pipeline (at most `Layouts::MAX`), in slot
+/// order; derefs to a slice.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Layouts {
+    len: u8,
+    items: [VertexLayout; Layouts::MAX],
+}
+
+impl Layouts {
+    pub const MAX: usize = 4;
+
+    pub fn of(layouts: &[VertexLayout]) -> Self {
+        assert!(layouts.len() <= Self::MAX, "at most {} vertex buffer slots", Self::MAX);
+        let mut items = [VertexLayout::default(); Self::MAX];
+        items[..layouts.len()].copy_from_slice(layouts);
+        Layouts { len: layouts.len() as u8, items }
+    }
+}
+
+impl std::ops::Deref for Layouts {
+    type Target = [VertexLayout];
+    fn deref(&self) -> &[VertexLayout] {
+        &self.items[..self.len as usize]
     }
 }
 
@@ -445,10 +493,10 @@ pub struct StencilState {
 }
 
 /// Fixed-function state of a draw, with the program. Hashed: pipelines
-/// are looked up by it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// are looked up by it. A small copyable value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PipelineDesc {
-    pub vertex_layouts: Vec<VertexLayout>,
+    pub vertex_layouts: Layouts,
     pub topology: Topology,
     pub depth: DepthState,
     pub blend: Option<BlendState>,
@@ -462,7 +510,7 @@ pub struct PipelineDesc {
 impl Default for PipelineDesc {
     fn default() -> Self {
         PipelineDesc {
-            vertex_layouts: Vec::new(),
+            vertex_layouts: Layouts::default(),
             topology: Topology::Triangles,
             depth: DepthState::LESS,
             blend: None,

@@ -180,7 +180,7 @@ impl SnowLayer {
         }
         let shader = &self.shader;
         let desc = gfx::PipelineDesc {
-            vertex_layouts: vec![Self::layout()],
+            vertex_layouts: crate::core::gfx::Layouts::of(&[Self::layout()]),
             depth: gfx::DepthState::LEQUAL,
             ..Default::default()
         };

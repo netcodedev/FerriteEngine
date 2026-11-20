@@ -57,7 +57,7 @@ impl PlaneRenderer {
 
     fn bind(&mut self) {
         let desc = gfx::PipelineDesc {
-            vertex_layouts: vec![DynamicVertexArray::<PlaneVertex>::layout()],
+            vertex_layouts: crate::core::gfx::Layouts::of(&[DynamicVertexArray::<PlaneVertex>::layout()]),
             depth: gfx::DepthState::LESS,
             blend: Some(gfx::BlendState::ALPHA),
             ..Default::default()

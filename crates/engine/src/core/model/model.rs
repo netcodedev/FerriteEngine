@@ -354,7 +354,7 @@ impl Model {
         camera_projection: &Matrix4<f32>,
     ) {
         let mut desc = gfx::PipelineDesc {
-            vertex_layouts: vec![DynamicVertexArray::<ModelMeshVertex>::layout()],
+            vertex_layouts: crate::core::gfx::Layouts::of(&[DynamicVertexArray::<ModelMeshVertex>::layout()]),
             depth: gfx::DepthState::LESS,
             cull: gfx::Cull::Back,
             ..Default::default()

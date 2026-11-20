@@ -9,7 +9,6 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
     ffi::CString,
     ptr,
 };
@@ -17,28 +16,29 @@ use std::{
 use gl::types::*;
 
 use super::*;
+use super::fx::FxHashMap;
 
 pub(super) struct GlDevice {
     pipelines: RefCell<Vec<GlPipeline>>,
     /// One vertex array per distinct set of vertex layouts.
-    vertex_arrays: RefCell<HashMap<Vec<VertexLayout>, GLuint>>,
+    vertex_arrays: RefCell<FxHashMap<Vec<VertexLayout>, GLuint>>,
     /// The vertex array of the current pipeline.
     current_vao: Cell<GLuint>,
     current_topology: Cell<GLenum>,
     index_format: Cell<GLenum>,
     /// The sampler last applied to each texture.
-    texture_samplers: RefCell<HashMap<GLuint, RawId>>,
+    texture_samplers: RefCell<FxHashMap<GLuint, RawId>>,
     samplers: RefCell<Vec<SamplerDesc>>,
     queries: RefCell<Vec<Vec<GLuint>>>,
     /// Attachments of each target, by framebuffer name.
-    targets: RefCell<HashMap<GLuint, TargetInfo>>,
+    targets: RefCell<FxHashMap<GLuint, TargetInfo>>,
     wireframe: Cell<bool>,
     stencil: Cell<Option<StencilState>>,
     stencil_reference: Cell<u8>,
     /// Uniform locations looked up so far, by program and name: asking
     /// the driver (and building a C string for it) is a hot path, as
     /// uniforms are set per draw.
-    locations: RefCell<HashMap<GLuint, HashMap<String, GLint>>>,
+    locations: RefCell<FxHashMap<GLuint, FxHashMap<String, GLint>>>,
     /// Whether `GL_FRAMEBUFFER_SRGB` is on (see `bind_framebuffer`).
     framebuffer_srgb: Cell<bool>,
     /// Samples of the default framebuffer.
@@ -70,18 +70,18 @@ impl GlDevice {
         }
         GlDevice {
             pipelines: RefCell::new(Vec::new()),
-            vertex_arrays: RefCell::new(HashMap::new()),
+            vertex_arrays: RefCell::new(FxHashMap::default()),
             current_vao: Cell::new(0),
             current_topology: Cell::new(gl::TRIANGLES),
             index_format: Cell::new(gl::UNSIGNED_INT),
-            texture_samplers: RefCell::new(HashMap::new()),
+            texture_samplers: RefCell::new(FxHashMap::default()),
             samplers: RefCell::new(Vec::new()),
             queries: RefCell::new(Vec::new()),
-            targets: RefCell::new(HashMap::new()),
+            targets: RefCell::new(FxHashMap::default()),
             wireframe: Cell::new(false),
             stencil: Cell::new(None),
             stencil_reference: Cell::new(0),
-            locations: RefCell::new(HashMap::new()),
+            locations: RefCell::new(FxHashMap::default()),
             framebuffer_srgb: Cell::new(false),
             window_samples: samples.max(1) as u32,
         }
@@ -96,7 +96,7 @@ impl GlDevice {
             gl::CreateVertexArrays(1, &mut vao);
             for (slot, layout) in layouts.iter().enumerate() {
                 let slot = slot as GLuint;
-                for attribute in &layout.attributes {
+                for attribute in layout.attributes {
                     gl::EnableVertexArrayAttrib(vao, attribute.location);
                     let components = attribute.format.components() as GLint;
                     if attribute.format.is_integer() {

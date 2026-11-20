@@ -177,7 +177,7 @@ impl TextureRenderer {
 
     fn render_inner(&self, texture: &Texture, x: f32, y: f32, w: f32, h: f32, is_depth: bool) {
         let desc = gfx::PipelineDesc {
-            vertex_layouts: vec![gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[gfx::VertexFormat::F32x2])],
+            vertex_layouts: crate::core::gfx::Layouts::of(&[gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[gfx::VertexFormat::F32x2])]),
             depth: gfx::DepthState::OFF,
             blend: Some(gfx::BlendState::ALPHA),
             polygon: gfx::PolygonMode::Solid,

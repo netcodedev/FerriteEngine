@@ -382,7 +382,7 @@ pub struct Hdr {
 /// no culling, blending as given.
 fn post_pipeline(blend: Option<gfx::BlendState>) -> gfx::PipelineDesc {
     gfx::PipelineDesc {
-        vertex_layouts: vec![gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[gfx::VertexFormat::F32x2])],
+        vertex_layouts: crate::core::gfx::Layouts::of(&[gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[gfx::VertexFormat::F32x2])]),
         topology: gfx::Topology::TriangleStrip,
         depth: gfx::DepthState::OFF,
         blend,
