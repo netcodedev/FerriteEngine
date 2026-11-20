@@ -54,6 +54,10 @@ enum Retired {
     Image(vk::Image, Allocation, Vec<vk::ImageView>),
     Pipeline(vk::Pipeline),
     Program(vk::ShaderModule, vk::ShaderModule, vk::DescriptorSetLayout, vk::PipelineLayout),
+    /// The params blocks' set layout of a program.
+    SetLayout(vk::DescriptorSetLayout),
+    /// Params descriptor sets (from `params_pool`).
+    Sets(Vec<vk::DescriptorSet>),
     Queries(vk::QueryPool),
 }
 
@@ -78,6 +82,8 @@ struct Frame {
     /// Serial of the commands last submitted from here.
     serial: u64,
     arena: Vec<Chunk>,
+    /// Uniform params uploaded this frame (see `params_alloc`).
+    params: Option<Chunk>,
 }
 
 struct Buf {
@@ -115,10 +121,11 @@ struct Prog {
     fragment: vk::ShaderModule,
     set_layout: vk::DescriptorSetLayout,
     layout: vk::PipelineLayout,
-    /// The params block as the shaders see it (std140).
-    params: Vec<u8>,
-    /// Where the params were uploaded last: serial, buffer, offset.
-    upload: Option<(u64, vk::Buffer, u64)>,
+    /// The params blocks as the shaders see them (std140).
+    blocks: Vec<ParamBlock>,
+    /// Layout of the params blocks' set (`glsl::PARAMS_SET`); null
+    /// without loose uniforms.
+    params_layout: vk::DescriptorSetLayout,
     /// The texture unit each sampler reads (set by `set_uniform`).
     units: Vec<u32>,
     /// View kind and whether it compares, per sampler.
@@ -127,7 +134,20 @@ struct Prog {
     buffers: Vec<glsl::BufferBlock>,
     /// The vertex stage's inputs: location and scalar type.
     inputs: Vec<(u32, spirv::Scalar)>,
+    /// Uniform names: a sampler's index (`Ok`) or a param's (`Err`).
+    names: FxHashMap<String, Result<usize, usize>>,
 }
+
+struct ParamBlock {
+    data: Vec<u8>,
+    /// Where it was uploaded last (serial, offset in that frame's params
+    /// memory); `None` once it changed.
+    upload: Option<(u64, u32)>,
+}
+
+/// At most this many params blocks per program (dynamic uniform buffers
+/// a pipeline may have: 8 at least).
+pub(super) const MAX_PARAM_BLOCKS: usize = 8;
 
 struct PipeEntry {
     program: RawId,
@@ -204,7 +224,9 @@ struct State {
     next_id: RawId,
     buffers: FxHashMap<RawId, Buf>,
     textures: FxHashMap<RawId, Tex>,
-    samplers: FxHashMap<RawId, (SamplerDesc, vk::Sampler)>,
+    /// Each sampler: its description and its Vulkan sampler without and
+    /// with depth comparison (made when first needed).
+    samplers: FxHashMap<RawId, (SamplerDesc, [vk::Sampler; 2])>,
     sampler_variants: Vec<(SamplerDesc, vk::Sampler)>,
     /// The pipeline the last draw used, by key: consecutive draws mostly
     /// share it, which spares hashing the key.
@@ -255,6 +277,14 @@ struct State {
     /// What was pushed last (layout and descriptors, see
     /// `push_descriptors`): an identical push is left out.
     last_push: Vec<u64>,
+
+    /// Pool of the params sets (`Prog::params_layout`), made at start.
+    params_pool: vk::DescriptorPool,
+    /// A params set per program and params memory it reads.
+    params_sets: FxHashMap<(RawId, vk::Buffer), vk::DescriptorSet>,
+    /// The params set and offsets bound last (none after a new command
+    /// buffer).
+    last_params: Option<(vk::PipelineLayout, vk::DescriptorSet, [u32; MAX_PARAM_BLOCKS])>,
 }
 
 impl State {
@@ -321,6 +351,10 @@ impl State {
                         self.gpu.device.destroy_pipeline_layout(l, None);
                     }
                     Retired::Queries(q) => self.gpu.device.destroy_query_pool(q, None),
+                    Retired::SetLayout(l) => self.gpu.device.destroy_descriptor_set_layout(l, None),
+                    Retired::Sets(sets) => {
+                        let _ = self.gpu.device.free_descriptor_sets(self.params_pool, &sets);
+                    }
                 }
             }
         }
@@ -350,6 +384,7 @@ impl State {
         self.upload_dirty.clear();
         self.bound_pipeline = vk::Pipeline::null();
         self.last_push.clear();
+        self.last_params = None;
         self.dynamic_dirty = true;
         self.rendering = false;
     }
@@ -401,6 +436,9 @@ impl State {
         self.completed = self.completed.max(frame.serial);
         for chunk in &mut frame.arena {
             chunk.used = 0;
+        }
+        if let Some(params) = frame.params.as_mut() {
+            params.used = 0;
         }
         // Keep the first chunks (the usual size); drop extra large ones.
         let mut keep = Vec::new();
@@ -486,13 +524,39 @@ pub(super) fn create(
             let acquired = device
                 .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
                 .map_err(|e| format!("semaphore: {e}"))?;
-            frames.push(Frame { pool, upload: buffers[0], main: buffers[1], fence, acquired, serial: 0, arena: Vec::new() });
+            frames.push(Frame {
+                pool,
+                upload: buffers[0],
+                main: buffers[1],
+                fence,
+                acquired,
+                serial: 0,
+                arena: Vec::new(),
+                params: None,
+            });
         }
     }
     let pipeline_cache =
         unsafe { gpu.device.create_pipeline_cache(&vk::PipelineCacheCreateInfo::default(), None) }.unwrap_or_default();
     let swapchain = context::create_swapchain(&gpu, vk::SwapchainKHR::null(), super::window_size(), vsync)?;
     let compiler = shaderc::Compiler::new().map_err(|e| format!("shaderc: {e}"))?;
+    // The params sets: one per program and params memory, freed with the
+    // program.
+    let params_pool = unsafe {
+        let sizes = [vk::DescriptorPoolSize {
+            ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            descriptor_count: 4096 * MAX_PARAM_BLOCKS as u32,
+        }];
+        gpu.device
+            .create_descriptor_pool(
+                &vk::DescriptorPoolCreateInfo::default()
+                    .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
+                    .max_sets(4096)
+                    .pool_sizes(&sizes),
+                None,
+            )
+            .map_err(|e| format!("descriptor pool: {e}"))?
+    };
     let mut state = State {
         gpu,
         allocator: ManuallyDrop::new(allocator),
@@ -547,6 +611,9 @@ pub(super) fn create(
         scratch_sampled: Vec::new(),
         scratch_push: Vec::new(),
         last_push: Vec::new(),
+        params_sets: FxHashMap::default(),
+        last_params: None,
+        params_pool,
     };
     state.begin_commands();
     state.create_dummies();
@@ -619,9 +686,8 @@ impl Device for VkDevice {
 
     fn create_sampler(&self, desc: &SamplerDesc) -> RawId {
         self.with(|s| {
-            let sampler = s.sampler_for(desc);
             let id = s.id();
-            s.samplers.insert(id, (*desc, sampler));
+            s.samplers.insert(id, (*desc, [vk::Sampler::null(); 2]));
             id
         })
     }

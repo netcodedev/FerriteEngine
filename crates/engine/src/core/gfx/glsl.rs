@@ -5,12 +5,15 @@
 //! texture unit, which Vulkan's GLSL does not allow. Rather than rewrite
 //! every shader, a program's two stages are rewritten together:
 //!
-//! Everything goes into descriptor set 0, which Vulkan fills with push
-//! descriptors at draw time (only one set of a pipeline may be pushed):
+//! Samplers and buffers go into descriptor set 0, which Vulkan fills with
+//! push descriptors at draw time (only one set of a pipeline may be
+//! pushed); the uniforms' blocks into set 1:
 //!
 //! - every loose non-opaque uniform of either stage becomes a member of
-//!   one std140 block, `FerriteParams`, declared identically in both
-//!   (binding `PARAMS_BINDING`); its layout is computed here, so the
+//!   a std140 block declared identically in both (`FerriteParams0`, and
+//!   one block per array of `OWN_BLOCK_BYTES` or more, so a small change
+//!   does not copy it), all in `PARAMS_SET` as dynamic uniform buffers
+//!   (a draw changes only their offsets); the layout is computed here, so the
 //!   by-name setters write the right bytes;
 //! - every loose sampler gets a binding of its own below
 //!   `BUFFER_BINDING_BASE` (the texture unit the program points it at
@@ -23,8 +26,12 @@
 
 use std::collections::HashMap;
 
-/// Binding of the loose uniforms' block.
-pub const PARAMS_BINDING: u32 = 48;
+/// Descriptor set of the loose uniforms' blocks (dynamic uniform
+/// buffers: a draw changes only their offsets).
+pub const PARAMS_SET: u32 = 1;
+/// Arrays at least this big get a block of their own, so changing a
+/// small uniform does not copy them again.
+pub const OWN_BLOCK_BYTES: u32 = 1024;
 /// Bindings below this are samplers; buffer slot `n` is bound at this
 /// plus `n`.
 pub const BUFFER_BINDING_BASE: u32 = 32;
@@ -39,6 +46,8 @@ pub struct Param {
     /// Elements of an array, 1 otherwise.
     pub count: u32,
     pub is_array: bool,
+    /// The params block it is in (its binding in `PARAMS_SET`).
+    pub block: u32,
     /// Byte offset in the block (std140).
     pub offset: u32,
     /// Bytes from one array element to the next (std140: 16 at least).
@@ -78,8 +87,9 @@ pub struct VulkanProgram {
     pub vertex: String,
     pub fragment: String,
     pub params: Vec<Param>,
-    /// Size of the params block in bytes (0 without one).
-    pub params_size: u32,
+    /// Size of each params block in bytes, by block (empty without
+    /// loose uniforms). Block 0 holds the small ones.
+    pub blocks: Vec<u32>,
     pub samplers: Vec<Sampler>,
     pub buffers: Vec<BufferBlock>,
 }
@@ -309,8 +319,13 @@ pub fn to_vulkan(vertex: &str, fragment: &str) -> Result<VulkanProgram, String> 
                 }
                 None => (1, false, size, size, align),
             };
+            if is_array && total >= OWN_BLOCK_BYTES {
+                // Numbered once all are known (after block 0).
+                params.push(Param { name: d.name.clone(), ty, components, count, is_array, block: u32::MAX, offset: 0, stride });
+                continue;
+            }
             offset = offset.next_multiple_of(align);
-            params.push(Param { name: d.name.clone(), ty, components, count, is_array, offset, stride });
+            params.push(Param { name: d.name.clone(), ty, components, count, is_array, block: 0, offset, stride });
             offset += total;
         }
         per_stage.push(found);
@@ -326,22 +341,33 @@ pub fn to_vulkan(vertex: &str, fragment: &str) -> Result<VulkanProgram, String> 
         sampler.binding = next;
         next += 1;
     }
-    let params_size = offset.next_multiple_of(16);
-    let block = if params.is_empty() {
-        String::new()
-    } else {
-        let mut b = format!("layout(std140, set = 0, binding = {PARAMS_BINDING}) uniform FerriteParams {{\n");
-        for (d, p) in params.iter().map(|p| (declaration_of(&per_stage, &p.name), p)) {
-            let ty = d.map(|d| d.ty.clone()).unwrap_or_default();
+    let mut blocks = Vec::new();
+    if params.iter().any(|p| p.block == 0) {
+        blocks.push(offset.next_multiple_of(16));
+    } else if !params.is_empty() {
+        blocks.push(16); // an empty block 0 keeps the numbering simple
+    }
+    for p in params.iter_mut().filter(|p| p.block == u32::MAX) {
+        p.block = blocks.len() as u32;
+        blocks.push(p.stride * p.count);
+    }
+    let mut block = String::new();
+    for (index, _) in blocks.iter().enumerate() {
+        let members: Vec<&Param> = params.iter().filter(|p| p.block == index as u32).collect();
+        block.push_str(&format!("layout(std140, set = {PARAMS_SET}, binding = {index}) uniform FerriteParams{index} {{\n"));
+        if members.is_empty() {
+            block.push_str(&format!("    vec4 ferriteUnused{index};\n"));
+        }
+        for p in members {
+            let ty = declaration_of(&per_stage, &p.name).map(|d| d.ty.clone()).unwrap_or_default();
             if p.is_array {
-                b.push_str(&format!("    layout(offset = {}) {} {}[{}];\n", p.offset, ty, p.name, p.count));
+                block.push_str(&format!("    layout(offset = {}) {} {}[{}];\n", p.offset, ty, p.name, p.count));
             } else {
-                b.push_str(&format!("    layout(offset = {}) {} {};\n", p.offset, ty, p.name));
+                block.push_str(&format!("    layout(offset = {}) {} {};\n", p.offset, ty, p.name));
             }
         }
-        b.push_str("};\n");
-        b
-    };
+        block.push_str("};\n");
+    }
     let mut buffers = Vec::new();
     let mut out = Vec::new();
     for (source, found) in stages.iter().zip(&per_stage) {
@@ -360,7 +386,7 @@ pub fn to_vulkan(vertex: &str, fragment: &str) -> Result<VulkanProgram, String> 
     }
     let fragment = out.pop().unwrap_or_default();
     let vertex = out.pop().unwrap_or_default();
-    Ok(VulkanProgram { vertex, fragment, params, params_size, samplers, buffers })
+    Ok(VulkanProgram { vertex, fragment, params, blocks, samplers, buffers })
 }
 
 fn declaration_of<'a>(stages: &'a [Vec<Declaration>], name: &str) -> Option<&'a Declaration> {
@@ -511,7 +537,7 @@ void main() { color = texture(image, uv) * float(mode) + vec4(offset, 1.0); }
         let p = to_vulkan(VS, FS).unwrap();
         let layout: Vec<(&str, u32, u32)> = p.params.iter().map(|p| (p.name.as_str(), p.offset, p.stride)).collect();
         assert_eq!(layout, [("viewProjection", 0, 64), ("kernel", 64, 16), ("offset", 128, 12), ("mode", 140, 4)]);
-        assert_eq!(p.params_size, 144);
+        assert_eq!(p.blocks, [144]);
         assert!(p.vertex.contains("uniform FerriteParams"));
         assert!(p.fragment.contains("uniform FerriteParams"));
         assert!(!p.vertex.contains("uniform mat4 viewProjection;"));
@@ -540,8 +566,11 @@ void main() { color = texture(image, uv) * float(mode) + vec4(offset, 1.0); }
     fn mat4_arrays_and_defined_lengths() {
         let vs = "#version 460 core\n#define MAX_BONES 100\nuniform mat4 bones[MAX_BONES];\nuniform float a;\nvoid main(){}\n";
         let p = to_vulkan(vs, "#version 460 core\nvoid main(){}\n").unwrap();
-        assert_eq!(p.params[0].count, 100);
-        assert_eq!(p.params[1].offset, 6400);
+        // The big array has a block of its own; the float is in block 0.
+        assert_eq!((p.params[0].count, p.params[0].block, p.params[0].offset), (100, 1, 0));
+        assert_eq!((p.params[1].block, p.params[1].offset), (0, 0));
+        assert_eq!(p.blocks, [16, 6400]);
+        assert!(p.vertex.contains("set = 1, binding = 1) uniform FerriteParams1"));
     }
 
     /// Every program dumped with `FERRITE_SHADER_DUMP` (from a run of the

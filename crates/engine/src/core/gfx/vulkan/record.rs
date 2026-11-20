@@ -303,7 +303,7 @@ impl State {
                 self.gpu.device.cmd_bind_vertex_buffers2(cmd, 0, &buffers[..n], &offsets[..n], None, Some(&strides[..n]));
             }
         }
-        let pushed = self.push_descriptors(program, &images);
+        let pushed = self.push_descriptors(program, &images) && self.bind_params(program);
         self.scratch_images = images;
         if !pushed {
             return;

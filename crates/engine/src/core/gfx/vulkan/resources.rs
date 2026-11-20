@@ -109,6 +109,45 @@ impl State {
         Some((buffer, 0, ptr))
     }
 
+    /// `size` bytes of this frame's params memory (one buffer per frame,
+    /// so a program's params set can stay the same all frame): buffer,
+    /// offset and where to write. Outgrown, it is replaced by one twice
+    /// as big (what was drawn with the old one keeps it until done).
+    pub(super) fn params_alloc(&mut self, size: u64, align: u64) -> Option<(vk::Buffer, u64, *mut u8)> {
+        let frame = self.frame;
+        if let Some(chunk) = self.frames[frame].params.as_mut() {
+            let offset = chunk.used.next_multiple_of(align);
+            if offset + size <= chunk.size {
+                chunk.used = offset + size;
+                return Some((chunk.buffer, offset, unsafe { chunk.ptr.add(offset as usize) }));
+            }
+        }
+        let old = self.frames[frame].params.take();
+        // What went into the old memory is uploaded again into the new.
+        for p in self.programs.values_mut() {
+            for b in &mut p.blocks {
+                b.upload = None;
+            }
+        }
+        let chunk_size = old.as_ref().map_or(16 << 20, |c| c.size * 2).max(size.next_power_of_two());
+        if let Some(old) = old {
+            let sets: Vec<vk::DescriptorSet> = self
+                .params_sets
+                .iter()
+                .filter(|((_, b), _)| *b == old.buffer)
+                .map(|(_, s)| *s)
+                .collect();
+            self.params_sets.retain(|(_, b), _| *b != old.buffer);
+            self.retire(Retired::Sets(sets));
+            self.retire(Retired::Buffer(old.buffer, old.allocation, old.size as usize));
+        }
+        let (buffer, allocation) =
+            self.raw_buffer(chunk_size, vk::BufferUsageFlags::UNIFORM_BUFFER, MemoryLocation::CpuToGpu, "params memory")?;
+        let ptr = allocation.mapped_ptr()?.as_ptr() as *mut u8;
+        self.frames[frame].params = Some(Chunk { buffer, allocation, ptr, size: chunk_size, used: size });
+        Some((buffer, 0, ptr))
+    }
+
     /// `data` in this frame's staging memory: buffer and offset.
     fn stage(&mut self, data: &[u8]) -> Option<(vk::Buffer, u64)> {
         let (buffer, offset, ptr) = self.arena_alloc(data.len() as u64, 16)?;
@@ -811,6 +850,15 @@ impl State {
             Raw::Program(id) => {
                 if let Some(p) = self.programs.remove(&id) {
                     self.retire(Retired::Program(p.vertex, p.fragment, p.set_layout, p.layout));
+                    if p.params_layout != vk::DescriptorSetLayout::null() {
+                        self.retire(Retired::SetLayout(p.params_layout));
+                    }
+                    let sets: Vec<vk::DescriptorSet> =
+                        self.params_sets.iter().filter(|((prog, _), _)| *prog == id).map(|(_, s)| *s).collect();
+                    self.params_sets.retain(|(prog, _), _| *prog != id);
+                    if !sets.is_empty() {
+                        self.retire(Retired::Sets(sets));
+                    }
                 }
                 if self.last_vk_pipeline.is_some_and(|(k, _)| k.program == id) {
                     self.last_vk_pipeline = None;

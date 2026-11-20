@@ -66,15 +66,18 @@ impl State {
                     .stage_flags(stages),
             );
         }
-        if reflect.params_size > 0 {
-            bindings.push(
-                vk::DescriptorSetLayoutBinding::default()
-                    .binding(glsl::PARAMS_BINDING)
-                    .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                    .descriptor_count(1)
-                    .stage_flags(stages),
-            );
+        if reflect.blocks.len() > MAX_PARAM_BLOCKS {
+            return Err(format!("shader program ({label}) has {} params blocks, at most {MAX_PARAM_BLOCKS}", reflect.blocks.len()));
         }
+        let params_bindings: Vec<vk::DescriptorSetLayoutBinding> = (0..reflect.blocks.len() as u32)
+            .map(|i| {
+                vk::DescriptorSetLayoutBinding::default()
+                    .binding(i)
+                    .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                    .descriptor_count(1)
+                    .stage_flags(stages)
+            })
+            .collect();
         if bindings.len() as u32 > self.gpu.max_push_descriptors {
             return Err(format!(
                 "shader program ({label}) needs {} descriptors, the device pushes at most {}",
@@ -99,9 +102,17 @@ impl State {
                     None,
                 )
                 .map_err(|e| format!("shader program ({label}): descriptor set layout: {e}"))?;
-            let layouts = [set_layout];
+            let params_layout = if params_bindings.is_empty() {
+                vk::DescriptorSetLayout::null()
+            } else {
+                device
+                    .create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&params_bindings), None)
+                    .map_err(|e| format!("shader program ({label}): params set layout: {e}"))?
+            };
+            let both = [set_layout, params_layout];
+            let layouts = if params_bindings.is_empty() { &both[..1] } else { &both[..] };
             let layout = device
-                .create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts), None)
+                .create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(layouts), None)
                 .map_err(|e| format!("shader program ({label}): pipeline layout: {e}"))?;
             let sampler_kinds = reflect.samplers.iter().map(|s| convert::sampler_kind(&s.ty)).collect();
             let id = self.id();
@@ -109,17 +120,24 @@ impl State {
                 id,
                 Prog {
                     label: label.to_owned(),
-                    params: vec![0; reflect.params_size as usize],
+                    blocks: reflect.blocks.iter().map(|&size| ParamBlock { data: vec![0; size as usize], upload: None }).collect(),
+                    params_layout,
                     units: vec![0; reflect.samplers.len()],
                     sampler_kinds,
                     buffers,
                     inputs,
+                    names: reflect
+                        .samplers
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| (s.name.clone(), Ok(i)))
+                        .chain(reflect.params.iter().enumerate().map(|(i, p)| (p.name.clone(), Err(i))))
+                        .collect(),
                     reflect,
                     vertex,
                     fragment,
                     set_layout,
                     layout,
-                    upload: None,
                 },
             );
             Ok(id)
@@ -134,15 +152,18 @@ impl State {
             Some((base, i)) => (base, i.trim().parse::<u32>().unwrap_or(0)),
             None => (name, 0),
         };
-        if let Some(i) = p.reflect.samplers.iter().position(|s| s.name == base) {
-            if let UniformValue::Int(unit) = value {
-                p.units[i] = unit.max(0) as u32;
+        let param_index = match p.names.get(base) {
+            Some(&Ok(i)) => {
+                if let UniformValue::Int(unit) = value {
+                    p.units[i] = unit.max(0) as u32;
+                }
+                return;
             }
-            return;
-        }
-        let Some(param) = p.reflect.param(base).map(|q| glsl::Param { name: String::new(), ..*q }) else {
-            return;
+            Some(&Err(i)) => i,
+            None => return,
         };
+        let q = &p.reflect.params[param_index];
+        let param = glsl::Param { name: String::new(), ..*q };
         if index >= param.count {
             return;
         }
@@ -170,11 +191,17 @@ impl State {
         let Some(p) = self.programs.get_mut(&program) else {
             return;
         };
-        let params = &mut p.params;
+        let Some(block) = p.blocks.get_mut(param.block as usize) else {
+            return;
+        };
+        // Only a real change makes the block go up again.
+        let mut changed = false;
+        let params = &mut block.data;
         let mut write = |offset: u32, bytes: &[u8]| {
             let o = offset as usize;
-            if o + bytes.len() <= params.len() {
+            if o + bytes.len() <= params.len() && params[o..o + bytes.len()] != *bytes {
                 params[o..o + bytes.len()].copy_from_slice(bytes);
+                changed = true;
             }
         };
         let at = |i: u32| param.offset + (index + i) * param.stride;
@@ -215,7 +242,9 @@ impl State {
                 }
             }
         }
-        p.upload = None;
+        if changed {
+            block.upload = None;
+        }
     }
 
     pub(super) fn set_pipeline(&mut self, id: RawId) {
@@ -455,14 +484,25 @@ impl State {
                 }
                 texture = self.dummy_textures[&(kind, shadow)];
             }
-            let mut desc = self.samplers.get(&sampler).map_or(SamplerDesc::LINEAR_CLAMP, |s| s.0);
-            if shadow && desc.compare.is_none() {
-                desc.compare = Some(CompareFunc::LessEqual);
-            }
-            if !shadow {
-                desc.compare = None;
-            }
-            let vk_sampler = self.sampler_for(&desc);
+            let variant = shadow as usize;
+            let cached = self.samplers.get(&sampler).map(|s| s.1[variant]).filter(|s| *s != vk::Sampler::null());
+            let vk_sampler = match cached {
+                Some(s) => s,
+                None => {
+                    let mut desc = self.samplers.get(&sampler).map_or(SamplerDesc::LINEAR_CLAMP, |s| s.0);
+                    if shadow && desc.compare.is_none() {
+                        desc.compare = Some(CompareFunc::LessEqual);
+                    }
+                    if !shadow {
+                        desc.compare = None;
+                    }
+                    let s = self.sampler_for(&desc);
+                    if let Some(entry) = self.samplers.get_mut(&sampler) {
+                        entry.1[variant] = s;
+                    }
+                    s
+                }
+            };
             out.push((binding, self.textures[&texture].view, vk_sampler, texture));
         }
     }
@@ -474,26 +514,7 @@ impl State {
             return false;
         };
         let block_count = p.buffers.len();
-        let (params_size, layout) = (p.reflect.params_size as u64, p.layout);
-        let serial = self.serial;
-        // The params, uploaded once per change and frame.
-        let params = if params_size > 0 {
-            match p.upload {
-                Some((s, buffer, offset)) if s == serial => Some((buffer, offset)),
-                _ => {
-                    let align = self.gpu.props.limits.min_uniform_buffer_offset_alignment.max(16);
-                    let Some((buffer, offset, ptr)) = self.arena_alloc(params_size, align) else {
-                        return false;
-                    };
-                    let p = self.programs.get_mut(&program).expect("looked up above");
-                    unsafe { std::ptr::copy_nonoverlapping(p.params.as_ptr(), ptr, p.params.len()) };
-                    p.upload = Some((serial, buffer, offset));
-                    Some((buffer, offset))
-                }
-            }
-        } else {
-            None
-        };
+        let layout = p.layout;
         let max_uniform = self.gpu.props.limits.max_uniform_buffer_range as u64;
         let mut buffer_infos = Vec::with_capacity(block_count + 1);
         for i in 0..block_count {
@@ -515,13 +536,6 @@ impl State {
                 glsl::BUFFER_BINDING_BASE + b.slot,
                 if b.storage { vk::DescriptorType::STORAGE_BUFFER } else { vk::DescriptorType::UNIFORM_BUFFER },
                 vk::DescriptorBufferInfo { buffer, offset: offset as u64, range },
-            ));
-        }
-        if let Some((buffer, offset)) = params {
-            buffer_infos.push((
-                glsl::PARAMS_BINDING,
-                vk::DescriptorType::UNIFORM_BUFFER,
-                vk::DescriptorBufferInfo { buffer, offset, range: params_size },
             ));
         }
         let image_infos: Vec<(u32, vk::DescriptorImageInfo)> = images
@@ -571,6 +585,102 @@ impl State {
                 self.gpu.push_fn.cmd_push_descriptor_set(self.cmd(), vk::PipelineBindPoint::GRAPHICS, layout, 0, &writes);
             }
         }
+        true
+    }
+
+    /// Upload the program's changed params blocks (and those not yet in
+    /// this frame's params memory) and bind its params set with their
+    /// offsets, unless the same is bound already.
+    pub(super) fn bind_params(&mut self, program: RawId) -> bool {
+        let Some(p) = self.programs.get(&program) else {
+            return false;
+        };
+        let count = p.blocks.len();
+        if count == 0 {
+            return true;
+        }
+        let (layout, params_layout) = (p.layout, p.params_layout);
+        let serial = self.serial;
+        let align = self.gpu.props.limits.min_uniform_buffer_offset_alignment.max(16);
+        let mut offsets = [0u32; MAX_PARAM_BLOCKS];
+        // Twice at most: an upload that replaces the params memory makes
+        // the blocks uploaded before it go up again.
+        for _attempt in 0..2 {
+        for i in 0..count {
+            let p = &self.programs[&program];
+            match p.blocks[i].upload {
+                Some((s, offset)) if s == serial => offsets[i] = offset,
+                _ => {
+                    let size = p.blocks[i].data.len() as u64;
+                    let Some((_, offset, ptr)) = self.params_alloc(size, align) else {
+                        return false;
+                    };
+                    let block = &mut self.programs.get_mut(&program).expect("looked up above").blocks[i];
+                    unsafe { std::ptr::copy_nonoverlapping(block.data.as_ptr(), ptr, block.data.len()) };
+                    block.upload = Some((serial, offset as u32));
+                    offsets[i] = offset as u32;
+                }
+            }
+        }
+        if self.programs[&program].blocks.iter().all(|b| b.upload.is_some_and(|(s, _)| s == serial)) {
+            break;
+        }
+        }
+        // The params memory now (an upload above may have replaced it).
+        let Some(memory) = self.frames[self.frame].params.as_ref().map(|c| c.buffer) else {
+            return false;
+        };
+        let set = match self.params_sets.get(&(program, memory)) {
+            Some(&set) => set,
+            None => {
+                let layouts = [params_layout];
+                let set = match unsafe {
+                    self.gpu.device.allocate_descriptor_sets(
+                        &vk::DescriptorSetAllocateInfo::default().descriptor_pool(self.params_pool).set_layouts(&layouts),
+                    )
+                } {
+                    Ok(sets) => sets[0],
+                    Err(e) => {
+                        self.warn_once(format!("no params descriptor set: {e}"));
+                        return false;
+                    }
+                };
+                let sizes: Vec<u64> = self.programs[&program].blocks.iter().map(|b| b.data.len() as u64).collect();
+                let infos: Vec<vk::DescriptorBufferInfo> =
+                    sizes.iter().map(|&range| vk::DescriptorBufferInfo { buffer: memory, offset: 0, range }).collect();
+                let writes: Vec<vk::WriteDescriptorSet> = infos
+                    .iter()
+                    .enumerate()
+                    .map(|(i, info)| {
+                        vk::WriteDescriptorSet::default()
+                            .dst_set(set)
+                            .dst_binding(i as u32)
+                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                            .buffer_info(std::slice::from_ref(info))
+                    })
+                    .collect();
+                unsafe { self.gpu.device.update_descriptor_sets(&writes, &[]) };
+                self.params_sets.insert((program, memory), set);
+                set
+            }
+        };
+        if !self.programs[&program].blocks.iter().all(|b| b.upload.is_some_and(|(s, _)| s == serial)) {
+            return false;
+        }
+        if self.last_params == Some((layout, set, offsets)) {
+            return true;
+        }
+        unsafe {
+            self.gpu.device.cmd_bind_descriptor_sets(
+                self.cmd(),
+                vk::PipelineBindPoint::GRAPHICS,
+                layout,
+                glsl::PARAMS_SET,
+                &[set],
+                &offsets[..count],
+            );
+        }
+        self.last_params = Some((layout, set, offsets));
         true
     }
 }
