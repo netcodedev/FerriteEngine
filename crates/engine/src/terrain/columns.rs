@@ -7,9 +7,11 @@
 use std::collections::HashSet;
 
 use cgmath::Point3;
-use gl::types::{GLint, GLuint, GLvoid};
 
-use crate::core::renderer::shader::Shader;
+use crate::core::{
+    gfx::{self, Format, Rect, SamplerDesc, TextureDesc, TextureKind, UploadFormat},
+    renderer::shader::Shader,
+};
 
 use super::{streaming::ColumnKey, CHUNK_SIZE};
 
@@ -23,10 +25,13 @@ pub const LOADED_UNIT: u32 = 18;
 /// loaded.
 const REACH: i32 = 12;
 const SIDE: i32 = 2 * REACH + 1;
+/// Read texel by texel.
+const SAMPLER: SamplerDesc = SamplerDesc::new(gfx::Filter::Nearest, gfx::Wrap::Repeat);
 
 /// One set's picture.
 pub struct ColumnMap {
-    texture: GLuint,
+    /// Made on the first `set`.
+    texture: Option<gfx::Texture>,
     /// The column of the first texel.
     origin: ColumnKey,
     texels: Vec<u8>,
@@ -35,7 +40,7 @@ pub struct ColumnMap {
 impl ColumnMap {
     pub fn new() -> Self {
         Self {
-            texture: 0,
+            texture: None,
             origin: (0, 0),
             texels: Vec::new(),
         }
@@ -55,33 +60,14 @@ impl ColumnMap {
                 texels[(j * SIDE + i) as usize] = 255;
             }
         }
-        if self.texture != 0 && origin == self.origin && texels == self.texels {
+        if self.texture.is_some() && origin == self.origin && texels == self.texels {
             return;
         }
-        unsafe {
-            if self.texture == 0 {
-                gl::GenTextures(1, &mut self.texture);
-                gl::BindTexture(gl::TEXTURE_2D, self.texture);
-                gl::TexStorage2D(gl::TEXTURE_2D, 1, gl::R8, SIDE, SIDE);
-                gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as GLint);
-                gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as GLint);
-            }
-            gl::BindTexture(gl::TEXTURE_2D, self.texture);
-            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-            gl::TexSubImage2D(
-                gl::TEXTURE_2D,
-                0,
-                0,
-                0,
-                SIDE,
-                SIDE,
-                gl::RED,
-                gl::UNSIGNED_BYTE,
-                texels.as_ptr() as *const GLvoid,
-            );
-            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-        }
+        let side = SIDE as u32;
+        let texture = self
+            .texture
+            .get_or_insert_with(|| gfx::Texture::new(TextureDesc::d2(Format::R8, side, side)));
+        texture.write(0, Rect::sized(side, side), 0, 1, UploadFormat::R8, &texels);
         self.origin = origin;
         self.texels = texels;
     }
@@ -93,10 +79,9 @@ impl ColumnMap {
         shader.set_uniform_1i(map, unit as i32);
         shader.set_uniform_2i(origin, self.origin.0, self.origin.1);
         shader.set_uniform_1f("columnSize", CHUNK_SIZE as f32);
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0 + unit);
-            gl::BindTexture(gl::TEXTURE_2D, self.texture);
-            gl::ActiveTexture(gl::TEXTURE0);
+        match &self.texture {
+            Some(texture) => gfx::bind_texture(unit, texture, &SAMPLER),
+            None => gfx::unbind_texture(unit, TextureKind::D2),
         }
     }
 
@@ -105,16 +90,9 @@ impl ColumnMap {
         self.bind(shader, LOADED_UNIT, "loadedColumns", "loadedOrigin");
     }
 
-    /// The raw texture and first column, for programs bound elsewhere.
-    pub fn raw(&self) -> (GLuint, ColumnKey) {
-        (self.texture, self.origin)
-    }
-}
-
-impl Drop for ColumnMap {
-    fn drop(&mut self) {
-        if self.texture != 0 && !crate::core::headless::is_headless() {
-            unsafe { gl::DeleteTextures(1, &self.texture) };
-        }
+    /// The raw texture (0 without a picture yet) and first column, for
+    /// programs bound elsewhere.
+    pub fn raw(&self) -> (u32, ColumnKey) {
+        (self.texture.as_ref().map_or(0, |t| t.raw() as u32), self.origin)
     }
 }

@@ -11,6 +11,8 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::core::gfx;
+
 static DEPTH_PASSES: AtomicU32 = AtomicU32::new(0);
 
 /// Whether a depth-only pass is being drawn.
@@ -18,19 +20,23 @@ pub fn is_active() -> bool {
     DEPTH_PASSES.load(Ordering::Relaxed) > 0
 }
 
-/// Marks a depth-only pass while it lives.
-pub struct DepthPass(());
+/// Marks a depth-only pass while it lives: pipelines drawn meanwhile
+/// write no colour (see `gfx::PassOverrides`).
+pub struct DepthPass(gfx::PassOverrides);
 
 impl DepthPass {
     pub fn begin() -> Self {
         DEPTH_PASSES.fetch_add(1, Ordering::Relaxed);
-        DepthPass(())
+        let before = gfx::pass_overrides();
+        gfx::set_pass_overrides(gfx::PassOverrides { depth_only: true, ..before });
+        DepthPass(before)
     }
 }
 
 impl Drop for DepthPass {
     fn drop(&mut self) {
         DEPTH_PASSES.fetch_sub(1, Ordering::Relaxed);
+        gfx::set_pass_overrides(self.0);
     }
 }
 

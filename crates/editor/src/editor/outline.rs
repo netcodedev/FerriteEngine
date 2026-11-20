@@ -4,9 +4,10 @@
 use cgmath::Vector3;
 use ferrite::core::{
     entity::EntityHandle,
+    gfx,
     renderer::{
         depth_pass::DepthPass,
-        framebuffer::{FrameBuffer, ShadowFrameBuffer},
+        framebuffer::ShadowFrameBuffer,
         shader::Shader,
     },
     scene::Scene,
@@ -56,19 +57,13 @@ void main() {
 
 pub struct Outline {
     shader: Shader,
-    vao: u32,
     target: Option<(ShadowFrameBuffer, i32, i32)>,
 }
 
 impl Outline {
     pub fn new() -> Self {
-        let mut vao = 0;
-        unsafe {
-            gl::GenVertexArrays(1, &mut vao);
-        }
         Self {
             shader: Shader::new(VERTEX, FRAGMENT),
-            vao,
             target: None,
         }
     }
@@ -96,58 +91,34 @@ impl Outline {
         let (target, _, _) = self.target.as_ref().expect("target just created");
 
         // 1. Depth mask of just the selected entity (and its children).
-        // `bind` also binds the mask texture to the active unit; use unit 0
-        // and release it so it is never sampled while being written (unit
-        // 15 holds the shadow map).
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0);
-        }
-        target.bind();
-        unsafe {
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::Viewport(0, 0, w, h);
-            gl::Enable(gl::DEPTH_TEST);
-            gl::DepthMask(gl::TRUE);
-            gl::ClearDepth(1.0);
-            gl::Clear(gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT);
-            // Only the depth is read: the renderers draw with their
-            // depth-only programs (the same positions and cut-outs, no
-            // shading) and no colour is written.
-            gl::ColorMask(gl::FALSE, gl::FALSE, gl::FALSE, gl::FALSE);
-        }
+        // Only the depth is read: the renderers draw with their depth-only
+        // programs (the same positions and cut-outs, no shading) and no
+        // colour is written.
+        target.0.begin_pass(gfx::Load::Color([0.0; 4]), gfx::Load::Depth(1.0));
         {
             let _depth_only = DepthPass::begin();
             entity.render(scene, &camera.get_view_projection(), parent);
         }
-        unsafe {
-            gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
-        }
-        FrameBuffer::unbind();
+        gfx::end_pass();
 
         // 2. Edge pass over the viewport, always on top of the scene.
         let Some(mask) = target.get_depth_texture() else {
             return;
         };
-        unsafe {
-            gl::Viewport(x, y, w, h);
-            gl::Disable(gl::DEPTH_TEST);
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            gl::ActiveTexture(gl::TEXTURE0);
-        }
-        mask.bind();
-        self.shader.bind();
+        gfx::set_viewport(gfx::Rect::new(x, y, w as u32, h as u32));
+        let desc = gfx::PipelineDesc {
+            depth: gfx::DepthState::OFF,
+            blend: Some(gfx::BlendState::ALPHA),
+            ..Default::default()
+        };
+        gfx::set_pipeline(self.shader.pipeline(&desc));
+        mask.bind_to(0);
         self.shader.set_uniform_1i("mask", 0);
         self.shader.set_uniform_3fv("color", &OUTLINE_COLOR);
         self.shader.set_uniform_1f("thickness", THICKNESS);
         self.shader
             .set_uniform_2f("texel", 1.0 / w as f32, 1.0 / h as f32);
-        unsafe {
-            gl::BindVertexArray(self.vao);
-            gl::DrawArrays(gl::TRIANGLES, 0, 3);
-            gl::BindVertexArray(0);
-            gl::UseProgram(0);
-            gl::Enable(gl::DEPTH_TEST);
-        }
+        gfx::draw(0, 3);
+        gfx::unbind_texture(0, gfx::TextureKind::D2);
     }
 }

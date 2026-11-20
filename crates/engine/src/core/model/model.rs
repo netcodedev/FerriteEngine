@@ -10,13 +10,14 @@ use russimp_ng::{
 };
 
 use crate::core::{
+    gfx,
     view_frustum::{Culled, ViewFrustum},
     assets::MaterialMap,
     renderer::{
         depth_pass,
         hdr,
         pbr::{self, Lighting},
-        shader::Shader,
+        shader::{DynamicVertexArray, Shader},
         ssao,
         texture::Texture,
     },
@@ -26,7 +27,7 @@ use super::{
     model_materials::{
         canonical_slot, map_texture_type, maps_by_name, read_image, texture_candidates, upload_map,
     },
-    Model, ModelBuilder, ModelMesh,
+    Model, ModelBuilder, ModelMesh, ModelMeshVertex,
 };
 
 /// A pose revision no model had yet (see `Model::pose_revision`).
@@ -89,19 +90,26 @@ impl Model {
                 PostProcess::FlipUVs,
             ],
         )?;
-        // Compiled with the first model, as each model's own program was.
-        COLOR_SHADER.with(|_| ());
         let model_dir = std::path::Path::new(full_path)
             .parent()
             .and_then(|p| p.to_str())
             .unwrap_or("assets/models")
             .to_string();
-        Ok(Model {
+        let name = super::outline::default_variant_name(std::path::Path::new(full_path));
+        Ok(Self::from_scene(scene, name, model_dir, position))
+    }
+
+    /// A model of an assimp scene made some other way (see `generated`):
+    /// `name` as a file's stem, maps looked for next to it in `model_dir`.
+    pub(super) fn from_scene<P: Into<Point3<f32>>>(scene: Scene, name: String, model_dir: String, position: P) -> Model {
+        // Compiled with the first model, as each model's own program was.
+        COLOR_SHADER.with(|_| ());
+        Model {
             model: scene,
             meshes: Vec::new(),
             textures: Vec::new(),
             shared_textures: Vec::new(),
-            name: super::outline::default_variant_name(std::path::Path::new(full_path)),
+            name,
             model_dir,
             position: position.into(),
             scale: 0.01,
@@ -111,7 +119,7 @@ impl Model {
             bone_cache: Default::default(),
             pose_revision: next_pose_revision(),
             cull_bounds: None,
-        })
+        }
     }
 
     pub fn init(&mut self) {
@@ -352,7 +360,18 @@ impl Model {
         parent_transform: &Matrix4<f32>,
         camera_projection: &Matrix4<f32>,
     ) {
-        shader.bind();
+        let mut desc = gfx::PipelineDesc {
+            vertex_layouts: crate::core::gfx::Layouts::of(&[DynamicVertexArray::<ModelMeshVertex>::layout()]),
+            depth: gfx::DepthState::LESS,
+            cull: gfx::Cull::Back,
+            ..Default::default()
+        };
+        // A tinted model is see-through and writes no depth.
+        if tint.is_some() {
+            desc.blend = Some(gfx::BlendState::ALPHA);
+            desc.depth.write = false;
+        }
+        gfx::set_pipeline(shader.pipeline(&desc));
         if !depth_only {
             lighting.apply(shader);
         }
@@ -365,21 +384,6 @@ impl Model {
         let [r, g, b, a] = tint.unwrap_or([1.0; 4]);
         shader.set_uniform_1i("useTint", tint.is_some() as i32);
         shader.set_uniform_4f("tint", r, g, b, a);
-        // Models are drawn depth tested and single-sided; the caller's
-        // state is put back after.
-        let (depth_test_was, cull_face_was) = unsafe {
-            let was = (gl::IsEnabled(gl::DEPTH_TEST), gl::IsEnabled(gl::CULL_FACE));
-            gl::Enable(gl::DEPTH_TEST);
-            gl::Enable(gl::CULL_FACE);
-            was
-        };
-        if tint.is_some() {
-            unsafe {
-                gl::Enable(gl::BLEND);
-                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-                gl::DepthMask(gl::FALSE);
-            }
-        }
         for (index, (name, mesh)) in self.meshes.iter().enumerate() {
             let shown = match only {
                 Some(only) => only.contains(name),
@@ -427,20 +431,6 @@ impl Model {
                 parent_transform * Matrix4::from_translation(self.position.to_vec().into()),
                 Some(self.scale),
             );
-        }
-        if tint.is_some() {
-            unsafe {
-                gl::DepthMask(gl::TRUE);
-                gl::Disable(gl::BLEND);
-            }
-        }
-        unsafe {
-            if depth_test_was == gl::FALSE {
-                gl::Disable(gl::DEPTH_TEST);
-            }
-            if cull_face_was == gl::FALSE {
-                gl::Disable(gl::CULL_FACE);
-            }
         }
     }
 

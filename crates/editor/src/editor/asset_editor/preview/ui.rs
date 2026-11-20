@@ -176,17 +176,14 @@ impl UIElement for AssetPreview {
                     view.w as i32,
                     view.h as i32,
                 ];
-                unsafe {
-                    gl::Enable(gl::SCISSOR_TEST);
-                    gl::Scissor(gl_rect[0], gl_rect[1], gl_rect[2], gl_rect[3]);
-                    gl::Viewport(gl_rect[0], gl_rect[1], gl_rect[2], gl_rect[3]);
-                    let bg = theme::BG_FIELD;
-                    gl::ClearColor(bg.0, bg.1, bg.2, 1.0);
-                    gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-                    gl::Enable(gl::DEPTH_TEST);
-                    gl::DepthMask(gl::TRUE);
-                    gl::DepthFunc(gl::LESS);
-                }
+                {
+            let bg = theme::BG_FIELD;
+            let r = [gl_rect[0], gl_rect[1], gl_rect[2], gl_rect[3]];
+            ferrite::core::gfx::begin_region(
+                ferrite::core::gfx::Rect::new(r[0] as i32, r[1] as i32, r[2].max(0) as u32, r[3].max(0) as u32),
+                [bg.0, bg.1, bg.2, 1.0],
+            );
+        }
                 let vp = self.view_projection(&view, *center, *radius);
 
                 // Floor grid under the model, sized to it.
@@ -218,13 +215,10 @@ impl UIElement for AssetPreview {
                     None => LodChoice::Distance(0.0),
                 };
                 instances.draw(&vp, &Matrix4::identity(), &lighting, lod);
-                unsafe {
-                    // Leave no 3D depth behind for the UI drawn over this
-                    // region.
-                    gl::Clear(gl::DEPTH_BUFFER_BIT);
-                    gl::Disable(gl::SCISSOR_TEST);
-                    gl::Viewport(0, 0, window_w as i32, window_h as i32);
-                }
+                {
+            // Leave no 3D depth behind for the UI drawn over this region.
+            ferrite::core::gfx::end_region(ferrite::core::gfx::Rect::sized((window_w as i32) as u32, (window_h as i32) as u32));
+        }
                 self.hint.render();
             }
             Shown::Rigged(rigged) => {
@@ -233,27 +227,14 @@ impl UIElement for AssetPreview {
                     (state.layout.window_w, state.layout.window_h)
                 };
                 let (center, radius) = (rigged.center, rigged.radius);
-                unsafe {
-                    gl::Enable(gl::SCISSOR_TEST);
-                    gl::Scissor(
-                        view.x as i32,
-                        (window_h - view.y - view.h) as i32,
-                        view.w as i32,
-                        view.h as i32,
-                    );
-                    gl::Viewport(
-                        view.x as i32,
-                        (window_h - view.y - view.h) as i32,
-                        view.w as i32,
-                        view.h as i32,
-                    );
-                    let bg = theme::BG_FIELD;
-                    gl::ClearColor(bg.0, bg.1, bg.2, 1.0);
-                    gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-                    gl::Enable(gl::DEPTH_TEST);
-                    gl::DepthMask(gl::TRUE);
-                    gl::DepthFunc(gl::LESS);
-                }
+                {
+            let bg = theme::BG_FIELD;
+            let r = [view.x as i32, (window_h - view.y - view.h) as i32, view.w as i32, view.h as i32];
+            ferrite::core::gfx::begin_region(
+                ferrite::core::gfx::Rect::new(r[0] as i32, r[1] as i32, r[2].max(0) as u32, r[3].max(0) as u32),
+                [bg.0, bg.1, bg.2, 1.0],
+            );
+        }
                 let vp = self.view_projection(&view, center, radius);
                 let extent = radius * 1.6;
                 let steps = 12;
@@ -272,7 +253,7 @@ impl UIElement for AssetPreview {
                     ));
                 }
                 LineRenderer::render_lines(&vp, &grid, Vector3::new(0.16, 0.17, 0.2), false);
-                unsafe { gl::Enable(gl::DEPTH_TEST) };
+                
                 let lighting =
                     Lighting::preview(Vector3::new(3.0, 5.0, 4.0), self.eye(center, radius));
                 rigged.model.render(&lighting, &Matrix4::identity(), &vp);
@@ -302,11 +283,10 @@ impl UIElement for AssetPreview {
                         }
                     }
                 }
-                unsafe {
-                    gl::Clear(gl::DEPTH_BUFFER_BIT);
-                    gl::Disable(gl::SCISSOR_TEST);
-                    gl::Viewport(0, 0, window_w as i32, window_h as i32);
-                }
+                {
+            // Leave no 3D depth behind for the UI drawn over this region.
+            ferrite::core::gfx::end_region(ferrite::core::gfx::Rect::sized((window_w as i32) as u32, (window_h as i32) as u32));
+        }
                 if self.clip_mode {
                     self.timeline.render((window_w, window_h));
                 }
@@ -321,27 +301,14 @@ impl UIElement for AssetPreview {
                     (state.layout.window_w, state.layout.window_h)
                 };
                 let (center, radius) = (held.center, held.radius);
-                unsafe {
-                    gl::Enable(gl::SCISSOR_TEST);
-                    gl::Scissor(
-                        view.x as i32,
-                        (window_h - view.y - view.h) as i32,
-                        view.w as i32,
-                        view.h as i32,
-                    );
-                    gl::Viewport(
-                        view.x as i32,
-                        (window_h - view.y - view.h) as i32,
-                        view.w as i32,
-                        view.h as i32,
-                    );
-                    let bg = theme::BG_FIELD;
-                    gl::ClearColor(bg.0, bg.1, bg.2, 1.0);
-                    gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-                    gl::Enable(gl::DEPTH_TEST);
-                    gl::DepthMask(gl::TRUE);
-                    gl::DepthFunc(gl::LESS);
-                }
+                {
+            let bg = theme::BG_FIELD;
+            let r = [view.x as i32, (window_h - view.y - view.h) as i32, view.w as i32, view.h as i32];
+            ferrite::core::gfx::begin_region(
+                ferrite::core::gfx::Rect::new(r[0] as i32, r[1] as i32, r[2].max(0) as u32, r[3].max(0) as u32),
+                [bg.0, bg.1, bg.2, 1.0],
+            );
+        }
                 let vp = self.view_projection(&view, center, radius);
                 let floor = held.player.floor;
                 let extent = held.player.radius * 1.2;
@@ -353,7 +320,7 @@ impl UIElement for AssetPreview {
                     grid.push(Line::new(Point3::new(-extent, floor, t), Vector3::unit_x(), extent * 2.0));
                 }
                 LineRenderer::render_lines(&vp, &grid, Vector3::new(0.16, 0.17, 0.2), false);
-                unsafe { gl::Enable(gl::DEPTH_TEST) };
+                
                 let lighting = Lighting::preview(Vector3::new(3.0, 5.0, 4.0), self.eye(center, radius));
                 held.player.model.render(&lighting, &Matrix4::identity(), &vp);
                 if let Some(grip) = self.grip() {
@@ -380,11 +347,10 @@ impl UIElement for AssetPreview {
                         }
                     }
                 }
-                unsafe {
-                    gl::Clear(gl::DEPTH_BUFFER_BIT);
-                    gl::Disable(gl::SCISSOR_TEST);
-                    gl::Viewport(0, 0, window_w as i32, window_h as i32);
-                }
+                {
+            // Leave no 3D depth behind for the UI drawn over this region.
+            ferrite::core::gfx::end_region(ferrite::core::gfx::Rect::sized((window_w as i32) as u32, (window_h as i32) as u32));
+        }
                 self.hint.render();
                 self.message.render();
             }

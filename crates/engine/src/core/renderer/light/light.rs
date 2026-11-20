@@ -17,6 +17,7 @@ use crate::core::{
         component::{Component, Property, PropertyValue},
         Entity,
     },
+    gfx,
     scene::{scene_file::ComponentData, Scene},
 };
 
@@ -482,7 +483,7 @@ pub fn select(mut lights: Vec<LightSource>, eye: Point3<f32>) -> Vec<LightSource
 /// The lights uploaded for the shaders: a uniform buffer bound to
 /// `LIGHTS_BINDING`.
 pub struct LightBuffer {
-    buffer: gl::types::GLuint,
+    buffer: gfx::Buffer,
 }
 
 impl LightBuffer {
@@ -490,43 +491,20 @@ impl LightBuffer {
     const SIZE: usize = MAX_LIGHTS * 4 * 4 * std::mem::size_of::<f32>();
 
     pub fn new() -> Self {
-        let mut buffer = 0;
-        unsafe {
-            gl::GenBuffers(1, &mut buffer);
-            gl::BindBuffer(gl::UNIFORM_BUFFER, buffer);
-            gl::BufferData(
-                gl::UNIFORM_BUFFER,
-                Self::SIZE as isize,
-                std::ptr::null(),
-                gl::DYNAMIC_DRAW,
-            );
-            gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
+        Self {
+            buffer: gfx::Buffer::new(gfx::BufferUsage::UNIFORM, gfx::BufferMemory::Dynamic, Self::SIZE),
         }
-        Self { buffer }
     }
 
     /// Upload `lights` (at most `MAX_LIGHTS` are used) and bind the buffer.
-    pub fn upload(&self, lights: &[LightSource]) {
-        let data: Vec<[[f32; 4]; 4]> = lights.iter().take(MAX_LIGHTS).map(|l| l.packed()).collect();
-        unsafe {
-            gl::BindBuffer(gl::UNIFORM_BUFFER, self.buffer);
-            if !data.is_empty() {
-                gl::BufferSubData(
-                    gl::UNIFORM_BUFFER,
-                    0,
-                    std::mem::size_of_val(data.as_slice()) as isize,
-                    data.as_ptr() as *const _,
-                );
-            }
-            gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
-            gl::BindBufferBase(gl::UNIFORM_BUFFER, LIGHTS_BINDING, self.buffer);
+    pub fn upload(&mut self, lights: &[LightSource]) {
+        // The whole block, lights past the count zero.
+        let mut data = vec![[[0.0f32; 4]; 4]; MAX_LIGHTS];
+        for (slot, light) in data.iter_mut().zip(lights) {
+            *slot = light.packed();
         }
-    }
-}
-
-impl Drop for LightBuffer {
-    fn drop(&mut self) {
-        unsafe { gl::DeleteBuffers(1, &self.buffer) };
+        self.buffer.replace(gfx::as_bytes(&data));
+        gfx::bind_uniform_buffer(LIGHTS_BINDING, &self.buffer);
     }
 }
 

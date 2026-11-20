@@ -14,9 +14,9 @@ pub struct PlaneRenderer {
     height: f32,
     /// The size the shader's projection was last set for.
     projection_for: Option<(f32, f32)>,
-    /// Vertex array, stream vertex buffer and the quads' index buffer;
-    /// created on the first draw.
-    buffers: Option<(u32, u32, u32)>,
+    /// The stream vertex buffer and the quads' index buffer; created on
+    /// the first draw.
+    buffers: Option<(crate::core::gfx::Buffer, crate::core::gfx::Buffer)>,
     /// Planes written to the stream buffer since it was last orphaned.
     written: usize,
     scratch: Vec<PlaneVertex>,

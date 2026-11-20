@@ -18,14 +18,14 @@
 use std::time::Instant;
 
 use cgmath::{Matrix4, Point3, SquareMatrix, Vector3};
-use gl::types::GLuint;
 use lazy_static::lazy_static;
 
 use crate::core::{
+    gfx,
     renderer::{
         hdr,
         pbr::Lighting,
-        shader::{Shader, VertexAttributes},
+        shader::{DynamicVertexArray, Shader, VertexAttributes},
     },
     scene::Scene,
 };
@@ -91,13 +91,9 @@ pub struct WaterVertex {
 }
 
 impl VertexAttributes for WaterVertex {
-    fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
-        vec![
-            (3, gl::FLOAT),
-            (1, gl::FLOAT),
-            (1, gl::FLOAT),
-            (2, gl::FLOAT),
-        ]
+    fn vertex_formats() -> Vec<crate::core::gfx::VertexFormat> {
+        use crate::core::gfx::VertexFormat::*;
+        vec![F32x3, F32, F32, F32x2]
     }
 }
 
@@ -331,7 +327,17 @@ pub fn draw<'a>(
     let opaque = hdr::opaque_scene().filter(|_| !depth_capture);
 
     WATER_SHADER.with(|ws| {
-        ws.bind();
+        // Depth capture (F10): every water fragment stamps its depth.
+        // Otherwise the shader composes the water with the opaque scene
+        // under it itself; alpha only fades it out where it thins to
+        // nothing at the shore.
+        let desc = gfx::PipelineDesc {
+            vertex_layouts: crate::core::gfx::Layouts::of(&[DynamicVertexArray::<WaterVertex>::layout()]),
+            depth: if depth_capture { gfx::DepthState::LESS.func(gfx::CompareFunc::Always) } else { gfx::DepthState::LESS },
+            blend: (!depth_capture).then_some(gfx::BlendState::ALPHA),
+            ..Default::default()
+        };
+        gfx::set_pipeline(ws.pipeline(&desc));
         ws.set_uniform_mat4("viewProjection", view_projection);
         let inverse = view_projection.invert().unwrap_or(Matrix4::identity());
         ws.set_uniform_mat4("inverseViewProjection", &inverse);
@@ -348,11 +354,8 @@ pub fn draw<'a>(
         ws.set_uniform_1i("loadedColumns", super::columns::LOADED_UNIT as i32);
         ws.set_uniform_2i("loadedOrigin", far.loaded.1 .0, far.loaded.1 .1);
         ws.set_uniform_1f("columnSize", super::CHUNK_SIZE as f32);
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0 + super::columns::LOADED_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, far.loaded.0);
-            gl::ActiveTexture(gl::TEXTURE0);
-        }
+        let columns = gfx::SamplerDesc::new(gfx::Filter::Nearest, gfx::Wrap::Repeat);
+        gfx::bind_raw_texture(super::columns::LOADED_UNIT, far.loaded.0 as gfx::RawId, gfx::TextureKind::D2, &columns);
         ws.set_uniform_1i("isFarWater", (far.load > 0.0) as i32);
         ws.set_uniform_3f("farSink", far.centre[0], far.centre[1], far.load);
         ws.set_uniform_1f("farHole", far.hole);
@@ -369,50 +372,19 @@ pub fn draw<'a>(
         ws.set_uniform_1i("sceneColor", SCENE_COLOR_UNIT as i32);
         ws.set_uniform_1i("sceneDepth", SCENE_DEPTH_UNIT as i32);
         ws.set_uniform_1i("hasScene", opaque.is_some() as i32);
-        unsafe {
-            if let Some(opaque) = opaque {
-                gl::ActiveTexture(gl::TEXTURE0 + SCENE_COLOR_UNIT);
-                gl::BindTexture(gl::TEXTURE_2D, opaque.color);
-                gl::ActiveTexture(gl::TEXTURE0 + SCENE_DEPTH_UNIT);
-                gl::BindTexture(gl::TEXTURE_2D, opaque.depth);
-                gl::ActiveTexture(gl::TEXTURE0);
-            }
-            gl::Disable(gl::CULL_FACE);
-            if depth_capture {
-                // Depth-capture mode: write the water surface's actual
-                // depth values into the FBO, ignoring whatever terrain
-                // depth is already there.  GL_ALWAYS + DepthMask=TRUE
-                // means every water fragment stamps its depth, giving a
-                // clean "water depth map" for the F10 debug panel.
-                gl::DepthMask(gl::TRUE);
-                gl::DepthFunc(gl::ALWAYS);
-            } else {
-                // Normal render: the shader composes the water with
-                // the opaque scene under it itself; alpha only fades
-                // it out where it thins to nothing at the shore.
-                gl::Enable(gl::BLEND);
-                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-                gl::DepthMask(gl::TRUE);
-                gl::DepthFunc(gl::LESS);
-            }
+        if let Some(opaque) = opaque {
+            let color = gfx::SamplerDesc::LINEAR_CLAMP;
+            let depth = gfx::SamplerDesc::new(gfx::Filter::Nearest, gfx::Wrap::Repeat);
+            gfx::bind_raw_texture(SCENE_COLOR_UNIT, opaque.color as gfx::RawId, gfx::TextureKind::D2, &color);
+            gfx::bind_raw_texture(SCENE_DEPTH_UNIT, opaque.depth as gfx::RawId, gfx::TextureKind::D2, &depth);
         }
         for (water_mesh, model) in &meshes {
             water_mesh.render(ws, model, None);
         }
-        unsafe {
-            gl::DepthMask(gl::TRUE);
-            gl::DepthFunc(gl::LESS); // restore default
-            if !depth_capture {
-                gl::Disable(gl::BLEND);
+        if opaque.is_some() {
+            for unit in [SCENE_COLOR_UNIT, SCENE_DEPTH_UNIT] {
+                gfx::unbind_texture(unit, gfx::TextureKind::D2);
             }
-            if opaque.is_some() {
-                for unit in [SCENE_COLOR_UNIT, SCENE_DEPTH_UNIT] {
-                    gl::ActiveTexture(gl::TEXTURE0 + unit);
-                    gl::BindTexture(gl::TEXTURE_2D, 0);
-                }
-                gl::ActiveTexture(gl::TEXTURE0);
-            }
-            // CULL_FACE is re-enabled by the terrain opaque pass each frame.
         }
     });
 }

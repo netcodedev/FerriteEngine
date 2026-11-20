@@ -10,7 +10,6 @@ use fast_surface_nets::{
     ndshape::{RuntimeShape, Shape},
     surface_nets, SurfaceNetsBuffer,
 };
-use gl::types::GLuint;
 
 use crate::core::renderer::shader::VertexAttributes;
 
@@ -63,8 +62,9 @@ pub struct TerrainVertex {
 }
 
 impl VertexAttributes for TerrainVertex {
-    fn get_vertex_attributes() -> Vec<(usize, GLuint)> {
-        vec![(3, gl::FLOAT), (3, gl::FLOAT), (3, gl::FLOAT), (4, gl::FLOAT), (4, gl::FLOAT), (4, gl::FLOAT), (4, gl::FLOAT)]
+    fn vertex_formats() -> Vec<crate::core::gfx::VertexFormat> {
+        use crate::core::gfx::VertexFormat::*;
+        vec![F32x3, F32x3, F32x3, F32x4, F32x4, F32x4, F32x4]
     }
 }
 

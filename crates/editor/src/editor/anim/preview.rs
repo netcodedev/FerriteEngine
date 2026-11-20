@@ -367,16 +367,13 @@ impl UIElement for PreviewPanel {
             view.w as i32,
             view.h as i32,
         ];
-        unsafe {
-            gl::Enable(gl::SCISSOR_TEST);
-            gl::Scissor(gl_rect[0], gl_rect[1], gl_rect[2], gl_rect[3]);
-            gl::Viewport(gl_rect[0], gl_rect[1], gl_rect[2], gl_rect[3]);
+        {
             let bg = theme::BG_FIELD;
-            gl::ClearColor(bg.0, bg.1, bg.2, 1.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-            gl::Enable(gl::DEPTH_TEST);
-            gl::DepthMask(gl::TRUE);
-            gl::DepthFunc(gl::LESS);
+            let r = [gl_rect[0], gl_rect[1], gl_rect[2], gl_rect[3]];
+            ferrite::core::gfx::begin_region(
+                ferrite::core::gfx::Rect::new(r[0] as i32, r[1] as i32, r[2].max(0) as u32, r[3].max(0) as u32),
+                [bg.0, bg.1, bg.2, 1.0],
+            );
         }
         let vp = self.view_projection(&view);
 
@@ -396,18 +393,13 @@ impl UIElement for PreviewPanel {
         LineRenderer::render_lines(&vp, &axes_z, Vector3::new(0.3, 0.45, 0.9), false);
 
         if let Some(model) = &self.model {
-            unsafe {
-                gl::Enable(gl::DEPTH_TEST);
-            }
             let lighting = Lighting::preview(Vector3::new(6.0, 10.0, 8.0), self.eye());
             model.render(&lighting, &Matrix4::from_angle_y(cgmath::Rad(self.body_yaw)), &vp);
         }
-        unsafe {
+        {
             // Leave no 3D depth behind for the UI drawn over this region.
-            gl::Clear(gl::DEPTH_BUFFER_BIT);
-            gl::Disable(gl::SCISSOR_TEST);
             let s = self.state.borrow();
-            gl::Viewport(0, 0, s.layout.window_w as i32, s.layout.window_h as i32);
+            ferrite::core::gfx::end_region(ferrite::core::gfx::Rect::sized((s.layout.window_w as i32) as u32, (s.layout.window_h as i32) as u32));
         }
 
         self.status.render();

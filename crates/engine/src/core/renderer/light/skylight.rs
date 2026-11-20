@@ -580,7 +580,7 @@ impl Component for SkyLight {
 }
 
 /// One cascade of the sun's shadow map.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShadowCascade {
     /// World to the cascade's clip space.
     pub view_projection: Matrix4<f32>,

@@ -5,10 +5,10 @@
 use std::cell::RefCell;
 
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Vector3, Vector4};
-use gl::types::*;
 
 use super::{ParticleBlend, ParticleSystem};
 use crate::core::{
+    gfx,
     renderer::{
         hdr,
         light::light::srgb_to_linear,
@@ -27,22 +27,24 @@ const INSTANCE_FLOATS: usize = 16;
 /// The shader and the instance buffer, shared by every emitter.
 pub struct ParticleRenderer {
     shader: Shader,
-    vao: GLuint,
-    vbo: GLuint,
-    /// Instances the buffer has room for.
-    capacity: usize,
+    /// The instances, rewritten for every emitter.
+    instances: gfx::Buffer,
 }
 
 thread_local! {
     static RENDERER: RefCell<Option<ParticleRenderer>> = const { RefCell::new(None) };
 }
 
-/// Free the particle renderer's GL objects. Must run on the GL thread while
-/// the context is still alive: dropped with the thread-local at process
-/// exit, it would call into a GL driver that is already unloaded (a crash
-/// on closing the window).
+/// Free the particle renderer's GPU objects (they go with the next frame)
+/// while the render layer is still there to free them, not at process
+/// exit with the thread-local.
 pub fn release_gl_resources() {
     let _ = RENDERER.try_with(|renderer| renderer.borrow_mut().take());
+}
+
+/// An instance: four vec4s at locations 0 to 3, one per quad.
+fn instance_layout() -> gfx::VertexLayout {
+    gfx::VertexLayout::packed(0, gfx::StepMode::Instance, &[gfx::VertexFormat::F32x4; 4])
 }
 
 impl ParticleRenderer {
@@ -51,60 +53,16 @@ impl ParticleRenderer {
             &format!("#version 460 core\n#define VERTEX\n{SOURCE}"),
             &format!("#version 460 core\n#define FRAGMENT\n{LIGHTING_GLSL}\n{SOURCE}"),
         );
-        let (mut vao, mut vbo) = (0, 0);
-        unsafe {
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut vbo);
-            gl::BindVertexArray(vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            let stride = (INSTANCE_FLOATS * std::mem::size_of::<f32>()) as GLsizei;
-            for i in 0..4u32 {
-                gl::EnableVertexAttribArray(i);
-                gl::VertexAttribPointer(
-                    i,
-                    4,
-                    gl::FLOAT,
-                    gl::FALSE,
-                    stride,
-                    (i as usize * 4 * std::mem::size_of::<f32>()) as *const _,
-                );
-                gl::VertexAttribDivisor(i, 1);
-            }
-            gl::BindVertexArray(0);
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-        }
         Self {
             shader,
-            vao,
-            vbo,
-            capacity: 0,
+            instances: gfx::Buffer::new(gfx::BufferUsage::VERTEX, gfx::BufferMemory::Dynamic, 0),
         }
     }
 
     fn upload(&mut self, instances: &[[f32; INSTANCE_FLOATS]]) {
-        unsafe {
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
-            let bytes = std::mem::size_of_val(instances) as isize;
-            if instances.len() > self.capacity {
-                self.capacity = instances.len().next_power_of_two();
-            }
-            // A fresh store every time (orphaning): the emitter drawn before
-            // may still be reading the old one, which writing over it would
-            // have to wait for.
-            let size = (self.capacity * INSTANCE_FLOATS * std::mem::size_of::<f32>()) as isize;
-            gl::BufferData(gl::ARRAY_BUFFER, size, std::ptr::null(), gl::STREAM_DRAW);
-            gl::BufferSubData(gl::ARRAY_BUFFER, 0, bytes, instances.as_ptr() as *const _);
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-        }
-    }
-}
-
-impl Drop for ParticleRenderer {
-    fn drop(&mut self) {
-        unsafe {
-            gl::DeleteVertexArrays(1, &self.vao);
-            gl::DeleteBuffers(1, &self.vbo);
-        }
+        // A fresh store every time: the emitter drawn before may still be
+        // reading the old one, which writing over it would have to wait for.
+        self.instances.replace(gfx::as_bytes(instances));
     }
 }
 
@@ -187,7 +145,14 @@ pub(super) fn draw(
         let renderer = renderer.get_or_insert_with(ParticleRenderer::new);
         renderer.upload(scratch);
         let shader = &renderer.shader;
-        shader.bind();
+        let desc = gfx::PipelineDesc {
+            vertex_layouts: crate::core::gfx::Layouts::of(&[instance_layout()]),
+            depth: gfx::DepthState::READ,
+            blend: Some(if additive { gfx::BlendState::ADDITIVE } else { gfx::BlendState::PREMULTIPLIED }),
+            ..Default::default()
+        };
+        gfx::set_pipeline(shader.pipeline(&desc));
+        gfx::set_vertex_buffer(0, &renderer.instances, 0, instance_layout().stride);
         lighting.apply(shader);
         shader.set_uniform_mat4("viewProjection", view_projection);
         shader.set_uniform_3fv("camRight", &right);
@@ -204,32 +169,14 @@ pub(super) fn draw(
         let soft = effect.soft > 0.0 && opaque.is_some();
         shader.set_uniform_1i("soft", soft as i32);
         shader.set_uniform_1f("softness", effect.soft.max(1e-3));
-        unsafe {
-            if let Some(opaque) = opaque {
-                gl::ActiveTexture(gl::TEXTURE0 + DEPTH_UNIT);
-                gl::BindTexture(gl::TEXTURE_2D, opaque.depth);
-                gl::ActiveTexture(gl::TEXTURE0);
-            }
-            gl::Enable(gl::DEPTH_TEST);
-            gl::DepthFunc(gl::LESS);
-            gl::DepthMask(gl::FALSE);
-            gl::Enable(gl::BLEND);
-            if additive {
-                gl::BlendFunc(gl::ONE, gl::ONE);
-            } else {
-                gl::BlendFunc(gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
-            }
-            gl::Disable(gl::CULL_FACE);
-            gl::BindVertexArray(renderer.vao);
-            gl::DrawArraysInstanced(gl::TRIANGLES, 0, 6, scratch.len() as GLsizei);
-            gl::BindVertexArray(0);
-            gl::Disable(gl::BLEND);
-            gl::DepthMask(gl::TRUE);
-            if opaque.is_some() {
-                gl::ActiveTexture(gl::TEXTURE0 + DEPTH_UNIT);
-                gl::BindTexture(gl::TEXTURE_2D, 0);
-                gl::ActiveTexture(gl::TEXTURE0);
-            }
+        if let Some(opaque) = &opaque {
+            // Sampled as the HDR target made it: texel by texel.
+            let sampler = gfx::SamplerDesc::new(gfx::Filter::Nearest, gfx::Wrap::Repeat);
+            gfx::bind_raw_texture(DEPTH_UNIT, opaque.depth as gfx::RawId, gfx::TextureKind::D2, &sampler);
+        }
+        gfx::draw_instanced(0, 6, 0, scratch.len() as u32);
+        if opaque.is_some() {
+            gfx::unbind_texture(DEPTH_UNIT, gfx::TextureKind::D2);
         }
     });
 }

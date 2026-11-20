@@ -6,13 +6,16 @@
 //! layer (`snow_layer.rs`) takes its height from this. It covers the same
 //! area as the exposure map and is made whenever that is drawn.
 
-use gl::types::*;
-
-use super::{exposure::SkyExposure, SHELTER_UNIT};
-use crate::core::renderer::{framebuffer, shader::Shader};
+use super::{exposure, exposure::SkyExposure, SHELTER_UNIT};
+use crate::core::{
+    gfx::{self, Format, Load, SamplerDesc, TextureDesc},
+    renderer::shader::Shader,
+};
 
 /// Texels per side: four exposure map texels each (about 63 cm).
-const SIZE: i32 = 256;
+const SIZE: u32 = 256;
+/// How the map is read.
+const SAMPLER: SamplerDesc = SamplerDesc::LINEAR_CLAMP;
 
 const VERTEX: &str = "#version 460 core
 void main() {
@@ -65,129 +68,87 @@ void main() {
 }";
 
 struct Target {
-    framebuffer: GLuint,
-    texture: GLuint,
+    texture: gfx::Texture,
+    target: gfx::RenderTarget,
+}
+
+impl Target {
+    fn new() -> Self {
+        let texture = gfx::Texture::new(TextureDesc::d2(Format::R16F, SIZE, SIZE));
+        let target = gfx::RenderTarget::new(&[texture.attachment(0, None)], None);
+        // Open everywhere until the first update.
+        gfx::begin_pass(target.reference(), (SIZE, SIZE), Load::Color([1.0; 4]), Load::Keep);
+        gfx::end_pass();
+        Target { texture, target }
+    }
+
+    fn begin(&self) {
+        gfx::begin_pass(self.target.reference(), (SIZE, SIZE), Load::Keep, Load::Keep);
+    }
 }
 
 pub struct ShelterMap {
     open: Shader,
     blur: Shader,
-    vao: GLuint,
     /// The result is in the second; the first holds the half-blurred map.
     targets: [Target; 2],
+}
+
+/// A triangle over the whole target, made from `gl_VertexID`: no depth,
+/// no blending, always filled (it computes a map).
+fn fullscreen() -> gfx::PipelineDesc {
+    gfx::PipelineDesc {
+        depth: gfx::DepthState::OFF,
+        polygon: gfx::PolygonMode::Solid,
+        ..Default::default()
+    }
 }
 
 impl ShelterMap {
     pub fn new() -> Self {
         let open = Shader::new(VERTEX, &OPEN.replace("SHELTER_SIZE", &SIZE.to_string()));
         let blur = Shader::new(VERTEX, BLUR);
-        let mut vao = 0;
-        unsafe { gl::GenVertexArrays(1, &mut vao) };
         Self {
             open,
             blur,
-            vao,
-            targets: [Self::target(), Self::target()],
+            targets: [Target::new(), Target::new()],
         }
     }
 
-    fn target() -> Target {
-        let (mut framebuffer, mut texture) = (0, 0);
-        unsafe {
-            gl::GenTextures(1, &mut texture);
-            gl::BindTexture(gl::TEXTURE_2D, texture);
-            gl::TexImage2D(
-                gl::TEXTURE_2D,
-                0,
-                gl::R16F as GLint,
-                SIZE,
-                SIZE,
-                0,
-                gl::RED,
-                gl::FLOAT,
-                std::ptr::null(),
-            );
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as GLint);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as GLint);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as GLint);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as GLint);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::GenFramebuffers(1, &mut framebuffer);
-            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
-            gl::FramebufferTexture2D(
-                gl::FRAMEBUFFER,
-                gl::COLOR_ATTACHMENT0,
-                gl::TEXTURE_2D,
-                texture,
-                0,
-            );
-            gl::DrawBuffer(gl::COLOR_ATTACHMENT0);
-            // Open everywhere until the first update.
-            gl::ClearColor(1.0, 1.0, 1.0, 1.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
-            framebuffer::bind(gl::FRAMEBUFFER, 0);
-        }
-        Target { framebuffer, texture }
-    }
-
-    /// Make the map from `exposure`'s maps, just drawn. Leaves the default
-    /// framebuffer bound; the caller restores the viewport.
+    /// Make the map from `exposure`'s maps, just drawn. The pass that was
+    /// running goes on after, with the viewport over all of its target;
+    /// the caller restores the viewport.
     pub fn update(&self, exposure: &SkyExposure, range: f32) {
         let (sky, ground) = exposure.textures();
-        unsafe {
-            gl::Disable(gl::DEPTH_TEST);
-            gl::Disable(gl::BLEND);
-            gl::Viewport(0, 0, SIZE, SIZE);
-            gl::BindVertexArray(self.vao);
+        let desc = fullscreen();
 
-            // The open share, into the second target.
-            framebuffer::bind(gl::FRAMEBUFFER, self.targets[1].framebuffer);
-            self.open.bind();
-            self.open.set_uniform_1i("exposureMap", 0);
-            self.open.set_uniform_1i("groundMap", 1);
-            self.open.set_uniform_1f("exposureRange", range);
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, sky);
-            gl::ActiveTexture(gl::TEXTURE1);
-            gl::BindTexture(gl::TEXTURE_2D, ground);
-            gl::DrawArrays(gl::TRIANGLES, 0, 3);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::ActiveTexture(gl::TEXTURE0);
+        // The open share, into the second target.
+        self.targets[1].begin();
+        gfx::set_pipeline(self.open.pipeline(&desc));
+        self.open.set_uniform_1i("exposureMap", 0);
+        self.open.set_uniform_1i("groundMap", 1);
+        self.open.set_uniform_1f("exposureRange", range);
+        gfx::bind_texture(0, sky, &exposure::SAMPLER);
+        gfx::bind_texture(1, ground, &exposure::SAMPLER);
+        gfx::draw(0, 3);
+        gfx::unbind_texture(1, gfx::TextureKind::D2);
+        gfx::end_pass();
 
-            // Blurred across into the first, then down back into the second.
-            self.blur.bind();
+        // Blurred across into the first, then down back into the second.
+        for (from, to, direction) in [(1, 0, (1, 0)), (0, 1, (0, 1))] {
+            self.targets[to].begin();
+            gfx::set_pipeline(self.blur.pipeline(&desc));
             self.blur.set_uniform_1i("source", 0);
-            for (from, to, direction) in [(1, 0, (1, 0)), (0, 1, (0, 1))] {
-                framebuffer::bind(gl::FRAMEBUFFER, self.targets[to].framebuffer);
-                self.blur.set_uniform_2i("direction", direction.0, direction.1);
-                gl::BindTexture(gl::TEXTURE_2D, self.targets[from].texture);
-                gl::DrawArrays(gl::TRIANGLES, 0, 3);
-            }
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::BindVertexArray(0);
-            gl::Enable(gl::DEPTH_TEST);
-            framebuffer::bind(gl::FRAMEBUFFER, 0);
+            self.blur.set_uniform_2i("direction", direction.0, direction.1);
+            gfx::bind_texture(0, &self.targets[from].texture, &SAMPLER);
+            gfx::draw(0, 3);
+            gfx::end_pass();
         }
+        gfx::unbind_texture(0, gfx::TextureKind::D2);
     }
 
     /// Bind the result (the second target) to `SHELTER_UNIT`.
     pub fn bind(&self) {
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0 + SHELTER_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, self.targets[1].texture);
-            gl::ActiveTexture(gl::TEXTURE0);
-        }
-    }
-}
-
-impl Drop for ShelterMap {
-    fn drop(&mut self) {
-        unsafe {
-            for target in &self.targets {
-                framebuffer::delete(&[target.framebuffer]);
-                gl::DeleteTextures(1, &target.texture);
-            }
-            gl::DeleteVertexArrays(1, &self.vao);
-        }
+        gfx::bind_texture(SHELTER_UNIT, &self.targets[1].texture, &SAMPLER);
     }
 }

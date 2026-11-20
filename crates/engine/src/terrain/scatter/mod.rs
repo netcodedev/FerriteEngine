@@ -8,7 +8,7 @@
 //! rebuilding the scene (e.g. entering and leaving play mode) does not load
 //! them again. Each chunk gets one `ScatterInstances` per layer, which picks
 //! a variant per placement (deterministically hashed from its XZ position)
-//! and drives one `glDrawElementsInstanced` call per (variant, LOD-submesh)
+//! and draws it with one instanced draw per (variant, LOD-submesh)
 //! bucket it actually contains.
 
 use std::collections::HashSet;
@@ -18,6 +18,7 @@ use cgmath::Point3;
 use crate::core::{
     assets::AssetRef,
     entity::component::{Property, PropertyValue},
+    gfx,
 };
 
 use super::CHUNK_SIZE_FLOAT;
@@ -56,12 +57,17 @@ pub const MAX_DENSITY: f32 = 200.0;
 /// Area the density refers to: placements tried per 100 m x 100 m.
 const DENSITY_AREA: f32 = 100.0 * 100.0;
 
-const POS_OFFSET: usize = 0;
-const NORMAL_OFFSET: usize = 12;
-const UV_OFFSET: usize = 24;
-const VERTEX_STRIDE: i32 = 32;
+/// A model's vertices: position, normal and texture coordinates at
+/// locations 0, 1 and 2.
+fn vertex_layout() -> gfx::VertexLayout {
+    use gfx::VertexFormat::*;
+    gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[F32x3, F32x3, F32x2])
+}
 
-const INSTANCE_STRIDE: i32 = 64;
+/// An instance: its transform's columns at locations 3 to 6.
+fn instance_layout() -> gfx::VertexLayout {
+    gfx::VertexLayout::packed(3, gfx::StepMode::Instance, &[gfx::VertexFormat::F32x4; 4])
+}
 
 /// The scatter layers of one terrain.
 pub struct Scatter {

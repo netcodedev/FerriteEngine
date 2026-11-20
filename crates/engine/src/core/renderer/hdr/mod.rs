@@ -13,14 +13,14 @@
 //! `writes_linear` whether to leave their colour linear for this pass.
 
 use std::{
-    sync::atomic::{AtomicU32, Ordering},
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
     time::Instant,
 };
 
-use gl::types::*;
 use serde::{Deserialize, Serialize};
 
-use super::{framebuffer, light::light::clamp_finite, shader::Shader};
+use super::{light::light::clamp_finite, shader::Shader};
+use crate::core::gfx::{self, Filter, Format, Rect, SamplerDesc, TargetRef, TextureDesc, Wrap};
 
 /// Shared GLSL: `tonemap`, `linearToSrgb`.
 pub const TONEMAP_GLSL: &str = include_str!("tonemap.glsl");
@@ -34,8 +34,8 @@ const DEPTH_UNIT: u32 = 2;
 const EXPOSURE_UNIT: u32 = 3;
 
 /// Format of the scene and bloom targets.
-const COLOR_FORMAT: GLenum = gl::RGBA16F;
-const BLOOM_FORMAT: GLenum = gl::R11F_G11F_B10F;
+const COLOR_FORMAT: Format = Format::Rgba16F;
+const BLOOM_FORMAT: Format = Format::Rg11B10F;
 /// Most bloom levels below the scene's resolution, each half the size of
 /// the one above.
 const BLOOM_LEVELS: usize = 6;
@@ -52,17 +52,25 @@ const EXPOSURE_KEY: f32 = 0.25;
 /// Bloom threshold softness, as a share of the threshold.
 const BLOOM_KNEE: f32 = 0.5;
 
-/// GL name of the HDR framebuffer while the camera's view is drawn into
-/// it, 0 otherwise.
-static VIEW_FRAMEBUFFER: AtomicU32 = AtomicU32::new(0);
+/// How the resolved scene depth is read: texel for texel.
+const DEPTH_SAMPLER: SamplerDesc = SamplerDesc::new(Filter::Nearest, Wrap::Repeat);
+/// How the adapted luminance is read: its one texel.
+const ADAPTED_SAMPLER: SamplerDesc = SamplerDesc::NEAREST_CLAMP;
 
-/// The bound draw framebuffer, as the engine keeps track of it (no
-/// `glGet`: this is asked on every lit draw).
-fn bound_draw_framebuffer() -> u32 {
-    framebuffer::bound_draw()
+/// Raw id of the HDR target while the camera's view is drawn into it, 0
+/// otherwise.
+static VIEW_TARGET: AtomicU64 = AtomicU64::new(0);
+
+/// The target drawn into now. Code that does not draw through `gfx`
+/// passes yet binds GL framebuffers itself, through `framebuffer::bind`
+/// as the GL backend does, so under GL the engine's record of the bound
+/// framebuffer is where drawing goes (a target's raw id is its GL name);
+/// other backends know it from the passes alone.
+fn drawing_into() -> Option<TargetRef> {
+    gfx::current_target()
 }
 
-/// GL names of the resolved colour and depth textures holding the opaque
+/// Raw ids of the resolved colour and depth textures holding the opaque
 /// scene, while a transparent pass draws over it (see `capture_opaque`),
 /// 0 otherwise.
 static OPAQUE_COLOR: AtomicU32 = AtomicU32::new(0);
@@ -71,11 +79,11 @@ static OPAQUE_DEPTH: AtomicU32 = AtomicU32::new(0);
 /// A copy of the camera's view as it was before the transparent pass:
 /// linear colour and depth, as big as the HDR target (window position
 /// `gl_FragCoord.xy` is the texel). Water reads it for what lies under its
-/// surface and around it.
+/// surface and around it. The textures' raw ids (GL names).
 #[derive(Clone, Copy, Debug)]
 pub struct OpaqueScene {
-    pub color: GLuint,
-    pub depth: GLuint,
+    pub color: u32,
+    pub depth: u32,
 }
 
 /// The opaque scene behind what is drawn now, when the camera's view is
@@ -87,24 +95,27 @@ pub fn opaque_scene() -> Option<OpaqueScene> {
 }
 
 /// Whether what is drawn now ends up in the camera's view: the HDR target
-/// while the scene is drawn into it, or the default framebuffer (previews
-/// that draw straight to the window). Shadow maps, depth captures and the
-/// editor's selection mask are their own framebuffers and return false.
+/// while the scene is drawn into it, or the window (previews that draw
+/// straight to it). Shadow maps, depth captures and the editor's selection
+/// mask are targets of their own and return false.
 pub fn draws_to_view() -> bool {
     // The depth pass draws into the view's target, but only its depth.
     if super::ssao::in_depth_pass() {
         return false;
     }
-    let bound = bound_draw_framebuffer();
-    bound == 0 || bound == VIEW_FRAMEBUFFER.load(Ordering::Relaxed)
+    match drawing_into() {
+        None | Some(TargetRef::Window) => true,
+        Some(TargetRef::Target(raw)) => raw == VIEW_TARGET.load(Ordering::Relaxed),
+    }
 }
 
 /// Whether the shader drawing now should write linear, unclamped light
 /// (into the HDR target), instead of tone mapped display colour.
 pub fn writes_linear() -> bool {
-    let view = VIEW_FRAMEBUFFER.load(Ordering::Relaxed);
-    view != 0 && bound_draw_framebuffer() == view
+    let view = VIEW_TARGET.load(Ordering::Relaxed);
+    view != 0 && drawing_into() == Some(TargetRef::Target(view))
 }
+
 
 /// Curve that brings HDR light into the display's range.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -225,60 +236,36 @@ impl HdrSettings {
     }
 }
 
-/// A texture with a framebuffer drawing into it.
+/// A texture with a render target drawing into it.
 struct Target {
-    framebuffer: GLuint,
-    texture: GLuint,
+    texture: gfx::Texture,
+    target: gfx::RenderTarget,
     width: i32,
     height: i32,
+    /// How it is read.
+    sampler: SamplerDesc,
 }
 
 impl Target {
-    fn new(width: i32, height: i32, format: GLenum, mipmaps: bool) -> Self {
-        let (mut framebuffer, mut texture) = (0, 0);
-        unsafe {
-            gl::GenTextures(1, &mut texture);
-            gl::BindTexture(gl::TEXTURE_2D, texture);
-            let levels = if mipmaps { mip_levels(width, height) } else { 1 };
-            gl::TexStorage2D(gl::TEXTURE_2D, levels, format, width, height);
-            let min_filter = if mipmaps { gl::LINEAR_MIPMAP_LINEAR } else { gl::LINEAR };
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, min_filter as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-
-            gl::GenFramebuffers(1, &mut framebuffer);
-            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
-            gl::FramebufferTexture2D(
-                gl::FRAMEBUFFER,
-                gl::COLOR_ATTACHMENT0,
-                gl::TEXTURE_2D,
-                texture,
-                0,
-            );
-            gl::DrawBuffer(gl::COLOR_ATTACHMENT0);
-        }
-        Self {
-            framebuffer,
-            texture,
-            width,
-            height,
-        }
+    fn new(width: i32, height: i32, format: Format, mipmaps: bool, sampler: SamplerDesc) -> Self {
+        let desc = TextureDesc::d2(format, width as u32, height as u32).with_mips(if mipmaps { 0 } else { 1 });
+        let texture = gfx::Texture::new(desc);
+        let target = gfx::RenderTarget::new(&[texture.attachment(0, None)], None);
+        Self { texture, target, width, height, sampler }
     }
 
-    unsafe fn bind(&self) {
-        framebuffer::bind(gl::FRAMEBUFFER, self.framebuffer);
-        gl::Viewport(0, 0, self.width, self.height);
+    /// A pass drawing into it, contents kept.
+    fn begin(&self) {
+        gfx::begin_pass(
+            self.target.reference(),
+            (self.width as u32, self.height as u32),
+            gfx::Load::Keep,
+            gfx::Load::Keep,
+        );
     }
-}
 
-impl Drop for Target {
-    fn drop(&mut self) {
-        unsafe {
-            framebuffer::delete(&[self.framebuffer]);
-            gl::DeleteTextures(1, &self.texture);
-        }
+    fn bind_to(&self, unit: u32) {
+        gfx::bind_texture(unit, &self.texture, &self.sampler);
     }
 }
 
@@ -290,132 +277,84 @@ fn mip_levels(width: i32, height: i32) -> i32 {
 struct ViewTargets {
     width: i32,
     height: i32,
-    samples: i32,
+    samples: u32,
     /// Multisampled colour and depth the scene is drawn into.
-    framebuffer: GLuint,
-    color_buffer: GLuint,
-    depth_buffer: GLuint,
+    target: gfx::RenderTarget,
+    _color_buffer: gfx::Texture,
+    _depth_buffer: gfx::Texture,
     /// The resolved colour and depth.
-    resolve_framebuffer: GLuint,
-    color: GLuint,
-    depth: GLuint,
+    resolve: gfx::RenderTarget,
+    color: gfx::Texture,
+    depth: gfx::Texture,
     /// Bloom chain, half the view's size and down from there.
     bloom: Vec<Target>,
 }
 
 impl ViewTargets {
-    fn new(width: i32, height: i32, samples: i32) -> Self {
-        let (mut framebuffer, mut color_buffer, mut depth_buffer) = (0, 0, 0);
-        let (mut resolve_framebuffer, mut color, mut depth) = (0, 0, 0);
-        unsafe {
-            gl::GenRenderbuffers(1, &mut color_buffer);
-            gl::BindRenderbuffer(gl::RENDERBUFFER, color_buffer);
-            gl::RenderbufferStorageMultisample(gl::RENDERBUFFER, samples, COLOR_FORMAT, width, height);
-            gl::GenRenderbuffers(1, &mut depth_buffer);
-            gl::BindRenderbuffer(gl::RENDERBUFFER, depth_buffer);
-            gl::RenderbufferStorageMultisample(
-                gl::RENDERBUFFER,
-                samples,
-                gl::DEPTH24_STENCIL8,
-                width,
-                height,
-            );
-            gl::BindRenderbuffer(gl::RENDERBUFFER, 0);
+    fn new(width: i32, height: i32, samples: u32) -> Self {
+        let (w, h) = (width as u32, height as u32);
+        let color_buffer = gfx::Texture::new(TextureDesc::d2(COLOR_FORMAT, w, h).with_samples(samples));
+        let depth_buffer =
+            gfx::Texture::new(TextureDesc::d2(Format::Depth24Stencil8, w, h).with_samples(samples));
+        let target = gfx::RenderTarget::new(
+            &[color_buffer.attachment(0, None)],
+            Some(depth_buffer.attachment(0, None)),
+        );
 
-            gl::GenFramebuffers(1, &mut framebuffer);
-            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
-            gl::FramebufferRenderbuffer(
-                gl::FRAMEBUFFER,
-                gl::COLOR_ATTACHMENT0,
-                gl::RENDERBUFFER,
-                color_buffer,
-            );
-            gl::FramebufferRenderbuffer(
-                gl::FRAMEBUFFER,
-                gl::DEPTH_STENCIL_ATTACHMENT,
-                gl::RENDERBUFFER,
-                depth_buffer,
-            );
-            gl::DrawBuffer(gl::COLOR_ATTACHMENT0);
-            check_framebuffer("HDR view");
-
-            gl::GenTextures(1, &mut color);
-            gl::BindTexture(gl::TEXTURE_2D, color);
-            gl::TexStorage2D(gl::TEXTURE_2D, 1, COLOR_FORMAT, width, height);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-            gl::GenTextures(1, &mut depth);
-            gl::BindTexture(gl::TEXTURE_2D, depth);
-            gl::TexStorage2D(gl::TEXTURE_2D, 1, gl::DEPTH24_STENCIL8, width, height);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-
-            gl::GenFramebuffers(1, &mut resolve_framebuffer);
-            framebuffer::bind(gl::FRAMEBUFFER, resolve_framebuffer);
-            gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color, 0);
-            gl::FramebufferTexture2D(
-                gl::FRAMEBUFFER,
-                gl::DEPTH_STENCIL_ATTACHMENT,
-                gl::TEXTURE_2D,
-                depth,
-                0,
-            );
-            gl::DrawBuffer(gl::COLOR_ATTACHMENT0);
-            check_framebuffer("HDR resolve");
-            framebuffer::bind(gl::FRAMEBUFFER, 0);
-        }
+        let color = gfx::Texture::new(TextureDesc::d2(COLOR_FORMAT, w, h));
+        let depth = gfx::Texture::new(TextureDesc::d2(Format::Depth24Stencil8, w, h));
+        let resolve = gfx::RenderTarget::new(&[color.attachment(0, None)], Some(depth.attachment(0, None)));
+        // Sampled as they will be from the start: the water binds them by
+        // name before the post passes first do.
+        gfx::bind_texture(SCENE_UNIT, &color, &SamplerDesc::LINEAR_CLAMP);
+        gfx::bind_texture(SCENE_UNIT, &depth, &DEPTH_SAMPLER);
+        gfx::unbind_texture(SCENE_UNIT, gfx::TextureKind::D2);
 
         let mut bloom = Vec::new();
         let (mut w, mut h) = (width, height);
         while bloom.len() < BLOOM_LEVELS && w > 2 && h > 2 {
             w = (w / 2).max(1);
             h = (h / 2).max(1);
-            bloom.push(Target::new(w, h, BLOOM_FORMAT, false));
+            bloom.push(Target::new(w, h, BLOOM_FORMAT, false, SamplerDesc::LINEAR_CLAMP));
         }
 
         Self {
             width,
             height,
             samples,
-            framebuffer,
-            color_buffer,
-            depth_buffer,
-            resolve_framebuffer,
+            target,
+            _color_buffer: color_buffer,
+            _depth_buffer: depth_buffer,
+            resolve,
             color,
             depth,
             bloom,
         }
     }
-}
 
-impl Drop for ViewTargets {
-    fn drop(&mut self) {
-        unsafe {
-            framebuffer::delete(&[self.framebuffer]);
-            framebuffer::delete(&[self.resolve_framebuffer]);
-            gl::DeleteRenderbuffers(1, &self.color_buffer);
-            gl::DeleteRenderbuffers(1, &self.depth_buffer);
-            gl::DeleteTextures(1, &self.color);
-            gl::DeleteTextures(1, &self.depth);
-        }
+    fn rect(&self) -> Rect {
+        Rect::sized(self.width as u32, self.height as u32)
+    }
+
+    /// Resolve the samples drawn so far into `color` and `depth`. Depth
+    /// has to be resolved with NEAREST.
+    fn resolve(&self) {
+        gfx::blit(
+            self.target.reference(),
+            self.rect(),
+            self.resolve.reference(),
+            self.rect(),
+            gfx::Planes::COLOR_DEPTH,
+            false,
+        );
     }
 }
 
-unsafe fn check_framebuffer(name: &str) {
-    let status = gl::CheckFramebufferStatus(gl::FRAMEBUFFER);
-    if status != gl::FRAMEBUFFER_COMPLETE {
-        eprintln!("{name} framebuffer incomplete: 0x{status:x}");
-    }
-}
-
-/// Where the view goes once it is tone mapped.
+/// Where the view goes once it is tone mapped: the viewport of the pass
+/// the HDR pass was begun in.
 #[derive(Clone, Copy)]
 struct Destination {
-    framebuffer: GLuint,
-    viewport: [i32; 4],
+    viewport: Rect,
 }
 
 pub struct Hdr {
@@ -424,8 +363,8 @@ pub struct Hdr {
     luminance_shader: Shader,
     adapt_shader: Shader,
     composite_shader: Shader,
-    vao: GLuint,
-    vbo: GLuint,
+    /// Fullscreen triangle strip.
+    quad: gfx::Buffer,
     view: Option<ViewTargets>,
     luminance: Target,
     /// Adapted log2 luminance, 1×1, ping-ponged: one is read while the
@@ -437,6 +376,19 @@ pub struct Hdr {
     adaptation_fresh: bool,
     last_frame: Option<Instant>,
     destination: Option<Destination>,
+}
+
+/// The state the post passes draw with: the fullscreen strip, no depth,
+/// no culling, blending as given.
+fn post_pipeline(blend: Option<gfx::BlendState>) -> gfx::PipelineDesc {
+    gfx::PipelineDesc {
+        vertex_layouts: crate::core::gfx::Layouts::of(&[gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[gfx::VertexFormat::F32x2])]),
+        topology: gfx::Topology::TriangleStrip,
+        depth: gfx::DepthState::OFF,
+        blend,
+        cull: gfx::Cull::None,
+        ..Default::default()
+    }
 }
 
 impl Hdr {
@@ -456,48 +408,20 @@ impl Hdr {
             ),
         );
 
-        // Fullscreen triangle strip.
         let vertices: [f32; 8] = [-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
-        let (mut vao, mut vbo) = (0, 0);
-        unsafe {
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut vbo);
-            gl::BindVertexArray(vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                std::mem::size_of_val(&vertices) as GLsizeiptr,
-                vertices.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-            gl::VertexAttribPointer(
-                0,
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                2 * std::mem::size_of::<f32>() as GLsizei,
-                std::ptr::null(),
-            );
-            gl::EnableVertexAttribArray(0);
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-        }
+        let quad = gfx::Buffer::from_slice(gfx::BufferUsage::VERTEX, gfx::BufferMemory::Static, &vertices);
 
-        let luminance = Target::new(LUMINANCE_SIZE, LUMINANCE_SIZE, gl::R16F, true);
+        let luminance = Target::new(
+            LUMINANCE_SIZE,
+            LUMINANCE_SIZE,
+            Format::R16F,
+            true,
+            SamplerDesc::LINEAR_CLAMP.mipmapped(),
+        );
         let adapted = [
-            Target::new(1, 1, gl::R32F, false),
-            Target::new(1, 1, gl::R32F, false),
+            Target::new(1, 1, Format::R32F, false, ADAPTED_SAMPLER),
+            Target::new(1, 1, Format::R32F, false, ADAPTED_SAMPLER),
         ];
-        unsafe {
-            for target in &adapted {
-                gl::BindTexture(gl::TEXTURE_2D, target.texture);
-                gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
-                gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
-            }
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            framebuffer::bind(gl::FRAMEBUFFER, 0);
-            gl::UseProgram(0);
-        }
 
         Self {
             downsample_shader,
@@ -505,8 +429,7 @@ impl Hdr {
             luminance_shader,
             adapt_shader,
             composite_shader,
-            vao,
-            vbo,
+            quad,
             view: None,
             luminance,
             adapted,
@@ -518,19 +441,19 @@ impl Hdr {
     }
 
     /// Draw the camera's view into the HDR target from now on, until
-    /// `finish`. The bound framebuffer and viewport are where the view
-    /// ends up; the HDR target is as big as the viewport, so window
-    /// positions in it are relative to the viewport's corner.
+    /// `finish`: a pass on it begins inside the pass running now, whose
+    /// viewport is where the view ends up. The HDR target is as big as the
+    /// viewport, so window positions in it are relative to the viewport's
+    /// corner.
     pub fn begin(&mut self) {
-        let mut viewport = [0; 4];
-        let framebuffer = framebuffer::bound_draw();
-        let mut clear = [0.0f32; 4];
-        unsafe {
-            gl::GetIntegerv(gl::VIEWPORT, viewport.as_mut_ptr());
-            gl::GetFloatv(gl::COLOR_CLEAR_VALUE, clear.as_mut_ptr());
-        }
-        let (width, height) = (viewport[2].max(1), viewport[3].max(1));
-        let samples = destination_samples();
+        let viewport = gfx::viewport();
+        let (width, height) = (viewport.width.max(1) as i32, viewport.height.max(1) as i32);
+        // As many samples as the window (8× MSAA), so the view keeps its
+        // anti-aliasing.
+        let samples = match gfx::current_target() {
+            Some(TargetRef::Window) | None => gfx::window_samples(),
+            Some(TargetRef::Target(_)) => 1,
+        };
         if self
             .view
             .as_ref()
@@ -540,41 +463,26 @@ impl Hdr {
             self.view = Some(ViewTargets::new(width, height, samples));
         }
         let view = self.view.as_ref().expect("just created");
-        self.destination = Some(Destination {
-            framebuffer,
-            viewport,
-        });
-        unsafe {
-            framebuffer::bind(gl::FRAMEBUFFER, view.framebuffer);
-            gl::Viewport(0, 0, width, height);
-            // The window's clear colour is display colour; the target
-            // holds linear light.
-            let linear = |c: f32| c.max(0.0).powf(2.2);
-            gl::ClearColor(linear(clear[0]), linear(clear[1]), linear(clear[2]), 1.0);
-            gl::DepthMask(gl::TRUE);
-            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT | gl::STENCIL_BUFFER_BIT);
-            gl::ClearColor(clear[0], clear[1], clear[2], clear[3]);
-        }
-        VIEW_FRAMEBUFFER.store(view.framebuffer, Ordering::Relaxed);
+        self.destination = Some(Destination { viewport });
+        // The window's clear colour is display colour; the target holds
+        // linear light.
+        let clear = gfx::window_clear_color();
+        let linear = |c: f32| c.max(0.0).powf(2.2);
+        gfx::begin_pass(
+            view.target.reference(),
+            (width as u32, height as u32),
+            gfx::Load::Color([linear(clear[0]), linear(clear[1]), linear(clear[2]), 1.0]),
+            gfx::Load::Depth(1.0),
+        );
+        VIEW_TARGET.store(view.target.raw(), Ordering::Relaxed);
         OPAQUE_COLOR.store(0, Ordering::Relaxed);
         OPAQUE_DEPTH.store(0, Ordering::Relaxed);
     }
 
     /// The target the scene is drawn into, with its size, while it is.
-    pub fn view_framebuffer(&self) -> Option<(GLuint, i32, i32)> {
+    pub fn view_target(&self) -> Option<(TargetRef, i32, i32)> {
         self.destination.as_ref()?;
-        self.view.as_ref().map(|v| (v.framebuffer, v.width, v.height))
-    }
-
-    /// Bind the target the scene is drawn into again, with its viewport,
-    /// after a pass drew elsewhere.
-    pub fn rebind(&self) {
-        if let Some((framebuffer, width, height)) = self.view_framebuffer() {
-            unsafe {
-                framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
-                gl::Viewport(0, 0, width, height);
-            }
-        }
+        self.view.as_ref().map(|v| (v.target.reference(), v.width, v.height))
     }
 
     /// Copy what was drawn since `begin` (the opaque scene) where
@@ -587,39 +495,33 @@ impl Hdr {
         if self.destination.is_none() {
             return;
         }
-        unsafe {
-            framebuffer::bind(gl::READ_FRAMEBUFFER, view.framebuffer);
-            framebuffer::bind(gl::DRAW_FRAMEBUFFER, view.resolve_framebuffer);
-            gl::BlitFramebuffer(
-                0,
-                0,
-                view.width,
-                view.height,
-                0,
-                0,
-                view.width,
-                view.height,
-                gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
-                gl::NEAREST,
-            );
-            framebuffer::bind(gl::FRAMEBUFFER, view.framebuffer);
-        }
-        OPAQUE_COLOR.store(view.color, Ordering::Relaxed);
-        OPAQUE_DEPTH.store(view.depth, Ordering::Relaxed);
+        view.resolve();
+        OPAQUE_COLOR.store(view.color.raw() as u32, Ordering::Relaxed);
+        OPAQUE_DEPTH.store(view.depth.raw() as u32, Ordering::Relaxed);
     }
 
-    /// Resolve what was drawn since `begin`, add bloom, expose and tone map
-    /// it into the framebuffer and viewport that were bound at `begin`
-    /// (left bound), along with the scene's depth.
+    /// End the pass `begin` began; resolve what was drawn since, add
+    /// bloom, expose and tone map it into the pass it was begun in, at the
+    /// viewport it had then (left set), along with the scene's depth.
     pub fn finish(&mut self, settings: &HdrSettings) {
-        VIEW_FRAMEBUFFER.store(0, Ordering::Relaxed);
+        VIEW_TARGET.store(0, Ordering::Relaxed);
         OPAQUE_COLOR.store(0, Ordering::Relaxed);
         OPAQUE_DEPTH.store(0, Ordering::Relaxed);
-        let (Some(destination), Some(view)) = (self.destination.take(), self.view.take()) else {
+        let Some(destination) = self.destination.take() else {
+            return;
+        };
+        gfx::end_pass();
+        let Some(view) = self.view.take() else {
             return;
         };
         self.process(&view, destination, settings);
         self.view = Some(view);
+    }
+
+    /// Draw the fullscreen strip with the pipeline set.
+    fn draw_quad(&self) {
+        gfx::set_vertex_buffer(0, &self.quad, 0, 8);
+        gfx::draw(0, 4);
     }
 
     fn process(&mut self, view: &ViewTargets, destination: Destination, settings: &HdrSettings) {
@@ -629,41 +531,16 @@ impl Hdr {
             .map_or(0.0, |last| now.duration_since(last).as_secs_f32().min(0.5));
         self.last_frame = Some(now);
 
-        unsafe {
-            // Resolve the samples. Depth has to be resolved with NEAREST.
-            framebuffer::bind(gl::READ_FRAMEBUFFER, view.framebuffer);
-            framebuffer::bind(gl::DRAW_FRAMEBUFFER, view.resolve_framebuffer);
-            gl::BlitFramebuffer(
-                0,
-                0,
-                view.width,
-                view.height,
-                0,
-                0,
-                view.width,
-                view.height,
-                gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
-                gl::NEAREST,
-            );
-            framebuffer::bind(gl::FRAMEBUFFER, 0);
-
-            gl::Disable(gl::DEPTH_TEST);
-            gl::DepthMask(gl::FALSE);
-            gl::Disable(gl::BLEND);
-            gl::Disable(gl::CULL_FACE);
-            gl::BindVertexArray(self.vao);
-        }
+        view.resolve();
 
         if settings.auto_exposure {
-            let scene = view.color;
-            self.adapt(scene, settings, delta);
+            self.adapt(view, settings, delta);
         } else {
             self.adaptation_fresh = true;
         }
-        let adapted = self.adapted[self.current_adapted].texture;
-        let bind_exposure = |shader: &Shader| unsafe {
-            gl::ActiveTexture(gl::TEXTURE0 + EXPOSURE_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, adapted);
+        let adapted = &self.adapted[self.current_adapted];
+        let bind_exposure = |shader: &Shader| {
+            adapted.bind_to(EXPOSURE_UNIT);
             shader.set_uniform_1i("adaptedLuminance", EXPOSURE_UNIT as i32);
             shader.set_uniform_1f("exposureScale", settings.exposure.exp2());
             shader.set_uniform_1i("autoExposure", settings.auto_exposure as i32);
@@ -675,49 +552,40 @@ impl Hdr {
             self.render_bloom(view, settings, &bind_exposure);
         }
 
-        unsafe {
-            framebuffer::bind(gl::FRAMEBUFFER, destination.framebuffer);
-            let [x, y, w, h] = destination.viewport;
-            gl::Viewport(x, y, w, h);
-            // The depth goes along, whatever is in the window already.
-            let mut depth_func = 0;
-            gl::GetIntegerv(gl::DEPTH_FUNC, &mut depth_func);
-            gl::Enable(gl::DEPTH_TEST);
-            gl::DepthFunc(gl::ALWAYS);
-            gl::DepthMask(gl::TRUE);
+        // Back in the pass the view was begun in, at its viewport. The
+        // depth goes along, whatever is in the target already.
+        let viewport = destination.viewport;
+        gfx::set_viewport(viewport);
+        let desc = gfx::PipelineDesc {
+            depth: gfx::DepthState::LESS.func(gfx::CompareFunc::Always),
+            ..post_pipeline(None)
+        };
+        let shader = &self.composite_shader;
+        gfx::set_pipeline(shader.pipeline(&desc));
+        gfx::bind_texture(SCENE_UNIT, &view.color, &SamplerDesc::LINEAR_CLAMP);
+        shader.set_uniform_1i("hdrColor", SCENE_UNIT as i32);
+        gfx::bind_texture(DEPTH_UNIT, &view.depth, &DEPTH_SAMPLER);
+        shader.set_uniform_1i("sceneDepth", DEPTH_UNIT as i32);
+        match view.bloom.first() {
+            Some(first) => first.bind_to(BLOOM_UNIT),
+            None => gfx::unbind_texture(BLOOM_UNIT, gfx::TextureKind::D2),
+        }
+        shader.set_uniform_1i("bloom", BLOOM_UNIT as i32);
+        shader.set_uniform_1i("useBloom", bloom as i32);
+        shader.set_uniform_1f("bloomIntensity", settings.bloom_intensity);
+        shader.set_uniform_1i("tonemapper", settings.tonemapper.index());
+        shader.set_uniform_2i("origin", viewport.x, viewport.y);
+        bind_exposure(shader);
+        self.draw_quad();
 
-            let shader = &self.composite_shader;
-            shader.bind();
-            gl::ActiveTexture(gl::TEXTURE0 + SCENE_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, view.color);
-            shader.set_uniform_1i("hdrColor", SCENE_UNIT as i32);
-            gl::ActiveTexture(gl::TEXTURE0 + DEPTH_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, view.depth);
-            shader.set_uniform_1i("sceneDepth", DEPTH_UNIT as i32);
-            gl::ActiveTexture(gl::TEXTURE0 + BLOOM_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, view.bloom.first().map_or(0, |b| b.texture));
-            shader.set_uniform_1i("bloom", BLOOM_UNIT as i32);
-            shader.set_uniform_1i("useBloom", bloom as i32);
-            shader.set_uniform_1f("bloomIntensity", settings.bloom_intensity);
-            shader.set_uniform_1i("tonemapper", settings.tonemapper.index());
-            shader.set_uniform_2i("origin", x, y);
-            bind_exposure(shader);
-            gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
-
-            for unit in [SCENE_UNIT, BLOOM_UNIT, DEPTH_UNIT, EXPOSURE_UNIT] {
-                gl::ActiveTexture(gl::TEXTURE0 + unit);
-                gl::BindTexture(gl::TEXTURE_2D, 0);
-            }
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::DepthFunc(depth_func as GLenum);
-            gl::BindVertexArray(0);
-            gl::UseProgram(0);
+        for unit in [SCENE_UNIT, BLOOM_UNIT, DEPTH_UNIT, EXPOSURE_UNIT] {
+            gfx::unbind_texture(unit, gfx::TextureKind::D2);
         }
     }
 
     /// Average the scene's log luminance and move the adapted value toward
     /// it.
-    fn adapt(&mut self, scene: GLuint, settings: &HdrSettings, delta: f32) {
+    fn adapt(&mut self, view: &ViewTargets, settings: &HdrSettings, delta: f32) {
         let blend = if self.adaptation_fresh {
             1.0
         } else {
@@ -726,81 +594,76 @@ impl Hdr {
         self.adaptation_fresh = false;
         let previous = self.current_adapted;
         let next = 1 - previous;
-        unsafe {
-            self.luminance.bind();
-            let shader = &self.luminance_shader;
-            shader.bind();
-            gl::ActiveTexture(gl::TEXTURE0 + SCENE_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, scene);
-            shader.set_uniform_1i("hdrColor", SCENE_UNIT as i32);
-            gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
-            gl::BindTexture(gl::TEXTURE_2D, self.luminance.texture);
-            gl::GenerateMipmap(gl::TEXTURE_2D);
 
-            self.adapted[next].bind();
-            let shader = &self.adapt_shader;
-            shader.bind();
-            shader.set_uniform_1i("luminance", SCENE_UNIT as i32);
-            shader.set_uniform_1i(
-                "averageLevel",
-                mip_levels(LUMINANCE_SIZE, LUMINANCE_SIZE) - 1,
-            );
-            gl::ActiveTexture(gl::TEXTURE0 + EXPOSURE_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, self.adapted[previous].texture);
-            shader.set_uniform_1i("previous", EXPOSURE_UNIT as i32);
-            shader.set_uniform_1f("blend", blend);
-            shader.set_uniform_2f("range", ADAPTATION_RANGE.0, ADAPTATION_RANGE.1);
-            gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::ActiveTexture(gl::TEXTURE0 + SCENE_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-        }
+        self.luminance.begin();
+        let shader = &self.luminance_shader;
+        gfx::set_pipeline(shader.pipeline(&post_pipeline(None)));
+        gfx::bind_texture(SCENE_UNIT, &view.color, &SamplerDesc::LINEAR_CLAMP);
+        shader.set_uniform_1i("hdrColor", SCENE_UNIT as i32);
+        self.draw_quad();
+        gfx::end_pass();
+        self.luminance.bind_to(SCENE_UNIT);
+        self.luminance.texture.generate_mips();
+
+        self.adapted[next].begin();
+        let shader = &self.adapt_shader;
+        gfx::set_pipeline(shader.pipeline(&post_pipeline(None)));
+        shader.set_uniform_1i("luminance", SCENE_UNIT as i32);
+        shader.set_uniform_1i("averageLevel", mip_levels(LUMINANCE_SIZE, LUMINANCE_SIZE) - 1);
+        self.adapted[previous].bind_to(EXPOSURE_UNIT);
+        shader.set_uniform_1i("previous", EXPOSURE_UNIT as i32);
+        shader.set_uniform_1f("blend", blend);
+        shader.set_uniform_2f("range", ADAPTATION_RANGE.0, ADAPTATION_RANGE.1);
+        self.draw_quad();
+        gfx::end_pass();
+        gfx::unbind_texture(EXPOSURE_UNIT, gfx::TextureKind::D2);
+        gfx::unbind_texture(SCENE_UNIT, gfx::TextureKind::D2);
         self.current_adapted = next;
     }
 
     /// Downsample the bright parts of the scene through the bloom chain and
     /// add them back up again; the result ends up in the first level.
     fn render_bloom(&self, view: &ViewTargets, settings: &HdrSettings, bind_exposure: &dyn Fn(&Shader)) {
-        unsafe {
-            let shader = &self.downsample_shader;
-            shader.bind();
-            bind_exposure(shader);
-            shader.set_uniform_1i("source", SCENE_UNIT as i32);
-            let [a, b, c, d] = settings.threshold_curve();
-            shader.set_uniform_4f("threshold", a, b, c, d);
-            gl::ActiveTexture(gl::TEXTURE0 + SCENE_UNIT);
-            let (mut source, mut source_size) = (view.color, (view.width, view.height));
-            for (i, level) in view.bloom.iter().enumerate() {
-                level.bind();
-                gl::BindTexture(gl::TEXTURE_2D, source);
-                shader.set_uniform_2f(
-                    "sourceTexel",
-                    1.0 / source_size.0 as f32,
-                    1.0 / source_size.1 as f32,
-                );
-                shader.set_uniform_1i("firstStep", (i == 0) as i32);
-                gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
-                source = level.texture;
-                source_size = (level.width, level.height);
+        let shader = &self.downsample_shader;
+        let pipeline = shader.pipeline(&post_pipeline(None));
+        gfx::set_pipeline(pipeline);
+        bind_exposure(shader);
+        shader.set_uniform_1i("source", SCENE_UNIT as i32);
+        let [a, b, c, d] = settings.threshold_curve();
+        shader.set_uniform_4f("threshold", a, b, c, d);
+        let mut source_size = (view.width, view.height);
+        for (i, level) in view.bloom.iter().enumerate() {
+            level.begin();
+            gfx::set_pipeline(pipeline);
+            match i {
+                0 => gfx::bind_texture(SCENE_UNIT, &view.color, &SamplerDesc::LINEAR_CLAMP),
+                _ => view.bloom[i - 1].bind_to(SCENE_UNIT),
             }
-
-            let shader = &self.upsample_shader;
-            shader.bind();
-            shader.set_uniform_1i("source", SCENE_UNIT as i32);
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::ONE, gl::ONE);
-            gl::BlendEquation(gl::FUNC_ADD);
-            for pair in view.bloom.windows(2).rev() {
-                let (target, smaller) = (&pair[0], &pair[1]);
-                target.bind();
-                gl::BindTexture(gl::TEXTURE_2D, smaller.texture);
-                shader.set_uniform_2f("radius", 1.0 / target.width as f32, 1.0 / target.height as f32);
-                gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
-            }
-            gl::Disable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
+            shader.set_uniform_2f(
+                "sourceTexel",
+                1.0 / source_size.0 as f32,
+                1.0 / source_size.1 as f32,
+            );
+            shader.set_uniform_1i("firstStep", (i == 0) as i32);
+            self.draw_quad();
+            gfx::end_pass();
+            source_size = (level.width, level.height);
         }
+
+        let shader = &self.upsample_shader;
+        let pipeline = shader.pipeline(&post_pipeline(Some(gfx::BlendState::ADDITIVE)));
+        gfx::set_pipeline(pipeline);
+        shader.set_uniform_1i("source", SCENE_UNIT as i32);
+        for pair in view.bloom.windows(2).rev() {
+            let (target, smaller) = (&pair[0], &pair[1]);
+            target.begin();
+            gfx::set_pipeline(pipeline);
+            smaller.bind_to(SCENE_UNIT);
+            shader.set_uniform_2f("radius", 1.0 / target.width as f32, 1.0 / target.height as f32);
+            self.draw_quad();
+            gfx::end_pass();
+        }
+        gfx::unbind_texture(SCENE_UNIT, gfx::TextureKind::D2);
     }
 }
 
@@ -810,25 +673,6 @@ impl Default for Hdr {
     }
 }
 
-impl Drop for Hdr {
-    fn drop(&mut self) {
-        unsafe {
-            gl::DeleteBuffers(1, &self.vbo);
-            gl::DeleteVertexArrays(1, &self.vao);
-        }
-    }
-}
-
-/// Samples per pixel of the bound framebuffer (the window's 8× MSAA), so
-/// the view keeps its anti-aliasing; within what the driver supports.
-fn destination_samples() -> i32 {
-    let (mut samples, mut max) = (0, 0);
-    unsafe {
-        gl::GetIntegerv(gl::SAMPLES, &mut samples);
-        gl::GetIntegerv(gl::MAX_SAMPLES, &mut max);
-    }
-    samples.clamp(0, max.max(0))
-}
 
 #[cfg(test)]
 mod tests {

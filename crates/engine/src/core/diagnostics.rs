@@ -297,26 +297,7 @@ pub fn context_created(glfw: &mut glfw::Glfw, debug: bool) {
         integer(gl::SAMPLES),
         integer(gl::MAX_TEXTURE_SIZE),
     );
-    let monitors = glfw.with_connected_monitors(|_, monitors| {
-        monitors
-            .iter()
-            .map(|m| {
-                let name = m.get_name().unwrap_or_else(|| "?".into());
-                match m.get_video_mode() {
-                    Some(v) => format!("{name} {}x{} @ {} Hz", v.width, v.height, v.refresh_rate),
-                    None => name,
-                }
-            })
-            .collect::<Vec<_>>()
-    });
-    text += &format!(
-        "Monitors: {}\n",
-        if monitors.is_empty() {
-            "-".into()
-        } else {
-            monitors.join("; ")
-        }
-    );
+    text += &monitors_text(glfw);
     if let Some(vram) = video_memory() {
         text += &format!("Video memory: {vram}\n");
         lock(&FRAMES).vram = Some(vram);
@@ -332,6 +313,46 @@ pub fn context_created(glfw: &mut glfw::Glfw, debug: bool) {
     }
 }
 
+fn monitors_text(glfw: &mut glfw::Glfw) -> String {
+    let monitors = glfw.with_connected_monitors(|_, monitors| {
+        monitors
+            .iter()
+            .map(|m| {
+                let name = m.get_name().unwrap_or_else(|| "?".into());
+                match m.get_video_mode() {
+                    Some(v) => format!("{name} {}x{} @ {} Hz", v.width, v.height, v.refresh_rate),
+                    None => name,
+                }
+            })
+            .collect::<Vec<_>>()
+    });
+    format!(
+        "Monitors: {}\n",
+        if monitors.is_empty() {
+            "-".into()
+        } else {
+            monitors.join("; ")
+        }
+    )
+}
+
+/// `context_created` for a window drawn with Vulkan (no GL context):
+/// `description` is the device's (`gfx::Device::describe`).
+pub fn vulkan_device_created(glfw: &mut glfw::Glfw, description: &str) {
+    let mut text = format!("GPU: {description}\nRenderer: Vulkan\n");
+    text += &monitors_text(glfw);
+    if let Some(vram) = video_memory() {
+        text += &format!("Video memory: {vram}\n");
+        lock(&FRAMES).vram = Some(vram);
+    }
+    for line in text.lines() {
+        log::info!("{line}");
+    }
+    if let Some(state) = lock(&STATE).as_mut() {
+        state.system = format!("{}{text}", machine_summary());
+    }
+}
+
 fn has_extension(name: &str) -> bool {
     let mut count = 0;
     unsafe { gl::GetIntegerv(gl::NUM_EXTENSIONS, &mut count) };
@@ -343,6 +364,13 @@ fn has_extension(name: &str) -> bool {
 
 /// Free (and on NVIDIA total) video memory, where the driver tells.
 fn video_memory() -> Option<String> {
+    use crate::core::gfx;
+    if gfx::backend() != gfx::BackendKind::OpenGl {
+        // No GL to ask: the device's own (Vulkan's memory budget).
+        return gfx::device().video_memory().filter(|(_, total)| *total > 0).map(|(used, total)| {
+            format!("{} MB free of {} MB", total.saturating_sub(used) >> 20, total >> 20)
+        });
+    }
     // GL_NVX_gpu_memory_info and GL_ATI_meminfo, in KiB.
     const NVX_TOTAL: u32 = 0x9048;
     const NVX_AVAILABLE: u32 = 0x9049;

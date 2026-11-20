@@ -7,6 +7,8 @@ pub struct Window {
     events: GlfwReceiver<(f64, glfw::WindowEvent)>,
     pub width: u32,
     pub height: u32,
+    /// Drawn with Vulkan (no GL context; the device presents).
+    vulkan: bool,
 }
 
 impl Window {
@@ -17,10 +19,30 @@ impl Window {
     /// `decorated = false` removes the system title bar and borders, for
     /// applications that draw their own (like the editor).
     pub fn with_decorations(width: u32, height: u32, title: &str, decorated: bool) -> Self {
+        #[allow(unused_mut)]
         let mut glfw = glfw::init(glfw::log_errors).unwrap_or_else(|err| {
             eprintln!("Fehler bei der GLFW-Initialisierung: {}", err);
             std::process::exit(1);
         });
+
+        // `FERRITE_RENDERER=vulkan` draws with Vulkan; OpenGL otherwise, and
+        // when Vulkan cannot.
+        let requested = std::env::var("FERRITE_RENDERER")
+            .ok()
+            .and_then(|v| crate::core::gfx::BackendKind::parse(&v));
+        if requested == Some(crate::core::gfx::BackendKind::Vulkan) {
+            #[cfg(feature = "vulkan")]
+            match Self::with_vulkan(glfw, width, height, title, decorated) {
+                Ok(window) => return window,
+                Err((g, e)) => {
+                    glfw = g;
+                    log::error!("Vulkan cannot draw ({e}); OpenGL draws instead");
+                }
+            }
+            #[cfg(not(feature = "vulkan"))]
+            log::error!("this build has no Vulkan backend; OpenGL draws instead");
+            glfw.default_window_hints();
+        }
 
         glfw.window_hint(glfw::WindowHint::Samples(Some(8)));
         glfw.window_hint(glfw::WindowHint::Decorated(decorated));
@@ -73,6 +95,7 @@ impl Window {
             gl::Enable(gl::MULTISAMPLE);
         }
         crate::core::diagnostics::context_created(&mut glfw, debug);
+        crate::core::gfx::init(crate::core::gfx::opengl_device());
 
         // In pixels, which differ from the screen coordinates asked for on
         // scaled displays; no `FramebufferSize` event tells it at first.
@@ -80,13 +103,85 @@ impl Window {
             (w, h) if w > 0 && h > 0 => (w as u32, h as u32),
             _ => (width, height),
         };
+        crate::core::gfx::set_window_size(width, height);
         Self {
             window,
             glfw,
             events,
             width,
             height,
+            vulkan: false,
         }
+    }
+
+    /// A window without a GL context, drawn by the Vulkan device.
+    #[cfg(feature = "vulkan")]
+    fn with_vulkan(
+        mut glfw: glfw::Glfw,
+        width: u32,
+        height: u32,
+        title: &str,
+        decorated: bool,
+    ) -> Result<Self, (glfw::Glfw, String)> {
+        match Self::vulkan_window(&mut glfw, width, height, title, decorated) {
+            Ok((window, events, width, height)) => Ok(Self { window, glfw, events, width, height, vulkan: true }),
+            Err(e) => Err((glfw, e)),
+        }
+    }
+
+    #[cfg(feature = "vulkan")]
+    #[allow(clippy::type_complexity)]
+    fn vulkan_window(
+        glfw: &mut glfw::Glfw,
+        width: u32,
+        height: u32,
+        title: &str,
+        decorated: bool,
+    ) -> Result<(glfw::PWindow, GlfwReceiver<(f64, glfw::WindowEvent)>, u32, u32), String> {
+        if !glfw.vulkan_supported() {
+            return Err("GLFW finds no Vulkan loader".into());
+        }
+        glfw.window_hint(glfw::WindowHint::ClientApi(glfw::ClientApiHint::NoApi));
+        glfw.window_hint(glfw::WindowHint::Decorated(decorated));
+        glfw.window_hint(glfw::WindowHint::Visible(false));
+        let (mut window, events) = glfw
+            .create_window(width, height, title, glfw::WindowMode::Windowed)
+            .ok_or("no window")?;
+        window.set_key_polling(true);
+        window.set_mouse_button_polling(true);
+        window.set_scroll_polling(true);
+        window.set_cursor_pos_polling(true);
+        window.set_framebuffer_size_polling(true);
+        window.set_char_polling(true);
+        window.set_close_polling(true);
+        window.set_cursor_mode(glfw::CursorMode::Disabled);
+        window.set_cursor_pos(0.0, 0.0);
+        let (width, height) = match window.get_framebuffer_size() {
+            (w, h) if w > 0 && h > 0 => (w as u32, h as u32),
+            _ => (width, height),
+        };
+        crate::core::gfx::set_window_size(width, height);
+        let extensions = glfw
+            .get_required_instance_extensions()
+            .ok_or("the window system offers no Vulkan surface")?;
+        let device = crate::core::gfx::vulkan_device(
+            &extensions,
+            &|instance| {
+                let mut surface: glfw::ffi::VkSurfaceKHR = ptr::null_mut();
+                let result = unsafe {
+                    window.create_window_surface(instance as usize as glfw::ffi::VkInstance, ptr::null(), &mut surface)
+                };
+                if result == 0 {
+                    Ok(surface as usize as u64)
+                } else {
+                    Err(format!("glfwCreateWindowSurface: {result}"))
+                }
+            },
+            true,
+        )?;
+        crate::core::gfx::init(device);
+        crate::core::diagnostics::vulkan_device_created(glfw, &crate::core::gfx::device().describe());
+        Ok((window, events, width, height))
     }
 
     /// Make the window visible (it is created hidden).
@@ -117,6 +212,7 @@ impl Window {
                 glfw::WindowEvent::FramebufferSize(width, height) => {
                     self.width = width as u32;
                     self.height = height as u32;
+                    crate::core::gfx::set_window_size(self.width, self.height);
                 }
                 _ => {}
             }
@@ -129,7 +225,10 @@ impl Window {
     }
 
     pub fn swap_buffers(&mut self) {
-        self.window.swap_buffers();
+        // Vulkan presents in `gfx::end_frame`.
+        if !self.vulkan {
+            self.window.swap_buffers();
+        }
     }
 
     pub fn calculate_frametime(&self) -> f64 {
@@ -146,30 +245,16 @@ impl Window {
     /// Save the current back buffer (what is about to be presented) as a
     /// PNG. Reads only this window's own framebuffer.
     pub fn save_screenshot(&self, path: &std::path::Path) -> Result<(), image::ImageError> {
+        use crate::core::gfx;
         let (w, h) = (self.width.max(1), self.height.max(1));
-        let mut pixels = vec![0u8; (w * h * 4) as usize];
-        unsafe {
-            gl::PixelStorei(gl::PACK_ALIGNMENT, 1);
-            gl::ReadBuffer(gl::BACK);
-            gl::ReadPixels(
-                0,
-                0,
-                w as i32,
-                h as i32,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                pixels.as_mut_ptr() as *mut _,
-            );
-        }
+        let pixels = gfx::read_pixels(gfx::TargetRef::Window, gfx::Rect::sized(w, h));
         let image = image::RgbaImage::from_raw(w, h, pixels).expect("buffer sized for image");
-        // GL rows start at the bottom.
+        // Rows start at the bottom.
         image::imageops::flip_vertical(&image).save(path)
     }
 
     pub fn reset_viewport(&self) {
-        unsafe {
-            gl::Viewport(0, 0, self.width as i32, self.height as i32);
-        }
+        crate::core::gfx::set_viewport(crate::core::gfx::Rect::sized(self.width, self.height));
     }
 }
 
@@ -179,6 +264,7 @@ impl Drop for Window {
     /// the driver are gone, and crash the process on exit: from here on
     /// every GL call does nothing.
     fn drop(&mut self) {
+        crate::core::gfx::shutdown();
         disconnect_gl();
     }
 }
@@ -227,5 +313,10 @@ mod tests {
 /// `glfw::ffi::glfwSwapInterval` from outside the engine fails to link.
 #[inline(never)]
 pub fn set_vsync(on: bool) {
+    use crate::core::gfx;
+    if gfx::backend() == gfx::BackendKind::Vulkan {
+        gfx::set_vsync(on);
+        return;
+    }
     unsafe { glfw::ffi::glfwSwapInterval(if on { 1 } else { 0 }) };
 }

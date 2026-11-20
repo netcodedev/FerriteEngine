@@ -42,8 +42,13 @@ pub fn fragment_source(body: &str) -> String {
     format!("#version 460 core\n{LIGHTING_GLSL}\n{MATERIAL_GLSL}\n{body}")
 }
 
+thread_local! {
+    /// The lighting each program was last given, by program and pass kind.
+    static APPLIED: std::cell::RefCell<Vec<((u64, bool, bool), Lighting)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// The light a PBR shader is drawn with.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Lighting {
     /// Toward the sun.
     pub sun_direction: Vector3<f32>,
@@ -114,6 +119,31 @@ impl Lighting {
 
     /// Set the lighting uniforms of the bound `shader`.
     pub fn apply(&self, shader: &Shader) {
+        // The uniforms stay set on the program: the same lighting in the
+        // same kind of pass needs no setting again (dozens of uniforms per
+        // drawn model otherwise).
+        let key = (shader.program().serial(), hdr::draws_to_view(), hdr::writes_linear());
+        let unchanged = APPLIED.with(|applied| {
+            let mut applied = applied.borrow_mut();
+            match applied.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, lighting)) if lighting == self => true,
+                Some((_, lighting)) => {
+                    *lighting = *self;
+                    false
+                }
+                None => {
+                    // Programs come and go (script reloads): keep a bounded list.
+                    if applied.len() >= 64 {
+                        applied.remove(0);
+                    }
+                    applied.push((key, *self));
+                    false
+                }
+            }
+        });
+        if unchanged {
+            return;
+        }
         // Shadow maps, depth captures and the selection mask are drawn into
         // framebuffers of their own; the camera's view into the HDR target
         // (linear light) or, for previews, straight into the window.
@@ -217,7 +247,6 @@ fn bind(shader: &Shader, unit: u32, sampler: &str, flag: &str, texture: Option<&
     shader.set_uniform_1i(sampler, unit as i32);
     shader.set_uniform_1i(flag, texture.is_some() as i32);
     if let Some(texture) = texture {
-        unsafe { gl::ActiveTexture(gl::TEXTURE0 + unit) };
-        texture.bind();
+        texture.bind_to(unit);
     }
 }

@@ -4,6 +4,7 @@ use cgmath::{InnerSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
 use glfw::{Action, Glfw, Key, WindowEvent};
 
 use crate::core::{
+    gfx,
     entity::{
         component::{
             camera_component::CameraComponent, missing_component::MissingComponent, Component,
@@ -12,7 +13,7 @@ use crate::core::{
     },
     physics::{collider_debug, physics_engine::PhysicsEngine, rigidbody::RigidBody},
     renderer::{
-        framebuffer::{self, CascadedShadowMap, FrameBuffer, ShadowFrameBuffer},
+        framebuffer::{CascadedShadowMap, ShadowFrameBuffer},
         line::{Line, LineRenderer},
         plane::PlaneRenderer,
         text::TextRenderer,
@@ -39,6 +40,10 @@ use crate::core::{
 };
 
 use super::Scene;
+
+/// Texture unit the sun's shadow cascades are bound to while the scene is
+/// shaded (`shadowMap` in the lit shaders, see `pbr`).
+const SHADOW_MAP_UNIT: u32 = 15;
 
 /// Metres the camera may move in a frame before every cascade is drawn
 /// again at once.
@@ -348,8 +353,8 @@ impl Scene {
                 entity.render(self, &view_projection, Matrix4::identity());
             }
             self.render_snow_layer(&view_projection, true);
+            maps.end_face();
         }
-        FrameBuffer::unbind();
         self.apply_viewport(window);
     }
 
@@ -382,12 +387,12 @@ impl Scene {
     fn render_debug_views(&self, depth_prepass: bool) {
         if debug_views::ambient_occlusion() && depth_prepass {
             if let Some(texture) = self.ambient_occlusion_texture() {
-                debug_views::draw_ambient_occlusion(texture);
+                debug_views::draw_ambient_occlusion(texture as gfx::RawId);
             }
         }
         if debug_views::sun_shadows() {
             if let Some(shadow_fbo) = &self.shadow_fbo {
-                debug_views::draw_shadow_cascades(shadow_fbo.texture().id, SHADOW_CASCADES);
+                debug_views::draw_shadow_cascades(shadow_fbo.texture(), SHADOW_CASCADES);
             }
         }
     }
@@ -400,7 +405,7 @@ impl Scene {
 
     fn apply_viewport(&self, window: &Window) {
         match self.viewport {
-            Some([x, y, w, h]) => unsafe { gl::Viewport(x, y, w.max(1), h.max(1)) },
+            Some([x, y, w, h]) => gfx::set_viewport(gfx::Rect::new(x, y, w.max(1) as u32, h.max(1) as u32)),
             None => window.reset_viewport(),
         }
     }
@@ -426,13 +431,14 @@ impl Scene {
     /// GL_ALWAYS) instead of blending colour, so the depth texture shows
     /// exactly where the water surface sits in clip-space.
     pub fn is_water_depth_capture(&self) -> bool {
-        let bound = framebuffer::bound_draw();
+        let current = gfx::current_target();
         self.water_debug_fbo
             .as_ref()
-            .map_or(false, |fbo| fbo.get_id() == bound)
+            .is_some_and(|fbo| current.is_some() && fbo.0.reference() == current)
     }
 
     pub fn update(&mut self, delta_time: f64) {
+        let _probe = Probe(std::time::Instant::now(), &crate::core::spike_probe::UPDATE_US);
         self.physics_engine.begin_frame();
         // Messages in and out, and the other players where they are, before
         // anything moves.
@@ -447,6 +453,7 @@ impl Scene {
     }
 
     pub fn render(&self, window: &Window) {
+        let _probe = Probe(std::time::Instant::now(), &crate::core::spike_probe::RENDER_US);
         // 2D overlays drawn by components (menus, HUD) lay out in the
         // viewport's pixels, as the cursor they get does (see
         // `handle_event`), not stretched from the whole window into it.
@@ -490,11 +497,8 @@ impl Scene {
         profiler::mark(Pass::SunShadows);
         if let Some(shadow_fbo) = &self.shadow_fbo {
             if let Some(skylight) = self.get_component::<SkyLight>() {
-                unsafe {
-                    // Unbound while drawn into, to prevent a feedback loop.
-                    gl::ActiveTexture(gl::TEXTURE15);
-                }
-                shadow_fbo.texture().unbind_target();
+                // Unbound while drawn into, to prevent a feedback loop.
+                gfx::unbind_texture(SHADOW_MAP_UNIT, gfx::TextureKind::D2Array);
                 let frame = self.shadow_frame.get();
                 self.shadow_frame.set(frame.wrapping_add(1));
                 let eye = self
@@ -530,12 +534,12 @@ impl Scene {
                     }
                     drawn[index] = *cascade;
                     let _depth_only = DepthPass::begin();
-                    shadow_fbo.bind_cascade(index as u32);
-                    window.clear_mask(gl::DEPTH_BUFFER_BIT);
+                    shadow_fbo.begin_cascade(index as u32);
                     for entity in self.entities.iter() {
                         entity.render(self, &cascade.view_projection, parent_transform);
                     }
                     self.render_snow_layer(&cascade.view_projection, true);
+                    gfx::end_pass();
                 }
                 self.drawn_cascades.set(Some(drawn));
                 self.shadow_redraw.set(false);
@@ -543,7 +547,6 @@ impl Scene {
                     lighting.shadow_cascades = Some(drawn);
                     self.frame_lighting.set(Some(lighting));
                 }
-                FrameBuffer::unbind();
                 self.apply_viewport(window);
             }
         }
@@ -583,8 +586,8 @@ impl Scene {
                 .get_component::<SkyLight>()
                 .map(|skylight| *skylight.ambient_occlusion())
                 .filter(|settings| settings.enabled);
-            let depth_prepass = match (ambient_occlusion, hdr.view_framebuffer()) {
-                (Some(settings), Some((framebuffer, width, height))) => {
+            let depth_prepass = match (ambient_occlusion, hdr.view_target()) {
+                (Some(settings), Some((target, width, height))) => {
                     let mut ssao = self.ssao.borrow_mut();
                     let ssao = ssao.get_or_insert_with(Ssao::new);
                     ssao.begin_depth_pass();
@@ -596,10 +599,9 @@ impl Scene {
                     // draws it.
                     self.render_snow_layer(&view_projection, false);
                     drop(depth_only);
-                    ssao.take_depth(framebuffer, width, height);
+                    ssao.take_depth(target, width, height);
                     ssao.resolve(&camera.get_projection().get_matrix(), &settings);
                     ssao.bind_result();
-                    hdr.rebind();
                     self.ambient_occlusion_origin.set(Some([0, 0]));
                     true
                 }
@@ -646,16 +648,13 @@ impl Scene {
 
             profiler::mark(Pass::Opaque);
             if let Some(shadow_fbo) = &self.shadow_fbo {
-                unsafe {
-                    gl::ActiveTexture(gl::TEXTURE15);
-                }
-                shadow_fbo.texture().bind();
+                shadow_fbo.texture().bind_to(SHADOW_MAP_UNIT);
             }
             if let Some(maps) = self.light_shadows.borrow().as_ref() {
                 maps.bind();
             }
             if depth_prepass {
-                unsafe { gl::DepthFunc(gl::LEQUAL) };
+                gfx::set_pass_overrides(gfx::PassOverrides { depth_less_equal: true, ..gfx::pass_overrides() });
             }
             ViewFrustum::begin_counting();
             for entity in self.entities.iter() {
@@ -664,7 +663,7 @@ impl Scene {
             ViewFrustum::end_counting();
             self.render_snow_layer(&view_projection, false);
             if depth_prepass {
-                unsafe { gl::DepthFunc(gl::LESS) };
+                gfx::set_pass_overrides(gfx::PassOverrides { depth_less_equal: false, ..gfx::pass_overrides() });
             }
             // Transparent pass — runs after every entity's opaque geometry is
             // in the depth buffer, so water with depth-write enabled correctly
@@ -689,17 +688,12 @@ impl Scene {
             // 2D overlays (HUD, inventory, menus) on the tone mapped image.
             // In the order drawn: the plane and text renderers switch the
             // depth test on, so it passes everything and writes nothing.
-            unsafe {
-                gl::DepthFunc(gl::ALWAYS);
-                gl::DepthMask(gl::FALSE);
-            }
+            let before = gfx::pass_overrides();
+            gfx::set_pass_overrides(gfx::PassOverrides { depth_ignored: true, ..before });
             for entity in self.entities.iter() {
                 entity.render_overlay(self);
             }
-            unsafe {
-                gl::DepthMask(gl::TRUE);
-                gl::DepthFunc(gl::LESS);
-            }
+            gfx::set_pass_overrides(before);
         }
 
         // ── Debug overlay (F10) ───────────────────────────────────────────
@@ -709,26 +703,24 @@ impl Scene {
 
             // ── Terrain depth capture (camera POV, no water) ─────────────
             if let (Some(tfbo), Some(vp)) = (&self.terrain_debug_fbo, vp) {
-                tfbo.bind();
-                window.clear_mask(gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT);
+                tfbo.0.begin_pass(gfx::Load::Color([0.0; 4]), gfx::Load::Depth(1.0));
                 for entity in self.entities.iter() {
                     entity.render(self, &vp, parent_transform);
                 }
-                FrameBuffer::unbind();
+                gfx::end_pass();
                 self.apply_viewport(window);
             }
 
             // ── Water depth capture (camera POV, terrain depth + water) ──
             if let (Some(wfbo), Some(vp)) = (&self.water_debug_fbo, vp) {
-                wfbo.bind();
-                window.clear_mask(gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT);
+                wfbo.0.begin_pass(gfx::Load::Color([0.0; 4]), gfx::Load::Depth(1.0));
                 for entity in self.entities.iter() {
                     entity.render(self, &vp, parent_transform);
                 }
                 for entity in self.entities.iter() {
                     entity.render_transparent(self, &vp, parent_transform);
                 }
-                FrameBuffer::unbind();
+                gfx::end_pass();
                 self.apply_viewport(window);
             }
 
@@ -1340,5 +1332,13 @@ mod tests {
         });
         assert_eq!(updated, ["a", "b", "c"]);
         assert_eq!(names(&scene), ["a", "b", "c"]);
+    }
+}
+
+/// Spike probe (see `core::spike_probe`): adds its lifetime to a counter.
+struct Probe(std::time::Instant, &'static std::sync::atomic::AtomicU64);
+impl Drop for Probe {
+    fn drop(&mut self) {
+        crate::core::spike_probe::add(self.1, self.0);
     }
 }

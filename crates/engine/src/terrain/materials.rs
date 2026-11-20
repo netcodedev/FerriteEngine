@@ -73,7 +73,6 @@ pub struct MaterialImages {
 /// texture units 0, 1 and 2, or nothing — and the shader falls back to
 /// plain colours — when a layer's colour map is missing.
 pub fn load(shader: &Shader, layers: &[TerrainLayer]) -> Vec<Texture> {
-    shader.bind();
     debug_assert!(
         layers.iter().enumerate().all(|(i, l)| l.stand_in.is_none_or(|s| s < i)),
         "stand-ins come before what they stand in for"
@@ -159,7 +158,6 @@ pub fn load(shader: &Shader, layers: &[TerrainLayer]) -> Vec<Texture> {
         texture.load_array(width, height, &layers, srgb);
         textures.push(texture);
     }
-    shader.bind();
     shader.set_uniform_1i("hasTerrainTextures", 1);
     textures
 }

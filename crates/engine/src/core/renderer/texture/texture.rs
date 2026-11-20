@@ -1,27 +1,22 @@
 use std::path::Path;
 
-use gl::types::{GLint, GLsizei, GLsizeiptr};
+use crate::core::gfx::{self, Format, Rect, SamplerDesc, TextureDesc, TextureKind, UploadFormat};
 
 use super::{Shader, Texture, TextureRenderer};
 
 impl Texture {
     pub fn new() -> Self {
-        let texture = Texture::gen_texture();
-        texture
+        Texture {
+            inner: std::cell::RefCell::new(None),
+            sampler: std::cell::Cell::new(SamplerDesc::LINEAR_CLAMP),
+        }
     }
 
-    fn gen_texture() -> Self {
-        if crate::core::headless::is_headless() {
-            return Texture { id: 0, target: gl::TEXTURE_2D, owned: true };
-        }
-        let mut id = 0;
-        unsafe {
-            gl::GenTextures(1, &mut id);
-        }
+    /// Wrap a texture made with `gfx`, sampled with `sampler`.
+    pub fn from_gfx(texture: gfx::Texture, sampler: SamplerDesc) -> Self {
         Texture {
-            id,
-            target: gl::TEXTURE_2D,
-            owned: true,
+            inner: std::cell::RefCell::new(Some(texture)),
+            sampler: std::cell::Cell::new(sampler),
         }
     }
 
@@ -29,106 +24,57 @@ impl Texture {
     /// texture. It does not free the texture: this one must outlive it.
     pub fn share(&self) -> Texture {
         Texture {
-            id: self.id,
-            target: self.target,
-            owned: false,
+            inner: std::cell::RefCell::new(self.inner.borrow().as_ref().map(gfx::Texture::share)),
+            sampler: std::cell::Cell::new(self.sampler.get()),
         }
     }
 
+    /// The GPU texture, once there is one.
+    pub fn gfx(&self) -> Option<std::cell::Ref<'_, gfx::Texture>> {
+        std::cell::Ref::filter_map(self.inner.borrow(), Option::as_ref).ok()
+    }
+
+    pub fn raw(&self) -> gfx::RawId {
+        self.inner.borrow().as_ref().map_or(0, gfx::Texture::raw)
+    }
+
+    pub fn sampler(&self) -> SamplerDesc {
+        self.sampler.get()
+    }
+
+    pub fn set_sampler(&self, sampler: SamplerDesc) {
+        self.sampler.set(sampler);
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        self.inner.borrow().as_ref().map_or((0, 0), |t| (t.width(), t.height()))
+    }
+
+    fn replace(&self, texture: gfx::Texture, sampler: SamplerDesc) {
+        *self.inner.borrow_mut() = Some(texture);
+        self.sampler.set(sampler);
+    }
+
     pub fn set_as_depth_texture(&self, width: u32, height: u32) {
-        if crate::core::headless::is_headless() {
-            return;
-        }
-        self.bind();
-        unsafe {
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
-            gl::TexParameteri(
-                gl::TEXTURE_2D,
-                gl::TEXTURE_WRAP_S,
-                gl::CLAMP_TO_BORDER as i32,
-            );
-            gl::TexParameteri(
-                gl::TEXTURE_2D,
-                gl::TEXTURE_WRAP_T,
-                gl::CLAMP_TO_BORDER as i32,
-            );
-            let color = [1.0, 1.0, 1.0, 1.0];
-            gl::TexParameterfv(gl::TEXTURE_2D, gl::TEXTURE_BORDER_COLOR, color.as_ptr());
-            gl::TexImage2D(
-                gl::TEXTURE_2D,
-                0,
-                gl::DEPTH_COMPONENT as GLint,
-                width as GLsizei,
-                height as GLsizei,
-                0,
-                gl::DEPTH_COMPONENT,
-                gl::FLOAT,
-                std::ptr::null(),
-            );
-        }
+        let mut sampler = SamplerDesc::NEAREST_CLAMP;
+        sampler.wrap = [gfx::Wrap::ClampToBorder; 3];
+        sampler.border = gfx::BorderColor::OpaqueWhite;
+        self.replace(gfx::Texture::new(TextureDesc::d2(Format::Depth32F, width, height)), sampler);
     }
 
     /// An array of `layers` depth maps (16 bit), one per shadow cascade.
     /// Outside the maps the depth reads as far away, i.e. lit.
     pub fn set_as_depth_array(&mut self, width: u32, height: u32, layers: u32) {
-        if crate::core::headless::is_headless() {
-            return;
-        }
-        self.target = gl::TEXTURE_2D_ARRAY;
-        self.bind();
-        unsafe {
-            // Sampled with depth comparison (`sampler2DArrayShadow`): each
-            // lookup compares the 2x2 texels around it and filters the
-            // results bilinearly. Lit where the reference is not farther.
-            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-            gl::TexParameteri(
-                gl::TEXTURE_2D_ARRAY,
-                gl::TEXTURE_COMPARE_MODE,
-                gl::COMPARE_REF_TO_TEXTURE as i32,
-            );
-            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_COMPARE_FUNC, gl::LEQUAL as i32);
-            gl::TexImage3D(
-                gl::TEXTURE_2D_ARRAY,
-                0,
-                gl::DEPTH_COMPONENT16 as GLint,
-                width as GLsizei,
-                height as GLsizei,
-                layers as GLsizei,
-                0,
-                gl::DEPTH_COMPONENT,
-                gl::FLOAT,
-                std::ptr::null(),
-            );
-            gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
-        }
+        let desc = TextureDesc {
+            kind: TextureKind::D2Array,
+            layers,
+            ..TextureDesc::d2(Format::Depth16, width, height)
+        };
+        self.replace(gfx::Texture::new(desc), SamplerDesc::LINEAR_CLAMP.compare(gfx::CompareFunc::LessEqual));
     }
 
     pub fn set_as_color_texture(&self, width: u32, height: u32) {
-        if crate::core::headless::is_headless() {
-            return;
-        }
-        self.bind();
-        unsafe {
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-            gl::TexImage2D(
-                gl::TEXTURE_2D,
-                0,
-                gl::RGBA8 as GLint,
-                width as GLsizei,
-                height as GLsizei,
-                0,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                std::ptr::null(),
-            );
-        }
+        self.replace(gfx::Texture::new(TextureDesc::d2(Format::Rgba8, width, height)), SamplerDesc::LINEAR_CLAMP);
     }
 
     /// Like `load_from_file`, but reports a file that cannot be read as an
@@ -141,188 +87,68 @@ impl Texture {
     }
 
     pub fn load_from_file(&self, path: &Path) {
-        if crate::core::headless::is_headless() {
-            return;
-        }
-        self.bind();
-        let img = image::open(path)
-            .expect("Image not found")
-            .flipv()
-            .to_rgba8();
-        unsafe {
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::REPEAT as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::REPEAT as i32);
-            gl::TexImage2D(
-                gl::TEXTURE_2D,
-                0,
-                gl::RGBA as GLint,
-                img.width() as GLsizei,
-                img.height() as GLsizei,
-                0,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                img.as_ptr() as *const _,
-            );
-        }
-        Texture::unbind();
+        let img = image::open(path).expect("Image not found").flipv().to_rgba8();
+        let (width, height) = (img.width(), img.height());
+        let mut sampler = SamplerDesc::new(gfx::Filter::Linear, gfx::Wrap::Repeat);
+        sampler.mag = gfx::Filter::Nearest;
+        self.upload(width, height, &img.into_raw(), Format::Rgba8, false, sampler);
     }
 
     pub fn load_from_data(&self, width: u32, height: u32, data: Vec<u8>) {
-        if crate::core::headless::is_headless() {
-            return;
-        }
-        self.bind();
-        unsafe {
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::REPEAT as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::REPEAT as i32);
-            gl::TexImage2D(
-                gl::TEXTURE_2D,
-                0,
-                gl::RGBA as GLint,
-                width as GLsizei,
-                height as GLsizei,
-                0,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                data.as_ptr() as *const _,
-            );
-        }
-        Texture::unbind();
+        self.upload(width, height, &data, Format::Rgba8, false, SamplerDesc::LINEAR_REPEAT);
     }
 
     /// Upload a material map with mipmaps and anisotropic filtering. A colour map is `srgb`, so the
     /// shader samples it in linear space; data maps (normal, roughness, ...)
     /// are stored as they are.
     pub fn load_material_map(&self, width: u32, height: u32, data: Vec<u8>, srgb: bool) {
-        if crate::core::headless::is_headless() {
-            return;
+        let format = if srgb { Format::Srgba8 } else { Format::Rgba8 };
+        // Sharp at a glancing angle too, as the terrain's textures.
+        let sampler = SamplerDesc::LINEAR_REPEAT.mipmapped().anisotropic(8);
+        self.upload(width, height, &data, format, true, sampler);
+    }
+
+    fn upload(&self, width: u32, height: u32, data: &[u8], format: Format, mipmaps: bool, sampler: SamplerDesc) {
+        let desc = TextureDesc::d2(format, width.max(1), height.max(1)).with_mips(if mipmaps { 0 } else { 1 });
+        let texture = gfx::Texture::new(desc);
+        texture.write(0, Rect::sized(width, height), 0, 1, UploadFormat::Rgba8, data);
+        if mipmaps {
+            texture.generate_mips();
         }
-        self.bind();
-        let internal = if srgb { gl::SRGB8_ALPHA8 } else { gl::RGBA8 };
-        unsafe {
-            gl::TexParameteri(
-                gl::TEXTURE_2D,
-                gl::TEXTURE_MIN_FILTER,
-                gl::LINEAR_MIPMAP_LINEAR as i32,
-            );
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::REPEAT as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::REPEAT as i32);
-            gl::TexImage2D(
-                gl::TEXTURE_2D,
-                0,
-                internal as GLint,
-                width as GLsizei,
-                height as GLsizei,
-                0,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                data.as_ptr() as *const _,
-            );
-            // Sharp at a glancing angle too, as the terrain's textures
-            // (GL_TEXTURE_MAX_ANISOTROPY, see `load_array`).
-            const TEXTURE_MAX_ANISOTROPY: gl::types::GLenum = 0x84FE;
-            gl::TexParameterf(gl::TEXTURE_2D, TEXTURE_MAX_ANISOTROPY, 8.0);
-            gl::GenerateMipmap(gl::TEXTURE_2D);
-        }
-        Texture::unbind();
+        self.replace(texture, sampler);
     }
 
     /// Load `layers` (RGBA8, all `width` x `height`) as a 2D array texture
     /// with mipmaps and anisotropic filtering. `srgb` as for
     /// `load_material_map`.
     pub fn load_array(&mut self, width: u32, height: u32, layers: &[Vec<u8>], srgb: bool) {
-        if crate::core::headless::is_headless() {
-            return;
+        let format = if srgb { Format::Srgba8 } else { Format::Rgba8 };
+        let desc = TextureDesc {
+            kind: TextureKind::D2Array,
+            layers: layers.len().max(1) as u32,
+            mips: 0,
+            ..TextureDesc::d2(format, width, height)
+        };
+        let texture = gfx::Texture::new(desc);
+        for (index, layer) in layers.iter().enumerate() {
+            texture.write(0, Rect::sized(width, height), index as u32, 1, UploadFormat::Rgba8, layer);
         }
-        self.target = gl::TEXTURE_2D_ARRAY;
-        let internal = if srgb { gl::SRGB8_ALPHA8 } else { gl::RGBA8 };
-        self.bind();
-        unsafe {
-            gl::TexImage3D(
-                gl::TEXTURE_2D_ARRAY,
-                0,
-                internal as GLint,
-                width as GLsizei,
-                height as GLsizei,
-                layers.len() as GLsizei,
-                0,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                std::ptr::null(),
-            );
-            for (index, layer) in layers.iter().enumerate() {
-                gl::TexSubImage3D(
-                    gl::TEXTURE_2D_ARRAY,
-                    0,
-                    0,
-                    0,
-                    index as GLint,
-                    width as GLsizei,
-                    height as GLsizei,
-                    1,
-                    gl::RGBA,
-                    gl::UNSIGNED_BYTE,
-                    layer.as_ptr() as *const _,
-                );
-            }
-            gl::TexParameteri(
-                gl::TEXTURE_2D_ARRAY,
-                gl::TEXTURE_MIN_FILTER,
-                gl::LINEAR_MIPMAP_LINEAR as i32,
-            );
-            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::REPEAT as i32);
-            gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::REPEAT as i32);
-            // GL_TEXTURE_MAX_ANISOTROPY (core in 4.6, EXT before); the
-            // generated bindings predate it.
-            const TEXTURE_MAX_ANISOTROPY: gl::types::GLenum = 0x84FE;
-            gl::TexParameterf(gl::TEXTURE_2D_ARRAY, TEXTURE_MAX_ANISOTROPY, 8.0);
-            gl::GenerateMipmap(gl::TEXTURE_2D_ARRAY);
-            gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
+        texture.generate_mips();
+        self.replace(texture, SamplerDesc::LINEAR_REPEAT.mipmapped().anisotropic(8));
+    }
+
+    /// Bind it to `slot` (a texture unit) with its sampling.
+    pub fn bind_to(&self, slot: u32) {
+        if let Some(texture) = self.inner.borrow().as_ref() {
+            gfx::bind_texture(slot, texture, &self.sampler.get());
         }
     }
 
-    pub fn bind(&self) {
-        if crate::core::headless::is_headless() {
-            return;
-        }
-        unsafe {
-            gl::BindTexture(self.target, self.id);
-        }
-    }
-
-    /// Unbind whatever is bound to this texture's target on the active unit.
-    pub fn unbind_target(&self) {
-        if crate::core::headless::is_headless() {
-            return;
-        }
-        unsafe {
-            gl::BindTexture(self.target, 0);
-        }
-    }
-
-    pub fn unbind() {
-        if crate::core::headless::is_headless() {
-            return;
-        }
-        unsafe {
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-        }
-    }
-}
-
-impl Drop for Texture {
-    fn drop(&mut self) {
-        if crate::core::headless::is_headless() || !self.owned {
-            return;
-        }
-        unsafe {
-            gl::DeleteTextures(1, &self.id);
+    /// Bind it to `slot` sampled as `sampler` (e.g. a shadow map read
+    /// without comparison).
+    pub fn bind_to_with(&self, slot: u32, sampler: &SamplerDesc) {
+        if let Some(texture) = self.inner.borrow().as_ref() {
+            gfx::bind_texture(slot, texture, sampler);
         }
     }
 }
@@ -330,36 +156,10 @@ impl Drop for Texture {
 impl TextureRenderer {
     pub fn new() -> Self {
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
-        let mut vao = 0;
-        let mut vbo = 0;
-        if !crate::core::headless::is_headless() {
-            // The unit square every quad is drawn from (see `vertex.glsl`).
-            let corners: [f32; 12] = [0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0];
-            unsafe {
-                gl::GenVertexArrays(1, &mut vao);
-                gl::BindVertexArray(vao);
-                gl::GenBuffers(1, &mut vbo);
-                gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-                gl::BufferData(
-                    gl::ARRAY_BUFFER,
-                    std::mem::size_of_val(&corners) as GLsizeiptr,
-                    corners.as_ptr() as *const _,
-                    gl::STATIC_DRAW,
-                );
-                gl::VertexAttribPointer(
-                    0,
-                    2,
-                    gl::FLOAT,
-                    gl::FALSE,
-                    2 * std::mem::size_of::<f32>() as GLsizei,
-                    std::ptr::null(),
-                );
-                gl::EnableVertexAttribArray(0);
-                gl::BindVertexArray(0);
-                gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            }
-        }
-        Self { shader, vao, vbo }
+        // The unit square every quad is drawn from (see `vertex.glsl`).
+        let corners: [f32; 12] = [0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0];
+        let corners = gfx::Buffer::from_slice(gfx::BufferUsage::VERTEX, gfx::BufferMemory::Static, &corners);
+        Self { shader, corners }
     }
 
     pub fn render_depth(&self, texture: &Texture, x: f32, y: f32, w: f32, h: f32) {
@@ -376,41 +176,22 @@ impl TextureRenderer {
     }
 
     fn render_inner(&self, texture: &Texture, x: f32, y: f32, w: f32, h: f32, is_depth: bool) {
-        if self.vao == 0 {
-            return;
-        }
-        unsafe {
-            gl::BindVertexArray(self.vao);
-            gl::ActiveTexture(gl::TEXTURE0);
-            texture.bind();
-            self.shader.bind();
-            // Standard UV layout: (0,0) = bottom-left, (1,1) = top-right.
-            self.shader.set_uniform_4f("rect", x, y, w, h);
-            self.shader.set_uniform_1i("isDepth", if is_depth { 1 } else { 0 });
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            gl::Enable(gl::BLEND);
-            gl::Disable(gl::DEPTH_TEST);
-            gl::DrawArrays(gl::TRIANGLES, 0, 6);
-            gl::Disable(gl::BLEND);
-            // As the quad's own (deleted) objects used to leave it.
-            gl::BindVertexArray(0);
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-        }
-    }
-}
-
-impl Drop for TextureRenderer {
-    fn drop(&mut self) {
-        if self.vao == 0 || crate::core::headless::is_headless() {
-            return;
-        }
-        // Not once the context is gone (a renderer kept until exit).
-        if unsafe { glfw::ffi::glfwGetCurrentContext() }.is_null() {
-            return;
-        }
-        unsafe {
-            gl::DeleteBuffers(1, &self.vbo);
-            gl::DeleteVertexArrays(1, &self.vao);
-        }
+        let desc = gfx::PipelineDesc {
+            vertex_layouts: crate::core::gfx::Layouts::of(&[gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[gfx::VertexFormat::F32x2])]),
+            depth: gfx::DepthState::OFF,
+            blend: Some(gfx::BlendState::ALPHA),
+            polygon: gfx::PolygonMode::Solid,
+            ..Default::default()
+        };
+        gfx::set_pipeline(self.shader.pipeline(&desc));
+        // A depth map is shown as it is, not compared.
+        let mut sampler = texture.sampler();
+        sampler.compare = None;
+        texture.bind_to_with(0, &sampler);
+        // Standard UV layout: (0,0) = bottom-left, (1,1) = top-right.
+        self.shader.set_uniform_4f("rect", x, y, w, h);
+        self.shader.set_uniform_1i("isDepth", if is_depth { 1 } else { 0 });
+        gfx::set_vertex_buffer(0, &self.corners, 0, 8);
+        gfx::draw(0, 6);
     }
 }

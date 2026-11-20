@@ -216,11 +216,8 @@ impl WeatherTargets {
     /// Bind the snow's scan, if there is one, to its units.
     pub fn bind_snow_textures(&self) {
         if let Some([colour, surface]) = &self.snow_textures {
-            unsafe { gl::ActiveTexture(gl::TEXTURE0 + SNOW_COLOUR_UNIT) };
-            colour.bind();
-            unsafe { gl::ActiveTexture(gl::TEXTURE0 + SNOW_SURFACE_UNIT) };
-            surface.bind();
-            unsafe { gl::ActiveTexture(gl::TEXTURE0) };
+            colour.bind_to(SNOW_COLOUR_UNIT);
+            surface.bind_to(SNOW_SURFACE_UNIT);
         }
     }
 }
@@ -284,7 +281,7 @@ pub struct WeatherShading {
 }
 
 /// Where the weather maps lie while the scene is shaded.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WeatherMaps {
     /// World to the exposure map's clip space, and the metres its depth
     /// range spans.

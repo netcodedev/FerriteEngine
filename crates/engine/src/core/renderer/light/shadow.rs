@@ -18,7 +18,7 @@
 use cgmath::{perspective, Deg, InnerSpace, Matrix4, Point3, Vector3};
 
 use super::light::{LightKind, LightSource};
-use crate::core::renderer::framebuffer;
+use crate::core::gfx;
 
 /// Most lights with shadows per frame; must match `MAX_SHADOWED_LIGHTS`
 /// in `pbr/lighting.glsl` only in that layers above it never appear.
@@ -164,110 +164,57 @@ impl ShadowPlanner {
 }
 
 /// The depth cube maps of the shadowed lights (a cube map array, one cube
-/// per layer) and the framebuffer they are drawn with.
+/// per layer) and a render target per face of each.
 pub struct LightShadowMaps {
-    texture: gl::types::GLuint,
-    framebuffer: gl::types::GLuint,
+    texture: gfx::Texture,
+    /// By `layer * 6 + face`.
+    faces: Vec<gfx::RenderTarget>,
 }
+
+/// Hardware comparison: the shader gets how much of the 2×2 texels around
+/// the point is lit.
+const SAMPLER: gfx::SamplerDesc = gfx::SamplerDesc::LINEAR_CLAMP.compare(gfx::CompareFunc::LessEqual);
 
 impl LightShadowMaps {
     pub fn new() -> Self {
-        let (mut texture, mut framebuffer) = (0, 0);
-        let size = SHADOW_RESOLUTION as i32;
-        unsafe {
-            gl::GenTextures(1, &mut texture);
-            gl::BindTexture(gl::TEXTURE_CUBE_MAP_ARRAY, texture);
-            gl::TexImage3D(
-                gl::TEXTURE_CUBE_MAP_ARRAY,
-                0,
-                gl::DEPTH_COMPONENT24 as i32,
-                size,
-                size,
-                (MAX_SHADOWED_LIGHTS * 6) as i32,
-                0,
-                gl::DEPTH_COMPONENT,
-                gl::FLOAT,
-                std::ptr::null(),
-            );
-            let linear = gl::LINEAR as i32;
-            gl::TexParameteri(gl::TEXTURE_CUBE_MAP_ARRAY, gl::TEXTURE_MIN_FILTER, linear);
-            gl::TexParameteri(gl::TEXTURE_CUBE_MAP_ARRAY, gl::TEXTURE_MAG_FILTER, linear);
-            let clamp = gl::CLAMP_TO_EDGE as i32;
-            gl::TexParameteri(gl::TEXTURE_CUBE_MAP_ARRAY, gl::TEXTURE_WRAP_S, clamp);
-            gl::TexParameteri(gl::TEXTURE_CUBE_MAP_ARRAY, gl::TEXTURE_WRAP_T, clamp);
-            gl::TexParameteri(gl::TEXTURE_CUBE_MAP_ARRAY, gl::TEXTURE_WRAP_R, clamp);
-            // Hardware comparison: the shader gets how much of the 2×2
-            // texels around the point is lit.
-            gl::TexParameteri(
-                gl::TEXTURE_CUBE_MAP_ARRAY,
-                gl::TEXTURE_COMPARE_MODE,
-                gl::COMPARE_REF_TO_TEXTURE as i32,
-            );
-            gl::TexParameteri(
-                gl::TEXTURE_CUBE_MAP_ARRAY,
-                gl::TEXTURE_COMPARE_FUNC,
-                gl::LEQUAL as i32,
-            );
-            gl::BindTexture(gl::TEXTURE_CUBE_MAP_ARRAY, 0);
-            // Filtering across the edges of the faces, not within each.
-            gl::Enable(gl::TEXTURE_CUBE_MAP_SEAMLESS);
+        let desc = gfx::TextureDesc {
+            kind: gfx::TextureKind::CubeArray,
+            layers: (MAX_SHADOWED_LIGHTS * 6) as u32,
+            ..gfx::TextureDesc::d2(gfx::Format::Depth24, SHADOW_RESOLUTION, SHADOW_RESOLUTION)
+        };
+        let texture = gfx::Texture::new(desc);
+        let faces = (0..desc.layers)
+            .map(|layer| gfx::RenderTarget::new(&[], Some(texture.attachment(0, Some(layer)))))
+            .collect();
+        Self { texture, faces }
+    }
 
-            gl::GenFramebuffers(1, &mut framebuffer);
-            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
-            gl::DrawBuffer(gl::NONE);
-            gl::ReadBuffer(gl::NONE);
-            framebuffer::bind(gl::FRAMEBUFFER, 0);
-        }
-        Self {
-            texture,
-            framebuffer,
+    /// A pass drawing into `face` of `layer`'s cube, cleared; end it with
+    /// `end_face`.
+    pub fn begin_face(&self, layer: u32, face: usize) {
+        if let Some(target) = self.faces.get(layer as usize * 6 + face) {
+            gfx::begin_pass(
+                target.reference(),
+                (SHADOW_RESOLUTION, SHADOW_RESOLUTION),
+                gfx::Load::Keep,
+                gfx::Load::Depth(1.0),
+            );
         }
     }
 
-    /// Draw into `face` of `layer`'s cube from now on, cleared.
-    pub fn begin_face(&self, layer: u32, face: usize) {
-        unsafe {
-            framebuffer::bind(gl::FRAMEBUFFER, self.framebuffer);
-            gl::FramebufferTextureLayer(
-                gl::FRAMEBUFFER,
-                gl::DEPTH_ATTACHMENT,
-                self.texture,
-                0,
-                (layer as usize * 6 + face) as i32,
-            );
-            let size = SHADOW_RESOLUTION as i32;
-            gl::Viewport(0, 0, size, size);
-            gl::DepthMask(gl::TRUE);
-            gl::Enable(gl::DEPTH_TEST);
-            gl::Clear(gl::DEPTH_BUFFER_BIT);
-        }
+    /// End the pass `begin_face` began.
+    pub fn end_face(&self) {
+        gfx::end_pass();
     }
 
     /// Unbound from its unit, before drawing into it (no feedback loop).
     pub fn unbind(&self) {
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0 + LIGHT_SHADOW_UNIT);
-            gl::BindTexture(gl::TEXTURE_CUBE_MAP_ARRAY, 0);
-            gl::ActiveTexture(gl::TEXTURE0);
-        }
+        gfx::unbind_texture(LIGHT_SHADOW_UNIT, gfx::TextureKind::CubeArray);
     }
 
     /// Bound to `LIGHT_SHADOW_UNIT` for the lit shaders.
     pub fn bind(&self) {
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0 + LIGHT_SHADOW_UNIT);
-            gl::BindTexture(gl::TEXTURE_CUBE_MAP_ARRAY, self.texture);
-            gl::ActiveTexture(gl::TEXTURE0);
-        }
-    }
-}
-
-impl Drop for LightShadowMaps {
-    fn drop(&mut self) {
-        unsafe {
-            framebuffer::delete(&[self.framebuffer]);
-            gl::DeleteTextures(1, &self.texture);
-        }
+        gfx::bind_texture(LIGHT_SHADOW_UNIT, &self.texture, &SAMPLER);
     }
 }
 
