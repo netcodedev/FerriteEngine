@@ -24,4 +24,4 @@ name = "server"
 path = "src/server.rs"
 
 [dependencies]
-ferrite = { path = "../engine", features = ["standalone"] }
+ferrite = { path = "../engine", default-features = false, features = ["standalone"] }
