@@ -56,20 +56,23 @@ An inventory of the GL use (2026-11-20):
 
 3. **Same conventions in both backends, so shaders and Rust math are
    shared:**
-   - Depth range [0,1] everywhere: GL gets
-     `glClipControl(LOWER_LEFT, ZERO_TO_ONE)` (GL 4.5); projections come
-     from one `gfx::math` (`perspective`, `ortho`, unproject) instead of
-     cgmath's; the eight shader formulas that assume [-1,1] are fixed.
-     (Reversed Z is a later, separate step.)
-   - Image rows: row 0 is NDC y = −1 in both APIs, and so is
-     `gl_FragCoord`'s origin, so offscreen rendering and sampling agree
-     without flipping. Vulkan sets the front face to clockwise to match
-     GL's counter-clockwise, and flips once when the final image goes to
-     the swapchain.
-   - The "window" is an offscreen target in both backends (colour with
-     the window's sample count, depth-stencil, resolve), presented at the
-     end of the frame. Screenshots read that target, so the MCP bridge
-     works the same on both.
+   - Depth range stays GL's [-1,1]: Vulkan enables
+     `VK_EXT_depth_clip_control` (`negativeOneToOne`, supported by the
+     NVIDIA and Mesa drivers here), so every projection, unprojection and
+     the shader formulas that assume [-1,1] stay as they are. (Moving both
+     to [0,1] with reversed Z is a later, separate step.)
+   - Image rows: row 0 is NDC y = −1 in both APIs (with a plain,
+     positive-height Vulkan viewport), and so is `gl_FragCoord`'s origin,
+     so offscreen rendering, sampling and viewport rects agree without
+     flipping. Vulkan sets the front face to clockwise to match GL's
+     counter-clockwise, and flips once when the final image goes to the
+     swapchain.
+   - The "window" is a render target of its own (`RenderTarget::WINDOW`):
+     GL's multisampled default framebuffer, and in Vulkan an offscreen
+     target like it (colour at the window's sample count, depth-stencil),
+     resolved and blitted (flipped) to the swapchain at present.
+     Screenshots read it through `gfx`, so the MCP bridge works the same
+     on both.
 
 4. **Pipelines are objects.** A `PipelineDesc` (shader, vertex layout,
    topology, depth test/func/write, blend, cull, colour mask, polygon
@@ -94,6 +97,9 @@ An inventory of the GL use (2026-11-20):
    In GLSL this is written once with macros: `SET(s, b)` expands to
    `layout(set = s, binding = b)` for Vulkan and to
    `layout(binding = s * 16 + b)` for GL; `PUSH_CONSTANTS` likewise.
+   Vulkan binds with push descriptors (`VK_KHR_push_descriptor`), which
+   keeps GL's "bind this texture here, then draw" model and needs no
+   descriptor pools; bindless material tables come with ray tracing.
 
 6. **Shaders: one GLSL 4.60 source, compiled at runtime.** A small
    preprocessor resolves `#include "name"` against a registry of engine
@@ -150,8 +156,7 @@ comparison against the stage before.
   pipelines and the state cache, the encoder (`begin_pass`,
   `set_pipeline`, `bind`, `push_constants`, `draw*`, `end_pass`),
   timestamp queries, readback, deferred destruction.
-- Window target and present; `glClipControl` and `gfx::math`
-  projections; fix the [-1,1] shader formulas.
+- Window target and present.
 - Shader preprocessor with `#include`, defines and stage injection;
   `Shader` keeps `set_uniform_*` as a GL-only shim for now so the port can
   be done file by file.
@@ -194,7 +199,7 @@ Editor statistics show the backend and its GPU/CPU frame times.
 
 ## Open questions (for later, not blocking)
 
-- Reversed Z for the far terrain (precision) once both backends share
-  one projection.
+- [0,1] depth with reversed Z for the far terrain (precision), in both
+  backends at once.
 - Whether the GL backend should eventually also consume SPIR-V
   (`ARB_gl_spirv`) instead of GLSL text.
