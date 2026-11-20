@@ -87,9 +87,12 @@ impl ParticleRenderer {
             let bytes = std::mem::size_of_val(instances) as isize;
             if instances.len() > self.capacity {
                 self.capacity = instances.len().next_power_of_two();
-                let size = (self.capacity * INSTANCE_FLOATS * std::mem::size_of::<f32>()) as isize;
-                gl::BufferData(gl::ARRAY_BUFFER, size, std::ptr::null(), gl::STREAM_DRAW);
             }
+            // A fresh store every time (orphaning): the emitter drawn before
+            // may still be reading the old one, which writing over it would
+            // have to wait for.
+            let size = (self.capacity * INSTANCE_FLOATS * std::mem::size_of::<f32>()) as isize;
+            gl::BufferData(gl::ARRAY_BUFFER, size, std::ptr::null(), gl::STREAM_DRAW);
             gl::BufferSubData(gl::ARRAY_BUFFER, 0, bytes, instances.as_ptr() as *const _);
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
         }
