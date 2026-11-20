@@ -7,7 +7,7 @@ use cgmath::{Matrix4, Point3, Quaternion, Vector3};
 use russimp_ng::{material::TextureType, scene::Scene};
 
 use crate::core::renderer::{
-    shader::{DynamicVertexArray, Shader},
+    shader::DynamicVertexArray,
     texture::Texture,
 };
 
@@ -34,12 +34,14 @@ pub struct Model {
     /// several primitives, an FBX mesh split per material): lookups by
     /// name (variants, parts) take every mesh of that name.
     meshes: Vec<(String, ModelMesh)>,
-    shader: Shader,
     /// Textures grouped by material index. A mesh selects its set via
     /// `ModelMesh::material_index`. Storing them in a single flat map (as the
     /// older code did) caused later materials to overwrite earlier ones so
     /// every mesh ended up sampling the last-loaded texture set.
     textures: Vec<HashMap<TextureType, Texture>>,
+    /// Texture files several materials refer to, loaded once: the
+    /// materials hold `share`d handles on these (see `Model::init`).
+    shared_textures: Vec<Texture>,
     /// File name without extension; names the variant of a model that holds
     /// just one.
     name: String,
