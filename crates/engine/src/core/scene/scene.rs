@@ -41,6 +41,10 @@ use crate::core::{
 
 use super::Scene;
 
+/// Texture unit the sun's shadow cascades are bound to while the scene is
+/// shaded (`shadowMap` in the lit shaders, see `pbr`).
+const SHADOW_MAP_UNIT: u32 = 15;
+
 /// Metres the camera may move in a frame before every cascade is drawn
 /// again at once.
 const CASCADE_JUMP: f32 = 5.0;
@@ -349,8 +353,8 @@ impl Scene {
                 entity.render(self, &view_projection, Matrix4::identity());
             }
             self.render_snow_layer(&view_projection, true);
+            maps.end_face();
         }
-        FrameBuffer::unbind();
         self.apply_viewport(window);
     }
 
@@ -491,11 +495,8 @@ impl Scene {
         profiler::mark(Pass::SunShadows);
         if let Some(shadow_fbo) = &self.shadow_fbo {
             if let Some(skylight) = self.get_component::<SkyLight>() {
-                unsafe {
-                    // Unbound while drawn into, to prevent a feedback loop.
-                    gl::ActiveTexture(gl::TEXTURE15);
-                }
-                shadow_fbo.texture().unbind_target();
+                // Unbound while drawn into, to prevent a feedback loop.
+                gfx::unbind_texture(SHADOW_MAP_UNIT, gfx::TextureKind::D2Array);
                 let frame = self.shadow_frame.get();
                 self.shadow_frame.set(frame.wrapping_add(1));
                 let eye = self
@@ -531,12 +532,12 @@ impl Scene {
                     }
                     drawn[index] = *cascade;
                     let _depth_only = DepthPass::begin();
-                    shadow_fbo.bind_cascade(index as u32);
-                    window.clear_mask(gl::DEPTH_BUFFER_BIT);
+                    shadow_fbo.begin_cascade(index as u32);
                     for entity in self.entities.iter() {
                         entity.render(self, &cascade.view_projection, parent_transform);
                     }
                     self.render_snow_layer(&cascade.view_projection, true);
+                    gfx::end_pass();
                 }
                 self.drawn_cascades.set(Some(drawn));
                 self.shadow_redraw.set(false);
@@ -544,7 +545,6 @@ impl Scene {
                     lighting.shadow_cascades = Some(drawn);
                     self.frame_lighting.set(Some(lighting));
                 }
-                FrameBuffer::unbind();
                 self.apply_viewport(window);
             }
         }
@@ -647,10 +647,7 @@ impl Scene {
 
             profiler::mark(Pass::Opaque);
             if let Some(shadow_fbo) = &self.shadow_fbo {
-                unsafe {
-                    gl::ActiveTexture(gl::TEXTURE15);
-                }
-                shadow_fbo.texture().bind();
+                shadow_fbo.texture().bind_to(SHADOW_MAP_UNIT);
             }
             if let Some(maps) = self.light_shadows.borrow().as_ref() {
                 maps.bind();

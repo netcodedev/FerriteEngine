@@ -6,9 +6,12 @@
 //! Points outside the grid, and shaders drawn while no grid is set, go
 //! through every light as before, so the light a point gets never changes.
 
+use std::cell::RefCell;
+
 use cgmath::{Matrix4, Point3, Transform};
 
 use super::light::{LightKind, LightSource};
+use crate::core::gfx;
 
 /// Must match `pbr/lighting.glsl`.
 pub const GRID_BINDING: u32 = 2;
@@ -144,9 +147,9 @@ impl ClusterCamera {
 /// The grid's buffers: its camera (a uniform block) and the lists (two
 /// storage buffers).
 pub struct ClusterBuffers {
-    grid: u32,
-    ranges: u32,
-    indices: u32,
+    grid: RefCell<gfx::Buffer>,
+    ranges: gfx::Buffer,
+    indices: gfx::Buffer,
 }
 
 /// std140 layout of `LightClusterGrid`.
@@ -162,12 +165,15 @@ struct GridBlock {
 
 impl ClusterBuffers {
     pub fn new() -> Self {
-        let mut names = [0u32; 3];
-        unsafe { gl::GenBuffers(3, names.as_mut_ptr()) };
+        let storage = || gfx::Buffer::new(gfx::BufferUsage::STORAGE, gfx::BufferMemory::Dynamic, 4);
         let buffers = Self {
-            grid: names[0],
-            ranges: names[1],
-            indices: names[2],
+            grid: RefCell::new(gfx::Buffer::new(
+                gfx::BufferUsage::UNIFORM,
+                gfx::BufferMemory::Dynamic,
+                std::mem::size_of::<GridBlock>(),
+            )),
+            ranges: storage(),
+            indices: storage(),
         };
         buffers.write_grid(None);
         buffers
@@ -191,38 +197,25 @@ impl ClusterBuffers {
                 dims: [0; 4],
             },
         };
-        unsafe {
-            gl::BindBuffer(gl::UNIFORM_BUFFER, self.grid);
-            gl::BufferData(
-                gl::UNIFORM_BUFFER,
-                std::mem::size_of::<GridBlock>() as isize,
-                &block as *const GridBlock as *const _,
-                gl::DYNAMIC_DRAW,
-            );
-            gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
-            gl::BindBufferBase(gl::UNIFORM_BUFFER, GRID_BINDING, self.grid);
-        }
+        let mut grid = self.grid.borrow_mut();
+        grid.replace(gfx::as_bytes(std::slice::from_ref(&block)));
+        gfx::bind_uniform_buffer(GRID_BINDING, &grid);
     }
 
     /// Build the grid for `camera` over `lights` (numbered as uploaded)
     /// and bind it for the shaders.
-    pub fn upload(&self, camera: &ClusterCamera, lights: &[LightSource]) {
+    pub fn upload(&mut self, camera: &ClusterCamera, lights: &[LightSource]) {
         let lists = camera.assign(lights);
-        let storage = |buffer: u32, binding: u32, bytes: &[u8]| unsafe {
-            gl::BindBuffer(gl::SHADER_STORAGE_BUFFER, buffer);
+        let storage = |buffer: &mut gfx::Buffer, binding: u32, bytes: &[u8]| {
             // Never empty: a zero-sized storage buffer cannot be bound.
             let data = if bytes.is_empty() { &[0u8; 4][..] } else { bytes };
-            gl::BufferData(
-                gl::SHADER_STORAGE_BUFFER,
-                data.len() as isize,
-                data.as_ptr() as *const _,
-                gl::STREAM_DRAW,
-            );
-            gl::BindBuffer(gl::SHADER_STORAGE_BUFFER, 0);
-            gl::BindBufferBase(gl::SHADER_STORAGE_BUFFER, binding, buffer);
+            buffer.replace(data);
+            // Exactly the data: the shaders take the lists' lengths from
+            // the bound range.
+            gfx::bind_storage_range(binding, buffer, 0, data.len());
         };
-        storage(self.ranges, RANGES_BINDING, as_bytes(&lists.ranges));
-        storage(self.indices, INDICES_BINDING, as_bytes(&lists.indices));
+        storage(&mut self.ranges, RANGES_BINDING, gfx::as_bytes(&lists.ranges));
+        storage(&mut self.indices, INDICES_BINDING, gfx::as_bytes(&lists.indices));
         self.write_grid(Some(camera));
     }
 
@@ -230,18 +223,6 @@ impl ClusterBuffers {
     pub fn disable(&self) {
         self.write_grid(None);
     }
-}
-
-impl Drop for ClusterBuffers {
-    fn drop(&mut self) {
-        let names = [self.grid, self.ranges, self.indices];
-        unsafe { gl::DeleteBuffers(3, names.as_ptr()) };
-    }
-}
-
-fn as_bytes<T: Copy>(values: &[T]) -> &[u8] {
-    // SAFETY: plain numbers, no padding.
-    unsafe { std::slice::from_raw_parts(values.as_ptr() as *const u8, std::mem::size_of_val(values)) }
 }
 
 #[cfg(test)]
