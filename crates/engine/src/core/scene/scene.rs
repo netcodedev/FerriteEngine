@@ -383,12 +383,12 @@ impl Scene {
     fn render_debug_views(&self, depth_prepass: bool) {
         if debug_views::ambient_occlusion() && depth_prepass {
             if let Some(texture) = self.ambient_occlusion_texture() {
-                debug_views::draw_ambient_occlusion(texture);
+                debug_views::draw_ambient_occlusion(texture as gfx::RawId);
             }
         }
         if debug_views::sun_shadows() {
             if let Some(shadow_fbo) = &self.shadow_fbo {
-                debug_views::draw_shadow_cascades(shadow_fbo.texture().id, SHADOW_CASCADES);
+                debug_views::draw_shadow_cascades(shadow_fbo.texture(), SHADOW_CASCADES);
             }
         }
     }
@@ -401,7 +401,7 @@ impl Scene {
 
     fn apply_viewport(&self, window: &Window) {
         match self.viewport {
-            Some([x, y, w, h]) => unsafe { gl::Viewport(x, y, w.max(1), h.max(1)) },
+            Some([x, y, w, h]) => gfx::set_viewport(gfx::Rect::new(x, y, w.max(1) as u32, h.max(1) as u32)),
             None => window.reset_viewport(),
         }
     }

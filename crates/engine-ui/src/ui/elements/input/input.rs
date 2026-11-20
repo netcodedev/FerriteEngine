@@ -308,9 +308,9 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
     fn render(&self) {
         PlaneRenderer::render(&self.plane);
         crate::ui::clip::push(&self.stencil_plane);
-        unsafe {
-            gl::DepthFunc(gl::LEQUAL);
-        }
+        use ferrite::core::gfx;
+        let before = gfx::pass_overrides();
+        gfx::set_pass_overrides(gfx::PassOverrides { depth_less_equal: true, ..before });
         if self.is_focused {
             PlaneRenderer::render(&self.selection_plane);
         }
@@ -322,6 +322,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 PlaneRenderer::render(&self.cursor_plane);
             }
         }
+        gfx::set_pass_overrides(gfx::PassOverrides { depth_less_equal: before.depth_less_equal, ..gfx::pass_overrides() });
         crate::ui::clip::pop(&self.stencil_plane);
     }
 

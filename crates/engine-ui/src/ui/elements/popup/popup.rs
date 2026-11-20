@@ -77,18 +77,14 @@ impl UIElement for Popup {
         // Depth writes disabled so later overlays stay unaffected; depth test
         // disabled too so the dim is not clipped by the depth buffer we
         // inherited from the normal pass.
-        unsafe {
-            gl::Disable(gl::DEPTH_TEST);
-            gl::DepthMask(gl::FALSE);
-        }
+        use ferrite::core::gfx;
+        let before = gfx::pass_overrides();
+        gfx::set_pass_overrides(gfx::PassOverrides { depth_ignored: true, ..before });
         PlaneRenderer::render(&self.background);
         self.panel.render();
         // Open dropdown lists, menus and tooltips inside the popup.
         self.panel.render_overlay();
-        unsafe {
-            gl::DepthMask(gl::TRUE);
-            gl::Enable(gl::DEPTH_TEST);
-        }
+        gfx::set_pass_overrides(before);
     }
 
     fn handle_events(

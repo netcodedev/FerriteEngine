@@ -217,7 +217,6 @@ fn bind(shader: &Shader, unit: u32, sampler: &str, flag: &str, texture: Option<&
     shader.set_uniform_1i(sampler, unit as i32);
     shader.set_uniform_1i(flag, texture.is_some() as i32);
     if let Some(texture) = texture {
-        unsafe { gl::ActiveTexture(gl::TEXTURE0 + unit) };
-        texture.bind();
+        texture.bind_to(unit);
     }
 }

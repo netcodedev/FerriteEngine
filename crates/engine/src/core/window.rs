@@ -158,9 +158,7 @@ impl Window {
     }
 
     pub fn reset_viewport(&self) {
-        unsafe {
-            gl::Viewport(0, 0, self.width as i32, self.height as i32);
-        }
+        crate::core::gfx::set_viewport(crate::core::gfx::Rect::sized(self.width, self.height));
     }
 }
 

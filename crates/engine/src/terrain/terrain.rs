@@ -798,10 +798,7 @@ impl Terrain {
             return;
         };
         for (i, texture) in look.textures.iter().enumerate() {
-            unsafe {
-                gl::ActiveTexture(gl::TEXTURE0 + i as u32);
-            }
-            texture.bind();
+            texture.bind_to(i as u32);
         }
     }
 

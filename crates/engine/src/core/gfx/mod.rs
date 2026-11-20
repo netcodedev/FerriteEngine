@@ -139,6 +139,7 @@ thread_local! {
     static DEVICE: Cell<Option<&'static dyn Device>> = const { Cell::new(None) };
     static PASSES: RefCell<Vec<(TargetRef, (u32, u32))>> = const { RefCell::new(Vec::new()) };
     static WINDOW_SIZE: Cell<(u32, u32)> = const { Cell::new((1, 1)) };
+    static VIEWPORT: Cell<Rect> = const { Cell::new(Rect { x: 0, y: 0, width: 1, height: 1 }) };
     static PIPELINES: RefCell<HashMap<(RawId, PipelineDesc), RawId>> = RefCell::new(HashMap::new());
     static SAMPLERS: RefCell<HashMap<SamplerDesc, RawId>> = RefCell::new(HashMap::new());
 }
@@ -677,6 +678,7 @@ impl Drop for Queries {
 /// ends.
 pub fn begin_pass(target: TargetRef, size: (u32, u32), color: Load, depth: Load) {
     PASSES.with(|p| p.borrow_mut().push((target, size)));
+    VIEWPORT.with(|v| v.set(Rect::sized(size.0, size.1)));
     device().begin_pass(target, size, color, depth);
 }
 
@@ -694,6 +696,7 @@ pub fn end_pass() {
     });
     device().end_pass();
     if let Some((target, size)) = resume {
+        VIEWPORT.with(|v| v.set(Rect::sized(size.0, size.1)));
         device().resume_pass(target, size);
     }
 }
@@ -709,7 +712,13 @@ pub fn current_target_size() -> Option<(u32, u32)> {
 }
 
 pub fn set_viewport(rect: Rect) {
+    VIEWPORT.with(|v| v.set(rect));
     device().set_viewport(rect);
+}
+
+/// The viewport set last (by `set_viewport`, or a pass beginning).
+pub fn viewport() -> Rect {
+    VIEWPORT.with(|v| v.get())
 }
 
 pub fn set_scissor(rect: Option<Rect>) {
@@ -726,6 +735,12 @@ pub fn set_stencil_reference(reference: u8) {
 
 pub fn bind_texture(slot: u32, texture: &Texture, sampler: &SamplerDesc) {
     device().bind_texture(slot, texture.raw, texture.desc.kind, self::sampler(sampler));
+}
+
+/// Bind a texture known only by its raw id (one made outside `gfx`'s
+/// owners, during the move onto it).
+pub fn bind_raw_texture(slot: u32, texture: RawId, kind: TextureKind, sampler: &SamplerDesc) {
+    device().bind_texture(slot, texture, kind, self::sampler(sampler));
 }
 
 pub fn unbind_texture(slot: u32, kind: TextureKind) {

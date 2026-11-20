@@ -8,10 +8,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use gl::types::{GLint, GLuint};
-
 use super::shader::Shader;
-
+use crate::core::gfx;
 static AMBIENT_OCCLUSION: AtomicBool = AtomicBool::new(false);
 static SUN_SHADOWS: AtomicBool = AtomicBool::new(false);
 
@@ -65,77 +63,56 @@ void main() {
 ";
 
 thread_local! {
-    static OVERLAY: OnceCell<(Shader, GLuint)> = const { OnceCell::new() };
+    static OVERLAY: OnceCell<Shader> = const { OnceCell::new() };
 }
 
 fn with_overlay(draw: impl FnOnce(&Shader)) {
     OVERLAY.with(|cell| {
-        let (shader, vao) = cell.get_or_init(|| {
-            let mut vao = 0;
-            unsafe { gl::GenVertexArrays(1, &mut vao) };
-            (Shader::new(VERTEX, FRAGMENT), vao)
-        });
-        unsafe {
-            gl::Disable(gl::DEPTH_TEST);
-            gl::Disable(gl::BLEND);
-            gl::Disable(gl::CULL_FACE);
-            gl::BindVertexArray(*vao);
-        }
-        shader.bind();
+        let shader = cell.get_or_init(|| Shader::new(VERTEX, FRAGMENT));
+        let desc = gfx::PipelineDesc { depth: gfx::DepthState::OFF, ..Default::default() };
+        gfx::set_pipeline(shader.pipeline(&desc));
         // Samplers of different types on one unit make every draw fail
         // (GL 4.6 §7.10), even the one not sampled: each its own unit.
         shader.set_uniform_1i("image", 0);
         shader.set_uniform_1i("layers", 1);
         draw(shader);
-        unsafe {
-            gl::BindVertexArray(0);
-            gl::ActiveTexture(gl::TEXTURE0);
-        }
     });
 }
 
 /// Draw `texture`'s red channel (the ambient occlusion: 1 open, 0 shut
 /// in) as grey over the whole viewport set.
-pub fn draw_ambient_occlusion(texture: GLuint) {
-    with_overlay(|shader| unsafe {
+pub fn draw_ambient_occlusion(texture: gfx::RawId) {
+    with_overlay(|shader| {
         shader.set_uniform_1i("mode", 0);
-        gl::ActiveTexture(gl::TEXTURE0);
-        gl::BindTexture(gl::TEXTURE_2D, texture);
-        gl::DrawArrays(gl::TRIANGLES, 0, 3);
-        gl::BindTexture(gl::TEXTURE_2D, 0);
+        gfx::bind_raw_texture(0, texture, gfx::TextureKind::D2, &gfx::SamplerDesc::LINEAR_CLAMP);
+        gfx::draw(0, 3);
+        gfx::unbind_texture(0, gfx::TextureKind::D2);
     });
 }
 
 /// Draw the `cascades` layers of the depth array `texture` (the sun's
 /// shadow map, sampled with comparison elsewhere) side by side along the
 /// bottom of the viewport set, nearest first.
-pub fn draw_shadow_cascades(texture: GLuint, cascades: usize) {
+pub fn draw_shadow_cascades(texture: &super::texture::Texture, cascades: usize) {
     if cascades == 0 {
         return;
     }
-    let mut viewport = [0 as GLint; 4];
-    unsafe { gl::GetIntegerv(gl::VIEWPORT, viewport.as_mut_ptr()) };
-    let [x, y, w, h] = viewport;
+    let viewport = gfx::viewport();
+    let (x, y, w, h) = (viewport.x, viewport.y, viewport.width as i32, viewport.height as i32);
     let gap = 8;
-    let side = ((w - gap * (cascades as GLint + 1)) / cascades as GLint).min(h / 3).max(16);
-    with_overlay(|shader| unsafe {
+    let side = ((w - gap * (cascades as i32 + 1)) / cascades as i32).min(h / 3).max(16);
+    with_overlay(|shader| {
         shader.set_uniform_1i("mode", 1);
-        gl::ActiveTexture(gl::TEXTURE1);
-        gl::BindTexture(gl::TEXTURE_2D_ARRAY, texture);
         // The depths themselves, not compared.
-        gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_COMPARE_MODE, gl::NONE as GLint);
+        let mut sampler = texture.sampler();
+        sampler.compare = None;
+        texture.bind_to_with(1, &sampler);
         for cascade in 0..cascades {
-            gl::Viewport(x + gap + cascade as GLint * (side + gap), y + gap, side, side);
+            gfx::set_viewport(gfx::Rect::new(x + gap + cascade as i32 * (side + gap), y + gap, side as u32, side as u32));
             shader.set_uniform_1f("layer", cascade as f32);
-            gl::DrawArrays(gl::TRIANGLES, 0, 3);
+            gfx::draw(0, 3);
         }
-        gl::TexParameteri(
-            gl::TEXTURE_2D_ARRAY,
-            gl::TEXTURE_COMPARE_MODE,
-            gl::COMPARE_REF_TO_TEXTURE as GLint,
-        );
-        gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
-        gl::Viewport(x, y, w, h);
+        gfx::unbind_texture(1, gfx::TextureKind::D2Array);
+        gfx::set_viewport(viewport);
     });
 }
-

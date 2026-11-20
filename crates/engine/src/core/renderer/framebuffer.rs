@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use gl::types::{GLenum, GLuint};
 
 use super::texture::Texture;
+use crate::core::gfx;
 
 /// `BOUND_DRAW` before anything is known: the next `bound_draw` asks GL.
 const UNKNOWN: u32 = u32::MAX;
@@ -53,71 +54,43 @@ pub fn forget_bound() {
     BOUND_DRAW.store(UNKNOWN, Ordering::Relaxed);
 }
 
+/// A render target of up to one colour and one depth texture.
 pub struct FrameBuffer {
-    id: u32,
     width: u32,
     height: u32,
     depth_texture: Option<Texture>,
     color_texture: Option<Texture>,
+    /// Made again when an attachment changes.
+    target: Option<gfx::RenderTarget>,
 }
 
 impl FrameBuffer {
     pub fn new(width: u32, height: u32) -> Self {
-        let mut id = 0;
-        unsafe {
-            gl::GenFramebuffers(1, &mut id);
-            bind(gl::FRAMEBUFFER, id);
-            gl::DrawBuffer(gl::COLOR_ATTACHMENT0);
-        }
-        Self {
-            id,
-            width,
-            height,
-            depth_texture: None,
-            color_texture: None,
-        }
+        Self { width, height, depth_texture: None, color_texture: None, target: None }
+    }
+
+    fn rebuild(&mut self) {
+        let attach = |t: &Option<Texture>| t.as_ref().and_then(|t| t.gfx().map(|g| g.attachment(0, None)));
+        let colors: Vec<gfx::Attachment> = attach(&self.color_texture).into_iter().collect();
+        self.target = Some(gfx::RenderTarget::new(&colors, attach(&self.depth_texture)));
     }
 
     pub fn append_depth_texture(&mut self, texture: Texture) {
-        self.bind();
-        unsafe {
-            gl::FramebufferTexture2D(
-                gl::FRAMEBUFFER,
-                gl::DEPTH_ATTACHMENT,
-                gl::TEXTURE_2D,
-                texture.id,
-                0,
-            );
-        }
         self.depth_texture = Some(texture);
-        FrameBuffer::unbind();
+        self.rebuild();
     }
 
     pub fn append_color_texture(&mut self, texture: Texture) {
-        self.bind();
-        unsafe {
-            gl::FramebufferTexture2D(
-                gl::FRAMEBUFFER,
-                gl::COLOR_ATTACHMENT0,
-                gl::TEXTURE_2D,
-                texture.id,
-                0,
-            );
-            gl::DrawBuffer(gl::COLOR_ATTACHMENT0);
-            gl::ReadBuffer(gl::COLOR_ATTACHMENT0);
-        }
         self.color_texture = Some(texture);
-        FrameBuffer::unbind();
+        self.rebuild();
     }
 
+    /// Draw into it from now on (OpenGL code not drawing through passes
+    /// yet), with the viewport over all of it.
     pub fn bind(&self) {
         unsafe {
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            bind(gl::FRAMEBUFFER, self.id);
+            bind(gl::FRAMEBUFFER, self.get_id());
             gl::Viewport(0, 0, self.width as i32, self.height as i32);
-        }
-        if let Some(texture) = &self.depth_texture {
-            texture.bind();
         }
     }
 
@@ -127,14 +100,18 @@ impl FrameBuffer {
         }
     }
 
-    pub fn depth_only(&self) {
-        self.bind();
-        unsafe {
-            gl::DrawBuffer(gl::NONE);
-            gl::ReadBuffer(gl::NONE);
+    /// A pass drawing into it.
+    pub fn begin_pass(&self, color: gfx::Load, depth: gfx::Load) {
+        if let Some(target) = &self.target {
+            gfx::begin_pass(target.reference(), (self.width, self.height), color, depth);
         }
-        FrameBuffer::unbind();
     }
+
+    pub fn reference(&self) -> Option<gfx::TargetRef> {
+        self.target.as_ref().map(gfx::RenderTarget::reference)
+    }
+
+    pub fn depth_only(&self) {}
 
     pub fn get_depth_texture(&self) -> Option<&Texture> {
         self.depth_texture.as_ref()
@@ -145,15 +122,11 @@ impl FrameBuffer {
     }
 
     pub fn get_id(&self) -> u32 {
-        self.id
+        self.target.as_ref().map_or(0, |t| t.raw() as u32)
     }
-}
 
-impl Drop for FrameBuffer {
-    fn drop(&mut self) {
-        unsafe {
-            delete(&[self.id]);
-        }
+    pub fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
     }
 }
 
@@ -165,11 +138,11 @@ impl ShadowFrameBuffer {
         let texture = Texture::new();
         texture.set_as_depth_texture(width, height);
         fbo.append_depth_texture(texture);
-        
+
         let color_texture = Texture::new();
         color_texture.set_as_color_texture(width, height);
         fbo.append_color_texture(color_texture);
-        
+
         Self(fbo)
     }
 
@@ -193,51 +166,44 @@ impl ShadowFrameBuffer {
 /// The sun's cascaded shadow map: one depth layer per cascade, drawn one at
 /// a time.
 pub struct CascadedShadowMap {
-    id: u32,
     size: u32,
     texture: Texture,
+    /// A render target per layer.
+    layers: Vec<gfx::RenderTarget>,
 }
 
 impl CascadedShadowMap {
     pub fn new(size: u32, cascades: u32) -> Self {
         let mut texture = Texture::new();
         texture.set_as_depth_array(size, size, cascades);
-        let mut id = 0;
-        unsafe {
-            gl::GenFramebuffers(1, &mut id);
-            bind(gl::FRAMEBUFFER, id);
-            gl::DrawBuffer(gl::NONE);
-            gl::ReadBuffer(gl::NONE);
-            bind(gl::FRAMEBUFFER, 0);
+        let layers = (0..cascades)
+            .map(|i| {
+                let depth = texture.gfx().map(|t| t.attachment(0, Some(i)));
+                gfx::RenderTarget::new(&[], depth)
+            })
+            .collect();
+        Self { size, texture, layers }
+    }
+
+    /// A pass drawing into the depth layer of `cascade`, cleared.
+    pub fn begin_cascade(&self, cascade: u32) {
+        if let Some(target) = self.layers.get(cascade as usize) {
+            gfx::begin_pass(target.reference(), (self.size, self.size), gfx::Load::Keep, gfx::Load::Depth(1.0));
         }
-        Self { id, size, texture }
     }
 
     /// Draw into the depth layer of `cascade` from now on.
     pub fn bind_cascade(&self, cascade: u32) {
-        unsafe {
-            bind(gl::FRAMEBUFFER, self.id);
-            gl::FramebufferTextureLayer(
-                gl::FRAMEBUFFER,
-                gl::DEPTH_ATTACHMENT,
-                self.texture.id,
-                0,
-                cascade as i32,
-            );
-            gl::Viewport(0, 0, self.size as i32, self.size as i32);
+        if let Some(target) = self.layers.get(cascade as usize) {
+            unsafe {
+                bind(gl::FRAMEBUFFER, target.raw() as GLuint);
+                gl::Viewport(0, 0, self.size as i32, self.size as i32);
+            }
         }
     }
 
     pub fn texture(&self) -> &Texture {
         &self.texture
-    }
-}
-
-impl Drop for CascadedShadowMap {
-    fn drop(&mut self) {
-        unsafe {
-            delete(&[self.id]);
-        }
     }
 }
 
@@ -275,7 +241,7 @@ mod tests {
     fn framebuffers_are_bound_only_through_bind() {
         // The impostor bake binds back what it found before it returns;
         // the window's test only deletes with GL disconnected.
-        let allowed = ["framebuffer.rs", "impostor.rs", "window.rs"];
+        let allowed = ["framebuffer.rs", "impostor.rs", "window.rs", "gl_backend.rs"];
         let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let mut stack = vec![crates];
         let mut offenders = Vec::new();
