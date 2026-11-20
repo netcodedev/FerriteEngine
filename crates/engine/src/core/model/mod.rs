@@ -64,6 +64,8 @@ pub struct Model {
     /// to about nine passes with the same pose; emptied when the pose,
     /// the meshes or the hidden bones change.
     bone_cache: [RefCell<HashMap<usize, Vec<Matrix4<f32>>>>; 2],
+    /// Changes with `bone_cache` (see `Model::pose_revision`).
+    pose_revision: u64,
     /// Box around every mesh in model space, for frustum culling. `None`
     /// for skinned models, whose bones can move vertices anywhere, and
     /// before `init`.

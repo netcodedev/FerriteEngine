@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 use russimp_ng::{
@@ -25,6 +28,12 @@ use super::{
     },
     Model, ModelBuilder, ModelMesh,
 };
+
+/// A pose revision no model had yet (see `Model::pose_revision`).
+fn next_pose_revision() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Length of `boneTransforms` in `vertex.glsl` (its `MAX_BONES`): bones
 /// with a higher index are not uploaded.
@@ -94,6 +103,7 @@ impl Model {
             hidden_bones: Vec::new(),
             tint: None,
             bone_cache: Default::default(),
+            pose_revision: next_pose_revision(),
             cull_bounds: None,
         })
     }
@@ -491,6 +501,15 @@ impl Model {
         for cache in &mut self.bone_cache {
             cache.get_mut().clear();
         }
+        self.pose_revision = next_pose_revision();
+    }
+
+    /// A number that changes whenever the bones are posed (or the meshes
+    /// loaded, or the hidden bones set), and that no other model or pose
+    /// has: for what is worked out from the pose, to be kept until it
+    /// changes. The model's position and scale are not part of it.
+    pub fn pose_revision(&self) -> u64 {
+        self.pose_revision
     }
 
     /// Draw the model as a see-through, lit silhouette of `rgba` (alpha
