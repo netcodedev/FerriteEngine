@@ -603,7 +603,7 @@ impl State {
 
     /// The Vulkan sampler for `desc`, made once.
     pub(super) fn sampler_for(&mut self, desc: &SamplerDesc) -> vk::Sampler {
-        if let Some(&s) = self.sampler_variants.get(desc) {
+        if let Some(&(_, s)) = self.sampler_variants.iter().find(|(d, _)| d == desc) {
             return s;
         }
         let max_anisotropy = self.gpu.props.limits.max_sampler_anisotropy;
@@ -633,7 +633,7 @@ impl State {
             .max_lod(if desc.mip.is_some() { vk::LOD_CLAMP_NONE } else { 0.25 })
             .border_color(border);
         let sampler = unsafe { self.gpu.device.create_sampler(&info, None) }.unwrap_or_default();
-        self.sampler_variants.insert(*desc, sampler);
+        self.sampler_variants.push((*desc, sampler));
         sampler
     }
 
@@ -811,6 +811,9 @@ impl State {
             Raw::Program(id) => {
                 if let Some(p) = self.programs.remove(&id) {
                     self.retire(Retired::Program(p.vertex, p.fragment, p.set_layout, p.layout));
+                }
+                if self.last_vk_pipeline.is_some_and(|(k, _)| k.program == id) {
+                    self.last_vk_pipeline = None;
                 }
                 let keys: Vec<PipelineKey> = self.vk_pipelines.keys().filter(|k| k.program == id).cloned().collect();
                 for k in keys {

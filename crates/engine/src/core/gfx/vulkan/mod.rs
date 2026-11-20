@@ -205,7 +205,10 @@ struct State {
     buffers: FxHashMap<RawId, Buf>,
     textures: FxHashMap<RawId, Tex>,
     samplers: FxHashMap<RawId, (SamplerDesc, vk::Sampler)>,
-    sampler_variants: FxHashMap<SamplerDesc, vk::Sampler>,
+    sampler_variants: Vec<(SamplerDesc, vk::Sampler)>,
+    /// The pipeline the last draw used, by key: consecutive draws mostly
+    /// share it, which spares hashing the key.
+    last_vk_pipeline: Option<(PipelineKey, vk::Pipeline)>,
     targets: FxHashMap<RawId, (Vec<Attachment>, Option<Attachment>)>,
     programs: FxHashMap<RawId, Prog>,
     pipelines: FxHashMap<RawId, PipeEntry>,
@@ -507,7 +510,8 @@ pub(super) fn create(
         buffers: FxHashMap::default(),
         textures: FxHashMap::default(),
         samplers: FxHashMap::default(),
-        sampler_variants: FxHashMap::default(),
+        sampler_variants: Vec::new(),
+        last_vk_pipeline: None,
         targets: FxHashMap::default(),
         programs: FxHashMap::default(),
         pipelines: FxHashMap::default(),

@@ -337,17 +337,22 @@ impl Default for VertexLayout {
     }
 }
 
-/// The interned copy of `attributes`.
+/// The interned copy of `attributes` (per thread: no lock on the draw
+/// path; a thread interns a list once).
 fn intern(attributes: &[VertexAttribute]) -> &'static [VertexAttribute] {
-    use std::sync::Mutex;
-    static INTERNED: Mutex<Vec<&'static [VertexAttribute]>> = Mutex::new(Vec::new());
-    let mut interned = INTERNED.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(found) = interned.iter().find(|a| **a == attributes) {
-        return found;
+    use std::cell::RefCell;
+    thread_local! {
+        static INTERNED: RefCell<super::fx::FxHashMap<Vec<VertexAttribute>, &'static [VertexAttribute]>> =
+            RefCell::new(Default::default());
     }
-    let leaked: &'static [VertexAttribute] = Box::leak(attributes.to_vec().into_boxed_slice());
-    interned.push(leaked);
-    leaked
+    INTERNED.with(|interned| {
+        if let Some(&found) = interned.borrow().get(attributes) {
+            return found;
+        }
+        let leaked: &'static [VertexAttribute] = Box::leak(attributes.to_vec().into_boxed_slice());
+        interned.borrow_mut().insert(attributes.to_vec(), leaked);
+        leaked
+    })
 }
 
 impl VertexLayout {

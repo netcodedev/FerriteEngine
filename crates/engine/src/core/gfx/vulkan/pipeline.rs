@@ -250,7 +250,13 @@ impl State {
     pub(super) fn vk_pipeline(&mut self, program: RawId, desc: &PipelineDesc, line: bool) -> Option<vk::Pipeline> {
         let (colors, depth, stencil, samples) = self.rendering_key;
         let key = PipelineKey { program, desc: *desc, line, colors, depth, stencil, samples };
+        if let Some((last, p)) = self.last_vk_pipeline {
+            if last == key {
+                return Some(p);
+            }
+        }
         if let Some(&p) = self.vk_pipelines.get(&key) {
+            self.last_vk_pipeline = Some((key, p));
             return Some(p);
         }
         let missing = self.missing_inputs(program, &desc.vertex_layouts);
@@ -410,6 +416,7 @@ impl State {
         match result {
             Ok(p) => {
                 self.vk_pipelines.insert(key, p[0]);
+                self.last_vk_pipeline = Some((key, p[0]));
                 Some(p[0])
             }
             Err((_, e)) => {

@@ -32,7 +32,6 @@ use std::{
 };
 
 pub use types::*;
-use fx::FxHashMap;
 
 /// A backend's name for one of its objects. 0 is never a live object.
 pub type RawId = u64;
@@ -165,8 +164,8 @@ thread_local! {
     static WINDOW_SIZE: Cell<(u32, u32)> = const { Cell::new((1, 1)) };
     static WINDOW_CLEAR: Cell<[f32; 4]> = const { Cell::new([0.0, 0.0, 0.0, 1.0]) };
     static VIEWPORT: Cell<Rect> = const { Cell::new(Rect { x: 0, y: 0, width: 1, height: 1 }) };
-    static PIPELINES: RefCell<FxHashMap<(RawId, PipelineDesc), RawId>> = RefCell::new(FxHashMap::default());
-    static SAMPLERS: RefCell<FxHashMap<SamplerDesc, RawId>> = RefCell::new(FxHashMap::default());
+    /// The samplers made so far: few, so a list is quicker than hashing.
+    static SAMPLERS: RefCell<Vec<(SamplerDesc, RawId)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// GPU objects dropped since the last frame, possibly on other threads.
@@ -555,7 +554,12 @@ impl Drop for Texture {
 /// The sampler for `desc`, made once and kept.
 pub fn sampler(desc: &SamplerDesc) -> RawId {
     SAMPLERS.with(|s| {
-        *s.borrow_mut().entry(*desc).or_insert_with(|| device().create_sampler(desc))
+        if let Some(&(_, raw)) = s.borrow().iter().find(|(d, _)| d == desc) {
+            return raw;
+        }
+        let raw = device().create_sampler(desc);
+        s.borrow_mut().push((*desc, raw));
+        raw
     })
 }
 
@@ -603,6 +607,9 @@ impl Drop for RenderTarget {
 /// A linked program (vertex + fragment stage).
 pub struct Program {
     raw: RawId,
+    /// The pipelines made of it so far: a program has few, so comparing
+    /// is quicker than hashing.
+    pipelines: RefCell<Vec<(PipelineDesc, RawId)>>,
 }
 
 impl Program {
@@ -616,7 +623,7 @@ impl Program {
     pub fn labelled(vertex: &str, fragment: &str, label: &str) -> Option<Self> {
         dump_program(vertex, fragment, label);
         match device().create_program(vertex, fragment, label) {
-            Ok(raw) => Some(Program { raw }),
+            Ok(raw) => Some(Program { raw, pipelines: RefCell::new(Vec::new()) }),
             Err(message) => {
                 report_shader_error(&message);
                 None
@@ -626,7 +633,7 @@ impl Program {
 
     /// A program that draws nothing (the null device's).
     pub fn empty() -> Self {
-        Program { raw: 0 }
+        Program { raw: 0, pipelines: RefCell::new(Vec::new()) }
     }
 
     pub fn raw(&self) -> RawId {
@@ -638,15 +645,11 @@ impl Program {
         if self.raw == 0 {
             return Pipeline { raw: 0, program: 0 };
         }
-        let key = (self.raw, desc.clone());
-        let raw = PIPELINES.with(|p| {
-            if let Some(&raw) = p.borrow().get(&key) {
-                return raw;
-            }
-            let raw = device().create_pipeline(self.raw, desc);
-            p.borrow_mut().insert(key, raw);
-            raw
-        });
+        if let Some(&(_, raw)) = self.pipelines.borrow().iter().find(|(d, _)| d == desc) {
+            return Pipeline { raw, program: self.raw };
+        }
+        let raw = device().create_pipeline(self.raw, desc);
+        self.pipelines.borrow_mut().push((*desc, raw));
         Pipeline { raw, program: self.raw }
     }
 }
@@ -656,18 +659,10 @@ impl Drop for Program {
         if self.raw == 0 {
             return;
         }
-        let raw = self.raw;
-        PIPELINES.with(|p| {
-            p.borrow_mut().retain(|(program, _), pipeline| {
-                if *program == raw {
-                    release(Raw::Pipeline(*pipeline));
-                    false
-                } else {
-                    true
-                }
-            })
-        });
-        release(Raw::Program(raw));
+        for (_, pipeline) in self.pipelines.borrow_mut().drain(..) {
+            release(Raw::Pipeline(pipeline));
+        }
+        release(Raw::Program(self.raw));
     }
 }
 
