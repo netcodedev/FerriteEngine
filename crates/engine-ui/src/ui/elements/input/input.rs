@@ -15,7 +15,7 @@ use glfw::{
     WindowEvent::{self, Char, CursorPos, MouseButton},
 };
 
-use crate::ui::{element_handle::UIElementHandle, focus, theme, UIElement};
+use crate::ui::{element_handle::UIElementHandle, elements::helpers::ellipsized, focus, theme, UIElement};
 
 use super::{Input, TextEdit};
 
@@ -23,7 +23,6 @@ use super::{Input, TextEdit};
 const PAD_X: f32 = 8.0;
 /// Clicks closer together than this count as double/triple clicks.
 const MULTI_CLICK_SECONDS: f32 = 0.35;
-const ELLIPSIS: char = '\u{2026}';
 
 impl<T: Clone + ToString + FromStr> Input<T> {
     pub fn new(
@@ -77,6 +76,7 @@ impl<T: Clone + ToString + FromStr> Input<T> {
                 .border_radius_uniform(2.0)
                 .build(),
             data_source,
+            display_cache: None,
         }
     }
 
@@ -175,22 +175,21 @@ impl<T: Clone + ToString + FromStr> Input<T> {
     }
 
     /// The text as shown without focus: cut with "…" if it does not fit.
-    fn display_text(&self, full: &str) -> String {
+    /// Kept until the text or the width changes.
+    fn display_text(&mut self, full: String) -> String {
         let visible = (self.region.size.width - PAD_X * 2.0).max(0.0);
-        if self.text.measure_str(full) <= visible {
-            return full.to_owned();
-        }
-        let chars: Vec<char> = full.chars().collect();
-        for keep in (0..chars.len()).rev() {
-            let candidate: String = chars[..keep]
-                .iter()
-                .chain(std::iter::once(&ELLIPSIS))
-                .collect();
-            if self.text.measure_str(&candidate) <= visible {
-                return candidate;
+        if let Some((text, width, shown)) = &self.display_cache {
+            if *text == full && *width == visible {
+                return shown.clone();
             }
         }
-        ELLIPSIS.to_string()
+        let shown = if self.text.measure_str(&full) <= visible {
+            full.clone()
+        } else {
+            ellipsized(&full, visible, |s| self.text.measure_str(s))
+        };
+        self.display_cache = Some((full, visible, shown.clone()));
+        shown
     }
 
     fn handle_key(&mut self, window: &mut glfw::Window, key: Key, mods: Modifiers) -> bool {
@@ -255,7 +254,7 @@ impl<T: Clone + ToString + FromStr> UIElement for Input<T> {
                 self.edit.set_text(&full);
                 self.edit.set_cursor(0, false);
             }
-            self.display_text(&full)
+            self.display_text(full)
         };
         self.text.set_content(&shown);
         let text_y = theme::center_y(&self.text, self.region.size.height);
@@ -499,5 +498,32 @@ mod tests {
         assert_eq!(char_index_at(text, -5.0, mono), 0);
         assert_eq!(char_index_at(text, 500.0, mono), 11);
         assert_eq!(char_index_at("aüb", 15.0, mono), 1);
+    }
+
+    #[test]
+    fn shown_text_follows_the_source_and_the_width() {
+        use super::*;
+        ferrite::core::headless::enable();
+        let mut scene = Scene::new();
+        let long: String = "a/long/path/".repeat(12);
+        let source = DataSource::new(long.clone());
+        let mut input = Input::new(Position::default(), Size::new(140.0, 24.0), long.clone(), Some(source.clone()));
+        input.update(&mut scene);
+        let cut = input.text.content.clone();
+        assert!(cut.ends_with('\u{2026}') && cut.len() < long.len(), "{cut}");
+        input.update(&mut scene);
+        assert_eq!(input.text.content, cut);
+
+        source.write("short".into());
+        input.update(&mut scene);
+        assert_eq!(input.text.content, "short");
+
+        source.write(long.clone());
+        input.update(&mut scene);
+        assert_eq!(input.text.content, cut);
+        // Wider: more of it fits.
+        input.set_size(Size::new(400.0, 24.0));
+        input.update(&mut scene);
+        assert!(input.text.content.len() > cut.len());
     }
 }

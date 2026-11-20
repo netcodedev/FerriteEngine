@@ -43,7 +43,7 @@ impl UIElement for AssetPreview {
                 (wanted_key, self.shown_for),
                 (Some((a, _)), Some((b, _))) if a == b
             );
-            let since = *self.pending_since.get_or_insert_with(Instant::now);
+            let since = settled_since(&mut self.pending_since, wanted_key, Instant::now());
             if !same_asset || since.elapsed().as_secs_f32() >= RELOAD_DELAY {
                 self.load();
                 self.shown_for = wanted_key;

@@ -50,6 +50,8 @@ pub struct AssetBrowser {
     rows: HashMap<u64, Row>,
     /// Database change counter the tree was last built for.
     built_for: Option<u64>,
+    /// Selection and database state the details text was made for.
+    details_for: Option<(u64, u64)>,
     last_selection: u64,
     /// Row and time of the last press, to tell a double click.
     last_press: Option<(u64, Instant)>,
@@ -127,6 +129,7 @@ impl AssetBrowser {
             selection,
             rows: HashMap::new(),
             built_for: None,
+            details_for: None,
             last_selection: NO_SELECTION,
             last_press: None,
         }
@@ -383,7 +386,12 @@ impl UIElement for AssetBrowser {
                 self.built_for = Some(changes);
                 rebuilt = true;
             }
-            self.details.set_text(self.details_text(&database));
+            // Made again only when the selection or the database changes.
+            let details_for = (self.selection.read(), changes);
+            if self.details_for != Some(details_for) {
+                self.details.set_text(self.details_text(&database));
+                self.details_for = Some(details_for);
+            }
         }
 
         let mut selection = self.selection.read();

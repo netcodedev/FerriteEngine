@@ -97,6 +97,39 @@ pub(super) fn render_thick_lines(
     }
 }
 
+/// Markers drawn 1 px wide, gathered while markers in a row share a colour
+/// and drawn in one go: one upload and draw instead of one per marker.
+/// Markers of another colour or drawn thicker `flush` it first, so
+/// everything is drawn in the same order as marker by marker.
+pub(super) struct LineBatch {
+    color: Vector3<f32>,
+    lines: Vec<Line>,
+}
+
+impl LineBatch {
+    pub(super) fn new() -> Self {
+        Self {
+            color: Vector3::new(0.0, 0.0, 0.0),
+            lines: Vec::new(),
+        }
+    }
+
+    pub(super) fn add(&mut self, vp: &Matrix4<f32>, rect: Rect, lines: Vec<Line>, color: Vector3<f32>) {
+        if color != self.color {
+            self.flush(vp, rect);
+            self.color = color;
+        }
+        self.lines.extend(lines);
+    }
+
+    pub(super) fn flush(&mut self, vp: &Matrix4<f32>, rect: Rect) {
+        if !self.lines.is_empty() {
+            render_thick_lines(vp, &self.lines, self.color, rect, 1);
+            self.lines.clear();
+        }
+    }
+}
+
 pub(super) fn arrow_lines(center: Point3<f32>, axis: Vector3<f32>, size: f32) -> Vec<Line> {
     let tip = center + axis * size;
     let (u, v) = perpendicular_basis(axis);
