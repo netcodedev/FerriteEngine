@@ -191,7 +191,7 @@ them all with `glslc` for Vulkan 1.3. Hand-designed per-frame/per-pass
 blocks and push constants remain an optimisation for later.
 
 ### D. Vulkan backend
-Instance/device (with validation layers in debug builds), swapchain,
+Instance/device (validation layers with `FERRITE_VK_VALIDATION=1`), swapchain,
 frames in flight, `gpu-allocator`, the `gfx` resource and encoder
 implementation, pipeline cache, timestamps, readback, present with the
 flip. Then pass by pass to parity with GL, comparing screenshots.
@@ -210,7 +210,7 @@ GL stays the default and is fallen back to when Vulkan cannot start):
 - GLSL varyings are linked by name in the SPIR-V (shaderc numbers each
   stage on its own); `gl_Position` is invariant; multisampling uses GL's
   sample positions (`VK_EXT_sample_locations`).
-- `FERRITE_VK_VALIDATION=1` (default in debug builds) turns the
+- `FERRITE_VK_VALIDATION=1` (off by default: it costs ~4× the CPU time) turns the
   validation layer on; its messages go to the log.
 - Left over against GL: alpha-tested foliage covers slightly fewer pixels
   (isolated pixels across tree crowns), cause not found yet.

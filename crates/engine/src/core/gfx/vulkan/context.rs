@@ -32,11 +32,10 @@ pub struct Gpu {
     pub driver: String,
 }
 
+/// The validation layer only when asked for (`FERRITE_VK_VALIDATION=1`):
+/// it costs the CPU many times the frame (26 ms instead of 7 here).
 fn validation_requested() -> bool {
-    match std::env::var("FERRITE_VK_VALIDATION") {
-        Ok(v) => v == "1" || v == "true",
-        Err(_) => cfg!(debug_assertions),
-    }
+    std::env::var("FERRITE_VK_VALIDATION").is_ok_and(|v| v == "1" || v == "true")
 }
 
 /// Messages seen per id, so a message repeated every frame is logged a
