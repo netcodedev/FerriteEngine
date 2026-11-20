@@ -111,6 +111,11 @@ pub trait Device {
     /// RGBA8 rows of `rect` of `target`'s first colour attachment, first row first.
     fn read_pixels(&self, target: TargetRef, rect: Rect) -> Vec<u8>;
 
+    /// Samples per pixel of the window's colour (its multisampling).
+    fn window_samples(&self) -> u32 {
+        1
+    }
+
     /// The frame starts (after the last one was presented).
     fn begin_frame(&self);
     /// The frame's commands are done: present the window.
@@ -139,6 +144,7 @@ thread_local! {
     static DEVICE: Cell<Option<&'static dyn Device>> = const { Cell::new(None) };
     static PASSES: RefCell<Vec<(TargetRef, (u32, u32))>> = const { RefCell::new(Vec::new()) };
     static WINDOW_SIZE: Cell<(u32, u32)> = const { Cell::new((1, 1)) };
+    static WINDOW_CLEAR: Cell<[f32; 4]> = const { Cell::new([0.0, 0.0, 0.0, 1.0]) };
     static VIEWPORT: Cell<Rect> = const { Cell::new(Rect { x: 0, y: 0, width: 1, height: 1 }) };
     static PIPELINES: RefCell<HashMap<(RawId, PipelineDesc), RawId>> = RefCell::new(HashMap::new());
     static SAMPLERS: RefCell<HashMap<SamplerDesc, RawId>> = RefCell::new(HashMap::new());
@@ -306,6 +312,16 @@ pub fn set_window_size(width: u32, height: u32) {
 
 pub fn window_size() -> (u32, u32) {
     WINDOW_SIZE.with(|s| s.get())
+}
+
+/// Samples per pixel of the window (1 without multisampling).
+pub fn window_samples() -> u32 {
+    device().window_samples().max(1)
+}
+
+/// The colour the window was cleared to last (by `begin_window_pass`).
+pub fn window_clear_color() -> [f32; 4] {
+    WINDOW_CLEAR.with(|c| c.get())
 }
 
 pub fn begin_frame() {
@@ -683,6 +699,9 @@ pub fn begin_pass(target: TargetRef, size: (u32, u32), color: Load, depth: Load)
 }
 
 pub fn begin_window_pass(color: Load, depth: Load) {
+    if let Load::Color(c) = color {
+        WINDOW_CLEAR.with(|w| w.set(c));
+    }
     begin_pass(TargetRef::Window, window_size(), color, depth);
 }
 
@@ -757,6 +776,10 @@ pub fn bind_uniform_range(slot: u32, buffer: &Buffer, offset: usize, size: usize
 
 pub fn bind_storage_buffer(slot: u32, buffer: &Buffer) {
     device().bind_storage_buffer(slot, buffer.raw, 0, buffer.size);
+}
+
+pub fn bind_storage_range(slot: u32, buffer: &Buffer, offset: usize, size: usize) {
+    device().bind_storage_buffer(slot, buffer.raw, offset, size);
 }
 
 pub fn set_vertex_buffer(slot: u32, buffer: &Buffer, offset: usize, stride: u32) {
