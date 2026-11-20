@@ -13,7 +13,7 @@ use crate::core::{
     },
     physics::{collider_debug, physics_engine::PhysicsEngine, rigidbody::RigidBody},
     renderer::{
-        framebuffer::{self, CascadedShadowMap, FrameBuffer, ShadowFrameBuffer},
+        framebuffer::{CascadedShadowMap, ShadowFrameBuffer},
         line::{Line, LineRenderer},
         plane::PlaneRenderer,
         text::TextRenderer,
@@ -431,10 +431,10 @@ impl Scene {
     /// GL_ALWAYS) instead of blending colour, so the depth texture shows
     /// exactly where the water surface sits in clip-space.
     pub fn is_water_depth_capture(&self) -> bool {
-        let bound = framebuffer::bound_draw();
+        let current = gfx::current_target();
         self.water_debug_fbo
             .as_ref()
-            .map_or(false, |fbo| fbo.get_id() == bound)
+            .is_some_and(|fbo| current.is_some() && fbo.0.reference() == current)
     }
 
     pub fn update(&mut self, delta_time: f64) {
@@ -652,7 +652,6 @@ impl Scene {
                 maps.bind();
             }
             if depth_prepass {
-                unsafe { gl::DepthFunc(gl::LEQUAL) };
                 gfx::set_pass_overrides(gfx::PassOverrides { depth_less_equal: true, ..gfx::pass_overrides() });
             }
             ViewFrustum::begin_counting();
@@ -662,7 +661,6 @@ impl Scene {
             ViewFrustum::end_counting();
             self.render_snow_layer(&view_projection, false);
             if depth_prepass {
-                unsafe { gl::DepthFunc(gl::LESS) };
                 gfx::set_pass_overrides(gfx::PassOverrides { depth_less_equal: false, ..gfx::pass_overrides() });
             }
             // Transparent pass — runs after every entity's opaque geometry is
@@ -688,20 +686,12 @@ impl Scene {
             // 2D overlays (HUD, inventory, menus) on the tone mapped image.
             // In the order drawn: the plane and text renderers switch the
             // depth test on, so it passes everything and writes nothing.
-            unsafe {
-                gl::DepthFunc(gl::ALWAYS);
-                gl::DepthMask(gl::FALSE);
-            }
             let before = gfx::pass_overrides();
             gfx::set_pass_overrides(gfx::PassOverrides { depth_ignored: true, ..before });
             for entity in self.entities.iter() {
                 entity.render_overlay(self);
             }
             gfx::set_pass_overrides(before);
-            unsafe {
-                gl::DepthMask(gl::TRUE);
-                gl::DepthFunc(gl::LESS);
-            }
         }
 
         // ── Debug overlay (F10) ───────────────────────────────────────────
@@ -711,26 +701,24 @@ impl Scene {
 
             // ── Terrain depth capture (camera POV, no water) ─────────────
             if let (Some(tfbo), Some(vp)) = (&self.terrain_debug_fbo, vp) {
-                tfbo.bind();
-                window.clear_mask(gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT);
+                tfbo.0.begin_pass(gfx::Load::Color([0.0; 4]), gfx::Load::Depth(1.0));
                 for entity in self.entities.iter() {
                     entity.render(self, &vp, parent_transform);
                 }
-                FrameBuffer::unbind();
+                gfx::end_pass();
                 self.apply_viewport(window);
             }
 
             // ── Water depth capture (camera POV, terrain depth + water) ──
             if let (Some(wfbo), Some(vp)) = (&self.water_debug_fbo, vp) {
-                wfbo.bind();
-                window.clear_mask(gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT);
+                wfbo.0.begin_pass(gfx::Load::Color([0.0; 4]), gfx::Load::Depth(1.0));
                 for entity in self.entities.iter() {
                     entity.render(self, &vp, parent_transform);
                 }
                 for entity in self.entities.iter() {
                     entity.render_transparent(self, &vp, parent_transform);
                 }
-                FrameBuffer::unbind();
+                gfx::end_pass();
                 self.apply_viewport(window);
             }
 

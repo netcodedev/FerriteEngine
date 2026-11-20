@@ -19,7 +19,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use super::{framebuffer, light::light::clamp_finite, shader::Shader};
+use super::{light::light::clamp_finite, shader::Shader};
 use crate::core::gfx::{self, Filter, Format, Rect, SamplerDesc, TargetRef, TextureDesc, Wrap};
 
 /// Shared GLSL: `tonemap`, `linearToSrgb`.
@@ -67,12 +67,6 @@ static VIEW_TARGET: AtomicU64 = AtomicU64::new(0);
 /// framebuffer is where drawing goes (a target's raw id is its GL name);
 /// other backends know it from the passes alone.
 fn drawing_into() -> Option<TargetRef> {
-    if gfx::backend() == gfx::BackendKind::OpenGl {
-        return Some(match framebuffer::bound_draw() {
-            0 => TargetRef::Window,
-            name => TargetRef::Target(name as gfx::RawId),
-        });
-    }
     gfx::current_target()
 }
 

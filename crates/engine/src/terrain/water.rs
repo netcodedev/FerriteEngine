@@ -354,11 +354,8 @@ pub fn draw<'a>(
         ws.set_uniform_1i("loadedColumns", super::columns::LOADED_UNIT as i32);
         ws.set_uniform_2i("loadedOrigin", far.loaded.1 .0, far.loaded.1 .1);
         ws.set_uniform_1f("columnSize", super::CHUNK_SIZE as f32);
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0 + super::columns::LOADED_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, far.loaded.0);
-            gl::ActiveTexture(gl::TEXTURE0);
-        }
+        let columns = gfx::SamplerDesc::new(gfx::Filter::Nearest, gfx::Wrap::Repeat);
+        gfx::bind_raw_texture(super::columns::LOADED_UNIT, far.loaded.0 as gfx::RawId, gfx::TextureKind::D2, &columns);
         ws.set_uniform_1i("isFarWater", (far.load > 0.0) as i32);
         ws.set_uniform_3f("farSink", far.centre[0], far.centre[1], far.load);
         ws.set_uniform_1f("farHole", far.hole);
@@ -375,25 +372,18 @@ pub fn draw<'a>(
         ws.set_uniform_1i("sceneColor", SCENE_COLOR_UNIT as i32);
         ws.set_uniform_1i("sceneDepth", SCENE_DEPTH_UNIT as i32);
         ws.set_uniform_1i("hasScene", opaque.is_some() as i32);
-        unsafe {
-            if let Some(opaque) = opaque {
-                gl::ActiveTexture(gl::TEXTURE0 + SCENE_COLOR_UNIT);
-                gl::BindTexture(gl::TEXTURE_2D, opaque.color);
-                gl::ActiveTexture(gl::TEXTURE0 + SCENE_DEPTH_UNIT);
-                gl::BindTexture(gl::TEXTURE_2D, opaque.depth);
-                gl::ActiveTexture(gl::TEXTURE0);
-            }
+        if let Some(opaque) = opaque {
+            let color = gfx::SamplerDesc::LINEAR_CLAMP;
+            let depth = gfx::SamplerDesc::new(gfx::Filter::Nearest, gfx::Wrap::Repeat);
+            gfx::bind_raw_texture(SCENE_COLOR_UNIT, opaque.color as gfx::RawId, gfx::TextureKind::D2, &color);
+            gfx::bind_raw_texture(SCENE_DEPTH_UNIT, opaque.depth as gfx::RawId, gfx::TextureKind::D2, &depth);
         }
         for (water_mesh, model) in &meshes {
             water_mesh.render(ws, model, None);
         }
-        unsafe {
-            if opaque.is_some() {
-                for unit in [SCENE_COLOR_UNIT, SCENE_DEPTH_UNIT] {
-                    gl::ActiveTexture(gl::TEXTURE0 + unit);
-                    gl::BindTexture(gl::TEXTURE_2D, 0);
-                }
-                gl::ActiveTexture(gl::TEXTURE0);
+        if opaque.is_some() {
+            for unit in [SCENE_COLOR_UNIT, SCENE_DEPTH_UNIT] {
+                gfx::unbind_texture(unit, gfx::TextureKind::D2);
             }
         }
     });

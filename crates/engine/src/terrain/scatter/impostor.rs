@@ -10,7 +10,7 @@ use cgmath::{Matrix4, Point3, Vector3};
 
 use crate::core::{
     gfx::{self, Format, Load, SamplerDesc, TextureDesc, TextureKind},
-    renderer::{framebuffer, pbr, shader::Shader},
+    renderer::{pbr, shader::Shader},
 };
 
 use super::{vertex_layout, ModelVariant};
@@ -139,37 +139,17 @@ pub(super) fn bake(variant: &ModelVariant) -> Impostor {
 struct OuterPass {
     viewport: gfx::Rect,
     overrides: gfx::PassOverrides,
-    /// Until every pass the bake can happen in is a gfx pass: a
-    /// framebuffer bound past gfx (see `framebuffer::bind`), and its
-    /// viewport, which ending the bake's pass would not bring back.
-    raw: Option<(u32, [i32; 4])>,
 }
 
 impl OuterPass {
     fn note() -> Self {
-        let gfx_target = match gfx::current_target() {
-            Some(gfx::TargetRef::Target(raw)) => raw as u32,
-            _ => 0,
-        };
-        let bound = framebuffer::bound_draw();
-        let raw = (gfx::backend() == gfx::BackendKind::OpenGl && bound != gfx_target).then(|| {
-            let mut viewport = [0; 4];
-            unsafe { gl::GetIntegerv(gl::VIEWPORT, viewport.as_mut_ptr()) };
-            (bound, viewport)
-        });
         let overrides = gfx::pass_overrides();
         gfx::set_pass_overrides(gfx::PassOverrides::default());
-        OuterPass { viewport: gfx::viewport(), overrides, raw }
+        OuterPass { viewport: gfx::viewport(), overrides }
     }
 
     fn restore(self) {
         gfx::set_pass_overrides(self.overrides);
-        match self.raw {
-            Some((framebuffer, [x, y, w, h])) => unsafe {
-                framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
-                gl::Viewport(x, y, w, h);
-            },
-            None => gfx::set_viewport(self.viewport),
-        }
+        gfx::set_viewport(self.viewport);
     }
 }
