@@ -49,7 +49,9 @@ An inventory of the GL use (2026-11-20):
    handles (`BufferId`, `TextureId`, `SamplerId`, `PipelineId`,
    `ShaderId`, `RenderTargetId`) into slot maps. Selection:
    `--renderer vulkan|gl` / `FERRITE_RENDERER`, saved per project later.
-   Default stays GL until Vulkan reaches parity.
+   Vulkan is the default since 2026-11-20 (where the build has the
+   `vulkan` feature); `FERRITE_RENDERER=gl` picks OpenGL, which also
+   draws when Vulkan cannot start.
 
 2. **Vulkan 1.3 with dynamic rendering**, no `VkRenderPass` objects;
    `gpu-allocator` for memory; `ash-window`-style surface creation through
@@ -197,8 +199,9 @@ implementation, pipeline cache, timestamps, readback, present with the
 flip. Then pass by pass to parity with GL, comparing screenshots.
 Editor statistics show the backend and its GPU/CPU frame times.
 
-As built (`core/gfx/vulkan`, feature `vulkan`, `FERRITE_RENDERER=vulkan`;
-GL stays the default and is fallen back to when Vulkan cannot start):
+As built (`core/gfx/vulkan`, feature `vulkan`; the default backend since
+2026-11-20, `FERRITE_RENDERER=gl` for OpenGL, which is also fallen back to
+when Vulkan cannot start):
 - Commands are recorded in call order into one command buffer per frame;
   rendering begins lazily at the first draw or clear of a pass and is
   ended by copies, blits, readback, texture uploads and layout changes of

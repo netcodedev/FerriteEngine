@@ -25,12 +25,18 @@ impl Window {
             std::process::exit(1);
         });
 
-        // `FERRITE_RENDERER=vulkan` draws with Vulkan; OpenGL otherwise, and
-        // when Vulkan cannot.
+        // Vulkan draws, where the build has it; `FERRITE_RENDERER=gl` (or
+        // `opengl`) asks for OpenGL, which also draws when Vulkan cannot.
+        let default = if cfg!(feature = "vulkan") {
+            crate::core::gfx::BackendKind::Vulkan
+        } else {
+            crate::core::gfx::BackendKind::OpenGl
+        };
         let requested = std::env::var("FERRITE_RENDERER")
             .ok()
-            .and_then(|v| crate::core::gfx::BackendKind::parse(&v));
-        if requested == Some(crate::core::gfx::BackendKind::Vulkan) {
+            .and_then(|v| crate::core::gfx::BackendKind::parse(&v))
+            .unwrap_or(default);
+        if requested == crate::core::gfx::BackendKind::Vulkan {
             #[cfg(feature = "vulkan")]
             match Self::with_vulkan(glfw, width, height, title, decorated) {
                 Ok(window) => return window,
