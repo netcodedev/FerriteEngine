@@ -536,8 +536,15 @@ pub(super) fn create(
             });
         }
     }
-    let pipeline_cache =
-        unsafe { gpu.device.create_pipeline_cache(&vk::PipelineCacheCreateInfo::default(), None) }.unwrap_or_default();
+    // Pipelines made in earlier runs: the driver checks the data is its
+    // own (device, driver version) and starts empty otherwise.
+    let cached = std::fs::read(pipeline_cache_path()).unwrap_or_default();
+    let pipeline_cache = unsafe {
+        gpu.device
+            .create_pipeline_cache(&vk::PipelineCacheCreateInfo::default().initial_data(&cached), None)
+            .or_else(|_| gpu.device.create_pipeline_cache(&vk::PipelineCacheCreateInfo::default(), None))
+    }
+    .unwrap_or_default();
     let swapchain = context::create_swapchain(&gpu, vk::SwapchainKHR::null(), super::window_size(), vsync)?;
     let compiler = shaderc::Compiler::new().map_err(|e| format!("shaderc: {e}"))?;
     // The params sets: one per program and params memory, freed with the
@@ -867,6 +874,7 @@ impl Device for VkDevice {
     fn shutdown(&self) {
         self.with(|s| unsafe {
             let _ = s.gpu.device.device_wait_idle();
+            save_pipeline_cache(&s.gpu.device, s.pipeline_cache);
             if let Some(swapchain) = s.swapchain.take() {
                 context::destroy_swapchain(&s.gpu, &swapchain);
             }
@@ -875,5 +883,37 @@ impl Device for VkDevice {
                 debug_fn.destroy_debug_utils_messenger(messenger, None);
             }
         })
+    }
+}
+
+/// Where the pipeline cache is kept between runs (the user's cache
+/// directory).
+pub(super) fn cache_dir() -> std::path::PathBuf {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("ferrite").join("vulkan")
+}
+
+fn pipeline_cache_path() -> std::path::PathBuf {
+    cache_dir().join("pipelines.bin")
+}
+
+/// Keep the pipelines made this run for the next (written atomically).
+fn save_pipeline_cache(device: &ash::Device, cache: vk::PipelineCache) {
+    if cache == vk::PipelineCache::null() {
+        return;
+    }
+    let Ok(data) = (unsafe { device.get_pipeline_cache_data(cache) }) else {
+        return;
+    };
+    let path = pipeline_cache_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let temp = path.with_extension("tmp");
+    if std::fs::write(&temp, &data).is_ok() {
+        let _ = std::fs::rename(&temp, &path);
     }
 }

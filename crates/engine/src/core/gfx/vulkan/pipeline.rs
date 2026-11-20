@@ -26,13 +26,51 @@ fn compile(
     }
 }
 
+/// Bumped when what `compile` makes of a source changes (options, the
+/// rewrite), so older cached SPIR-V is not used.
+const SPIRV_CACHE_VERSION: u32 = 1;
+
+/// `compile`, kept in the cache directory between runs by the source's
+/// hash: compiling every program took a good part of the start.
+fn compile_cached(
+    compiler: &shaderc::Compiler,
+    source: &str,
+    kind: shaderc::ShaderKind,
+    stage: &str,
+    label: &str,
+) -> Result<Vec<u32>, String> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (SPIRV_CACHE_VERSION, stage, source).hash(&mut hasher);
+    let path = super::cache_dir().join("spirv").join(format!("{:016x}.spv", hasher.finish()));
+    if let Ok(bytes) = std::fs::read(&path) {
+        if bytes.len() % 4 == 0 && bytes.len() >= 20 {
+            let words: Vec<u32> = bytes.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+            // The SPIR-V magic number: a whole file, not a torn one.
+            if words[0] == 0x0723_0203 {
+                return Ok(words);
+            }
+        }
+    }
+    let words = compile(compiler, source, kind, stage, label)?;
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let temp = path.with_extension("tmp");
+    if std::fs::write(&temp, &bytes).is_ok() {
+        let _ = std::fs::rename(&temp, &path);
+    }
+    Ok(words)
+}
+
 impl State {
     pub(super) fn create_program(&mut self, vertex: &str, fragment: &str, label: &str) -> Result<RawId, String> {
         let reflect = glsl::to_vulkan(vertex, fragment)
             .map_err(|e| format!("shader program ({label}) cannot be made for Vulkan: {e}"))?;
         let compiler = self.compiler.as_ref().ok_or("no shader compiler")?;
-        let vs = compile(compiler, &reflect.vertex, shaderc::ShaderKind::Vertex, "vertex", label)?;
-        let mut fs = compile(compiler, &reflect.fragment, shaderc::ShaderKind::Fragment, "fragment", label)?;
+        let vs = compile_cached(compiler, &reflect.vertex, shaderc::ShaderKind::Vertex, "vertex", label)?;
+        let mut fs = compile_cached(compiler, &reflect.fragment, shaderc::ShaderKind::Fragment, "fragment", label)?;
         spirv::link_locations(&vs, &mut fs);
         let inputs = spirv::interface(&vs, spirv::STORAGE_INPUT).into_iter().map(|v| (v.location, v.scalar)).collect();
 
