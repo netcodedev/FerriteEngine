@@ -137,10 +137,11 @@ impl Model {
         // Every skinned mesh moves its own copy of the root; the model
         // moves once, as the skeleton's mesh says.
         let skeleton_mesh = self.skeleton_mesh();
+        let channels = super::bone::PoseChannels::new(pose);
         let mut root_translation = Vector3::zero();
         for (index, (_, mesh)) in self.meshes.iter_mut().enumerate() {
             if let Some(root_bone) = &mut mesh.root_bone {
-                let delta = root_bone.apply_pose(pose, true);
+                let delta = root_bone.apply_pose(&channels, true);
                 if Some(index) == skeleton_mesh {
                     root_translation = delta;
                 }
