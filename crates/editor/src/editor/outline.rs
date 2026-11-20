@@ -5,6 +5,7 @@ use cgmath::Vector3;
 use ferrite::core::{
     entity::EntityHandle,
     renderer::{
+        depth_pass::DepthPass,
         framebuffer::{FrameBuffer, ShadowFrameBuffer},
         shader::Shader,
     },
@@ -109,8 +110,18 @@ impl Outline {
             gl::DepthMask(gl::TRUE);
             gl::ClearDepth(1.0);
             gl::Clear(gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT);
+            // Only the depth is read: the renderers draw with their
+            // depth-only programs (the same positions and cut-outs, no
+            // shading) and no colour is written.
+            gl::ColorMask(gl::FALSE, gl::FALSE, gl::FALSE, gl::FALSE);
         }
-        entity.render(scene, &camera.get_view_projection(), parent);
+        {
+            let _depth_only = DepthPass::begin();
+            entity.render(scene, &camera.get_view_projection(), parent);
+        }
+        unsafe {
+            gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
+        }
         FrameBuffer::unbind();
 
         // 2. Edge pass over the viewport, always on top of the scene.
