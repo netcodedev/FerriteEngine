@@ -3,7 +3,7 @@
 //! `ferrite::core::logging`), coloured by level, with level and source
 //! filters and a text search.
 
-use std::time::Duration;
+use std::{collections::VecDeque, time::Duration};
 
 use ferrite::{
     core::{
@@ -231,7 +231,7 @@ struct RowView {
 struct LogView {
     region: Region,
     frame: Plane,
-    entries: Vec<LogEntry>,
+    entries: VecDeque<LogEntry>,
     /// Sequence number of the next message to read from the logger.
     next_seq: u64,
     /// Messages per level (`LEVELS` order), whatever the filter.
@@ -274,7 +274,7 @@ impl LogView {
                 .border_thickness(1.0)
                 .border_radius_uniform(theme::RADIUS_SMALL)
                 .build(),
-            entries: Vec::new(),
+            entries: VecDeque::new(),
             next_seq: 0,
             counts: [0; 4],
             filter: ConsoleFilter::default(),
@@ -310,27 +310,37 @@ impl LogView {
         if added.is_empty() {
             return false;
         }
+        self.add(added);
+        true
+    }
+
+    /// Append new messages, dropping the oldest beyond `logging::HISTORY`.
+    /// Only the new ones are filtered; the lines of dropped ones go from the
+    /// front, so a full history costs no more than an empty one.
+    fn add(&mut self, added: Vec<LogEntry>) {
         for entry in &added {
             self.counts[level_slot(entry.level)] += 1;
         }
         let first_new = self.entries.len();
         self.entries.extend(added);
         let excess = self.entries.len().saturating_sub(logging::HISTORY);
-        if excess > 0 {
-            for entry in self.entries.drain(..excess) {
-                self.counts[level_slot(entry.level)] -= 1;
-            }
-            self.rebuild_lines();
-        } else {
-            // Only new lines at the end: no need to filter everything again.
-            let mut lines = std::mem::take(&mut self.lines);
-            for index in first_new..self.entries.len() {
-                self.push_lines(&mut lines, index);
-            }
-            self.lines = lines;
+        for entry in self.entries.drain(..excess) {
+            self.counts[level_slot(entry.level)] -= 1;
         }
+        if excess > 0 {
+            // Lines are in entry order: those of dropped entries lead.
+            let dropped = self.lines.iter().take_while(|l| l.entry < excess).count();
+            self.lines.drain(..dropped);
+            for line in &mut self.lines {
+                line.entry -= excess;
+            }
+        }
+        let mut lines = std::mem::take(&mut self.lines);
+        for index in first_new.saturating_sub(excess)..self.entries.len() {
+            self.push_lines(&mut lines, index);
+        }
+        self.lines = lines;
         self.dirty = true;
-        true
     }
 
     fn push_lines(&self, lines: &mut Vec<Line>, index: usize) {
@@ -1029,6 +1039,38 @@ mod tests {
         filter.debug = false;
         filter.engine = true;
         assert!(!filter.shows(&entry(Level::Trace, "ferrite", "x"), ""));
+    }
+
+    #[test]
+    fn a_full_history_drops_the_oldest_lines() {
+        ferrite::core::headless::enable();
+        let message = |seq: u64| LogEntry {
+            seq,
+            time: Duration::ZERO,
+            level: if seq % 3 == 0 { Level::Warn } else { Level::Info },
+            target: "ferrite::test".into(),
+            message: if seq % 5 == 0 { format!("{seq}\nsecond line") } else { format!("{seq}") },
+        };
+        let mut view = LogView::new();
+        view.set_filter(&ConsoleFilter::default(), "1");
+        // The expanded message has more lines; it is dropped as well.
+        view.selected = Some(4100);
+        let mut seq = 0;
+        for batch in [3000, 1500, 1, 600, 7, 6000] {
+            view.add((seq..seq + batch).map(message).collect());
+            seq += batch;
+            let lines = view.lines.clone();
+            let counts = view.counts;
+            view.rebuild_lines();
+            assert_eq!(lines, view.lines, "after {seq} messages");
+            assert_eq!(view.entries.len(), (seq as usize).min(logging::HISTORY));
+            assert_eq!(view.entries[0].seq, seq.saturating_sub(logging::HISTORY as u64));
+            let mut expected = [0; 4];
+            for entry in &view.entries {
+                expected[level_slot(entry.level)] += 1;
+            }
+            assert_eq!(counts, expected);
+        }
     }
 
     #[test]
