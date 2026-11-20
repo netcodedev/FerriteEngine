@@ -7,13 +7,12 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use cgmath::{ortho, Matrix4, Point3, Vector3};
-use gl::types::*;
 
 use super::{EXPOSURE_UNIT, GROUND_UNIT};
-use crate::core::renderer::framebuffer;
+use crate::core::gfx::{self, Format, Load, SamplerDesc, TextureDesc, TextureKind};
 
 /// Texels per side.
-const SIZE: i32 = 1024;
+const SIZE: u32 = 1024;
 /// Metres the map spans per side (about 16 cm per texel).
 const EXTENT: f32 = 160.0;
 /// Metres between the map's top and bottom.
@@ -57,51 +56,32 @@ pub fn in_ground_pass() -> bool {
     GROUND_PASS.load(Ordering::Relaxed)
 }
 
-/// A depth map of its own: framebuffer and texture.
-fn depth_target() -> (GLuint, GLuint) {
-    let (mut framebuffer, mut depth) = (0, 0);
-    unsafe {
-        gl::GenTextures(1, &mut depth);
-        gl::BindTexture(gl::TEXTURE_2D, depth);
-        gl::TexImage2D(
-            gl::TEXTURE_2D,
-            0,
-            gl::DEPTH_COMPONENT32F as GLint,
-            SIZE,
-            SIZE,
-            0,
-            gl::DEPTH_COMPONENT,
-            gl::FLOAT,
-            std::ptr::null(),
-        );
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as GLint);
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as GLint);
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as GLint);
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as GLint);
-        gl::BindTexture(gl::TEXTURE_2D, 0);
+/// How the maps are read: texel by texel.
+pub const SAMPLER: SamplerDesc = SamplerDesc::NEAREST_CLAMP;
 
-        gl::GenFramebuffers(1, &mut framebuffer);
-        framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
-        gl::FramebufferTexture2D(
-            gl::FRAMEBUFFER,
-            gl::DEPTH_ATTACHMENT,
-            gl::TEXTURE_2D,
-            depth,
-            0,
-        );
-        gl::DrawBuffer(gl::NONE);
-        gl::ReadBuffer(gl::NONE);
-        framebuffer::bind(gl::FRAMEBUFFER, 0);
+/// A depth map of its own, and the target drawing into it.
+struct DepthTarget {
+    texture: gfx::Texture,
+    target: gfx::RenderTarget,
+}
+
+impl DepthTarget {
+    fn new() -> Self {
+        let texture = gfx::Texture::new(TextureDesc::d2(Format::Depth32F, SIZE, SIZE));
+        let target = gfx::RenderTarget::new(&[], Some(texture.attachment(0, None)));
+        Self { texture, target }
     }
-    (framebuffer, depth)
+
+    /// Begin a pass drawing into it, cleared.
+    fn begin(&self) {
+        gfx::begin_pass(self.target.reference(), (SIZE, SIZE), Load::Keep, Load::Depth(1.0));
+    }
 }
 
 pub struct SkyExposure {
-    framebuffer: GLuint,
-    depth: GLuint,
+    depth: DepthTarget,
     /// The terrain alone, from the same view.
-    ground_framebuffer: GLuint,
-    ground: GLuint,
+    ground: DepthTarget,
     /// Corner (x, z) and top the map was drawn for, and frames since.
     drawn: Option<[f32; 3]>,
     age: u32,
@@ -114,13 +94,9 @@ pub struct SkyExposure {
 
 impl SkyExposure {
     pub fn new() -> Self {
-        let (framebuffer, depth) = depth_target();
-        let (ground_framebuffer, ground) = depth_target();
         Self {
-            framebuffer,
-            depth,
-            ground_framebuffer,
-            ground,
+            depth: DepthTarget::new(),
+            ground: DepthTarget::new(),
             drawn: None,
             age: 0,
             revision: 0,
@@ -129,8 +105,8 @@ impl SkyExposure {
         }
     }
 
-    /// Start drawing the map for a camera at `eye`, if it is due: then the
-    /// map's framebuffer is bound and cleared and `Some(view_projection)`
+    /// Start drawing the map for a camera at `eye`, if it is due: then a
+    /// pass into the map begins, cleared, and `Some(view_projection)`
     /// comes back; draw the opaque scene with it and call `end`.
     pub fn begin(&mut self, eye: Point3<f32>) -> Option<Matrix4<f32>> {
         let snap = |v: f32| (v / SNAP).round() * SNAP;
@@ -159,16 +135,9 @@ impl SkyExposure {
         let half = EXTENT * 0.5;
         self.view_projection = ortho(-half, half, -half, half, 0.0, RANGE) * view;
 
-        unsafe {
-            // Not sampled while drawn into.
-            gl::ActiveTexture(gl::TEXTURE0 + EXPOSURE_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::ActiveTexture(gl::TEXTURE0);
-            framebuffer::bind(gl::FRAMEBUFFER, self.framebuffer);
-            gl::Viewport(0, 0, SIZE, SIZE);
-            gl::DepthMask(gl::TRUE);
-            gl::Clear(gl::DEPTH_BUFFER_BIT);
-        }
+        // Not sampled while drawn into.
+        gfx::unbind_texture(EXPOSURE_UNIT, TextureKind::D2);
+        self.depth.begin();
         EXPOSURE_PASS.store(true, Ordering::Relaxed);
         Some(self.view_projection)
     }
@@ -177,15 +146,8 @@ impl SkyExposure {
     /// map from the same view. Draw the opaque scene again (only the
     /// terrain draws itself, see `in_ground_pass`) and call `end`.
     pub fn begin_ground(&self) -> Matrix4<f32> {
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0 + GROUND_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::ActiveTexture(gl::TEXTURE0);
-            framebuffer::bind(gl::FRAMEBUFFER, self.ground_framebuffer);
-            gl::Viewport(0, 0, SIZE, SIZE);
-            gl::DepthMask(gl::TRUE);
-            gl::Clear(gl::DEPTH_BUFFER_BIT);
-        }
+        gfx::unbind_texture(GROUND_UNIT, TextureKind::D2);
+        self.ground.begin();
         EXPOSURE_PASS.store(true, Ordering::Relaxed);
         GROUND_PASS.store(true, Ordering::Relaxed);
         self.view_projection
@@ -197,11 +159,12 @@ impl SkyExposure {
         self.ground_due
     }
 
-    /// Done drawing the map; the default framebuffer is bound again.
+    /// Done drawing the map: its pass ends, and the one it interrupted
+    /// goes on (with the viewport over all of its target).
     pub fn end(&self) {
         EXPOSURE_PASS.store(false, Ordering::Relaxed);
         GROUND_PASS.store(false, Ordering::Relaxed);
-        unsafe { framebuffer::bind(gl::FRAMEBUFFER, 0) };
+        gfx::end_pass();
     }
 
     /// World to the map's clip space, and the metres its depth spans.
@@ -209,30 +172,14 @@ impl SkyExposure {
         self.drawn.map(|_| (self.view_projection, RANGE))
     }
 
-    /// GL names of the exposure map and the ground map.
-    pub fn textures(&self) -> (GLuint, GLuint) {
-        (self.depth, self.ground)
+    /// The exposure map and the ground map.
+    pub fn textures(&self) -> (&gfx::Texture, &gfx::Texture) {
+        (&self.depth.texture, &self.ground.texture)
     }
 
     pub fn bind(&self) {
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0 + EXPOSURE_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, self.depth);
-            gl::ActiveTexture(gl::TEXTURE0 + GROUND_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, self.ground);
-            gl::ActiveTexture(gl::TEXTURE0);
-        }
-    }
-}
-
-impl Drop for SkyExposure {
-    fn drop(&mut self) {
-        unsafe {
-            framebuffer::delete(&[self.framebuffer]);
-            gl::DeleteTextures(1, &self.depth);
-            framebuffer::delete(&[self.ground_framebuffer]);
-            gl::DeleteTextures(1, &self.ground);
-        }
+        gfx::bind_texture(EXPOSURE_UNIT, &self.depth.texture, &SAMPLER);
+        gfx::bind_texture(GROUND_UNIT, &self.ground.texture, &SAMPLER);
     }
 }
 

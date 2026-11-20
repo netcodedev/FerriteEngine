@@ -1,7 +1,7 @@
 use cgmath::{Matrix4, Point3, Vector3};
-use gl::types::*;
 
 use super::{Line, LineRenderer, Shader};
+use crate::core::gfx;
 
 use lazy_static::lazy_static;
 use std::sync::Mutex;
@@ -20,34 +20,16 @@ impl Line {
     }
 }
 
+/// A line's ends: positions at location 0.
+fn layout() -> gfx::VertexLayout {
+    gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[gfx::VertexFormat::F32x3])
+}
+
 impl LineRenderer {
     fn new() -> Self {
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
-
-        let mut vao = 0;
-        let mut vbo = 0;
-        unsafe {
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut vbo);
-
-            gl::BindVertexArray(vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-
-            gl::VertexAttribPointer(
-                0,
-                3,
-                gl::FLOAT,
-                gl::FALSE,
-                3 * std::mem::size_of::<GLfloat>() as GLsizei,
-                std::ptr::null(),
-            );
-            gl::EnableVertexAttribArray(0);
-
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-        }
-
-        Self { shader, vao, vbo }
+        let vertices = gfx::Buffer::new(gfx::BufferUsage::VERTEX, gfx::BufferMemory::Dynamic, 0);
+        Self { shader, vertices }
     }
 
     pub fn render(
@@ -56,46 +38,7 @@ impl LineRenderer {
         color: Vector3<f32>,
         always_on_top: bool,
     ) {
-        let renderer = RENDERER.lock().unwrap();
-        unsafe {
-            if always_on_top {
-                gl::Disable(gl::DEPTH_TEST);
-            } else {
-                gl::Enable(gl::DEPTH_TEST);
-            }
-            renderer.shader.bind();
-
-            renderer
-                .shader
-                .set_uniform_mat4("viewProjection", &view_projection);
-            renderer.shader.set_uniform_3fv("color", &color);
-
-            gl::BindVertexArray(renderer.vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, renderer.vbo);
-
-            let end = line.position + line.direction * line.length;
-            let lines = vec![
-                line.position.x,
-                line.position.y,
-                line.position.z,
-                end.x,
-                end.y,
-                end.z,
-            ];
-
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (lines.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
-                lines.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-            gl::DrawArrays(gl::LINES, 0, (lines.len() / 3) as i32);
-
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-            gl::UseProgram(0);
-            gl::Disable(gl::DEPTH_TEST);
-        }
+        Self::render_lines(view_projection, &vec![line.clone()], color, always_on_top);
     }
 
     pub fn render_lines(
@@ -104,46 +47,29 @@ impl LineRenderer {
         color: Vector3<f32>,
         always_on_top: bool,
     ) {
-        let renderer = RENDERER.lock().unwrap();
-        unsafe {
-            if always_on_top {
-                gl::Disable(gl::DEPTH_TEST);
-            } else {
-                gl::Enable(gl::DEPTH_TEST);
-            }
-            renderer.shader.bind();
-
-            renderer
-                .shader
-                .set_uniform_mat4("viewProjection", &view_projection);
-            renderer.shader.set_uniform_3fv("color", &color);
-
-            gl::BindVertexArray(renderer.vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, renderer.vbo);
-
-            let mut lines_data = Vec::new();
-            for line in lines {
-                let end = line.position + line.direction * line.length;
-                lines_data.push(line.position.x);
-                lines_data.push(line.position.y);
-                lines_data.push(line.position.z);
-                lines_data.push(end.x);
-                lines_data.push(end.y);
-                lines_data.push(end.z);
-            }
-
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (lines_data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
-                lines_data.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-            gl::DrawArrays(gl::LINES, 0, (lines_data.len() / 3) as i32);
-
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-            gl::UseProgram(0);
-            gl::Disable(gl::DEPTH_TEST);
+        let mut ends: Vec<f32> = Vec::with_capacity(lines.len() * 6);
+        for line in lines {
+            let end = line.position + line.direction * line.length;
+            ends.extend_from_slice(&[line.position.x, line.position.y, line.position.z, end.x, end.y, end.z]);
         }
+        if ends.is_empty() {
+            return;
+        }
+        let mut renderer = RENDERER.lock().unwrap();
+        let renderer = &mut *renderer;
+        // On top: no depth test (which writes no depth either).
+        let desc = gfx::PipelineDesc {
+            vertex_layouts: vec![layout()],
+            topology: gfx::Topology::Lines,
+            depth: if always_on_top { gfx::DepthState::OFF } else { gfx::DepthState::LESS },
+            ..Default::default()
+        };
+        gfx::set_pipeline(renderer.shader.pipeline(&desc));
+        renderer.shader.set_uniform_mat4("viewProjection", view_projection);
+        renderer.shader.set_uniform_3fv("color", &color);
+        // A fresh store: lines drawn before may still be read from the old.
+        renderer.vertices.replace(gfx::as_bytes(&ends));
+        gfx::set_vertex_buffer(0, &renderer.vertices, 0, layout().stride);
+        gfx::draw(0, (ends.len() / 3) as u32);
     }
 }

@@ -1,7 +1,6 @@
 use cgmath::{Point3, Vector3};
-use gl::types::GLuint;
 
-use crate::core::renderer::shader::Shader;
+use crate::core::{gfx, renderer::shader::Shader};
 
 pub mod line;
 
@@ -14,6 +13,6 @@ pub struct Line {
 
 pub struct LineRenderer {
     shader: Shader,
-    vao: GLuint,
-    vbo: GLuint,
+    /// The ends of the lines drawn last.
+    vertices: gfx::Buffer,
 }

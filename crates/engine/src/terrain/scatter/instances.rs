@@ -3,12 +3,12 @@
 use std::cell::RefCell;
 
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, Vector3, Zero};
-use gl::types::{GLsizei, GLsizeiptr, GLuint, GLvoid};
 use glfw::WindowEvent;
 use rapier3d::prelude::{ColliderBuilder, ColliderHandle, Pose, Rotation, Vector};
 
 use crate::core::{
     entity::{component::Component, Entity},
+    gfx,
     physics::physics_engine::{collider_tag, PhysicsEngine},
     renderer::{
         depth_pass,
@@ -169,29 +169,9 @@ struct ScatterGpu {
 }
 
 struct VariantGpu {
-    instance_vbo: GLuint,
-    /// `vaos[lod_idx][submesh_idx]`
-    vaos: Vec<Vec<GLuint>>,
-    instance_count: GLsizei,
-}
-
-impl Drop for ScatterGpu {
-    fn drop(&mut self) {
-        if crate::core::headless::is_headless() {
-            return;
-        }
-        unsafe {
-            for kind in &self.variants {
-                let Some(kind) = kind else { continue };
-                gl::DeleteBuffers(1, &kind.instance_vbo);
-                for lod_vaos in &kind.vaos {
-                    if !lod_vaos.is_empty() {
-                        gl::DeleteVertexArrays(lod_vaos.len() as GLsizei, lod_vaos.as_ptr());
-                    }
-                }
-            }
-        }
-    }
+    /// The instances' transforms (`instance_layout`).
+    instances: gfx::Buffer,
+    instance_count: u32,
 }
 
 impl ScatterInstances {
@@ -388,24 +368,20 @@ impl ScatterInstances {
         if self.gpu.borrow().is_some() || crate::core::headless::is_headless() {
             return;
         }
-        let gpu = build_instances_gpu(&self.instances_by_variant, &self.spec.model);
+        let gpu = build_instances_gpu(&self.instances_by_variant);
         *self.gpu.borrow_mut() = Some(gpu);
     }
 }
 
-fn build_instances_gpu(
-    instances_by_variant: &[Vec<Matrix4<f32>>],
-    r: &ScatterModel,
-) -> ScatterGpu {
+fn build_instances_gpu(instances_by_variant: &[Vec<Matrix4<f32>>]) -> ScatterGpu {
     let mut kinds: Vec<Option<VariantGpu>> = Vec::with_capacity(instances_by_variant.len());
-    for (variant_idx, instances) in instances_by_variant.iter().enumerate() {
+    for instances in instances_by_variant {
         if instances.is_empty() {
             kinds.push(None);
             continue;
         }
-        let kind = &r.variants[variant_idx];
 
-        // Per-variant instance VBO.
+        // Per-variant instance buffer: each transform's columns.
         let mut buf: Vec<f32> = Vec::with_capacity(instances.len() * 16);
         for m in instances {
             let cols: [[f32; 4]; 4] = (*m).into();
@@ -413,90 +389,9 @@ fn build_instances_gpu(
                 buf.extend_from_slice(c);
             }
         }
-        let instance_vbo = unsafe {
-            let mut vbo = 0;
-            gl::GenBuffers(1, &mut vbo);
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (buf.len() * std::mem::size_of::<f32>()) as GLsizeiptr,
-                buf.as_ptr() as *const GLvoid,
-                gl::STATIC_DRAW,
-            );
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            vbo
-        };
-
-        // One VAO per (LOD, submesh) within this variant.
-        let mut vaos_per_lod: Vec<Vec<GLuint>> = Vec::with_capacity(kind.lods.len());
-        for lod in &kind.lods {
-            let mut lod_vaos: Vec<GLuint> = vec![0; lod.submeshes.len()];
-            if !lod_vaos.is_empty() {
-                unsafe {
-                    gl::GenVertexArrays(lod_vaos.len() as GLsizei, lod_vaos.as_mut_ptr());
-                    for (vao, sub) in lod_vaos.iter().zip(lod.submeshes.iter()) {
-                        gl::BindVertexArray(*vao);
-
-                        gl::BindBuffer(gl::ARRAY_BUFFER, sub.vbo);
-                        gl::EnableVertexAttribArray(0);
-                        gl::VertexAttribPointer(
-                            0,
-                            3,
-                            gl::FLOAT,
-                            gl::FALSE,
-                            VERTEX_STRIDE,
-                            POS_OFFSET as *const GLvoid,
-                        );
-                        gl::EnableVertexAttribArray(1);
-                        gl::VertexAttribPointer(
-                            1,
-                            3,
-                            gl::FLOAT,
-                            gl::FALSE,
-                            VERTEX_STRIDE,
-                            NORMAL_OFFSET as *const GLvoid,
-                        );
-                        gl::EnableVertexAttribArray(2);
-                        gl::VertexAttribPointer(
-                            2,
-                            2,
-                            gl::FLOAT,
-                            gl::FALSE,
-                            VERTEX_STRIDE,
-                            UV_OFFSET as *const GLvoid,
-                        );
-
-                        gl::BindBuffer(gl::ARRAY_BUFFER, instance_vbo);
-                        for col in 0..4 {
-                            let loc = 3 + col as GLuint;
-                            let offset = (col * 16) as usize;
-                            gl::EnableVertexAttribArray(loc);
-                            gl::VertexAttribPointer(
-                                loc,
-                                4,
-                                gl::FLOAT,
-                                gl::FALSE,
-                                INSTANCE_STRIDE,
-                                offset as *const GLvoid,
-                            );
-                            gl::VertexAttribDivisor(loc, 1);
-                        }
-                        gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, sub.ibo);
-                    }
-                }
-            }
-            vaos_per_lod.push(lod_vaos);
-        }
-        unsafe {
-            gl::BindVertexArray(0);
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, 0);
-        }
-
         kinds.push(Some(VariantGpu {
-            instance_vbo,
-            vaos: vaos_per_lod,
-            instance_count: instances.len() as GLsizei,
+            instances: gfx::Buffer::from_slice(gfx::BufferUsage::VERTEX, gfx::BufferMemory::Static, &buf),
+            instance_count: instances.len() as u32,
         }));
     }
     ScatterGpu { variants: kinds }
@@ -609,7 +504,13 @@ impl ScatterInstances {
             let depth_only = depth_pass::is_active();
             let shader = if depth_only { depth_shader() } else { r.shader.clone() };
             let shader = &*shader;
-            shader.bind();
+            // LEQUAL: the scene's depth may already be drawn.
+            let desc = gfx::PipelineDesc {
+                vertex_layouts: vec![vertex_layout(), instance_layout()],
+                depth: gfx::DepthState::LEQUAL,
+                ..Default::default()
+            };
+            gfx::set_pipeline(shader.pipeline(&desc));
             shader.set_uniform_mat4("viewProjection", view_projection);
             shader.set_uniform_mat4("parentTransform", parent_transform);
             if !depth_only {
@@ -626,12 +527,7 @@ impl ScatterInstances {
                 }
             }
 
-            unsafe {
-                gl::Enable(gl::DEPTH_TEST);
-                gl::DepthMask(gl::TRUE);
-                // LEQUAL: the scene's depth may already be drawn.
-                gl::DepthFunc(gl::LEQUAL);
-                gl::Disable(gl::CULL_FACE);
+            {
                 let planes = matches!(lod, LodChoice::PerCell { .. })
                     .then(|| ViewFrustum::planes(view_projection));
                 // (tier, first instance, instances) of what is drawn.
@@ -683,7 +579,7 @@ impl ScatterInstances {
                                     }
                                 }
                             };
-                            runs.push((tier, 0, variant_gpu.instance_count as u32));
+                            runs.push((tier, 0, variant_gpu.instance_count));
                         }
                     }
                     for lod_idx in 0..tiers {
@@ -691,29 +587,19 @@ impl ScatterInstances {
                             continue;
                         }
                         let lod = &kind.lods[lod_idx];
-                        let vaos = &variant_gpu.vaos[lod_idx];
-                        for (sub_idx, sub) in lod.submeshes.iter().enumerate() {
+                        for sub in &lod.submeshes {
                             pbr::bind_material(
                                 shader,
                                 kind.model.material_textures(sub.material_index),
                             );
-                            gl::BindVertexArray(vaos[sub_idx]);
+                            sub.bind();
+                            gfx::set_vertex_buffer(1, &variant_gpu.instances, 0, instance_layout().stride);
                             for &(_, start, count) in runs.iter().filter(|run| run.0 == lod_idx) {
-                                gl::DrawElementsInstancedBaseInstance(
-                                    gl::TRIANGLES,
-                                    sub.index_count,
-                                    gl::UNSIGNED_INT,
-                                    std::ptr::null(),
-                                    count as GLsizei,
-                                    start,
-                                );
+                                gfx::draw_indexed_instanced(0, sub.index_count, 0, start, count);
                             }
                         }
                     }
                 }
-                gl::BindVertexArray(0);
-                gl::Enable(gl::CULL_FACE);
-                gl::Disable(gl::DEPTH_TEST);
             }
         }
     }

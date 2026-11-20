@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gl::types::{GLsizei, GLsizeiptr, GLuint, GLvoid};
 use rapier3d::prelude::{SharedShape, TriMeshFlags, Vector};
 
 use crate::core::{
     assets::{self, AssetDatabase, AssetKind, AssetRef, MaterialMap, ModelSettings},
+    gfx,
     model::{outline, Model, ModelBuilder},
     renderer::{
         pbr::{self},
@@ -265,21 +265,18 @@ pub(super) struct VariantLod {
 }
 
 pub(super) struct SubmeshGpu {
-    pub(super) vbo: GLuint,
-    pub(super) ibo: GLuint,
-    pub(super) index_count: GLsizei,
+    /// Interleaved as `vertex_layout`.
+    pub(super) vertices: gfx::Buffer,
+    pub(super) indices: gfx::Buffer,
+    pub(super) index_count: u32,
     pub(super) material_index: usize,
 }
 
-impl Drop for SubmeshGpu {
-    fn drop(&mut self) {
-        if crate::core::headless::is_headless() {
-            return;
-        }
-        unsafe {
-            gl::DeleteBuffers(1, &self.vbo);
-            gl::DeleteBuffers(1, &self.ibo);
-        }
+impl SubmeshGpu {
+    /// Bind the vertices (slot 0) and indices to the current pipeline.
+    pub(super) fn bind(&self) {
+        gfx::set_vertex_buffer(0, &self.vertices, 0, vertex_layout().stride);
+        gfx::set_index_buffer(&self.indices, gfx::IndexFormat::U32);
     }
 }
 
@@ -341,35 +338,15 @@ fn load_variants(
                         p[0], p[1], p[2], n[0], n[1], n[2], uv[0], uv[1],
                     ]);
                 }
-                let (vbo, ibo) = if crate::core::headless::is_headless() {
-                    (0, 0)
-                } else { unsafe {
-                    let mut vbo = 0;
-                    let mut ibo = 0;
-                    gl::GenBuffers(1, &mut vbo);
-                    gl::GenBuffers(1, &mut ibo);
-                    gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-                    gl::BufferData(
-                        gl::ARRAY_BUFFER,
-                        (vertex_data.len() * std::mem::size_of::<f32>()) as GLsizeiptr,
-                        vertex_data.as_ptr() as *const GLvoid,
-                        gl::STATIC_DRAW,
-                    );
-                    gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ibo);
-                    gl::BufferData(
-                        gl::ELEMENT_ARRAY_BUFFER,
-                        (sd.indices.len() * std::mem::size_of::<u32>()) as GLsizeiptr,
-                        sd.indices.as_ptr() as *const GLvoid,
-                        gl::STATIC_DRAW,
-                    );
-                    gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-                    gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, 0);
-                    (vbo, ibo)
-                } };
+                // Nothing is made where nothing draws (headless).
+                let usage = gfx::BufferUsage::VERTEX | gfx::BufferUsage::RAY_TRACING_INPUT;
+                let vertices = gfx::Buffer::from_slice(usage, gfx::BufferMemory::Static, &vertex_data);
+                let usage = gfx::BufferUsage::INDEX | gfx::BufferUsage::RAY_TRACING_INPUT;
+                let indices = gfx::Buffer::from_slice(usage, gfx::BufferMemory::Static, &sd.indices);
                 submesh_gpu.push(SubmeshGpu {
-                    vbo,
-                    ibo,
-                    index_count: sd.indices.len() as GLsizei,
+                    vertices,
+                    indices,
+                    index_count: sd.indices.len() as u32,
                     material_index: sd.material_index,
                 });
             }

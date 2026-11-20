@@ -39,6 +39,8 @@ pub(super) struct GlDevice {
     /// the driver (and building a C string for it) is a hot path, as
     /// uniforms are set per draw.
     locations: RefCell<HashMap<GLuint, HashMap<String, GLint>>>,
+    /// Whether `GL_FRAMEBUFFER_SRGB` is on (see `bind_framebuffer`).
+    framebuffer_srgb: Cell<bool>,
 }
 
 struct GlPipeline {
@@ -49,6 +51,9 @@ struct GlPipeline {
 
 struct TargetInfo {
     colors: usize,
+    /// A colour attachment is sRGB: written as linear light, stored
+    /// encoded (as Vulkan does for an sRGB format).
+    srgb: bool,
 }
 
 impl GlDevice {
@@ -67,6 +72,7 @@ impl GlDevice {
             stencil: Cell::new(None),
             stencil_reference: Cell::new(0),
             locations: RefCell::new(HashMap::new()),
+            framebuffer_srgb: Cell::new(false),
         }
     }
 
@@ -102,6 +108,21 @@ impl GlDevice {
 
     fn bind_framebuffer(&self, target: TargetRef) {
         unsafe { crate::core::renderer::framebuffer::bind(gl::FRAMEBUFFER, framebuffer_of(target)) };
+        // GL converts to sRGB on write only with `FRAMEBUFFER_SRGB`, which
+        // is on exactly while a target with an sRGB colour attachment is
+        // drawn into (the window is not one).
+        let srgb = match target {
+            TargetRef::Window => false,
+            TargetRef::Target(raw) => self.targets.borrow().get(&(raw as GLuint)).is_some_and(|t| t.srgb),
+        };
+        self.set_framebuffer_srgb(srgb);
+    }
+
+    fn set_framebuffer_srgb(&self, on: bool) {
+        if self.framebuffer_srgb.get() != on {
+            self.framebuffer_srgb.set(on);
+            unsafe { set_enabled(gl::FRAMEBUFFER_SRGB, on) };
+        }
     }
 
     fn apply_sampler(&self, texture: GLuint, sampler: RawId) {
@@ -520,7 +541,8 @@ impl Device for GlDevice {
                 log::error!("render target incomplete (status 0x{status:x})");
             }
         }
-        self.targets.borrow_mut().insert(framebuffer, TargetInfo { colors: colors.len() });
+        let srgb = colors.iter().any(|c| c.desc.format == Format::Srgba8);
+        self.targets.borrow_mut().insert(framebuffer, TargetInfo { colors: colors.len(), srgb });
         framebuffer as RawId
     }
 
@@ -693,7 +715,11 @@ impl Device for GlDevice {
         unsafe { gl::Viewport(0, 0, size.0 as GLsizei, size.1 as GLsizei) };
     }
 
-    fn end_pass(&self) {}
+    fn end_pass(&self) {
+        // Code drawing past the passes (into framebuffers it binds itself)
+        // must not meet it.
+        self.set_framebuffer_srgb(false);
+    }
 
     fn set_viewport(&self, rect: Rect) {
         unsafe { gl::Viewport(rect.x, rect.y, rect.width as GLsizei, rect.height as GLsizei) };
