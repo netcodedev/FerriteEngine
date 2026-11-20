@@ -9,12 +9,19 @@ use super::{Font, Shader, Text, TextMesh, TextRenderer, TextVertex, Texture};
 
 use lazy_static::lazy_static;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Mutex, OnceLock,
 };
 
 /// See `TextRenderer::set_wireframe`.
 static WIREFRAME: AtomicBool = AtomicBool::new(false);
+
+/// Side of the glyph atlas, in texels.
+const ATLAS_SIZE: u32 = 2048;
+
+/// Goes up whenever the glyph atlas is cleared: text meshes built before
+/// point at glyphs that are gone, and are built again.
+static ATLAS_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 lazy_static! {
     static ref RENDERER: Mutex<TextRenderer> = Mutex::new(TextRenderer::new(1280, 720));
@@ -69,6 +76,7 @@ impl Text {
             mesh: TextMesh::new(),
             max_x: x,
             max_y: y,
+            atlas: 0,
         };
         text.layout(TextRenderer::get_size().0);
         text
@@ -113,7 +121,8 @@ impl Text {
 
     pub fn prepare_render_at(&mut self, position: Position) {
         let (x, y, z) = (position.x as i32, position.y as i32, position.z as i32);
-        if self.x == x && self.y == y && self.z == z {
+        if self.x == x && self.y == y && self.z == z && self.atlas == TextRenderer::atlas_generation()
+        {
             return;
         }
         self.x = x;
@@ -185,6 +194,9 @@ impl Text {
     }
 
     fn update_mesh(&mut self) {
+        // Read first: should the atlas be cleared while this mesh is built,
+        // it is built again next time.
+        self.atlas = TextRenderer::atlas_generation();
         // Measured fresh each time so the size shrinks with shorter content.
         self.max_x = 0;
         self.max_y = 0;
@@ -280,20 +292,26 @@ impl Text {
 
 impl TextRenderer {
     fn new(width: u32, height: u32) -> TextRenderer {
-        // Room for several fonts and sizes (UI text, headings, icons): if
-        // the cache had to evict glyphs, already-built text meshes would
-        // point at reused texture regions.
-        let cache: Cache<'static> = Cache::builder().dimensions(2048, 2048).build();
+        // Room for several fonts and sizes (UI text, headings, icons). When
+        // it is full anyway, `rect_for` clears it and the texts are built
+        // again.
+        let cache: Cache<'static> = Cache::builder().dimensions(ATLAS_SIZE, ATLAS_SIZE).build();
 
         let shader = Shader::new(include_str!("vertex.glsl"), include_str!("fragment.glsl"));
         TextRenderer {
             cache,
             shader,
-            texture_buffer: Texture::new(2048, 2048),
+            texture_buffer: Texture::new(ATLAS_SIZE as i32, ATLAS_SIZE as i32),
             projection_for: None,
             width,
             height,
+            written: vec![0; ATLAS_SIZE as usize],
         }
+    }
+
+    /// See `ATLAS_GENERATION`.
+    pub fn atlas_generation() -> u64 {
+        ATLAS_GENERATION.load(Ordering::Relaxed)
     }
 
     /// Renders text to the screen
@@ -391,26 +409,93 @@ impl TextRenderer {
             return None;
         }
         let mut renderer = RENDERER.lock().unwrap();
-        renderer.cache.queue_glyph(font_id, glyph.clone());
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             renderer.texture_buffer.bind();
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
         }
-        let _ = renderer.cache.cache_queued(|rect, data| unsafe {
-            gl::TexSubImage2D(
-                gl::TEXTURE_2D,
-                0,
-                rect.min.x as i32,
-                rect.min.y as i32,
-                rect.width() as i32,
-                rect.height() as i32,
-                gl::RED,
-                gl::UNSIGNED_BYTE,
-                data.as_ptr() as *const std::ffi::c_void,
-            );
-        });
+        let renderer = &mut *renderer;
+        // The cache only keeps the glyphs of the latest queue for sure: when
+        // full, it drops the oldest and writes over them, which texts built
+        // before still point at. Then it is cleared instead, and every text
+        // is built again (`ATLAS_GENERATION`).
+        for attempt in 0..2 {
+            renderer.cache.queue_glyph(font_id, glyph.clone());
+            let written = &mut renderer.written;
+            let mut overwrote = false;
+            let result = renderer.cache.cache_queued(|rect, data| unsafe {
+                overwrote |= write_over(written, rect);
+                gl::TexSubImage2D(
+                    gl::TEXTURE_2D,
+                    0,
+                    rect.min.x as i32,
+                    rect.min.y as i32,
+                    rect.width() as i32,
+                    rect.height() as i32,
+                    gl::RED,
+                    gl::UNSIGNED_BYTE,
+                    data.as_ptr() as *const std::ffi::c_void,
+                );
+            });
+            match result {
+                Ok(_) if !overwrote => break,
+                Err(e) if attempt > 0 => {
+                    renderer.cache.clear_queue();
+                    log::warn!("glyph not drawn: {e}");
+                    return None;
+                }
+                _ => {
+                    renderer.cache.clear_queue();
+                    renderer.cache.clear();
+                    renderer.written.fill(0);
+                    ATLAS_GENERATION.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
         renderer.cache.rect_for(font_id, &glyph).ok().flatten()
+    }
+}
+
+/// Note that `rect` of the atlas is written to, in `written` (per texel
+/// row, how far right it has been written). Whether that wrote over an
+/// earlier glyph: the cache fills each row left to right, so anything else
+/// is a glyph it dropped.
+fn write_over(written: &mut [u32], rect: Rect<u32>) -> bool {
+    let mut overwrote = false;
+    for row in &mut written[rect.min.y as usize..rect.max.y as usize] {
+        overwrote |= *row > rect.min.x;
+        *row = (*row).max(rect.max.x);
+    }
+    overwrote
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(x: u32, y: u32, w: u32, h: u32) -> Rect<u32> {
+        Rect {
+            min: point(x, y),
+            max: point(x + w, y + h),
+        }
+    }
+
+    #[test]
+    fn glyphs_added_along_a_row_write_over_nothing() {
+        let mut written = vec![0; 64];
+        assert!(!write_over(&mut written, rect(0, 0, 10, 12)));
+        assert!(!write_over(&mut written, rect(10, 0, 8, 6)));
+        assert!(!write_over(&mut written, rect(18, 0, 9, 12)));
+        // A new row below.
+        assert!(!write_over(&mut written, rect(0, 12, 7, 7)));
+    }
+
+    #[test]
+    fn a_row_put_where_a_dropped_one_was_writes_over_it() {
+        let mut written = vec![0; 64];
+        write_over(&mut written, rect(0, 0, 10, 12));
+        write_over(&mut written, rect(10, 0, 8, 12));
+        assert!(write_over(&mut written, rect(0, 4, 6, 6)));
     }
 }
 

@@ -264,5 +264,3 @@ Each phase is one or a few commits and leaves the editor usable.
   path (`animations/`, `scenes/`), not assets. They are documents the
   editor writes rather than imported files; should they show up in the
   asset browser anyway?
-- The voxel terrain backend loads `assets/grass.png` and
-  `assets/stone.png` directly. It is not used by any scene at the moment.

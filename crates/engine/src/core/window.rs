@@ -71,6 +71,12 @@ impl Window {
         }
         crate::core::diagnostics::context_created(&mut glfw, debug);
 
+        // In pixels, which differ from the screen coordinates asked for on
+        // scaled displays; no `FramebufferSize` event tells it at first.
+        let (width, height) = match window.get_framebuffer_size() {
+            (w, h) if w > 0 && h > 0 => (w as u32, h as u32),
+            _ => (width, height),
+        };
         Self {
             window,
             glfw,

@@ -394,8 +394,8 @@ impl<T> Drop for DynamicVertexArray<T> {
 }
 
 /// Delete the GL objects of the vertex arrays dropped so far. Call where
-/// the GL context is current (the terrain does, every frame, as it streams
-/// chunks in and out).
+/// the GL context is current: the application does, every frame (and the
+/// terrain, as it streams chunks in and out).
 pub fn delete_released_vertex_arrays() {
     let released = match RELEASED.lock() {
         Ok(mut released) if !released.is_empty() => std::mem::take(&mut *released),

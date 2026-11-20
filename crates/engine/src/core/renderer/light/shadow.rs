@@ -6,7 +6,8 @@
 //! get one each frame (`assign`). Drawing six views per light is the
 //! expensive part, so at most `FACE_BUDGET` faces are drawn per frame
 //! (`ShadowPlanner`): a light that is new to its layer or has moved gets
-//! all its faces at once, the others are refreshed in turn, which keeps
+//! all its faces at once, the others are refreshed in turn (a few faces
+//! each frame even while moving lights take the whole budget), which keeps
 //! static lights exact and moving things (the player walking past a
 //! lantern) up to date every frame or two. A spot light only draws the
 //! faces its cone reaches.
@@ -28,6 +29,9 @@ pub const SHADOW_RESOLUTION: u32 = 512;
 pub const SHADOW_NEAR: f32 = 0.05;
 /// Faces drawn per frame at most, beyond those a light needs at once.
 pub const FACE_BUDGET: usize = 12;
+/// Faces of unchanged lights refreshed per frame even when moving lights
+/// take the whole budget, so their maps never stay stale for long.
+pub const MIN_REFRESH: usize = 2;
 /// Texture unit the shadow cube maps are bound to while the scene is
 /// shaded. Above the 16 every GL 4 driver has for sure, but the units below
 /// are all taken; desktop GPUs have 32 or more.
@@ -145,7 +149,10 @@ impl ShadowPlanner {
             }
         }
 
-        let budget = FACE_BUDGET.saturating_sub(fresh.len()).min(refresh.len());
+        let budget = FACE_BUDGET
+            .saturating_sub(fresh.len())
+            .max(MIN_REFRESH)
+            .min(refresh.len());
         if !refresh.is_empty() {
             let start = self.cursor % refresh.len();
             fresh.extend((0..budget).map(|i| refresh[(start + i) % refresh.len()]));
@@ -374,6 +381,27 @@ mod tests {
         let frame = planner.plan(&lights);
         assert!((0..6).all(|face| frame.contains(&(2, face))));
         assert_eq!(frame.len(), FACE_BUDGET);
+    }
+
+    #[test]
+    fn moving_lights_never_starve_the_refresh_of_static_ones() {
+        let mut lights: Vec<LightSource> = (0..4).map(|i| point_at(i as f32)).collect();
+        assign(&mut lights, Point3::origin());
+        let mut planner = ShadowPlanner::default();
+        planner.plan(&lights);
+
+        // Layers 0 and 1 move every frame (12 fresh faces); layers 2 and 3
+        // still come round in turn.
+        let mut refreshed = std::collections::HashSet::new();
+        for frame in 0..6 {
+            for light in &mut lights[..2] {
+                light.position.y += 0.1;
+            }
+            let faces = planner.plan(&lights);
+            assert_eq!(faces.len(), 12 + MIN_REFRESH, "frame {frame}");
+            refreshed.extend(faces.into_iter().filter(|(layer, _)| *layer >= 2));
+        }
+        assert_eq!(refreshed.len(), 12);
     }
 
     #[test]

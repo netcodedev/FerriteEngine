@@ -9,8 +9,11 @@ use crate::core::{
     },
     renderer::{
         hdr::{HdrSettings, Tonemapper},
-        light::global_illumination::{
-            moon_casts_shadows, moon_direction, GlobalIllumination, IndirectShading,
+        light::{
+            global_illumination::{
+                moon_casts_shadows, moon_direction, GlobalIllumination, IndirectShading,
+            },
+            light::clamp_finite,
         },
         sky::{CloudSettings, CloudType},
         ssao::AmbientOcclusionSettings,
@@ -193,7 +196,7 @@ impl SkyLight {
     }
 
     pub fn set_cloud_coverage(&mut self, c: f32) {
-        self.cloud_coverage = c.clamp(0.0, 1.0);
+        self.cloud_coverage = clamp_finite(c, (0.0, 1.0), self.cloud_coverage);
     }
 
     pub fn adjust_cloud_coverage(&mut self, delta: f32) {
@@ -349,6 +352,9 @@ impl SkyLight {
 
 impl SkyLight {
     pub fn set_time_of_day(&mut self, time_of_day: f32) {
+        if !time_of_day.is_finite() {
+            return;
+        }
         self.time_of_day = time_of_day.rem_euclid(1.0);
         self.position = Point3::from_vec(self.compute_sun_direction() * SUN_DISTANCE);
     }

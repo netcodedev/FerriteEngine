@@ -182,7 +182,9 @@ impl LightSettings {
     }
 }
 
-fn clamp_finite(value: f32, (min, max): (f32, f32), fallback: f32) -> f32 {
+/// `value` clamped to `min..=max`, or `fallback` when it is NaN or
+/// infinite (`f32::clamp` lets NaN through).
+pub(crate) fn clamp_finite(value: f32, (min, max): (f32, f32), fallback: f32) -> f32 {
     if value.is_finite() {
         value.clamp(min, max)
     } else {

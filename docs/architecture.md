@@ -85,7 +85,10 @@ crates/engine/src/
 │   ├── view_frustum  AABB vs clip-volume culling
 │   └── window        GLFW window and input
 ├── player/           the Player component and its animation graph
-└── terrain/          voxel, marching cubes, dual contouring, scatter, materials
+├── terrain/          streamed chunk columns from a pluggable TerrainSource
+│                     (hills, script worlds), dual contouring / surface nets,
+│                     LODs, horizon, water, scatter and far scatter, materials
+└── vegetation/       trees grown from parameters (the Tree component)
 ```
 
 ## How a scene runs
