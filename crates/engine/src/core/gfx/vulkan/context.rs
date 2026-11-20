@@ -27,6 +27,8 @@ pub struct Gpu {
     pub depth_stencil_format: vk::Format,
     pub window_samples: u32,
     pub memory_budget: bool,
+    /// `VK_EXT_sample_locations`: multisampling uses GL's sample positions.
+    pub sample_locations: bool,
     pub driver: String,
 }
 
@@ -224,6 +226,11 @@ pub fn create(
         if memory_budget {
             device_extensions.push(ash::ext::memory_budget::NAME.as_ptr());
         }
+        let sample_locations =
+            available.iter().any(|a| a.extension_name_as_c_str() == Ok(ash::ext::sample_locations::NAME));
+        if sample_locations {
+            device_extensions.push(ash::ext::sample_locations::NAME.as_ptr());
+        }
         let features = vk::PhysicalDeviceFeatures::default()
             .sampler_anisotropy(true)
             .image_cube_array(true)
@@ -286,6 +293,7 @@ pub fn create(
             depth_stencil_format,
             window_samples,
             memory_budget,
+            sample_locations,
             driver,
         })
     }

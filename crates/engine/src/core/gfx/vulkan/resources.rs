@@ -26,6 +26,12 @@ const BUFFER_USAGE: vk::BufferUsageFlags = vk::BufferUsageFlags::from_raw(
 );
 
 impl State {
+    /// Whether a texture is multisampled depth drawn with GL's sample
+    /// positions (which its layout changes must name).
+    pub(super) fn custom_locations(&self, format: Format, samples: u32) -> bool {
+        self.gpu.sample_locations && format.is_depth() && samples > 1
+    }
+
     pub(super) fn raw_buffer(
         &mut self,
         size: u64,
@@ -263,11 +269,14 @@ impl State {
             TextureKind::D3 => (vk::ImageType::TYPE_3D, desc.layers.max(1), 1),
             _ => (vk::ImageType::TYPE_2D, 1, layers),
         };
-        let flags = if desc.kind == TextureKind::CubeArray {
+        let mut flags = if desc.kind == TextureKind::CubeArray {
             vk::ImageCreateFlags::CUBE_COMPATIBLE
         } else {
             vk::ImageCreateFlags::empty()
         };
+        if self.custom_locations(desc.format, samples) {
+            flags |= vk::ImageCreateFlags::SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_EXT;
+        }
         let info = vk::ImageCreateInfo::default()
             .flags(flags)
             .image_type(image_type)
@@ -387,6 +396,8 @@ impl State {
     /// texture, mips, layers, new layout.
     pub(super) fn transition(&mut self, cmd: vk::CommandBuffer, list: &[(RawId, Range<u32>, Range<u32>, vk::ImageLayout)]) {
         let mut barriers = Vec::new();
+        // Which barriers are of multisampled depth (with GL's positions).
+        let mut located = Vec::new();
         for (id, mips, layers, layout) in list {
             let Some(tex) = self.textures.get_mut(id) else {
                 continue;
@@ -421,6 +432,8 @@ impl State {
                         layer_count: l.end - l.start,
                     })
             };
+            let custom = self.gpu.sample_locations && tex.desc.format.is_depth() && tex.desc.samples > 1;
+            let before = barriers.len();
             if olds.iter().all(|o| *o == olds[0]) {
                 barriers.push(barrier(olds[0], mips.clone(), layers.clone()));
             } else {
@@ -438,7 +451,28 @@ impl State {
                     tex.layouts[index(m, l)] = *layout;
                 }
             }
+            for _ in before..barriers.len() {
+                located.push(custom.then_some(tex.desc.samples));
+            }
         }
+        let locations: Vec<Vec<vk::SampleLocationEXT>> =
+            located.iter().map(|s| s.map(convert::gl_sample_locations).unwrap_or_default()).collect();
+        let mut infos: Vec<vk::SampleLocationsInfoEXT> = located
+            .iter()
+            .zip(&locations)
+            .map(|(s, l)| {
+                vk::SampleLocationsInfoEXT::default()
+                    .sample_locations_per_pixel(convert::samples(s.unwrap_or(1)))
+                    .sample_location_grid_size(vk::Extent2D { width: 1, height: 1 })
+                    .sample_locations(l)
+            })
+            .collect();
+        let barriers: Vec<_> = barriers
+            .into_iter()
+            .zip(infos.iter_mut())
+            .zip(&located)
+            .map(|((b, info), s)| if s.is_some() { b.push_next(info) } else { b })
+            .collect();
         let memory = [vk::MemoryBarrier2::default()
             .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
             .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
@@ -581,9 +615,11 @@ impl State {
         let info = vk::SamplerCreateInfo::default()
             .mag_filter(convert::filter(desc.mag))
             .min_filter(convert::filter(desc.min))
+            // Without mips: NEAREST, so the LOD clamped to 0.25 below rounds
+            // to level 0 (with LINEAR it would blend in a quarter of level 1).
             .mipmap_mode(match desc.mip {
-                Some(Filter::Nearest) => vk::SamplerMipmapMode::NEAREST,
-                _ => vk::SamplerMipmapMode::LINEAR,
+                Some(Filter::Linear) => vk::SamplerMipmapMode::LINEAR,
+                _ => vk::SamplerMipmapMode::NEAREST,
             })
             .address_mode_u(convert::wrap(desc.wrap[0]))
             .address_mode_v(convert::wrap(desc.wrap[1]))

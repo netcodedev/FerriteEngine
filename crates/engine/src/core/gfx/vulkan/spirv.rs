@@ -133,3 +133,36 @@ pub fn link_locations(vertex: &[u32], fragment: &mut [u32]) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn compile(source: &str, kind: shaderc::ShaderKind) -> Vec<u32> {
+        let compiler = shaderc::Compiler::new().unwrap();
+        let mut options = shaderc::CompileOptions::new().unwrap();
+        options.set_target_env(shaderc::TargetEnv::Vulkan, shaderc::EnvVersion::Vulkan1_3 as u32);
+        options.set_auto_map_locations(true);
+        compiler.compile_into_spirv(source, kind, "0", "main", Some(&options)).unwrap().as_binary().to_vec()
+    }
+
+    #[test]
+    fn fragment_inputs_take_the_vertex_outputs_locations_by_name() {
+        let vs = compile(
+            "#version 460\nout vec3 Normal;\nout vec3 WorldPos;\nflat out ivec2 Ids;\nout vec2 TexCoords;\nvoid main(){Normal=vec3(0);WorldPos=vec3(1);Ids=ivec2(0);TexCoords=vec2(0);gl_Position=vec4(0);}\n",
+            shaderc::ShaderKind::Vertex,
+        );
+        let mut fs = compile(
+            "#version 460\nin vec2 TexCoords;\nout vec4 c;\nvoid main(){c=vec4(TexCoords,0,1);}\n",
+            shaderc::ShaderKind::Fragment,
+        );
+        assert_eq!(interface(&fs, STORAGE_INPUT)[0].location, 0);
+        link_locations(&vs, &mut fs);
+        let outputs = interface(&vs, STORAGE_OUTPUT);
+        let tex = outputs.iter().find(|v| v.name == "TexCoords").unwrap().location;
+        assert_eq!(tex, 3);
+        assert_eq!(interface(&fs, STORAGE_INPUT)[0].location, tex);
+        let ids = outputs.iter().find(|v| v.name == "Ids").unwrap();
+        assert_eq!(ids.scalar, Scalar::Int);
+    }
+}

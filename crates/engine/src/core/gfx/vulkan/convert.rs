@@ -52,6 +52,26 @@ pub fn samples(n: u32) -> vk::SampleCountFlags {
     }
 }
 
+/// The sample positions GL uses (NVIDIA's, read with
+/// `glGetMultisamplefv`): Vulkan's standard ones mirrored vertically, as
+/// GL counts y up and this backend's images have GL's row order.
+pub fn gl_sample_locations(n: u32) -> Vec<vk::SampleLocationEXT> {
+    let standard: &[(u32, u32)] = match n {
+        2 => &[(12, 12), (4, 4)],
+        4 => &[(6, 2), (14, 6), (2, 10), (10, 14)],
+        8 => &[(9, 5), (7, 11), (13, 9), (5, 3), (3, 13), (1, 7), (11, 15), (15, 1)],
+        16 => &[
+            (9, 9), (7, 5), (5, 10), (12, 7), (3, 6), (10, 13), (13, 11), (11, 3),
+            (6, 14), (8, 1), (4, 2), (2, 12), (0, 8), (15, 4), (14, 15), (1, 0),
+        ],
+        _ => &[],
+    };
+    standard
+        .iter()
+        .map(|&(x, y)| vk::SampleLocationEXT { x: x as f32 / 16.0, y: 1.0 - y as f32 / 16.0 })
+        .collect()
+}
+
 pub fn filter(f: Filter) -> vk::Filter {
     match f {
         Filter::Nearest => vk::Filter::NEAREST,

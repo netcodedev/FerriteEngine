@@ -331,8 +331,20 @@ impl State {
             // GL's counter-clockwise, seen through the flipped viewport.
             .front_face(vk::FrontFace::CLOCKWISE)
             .line_width(1.0);
-        let multisample =
+        let locations = convert::gl_sample_locations(key.samples);
+        let mut sample_locations = vk::PipelineSampleLocationsStateCreateInfoEXT::default()
+            .sample_locations_enable(true)
+            .sample_locations_info(
+                vk::SampleLocationsInfoEXT::default()
+                    .sample_locations_per_pixel(convert::samples(key.samples))
+                    .sample_location_grid_size(vk::Extent2D { width: 1, height: 1 })
+                    .sample_locations(&locations),
+            );
+        let mut multisample =
             vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(convert::samples(key.samples));
+        if self.gpu.sample_locations && !locations.is_empty() {
+            multisample = multisample.push_next(&mut sample_locations);
+        }
         let has_depth = key.depth != vk::Format::UNDEFINED;
         let stencil_state = desc.stencil.filter(|_| key.stencil);
         let op = |s: &StencilState| vk::StencilOpState {

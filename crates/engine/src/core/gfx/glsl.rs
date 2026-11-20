@@ -356,7 +356,7 @@ pub fn to_vulkan(vertex: &str, fragment: &str) -> Result<VulkanProgram, String> 
             text = replace_statement(&text, &d.text, &replacement);
         }
         text = rebind_blocks(&text, &mut buffers);
-        out.push(finish_stage(&text, &block));
+        out.push(finish_stage(&text, &block, out.is_empty()));
     }
     let fragment = out.pop().unwrap_or_default();
     let vertex = out.pop().unwrap_or_default();
@@ -430,7 +430,7 @@ fn rebind_blocks(source: &str, buffers: &mut Vec<BufferBlock>) -> String {
 
 /// The version line made 4.60, the built-ins renamed, and the params
 /// block put after the version (and any `#extension` lines).
-fn finish_stage(source: &str, block: &str) -> String {
+fn finish_stage(source: &str, block: &str, vertex: bool) -> String {
     let mut out = String::new();
     let mut lines = source.lines().peekable();
     // Leading blank lines and comments before #version are not allowed
@@ -463,6 +463,12 @@ fn finish_stage(source: &str, block: &str) -> String {
         out.push('\n');
     }
     out.push_str("#define FERRITE_VULKAN 1\n#define gl_VertexID gl_VertexIndex\n#define gl_InstanceID gl_InstanceIndex\n");
+    if vertex {
+        // The depth prepass and the passes after it draw the same surfaces
+        // with other programs and test them `LEQUAL`: the positions must
+        // come out the same to the bit (GL's driver does that unasked).
+        out.push_str("invariant gl_Position;\n");
+    }
     out.push_str(block);
     for line in rest {
         out.push_str(line);
@@ -511,6 +517,8 @@ void main() { color = texture(image, uv) * float(mode) + vec4(offset, 1.0); }
         assert!(!p.vertex.contains("uniform mat4 viewProjection;"));
         assert!(p.vertex.starts_with("#version 460\n"));
         assert!(p.vertex.contains("#define gl_VertexID gl_VertexIndex"));
+        assert!(p.vertex.contains("invariant gl_Position;"));
+        assert!(!p.fragment.contains("invariant gl_Position;"));
     }
 
     #[test]
