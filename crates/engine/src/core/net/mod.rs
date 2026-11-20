@@ -35,13 +35,14 @@ mod protocol;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    path::Path,
+    fs::File,
+    path::{Path, PathBuf},
     net::{SocketAddr, ToSocketAddrs, UdpSocket},
     sync::{LazyLock, Mutex, MutexGuard},
     time::{Duration, Instant, SystemTime},
 };
 
-use renet::{ConnectionConfig, DefaultChannel, RenetClient, RenetServer, ServerEvent};
+use renet::{ChannelConfig, ConnectionConfig, DefaultChannel, RenetClient, RenetServer, ServerEvent};
 use renet_netcode::{
     ClientAuthentication, NetcodeClientTransport, NetcodeServerTransport, ServerAuthentication,
     ServerConfig,
@@ -67,6 +68,45 @@ const PROTOCOL_ID: u64 = 0x4645_5252_4954_4501;
 const SEND_RATE: f32 = 20.0;
 /// Connecting gives up after this long.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Most bytes the reliable channels hold for one peer, sent but not yet
+/// acknowledged (renet disconnects a peer whose channel overflows). The
+/// server never fills it past this (see `Server::outbox`), and a scene sent
+/// on joining has to fit.
+const RELIABLE_MEMORY: usize = 32 * 1024 * 1024;
+/// Bytes of queued events (the history, on joining) the server hands each
+/// client's reliable channel per update at most.
+const OUTBOX_BYTES_PER_TICK: usize = 256 * 1024;
+/// Largest request a client may send; bigger ones are dropped.
+const MAX_REQUEST_BYTES: usize = 64 * 1024;
+/// Requests and their bytes one client may send per second; more are
+/// dropped (a client that floods the server with requests would grow every
+/// channel's history without end).
+const MAX_REQUESTS_PER_SECOND: u32 = 240;
+const MAX_REQUEST_BYTES_PER_SECOND: usize = 1024 * 1024;
+/// Size of the kept history (over all channels) from which the server
+/// warns that it should be replaced by snapshots (`replace_history`); again
+/// at every doubling.
+const HISTORY_WARNING_BYTES: usize = 8 * 1024 * 1024;
+
+/// renet's channels, with room for `RELIABLE_MEMORY` in the reliable ones.
+/// Only how much each side keeps changes, not what goes over the wire.
+fn connection_config() -> ConnectionConfig {
+    let channels: Vec<ChannelConfig> = DefaultChannel::config()
+        .into_iter()
+        .map(|mut channel| {
+            if channel.channel_id != u8::from(DefaultChannel::Unreliable) {
+                channel.max_memory_usage_bytes = RELIABLE_MEMORY;
+            }
+            channel
+        })
+        .collect();
+    ConnectionConfig {
+        server_channels_config: channels.clone(),
+        client_channels_config: channels,
+        ..ConnectionConfig::default()
+    }
+}
 
 /// Where the game stands.
 #[derive(Clone, Debug, PartialEq)]
@@ -97,6 +137,53 @@ struct Server {
     last_seen: HashMap<u64, PlayerState>,
     /// Players that joined so far.
     joined: u32,
+    /// Reliable messages waiting for a client's channel to have room, in
+    /// order: the history a client gets on joining is handed over a bit
+    /// per update instead of all at once, and events made meanwhile wait
+    /// behind it.
+    outbox: HashMap<ClientId, VecDeque<Vec<u8>>>,
+    /// What each client requested in the current second.
+    request_budget: HashMap<ClientId, RequestBudget>,
+    /// Bytes in `log`, and from which size the next warning comes.
+    log_bytes: usize,
+    log_warning_at: usize,
+}
+
+/// Requests of one client in the second since `since`.
+struct RequestBudget {
+    since: Instant,
+    count: u32,
+    bytes: usize,
+    /// Whether dropping was logged this second.
+    warned: bool,
+}
+
+impl RequestBudget {
+    fn new() -> Self {
+        Self {
+            since: Instant::now(),
+            count: 0,
+            bytes: 0,
+            warned: false,
+        }
+    }
+
+    /// Whether a request of `bytes` may still come this second (and count
+    /// it if so).
+    fn allow(&mut self, bytes: usize) -> bool {
+        if self.since.elapsed() >= Duration::from_secs(1) {
+            *self = Self::new();
+        }
+        if bytes > MAX_REQUEST_BYTES
+            || self.count >= MAX_REQUESTS_PER_SECOND
+            || self.bytes + bytes > MAX_REQUEST_BYTES_PER_SECOND
+        {
+            return false;
+        }
+        self.count += 1;
+        self.bytes += bytes;
+        true
+    }
 }
 
 struct Client {
@@ -180,7 +267,7 @@ pub fn host(port: u16) -> Result<(), String> {
     let transport = NetcodeServerTransport::new(config, socket).map_err(|e| e.to_string())?;
     let mut net = net();
     net.role = Role::Server(Box::new(Server {
-        server: RenetServer::new(ConnectionConfig::default()),
+        server: RenetServer::new(connection_config()),
         transport,
         log: Vec::new(),
         players: HashMap::new(),
@@ -189,6 +276,10 @@ pub fn host(port: u16) -> Result<(), String> {
         keys: HashMap::new(),
         last_seen: HashMap::new(),
         joined: 0,
+        outbox: HashMap::new(),
+        request_budget: HashMap::new(),
+        log_bytes: 0,
+        log_warning_at: HISTORY_WARNING_BYTES,
     }));
     net.events.clear();
     net.requests.clear();
@@ -208,20 +299,76 @@ pub fn share_scene(scene_file: String) {
 /// Who this player is, the same on every connection: a number made once
 /// and kept in `saves/player.id` (in the project). The server remembers
 /// players by it, e.g. where they were when they left.
+///
+/// The file is locked while the game runs: a second game of the same
+/// project on this machine (the editor's play mode and a player started
+/// with `--connect`, say) is another player, kept in `saves/player-2.id`,
+/// and so on.
 fn player_key() -> u64 {
-    let path = Path::new("saves").join("player.id");
-    if let Some(key) = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| u64::from_str_radix(text.trim(), 16).ok())
-    {
-        return key;
+    static HELD: Mutex<Option<(PathBuf, u64, File)>> = Mutex::new(None);
+    let saves = Path::new("saves");
+    let _ = std::fs::create_dir_all(saves);
+    let dir = saves.canonicalize().unwrap_or_else(|_| saves.to_path_buf());
+    let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((held_dir, key, _)) = &*held {
+        if *held_dir == dir {
+            return *key;
+        }
     }
-    let key = now().as_nanos() as u64 ^ (std::process::id() as u64).rotate_left(40);
-    let _ = std::fs::create_dir_all("saves");
-    if let Err(e) = std::fs::write(&path, format!("{key:016x}\n")) {
-        log::warn!("net: cannot keep {}: {e}", path.display());
+    match claim_player_key(&dir) {
+        Some((key, file)) => {
+            *held = Some((dir, key, file));
+            key
+        }
+        None => {
+            log::warn!("net: cannot keep who this player is in {}", dir.display());
+            new_player_key()
+        }
     }
-    key
+}
+
+fn new_player_key() -> u64 {
+    now().as_nanos() as u64 ^ (std::process::id() as u64).rotate_left(40)
+}
+
+/// The first player id file in `dir` no other game holds, locked, with
+/// the key in it (made if it is new).
+fn claim_player_key(dir: &Path) -> Option<(u64, File)> {
+    use std::io::{Read, Seek, Write};
+    for slot in 1..=MAX_PLAYERS {
+        let name = match slot {
+            1 => "player.id".to_string(),
+            n => format!("player-{n}.id"),
+        };
+        let path = dir.join(name);
+        let Ok(mut file) = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+        else {
+            continue;
+        };
+        if file.try_lock().is_err() {
+            continue;
+        }
+        let mut text = String::new();
+        let _ = file.read_to_string(&mut text);
+        if let Ok(key) = u64::from_str_radix(text.trim(), 16) {
+            return Some((key, file));
+        }
+        let key = new_player_key();
+        let written = file
+            .set_len(0)
+            .and_then(|()| file.rewind())
+            .and_then(|()| write!(file, "{key:016x}\n"));
+        if let Err(e) = written {
+            log::warn!("net: cannot keep {}: {e}", path.display());
+        }
+        return Some((key, file));
+    }
+    None
 }
 
 /// Connect to the server at `address` ("host" or "host:port"). Returns at
@@ -253,7 +400,7 @@ pub fn connect(address: &str) -> Result<(), String> {
         NetcodeClientTransport::new(now(), authentication, socket).map_err(|e| e.to_string())?;
     let mut net = net();
     net.role = Role::Client(Box::new(Client {
-        client: RenetClient::new(ConnectionConfig::default()),
+        client: RenetClient::new(connection_config()),
         transport,
         id,
         started: Instant::now(),
@@ -264,6 +411,8 @@ pub fn connect(address: &str) -> Result<(), String> {
     net.events.clear();
     net.requests.clear();
     net.failure = None;
+    // What the server's players look like is taken from its scene.
+    players::forget_template();
     Ok(())
 }
 
@@ -284,6 +433,10 @@ pub fn disconnect() {
     net.events.clear();
     net.requests.clear();
     net.failure = None;
+    // The next session may be in another scene, or project. (Not on `host`:
+    // a dedicated server takes it from its scene just before, see
+    // `make_dedicated`.)
+    players::forget_template();
 }
 
 pub fn status() -> Status {
@@ -383,6 +536,7 @@ pub fn replace_history(channel: &str, data: Vec<u8>) {
     if let Role::Server(server) = &mut net().role {
         server.log.retain(|(c, _)| c != channel);
         server.log.push((channel.to_string(), data));
+        server.log_bytes = server.log.iter().map(|(c, d)| c.len() + d.len()).sum();
     }
 }
 
@@ -465,8 +619,10 @@ pub fn load_world(path: &Path) -> Result<usize, String> {
     let count = saved.history.len();
     server.last_seen.extend(saved.players);
     for (channel, data) in saved.history {
-        push_event(&mut net.events, &channel, data.clone());
-        server.log.push((channel, data));
+        // All of it, however long: the scripts have not run yet, and the
+        // world they build has to be the one players get.
+        net.events.entry(channel.clone()).or_default().push_back(data.clone());
+        keep_in_log(server, channel, data);
     }
     Ok(count)
 }
@@ -578,8 +734,87 @@ fn push_event(events: &mut HashMap<String, VecDeque<Vec<u8>>>, channel: &str, da
     let queue = events.entry(channel.to_string()).or_default();
     if queue.len() >= MAX_QUEUED {
         queue.pop_front();
+        static WARNED: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+        if WARNED.lock().unwrap_or_else(|e| e.into_inner()).insert(channel.to_string()) {
+            log::warn!(
+                "net: nobody takes the events of '{channel}'; dropping the oldest beyond \
+                 {MAX_QUEUED}"
+            );
+        }
     }
     queue.push_back(data);
+}
+
+/// On the server: keep an event for later players (and the saved world).
+fn keep_in_log(server: &mut Server, channel: String, data: Vec<u8>) {
+    server.log_bytes += channel.len() + data.len();
+    server.log.push((channel, data));
+    if server.log_bytes >= server.log_warning_at {
+        log::warn!(
+            "net: the world's history holds {} MiB; every player who joins is sent all of it. \
+             Replace channels' histories with snapshots (replace_history).",
+            server.log_bytes / (1024 * 1024)
+        );
+        server.log_warning_at = server.log_warning_at.saturating_mul(2);
+    }
+}
+
+/// On the server: send `message` to `client_id` reliably and in order:
+/// now if its channel has room and nothing waits before it, else after
+/// what waits (see `flush_outbox`).
+fn send_reliable(server: &mut Server, client_id: ClientId, message: Vec<u8>) {
+    let outbox = server.outbox.entry(client_id).or_default();
+    if outbox.is_empty()
+        && server
+            .server
+            .can_send_message(client_id, DefaultChannel::ReliableOrdered, message.len())
+    {
+        server
+            .server
+            .send_message(client_id, DefaultChannel::ReliableOrdered, message);
+    } else {
+        outbox.push_back(message);
+    }
+}
+
+/// `send_reliable` to every connected client.
+fn broadcast_reliable(server: &mut Server, message: Vec<u8>) {
+    for client_id in server.server.clients_id() {
+        send_reliable(server, client_id, message.clone());
+    }
+}
+
+/// On the server: hand each client's channel what waits for it, as much as
+/// it has room for, up to `OUTBOX_BYTES_PER_TICK`.
+fn flush_outbox(renet: &mut RenetServer, outbox: &mut HashMap<ClientId, VecDeque<Vec<u8>>>) {
+    outbox.retain(|&client_id, queue| {
+        if !renet.is_connected(client_id) {
+            return false;
+        }
+        let mut sent = 0;
+        while let Some(message) = queue.front() {
+            if message.len() > RELIABLE_MEMORY {
+                log::error!(
+                    "net: a message of {} MiB cannot be sent to player {client_id}; the most is \
+                     {} MiB",
+                    message.len() / (1024 * 1024),
+                    RELIABLE_MEMORY / (1024 * 1024)
+                );
+                queue.pop_front();
+                continue;
+            }
+            // One message at least, however big, when there is room.
+            if (sent > 0 && sent + message.len() > OUTBOX_BYTES_PER_TICK)
+                || !renet.can_send_message(client_id, DefaultChannel::ReliableOrdered, message.len())
+            {
+                break;
+            }
+            let message = queue.pop_front().expect("checked");
+            sent += message.len();
+            renet.send_message(client_id, DefaultChannel::ReliableOrdered, message);
+        }
+        !queue.is_empty()
+    });
 }
 
 /// On the server: `data` becomes an event, kept for later players, sent to
@@ -594,9 +829,9 @@ fn server_event(
         channel: channel.clone(),
         data: data.clone(),
     });
-    server.server.broadcast_message(DefaultChannel::ReliableOrdered, message);
+    broadcast_reliable(server, message);
     push_event(events, &channel, data.clone());
-    server.log.push((channel, data));
+    keep_in_log(server, channel, data);
 }
 
 /// Send and receive, and keep the remote players in `scene` up to date.
@@ -667,6 +902,8 @@ pub(crate) fn update(scene: &mut Scene, delta_time: f64) {
                 Err(e) => log::warn!("net: cannot play the server's scene: {e}"),
             }
         }
+        // Other players look like the player of the scene played now.
+        players::refresh_template(scene);
         players::place_local(scene, welcome.returning.as_ref(), welcome.index);
     }
     if offline {
@@ -707,28 +944,30 @@ fn update_server(
                     index: server.joined,
                 });
                 server.joined += 1;
-                server
-                    .server
-                    .send_message(client_id, DefaultChannel::ReliableOrdered, welcome);
-                // The world as it is: every event so far.
-                for (channel, data) in &server.log {
-                    let message = encode(&ToClient::Event {
-                        channel: channel.clone(),
-                        data: data.clone(),
-                    });
-                    server
-                        .server
-                        .send_message(client_id, DefaultChannel::ReliableOrdered, message);
-                }
+                send_reliable(server, client_id, welcome);
+                // The world as it is: every event so far, handed over a bit
+                // per update (see `flush_outbox`), events made meanwhile
+                // behind it.
+                let history: Vec<Vec<u8>> = server
+                    .log
+                    .iter()
+                    .map(|(channel, data)| {
+                        encode(&ToClient::Event {
+                            channel: channel.clone(),
+                            data: data.clone(),
+                        })
+                    })
+                    .collect();
+                server.outbox.entry(client_id).or_default().extend(history);
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 log::info!("net: player {client_id} left ({reason})");
                 server.players.remove(&client_id);
                 server.keys.remove(&client_id);
+                server.outbox.remove(&client_id);
+                server.request_budget.remove(&client_id);
                 server.left.push(client_id);
-                server
-                    .server
-                    .broadcast_message(DefaultChannel::ReliableOrdered, encode(&ToClient::Left(client_id)));
+                broadcast_reliable(server, encode(&ToClient::Left(client_id)));
             }
         }
     }
@@ -736,7 +975,24 @@ fn update_server(
         for lane in [DefaultChannel::ReliableOrdered, DefaultChannel::Unreliable] {
             let lane = u8::from(lane);
             while let Some(message) = server.server.receive_message(client_id, lane) {
-                match bincode::deserialize::<ToServer>(&message) {
+                let parsed = bincode::deserialize::<ToServer>(&message);
+                if let Ok(ToServer::Request { .. }) = &parsed {
+                    let budget = server
+                        .request_budget
+                        .entry(client_id)
+                        .or_insert_with(RequestBudget::new);
+                    if !budget.allow(message.len()) {
+                        if !budget.warned {
+                            budget.warned = true;
+                            log::warn!(
+                                "net: player {client_id} sends too many or too big requests; \
+                                 dropping them"
+                            );
+                        }
+                        continue;
+                    }
+                }
+                match parsed {
                     Ok(ToServer::Request { channel, data }) if moderated.contains(&channel) => {
                         push_request(requests, &channel, Some(client_id), data)
                     }
@@ -761,6 +1017,7 @@ fn update_server(
             .server
             .broadcast_message(DefaultChannel::Unreliable, encode(&ToClient::Players(all)));
     }
+    flush_outbox(&mut server.server, &mut server.outbox);
     server.transport.send_packets(&mut server.server);
 }
 
@@ -869,8 +1126,74 @@ mod tests {
         assert_eq!(load_world(&path).unwrap(), 2);
         assert_eq!(take_values::<u8>("kept"), vec![12]);
         assert_eq!(take_values::<u8>("other"), vec![3]);
+
+        // A long history comes back whole, not cut to what a queue keeps.
+        for i in 0..MAX_QUEUED as u32 + 5 {
+            publish_value("long", &i);
+        }
+        let _ = take_events("long");
+        save_world(&path).unwrap();
+        disconnect();
+        host(0).unwrap();
+        load_world(&path).unwrap();
+        assert_eq!(take_events("long").len(), MAX_QUEUED + 5);
         disconnect();
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_long_history_is_handed_to_a_joining_client_without_overflowing_its_channel() {
+        let mut renet = RenetServer::new(connection_config());
+        renet.add_connection(1);
+        // More than the channel holds unacknowledged (nothing is
+        // acknowledged here: no client answers).
+        let mut outbox = HashMap::new();
+        let count = RELIABLE_MEMORY / (64 * 1024) + 100;
+        let history: VecDeque<Vec<u8>> = (0..count).map(|_| vec![7u8; 64 * 1024]).collect();
+        outbox.insert(1, history);
+        for ticks in 0..300 {
+            flush_outbox(&mut renet, &mut outbox);
+            renet.update(Duration::from_millis(16));
+            assert!(renet.is_connected(1), "dropped after {ticks} updates");
+        }
+        // What did not fit waits for room.
+        let waiting = outbox.get(&1).map_or(0, VecDeque::len);
+        assert!(waiting >= 100, "{waiting}");
+    }
+
+    #[test]
+    fn a_client_may_request_only_so_much_per_second() {
+        let mut budget = RequestBudget::new();
+        assert!(!budget.allow(MAX_REQUEST_BYTES + 1));
+        for _ in 0..MAX_REQUESTS_PER_SECOND {
+            assert!(budget.allow(16));
+        }
+        assert!(!budget.allow(16));
+        let mut budget = RequestBudget::new();
+        let mut bytes = 0;
+        while budget.allow(MAX_REQUEST_BYTES) {
+            bytes += MAX_REQUEST_BYTES;
+        }
+        assert!(bytes <= MAX_REQUEST_BYTES_PER_SECOND);
+        // A second later, again.
+        budget.since -= Duration::from_secs(1);
+        assert!(budget.allow(16));
+    }
+
+    #[test]
+    fn two_games_of_one_project_are_two_players() {
+        let dir = std::env::temp_dir().join(format!("ferrite-player-key-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (first, held) = claim_player_key(&dir).unwrap();
+        let (second, other) = claim_player_key(&dir).unwrap();
+        assert_ne!(first, second);
+        assert!(dir.join("player-2.id").is_file());
+        drop(held);
+        drop(other);
+        // The same again once the games ended.
+        assert_eq!(claim_player_key(&dir).unwrap().0, first);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn offline_requests_are_events_at_once() {

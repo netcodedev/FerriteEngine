@@ -25,8 +25,8 @@ use std::{
 
 use cgmath::{Matrix4, Point3, Vector3};
 use glfw::{Glfw, Window, WindowEvent};
-use ron::Value;
-use serde::{de::DeserializeOwned, Serialize};
+use ron::{value::RawValue, Value};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::terrain::{generators::GeneratorEntry, source::TerrainGenerator};
 
@@ -41,8 +41,9 @@ use super::{
 
 pub use library::{
     clean_cargo_env, engine_workspace, is_inherited_cargo_var, load_library, packaged_library,
-    ScriptCrate, REGISTER_SYMBOL, SCRIPTS_LIBRARY,
+    build_dir, target_dir, ScriptCrate, REGISTER_SYMBOL, SCRIPTS_LIBRARY,
 };
+pub(crate) use library::first_error;
 
 /// What a script does. Every method is optional.
 #[allow(unused_variables)]
@@ -122,8 +123,8 @@ impl<S: Script> ScriptComponent<S> {
         &mut self.script
     }
 
-    fn parameters(&self) -> Value {
-        to_value(&self.script.data())
+    fn parameters(&self) -> ScriptData {
+        ScriptData::of(&self.script.data())
     }
 }
 
@@ -189,15 +190,14 @@ impl<S: Script> Component for ScriptComponent<S> {
     }
 
     fn properties(&self) -> Vec<Property> {
-        parameters::properties(&self.parameters(), S::PARAMETERS)
+        parameters::properties(&to_value(&self.script.data()), S::PARAMETERS)
     }
 
     fn set_property(&mut self, name: &str, value: PropertyValue) {
-        let mut data = self.parameters();
-        if !parameters::set(&mut data, name, value) {
+        let Some(data) = self.parameters().with_parameter(name, value) else {
             return;
-        }
-        match data.into_rust::<S::Data>() {
+        };
+        match ron::from_str::<S::Data>(data.as_str()) {
             Ok(data) => self.script.apply(data),
             Err(e) => log::warn!("script {}: cannot set {name}: {e}", S::NAME),
         }
@@ -273,10 +273,129 @@ impl Scene {
     }
 }
 
-type Create = fn(&Value) -> Result<Box<dyn Component>, String>;
+/// A script's parameters as RON text, as serde writes the script's data
+/// (`(speed: 2.0, mode: Fast)`); `()` for its defaults. Kept as text, not
+/// as a `ron::Value`: a value forgets the names of enum variants (`Fast`
+/// would come back as `()`). In a scene file it is written as it is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScriptData(String);
+
+impl ScriptData {
+    /// `data` as RON text.
+    pub fn of<T: Serialize>(data: &T) -> Self {
+        ron::to_string(data).map(Self).unwrap_or_default()
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// No parameters given: the script's defaults.
+    pub fn is_unit(&self) -> bool {
+        matches!(self.0.trim(), "" | "()")
+    }
+
+    /// The data with the parameter shown as `name` (see `parameters`) set
+    /// to `value`. Every other field is kept as it is written, enum
+    /// variants too. `None` if there is no such parameter.
+    fn with_parameter(&self, name: &str, value: PropertyValue) -> Option<ScriptData> {
+        let mut fields = ron::from_str::<Fields>(&self.0).ok()?.0;
+        let changed = fields.iter_mut().any(|(key, raw)| {
+            let Ok(old) = raw.into_rust::<Value>() else {
+                return false;
+            };
+            let mut field = Value::Map([(Value::String(key.clone()), old)].into_iter().collect());
+            if !parameters::set(&mut field, name, value.clone()) {
+                return false;
+            }
+            let Value::Map(field) = field else {
+                return false;
+            };
+            let Some(new) = field.values().next() else {
+                return false;
+            };
+            // A value writes every list as `[..]`; a tuple or an array
+            // (a vector, a colour) is read from `(..)` only.
+            let text = match new {
+                Value::Seq(items) if raw.get_ron().trim_start().starts_with('(') => items
+                    .iter()
+                    .map(ron::to_string)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|items| format!("({})", items.join(","))),
+                new => ron::to_string(new),
+            };
+            match text.ok().and_then(|text| RawValue::from_boxed_ron(text.into()).ok()) {
+                Some(new) => {
+                    *raw = new;
+                    true
+                }
+                None => false,
+            }
+        });
+        if !changed {
+            return None;
+        }
+        let fields: Vec<String> = fields
+            .iter()
+            .map(|(key, raw)| format!("{key}:{}", raw.get_ron()))
+            .collect();
+        Some(ScriptData(format!("({})", fields.join(","))))
+    }
+}
+
+impl Default for ScriptData {
+    fn default() -> Self {
+        Self("()".to_string())
+    }
+}
+
+impl Serialize for ScriptData {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        RawValue::from_ron(&self.0)
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ScriptData {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = Box::<RawValue>::deserialize(deserializer)?;
+        Ok(Self(raw.get_ron().to_string()))
+    }
+}
+
+/// The fields of a struct written in RON, each as it is written.
+struct Fields(Vec<(String, Box<RawValue>)>);
+
+impl<'de> Deserialize<'de> for Fields {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Fields;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a struct")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Fields, A::Error> {
+                let mut fields = Vec::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    fields.push((key, map.next_value()?));
+                }
+                Ok(Fields(fields))
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+type Create = fn(&ScriptData) -> Result<Box<dyn Component>, String>;
 
 struct Entry {
     create: Create,
+    /// The script's type, with its module, to tell two scripts of one name
+    /// apart.
+    type_name: &'static str,
 }
 
 /// The scripts a game offers, by name, and its worlds (see
@@ -289,21 +408,44 @@ pub struct ScriptRegistry {
 
 impl ScriptRegistry {
     pub fn register<S: Script>(&mut self) {
-        fn create<S: Script>(data: &Value) -> Result<Box<dyn Component>, String> {
+        fn create<S: Script>(data: &ScriptData) -> Result<Box<dyn Component>, String> {
             // No data at all (`()`): the script's defaults.
-            let data: S::Data = match data {
-                Value::Unit => S::Data::default(),
-                data => data
-                    .clone()
-                    .into_rust()
-                    .map_err(|e| format!("invalid parameters for script '{}': {e}", S::NAME))?,
+            let data: S::Data = if data.is_unit() {
+                S::Data::default()
+            } else {
+                ron::from_str(data.as_str())
+                    .or_else(|e| {
+                        // Scene files from before wrote the data as a map
+                        // (`{"speed": 2.0}`), which only a value reads as
+                        // a struct.
+                        ron::from_str::<Value>(data.as_str())
+                            .ok()
+                            .and_then(|value| value.into_rust().ok())
+                            .ok_or(e)
+                    })
+                    .map_err(|e| format!("invalid parameters for script '{}': {e}", S::NAME))?
             };
             Ok(Box::new(ScriptComponent::new(S::from_data(data))))
+        }
+        let type_name = std::any::type_name::<S>();
+        // Scenes save a script by its struct's name alone: a second script
+        // of that name would silently take over the first one's entities.
+        if let Some(first) = self.scripts.get(S::NAME) {
+            if first.type_name != type_name {
+                log::error!(
+                    "two scripts are named '{}' ({} and {type_name}); only the first is used. \
+                     Rename one of them.",
+                    S::NAME,
+                    first.type_name,
+                );
+            }
+            return;
         }
         self.scripts.insert(
             S::NAME.to_string(),
             Entry {
                 create: create::<S>,
+                type_name,
             },
         );
     }
@@ -379,7 +521,7 @@ pub fn terrain_generator_names() -> Vec<String> {
 }
 
 /// A new component of the script `name`, from its saved parameters.
-pub fn create(name: &str, data: &Value) -> Result<Box<dyn Component>, String> {
+pub fn create(name: &str, data: &ScriptData) -> Result<Box<dyn Component>, String> {
     let registry = REGISTRY.read().unwrap();
     let entry = registry
         .scripts
@@ -503,12 +645,12 @@ mod tests {
         assert_eq!(ron::from_str::<ComponentData>(&text).unwrap(), saved);
 
         // Saved without parameters: built with its defaults.
-        let fresh = create("Spin", &Value::Unit).unwrap();
+        let fresh = create("Spin", &ScriptData::default()).unwrap();
         assert_eq!(
             fresh.to_data(),
             ScriptComponent::new(Spin::default()).to_data()
         );
-        assert!(create("Nope", &Value::Unit).is_err());
+        assert!(create("Nope", &ScriptData::default()).is_err());
         install(ScriptRegistry::default());
     }
 
@@ -560,6 +702,99 @@ mod tests {
         // Not again: the caches it empties were not filled since.
         install(ScriptRegistry::default());
         assert_eq!(RELEASED.load(Ordering::SeqCst), 1);
+    }
+
+    #[derive(Clone, Default, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    pub enum Mode {
+        #[default]
+        Slow,
+        Fast,
+        Custom(f32),
+    }
+
+    #[derive(Script, Default)]
+    pub struct Gear {
+        pub mode: Mode,
+        pub speed: f32,
+        pub spare: Mode,
+    }
+
+    impl Behaviour for Gear {}
+
+    #[test]
+    fn enum_parameters_survive_saving_loading_and_editing() {
+        let _guard = TEST_REGISTRY.lock().unwrap();
+        let mut registry = ScriptRegistry::default();
+        registry.register::<Gear>();
+        install(registry);
+        let saved = ScriptComponent::new(Gear {
+            mode: Mode::Fast,
+            speed: 1.0,
+            spare: Mode::Custom(2.5),
+        })
+        .to_data()
+        .unwrap();
+        // Through a scene file's text, pretty as scenes are written.
+        let text = ron::ser::to_string_pretty(&saved, ron::ser::PrettyConfig::default()).unwrap();
+        let loaded: ComponentData = ron::from_str(&text).unwrap();
+        let ComponentData::Script { name, data } = &loaded else {
+            panic!("not script data: {loaded:?}");
+        };
+        let mut rebuilt = create(name, data).unwrap();
+        assert_eq!(rebuilt.to_data(), Some(saved));
+
+        // Editing another parameter keeps the enums.
+        rebuilt.set_property("speed", PropertyValue::Float(4.0));
+        let gear = rebuilt
+            .as_any()
+            .downcast_ref::<ScriptComponent<Gear>>()
+            .unwrap()
+            .script();
+        assert_eq!((gear.mode.clone(), gear.speed, gear.spare.clone()), (Mode::Fast, 4.0, Mode::Custom(2.5)));
+        install(ScriptRegistry::default());
+    }
+
+    #[test]
+    fn scene_files_from_before_keep_loading_their_scripts() {
+        let _guard = TEST_REGISTRY.lock().unwrap();
+        install(registry());
+        let text = "Script(name: \"Spin\", data: {\n    \"speed\": 2.0,\n    \"axis\": (0.0, 1.0, 0.0),\n})";
+        let data: ComponentData = ron::from_str(text).unwrap();
+        let ComponentData::Script { name, data } = &data else {
+            panic!("not script data");
+        };
+        let spin = create(name, data).unwrap();
+        let spin = spin.as_any().downcast_ref::<ScriptComponent<Spin>>().unwrap().script();
+        assert_eq!((spin.speed, spin.axis), (2.0, [0.0, 1.0, 0.0]));
+        // Without data: its defaults.
+        let data: ComponentData = ron::from_str("Script(name: \"Spin\")").unwrap();
+        let ComponentData::Script { name, data } = &data else {
+            panic!("not script data");
+        };
+        assert!(create(name, data).is_ok());
+        install(ScriptRegistry::default());
+    }
+
+    mod other {
+        use super::super::Behaviour;
+        use crate::Script;
+
+        /// A second script named `Spin`, in another module.
+        #[derive(Script, Default)]
+        pub struct Spin {
+            pub other: bool,
+        }
+
+        impl Behaviour for Spin {}
+    }
+
+    #[test]
+    fn a_second_script_of_the_same_name_does_not_replace_the_first() {
+        let mut registry = registry();
+        registry.register::<other::Spin>();
+        assert_eq!(registry.len(), 1);
+        let entry = registry.scripts.get("Spin").unwrap();
+        assert_eq!(entry.type_name, std::any::type_name::<Spin>());
     }
 
     /// Tests that install a registry take turns.

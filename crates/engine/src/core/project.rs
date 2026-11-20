@@ -76,8 +76,20 @@ impl Project {
             let folder = dir.join(folder);
             std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
         }
+        // A folder may hold a project's content without its `.fp` file (lost,
+        // or not checked in): its main scene is kept, not replaced.
         let scene = dir.join(STARTER_SCENE_PATH);
-        std::fs::write(&scene, STARTER_SCENE).map_err(|e| format!("{}: {e}", scene.display()))?;
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&scene) {
+            Ok(mut file) => {
+                use std::io::Write;
+                file.write_all(STARTER_SCENE.as_bytes())
+                    .map_err(|e| format!("{}: {e}", scene.display()))?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                log::info!("{} is kept as the startup scene", scene.display());
+            }
+            Err(e) => return Err(format!("{}: {e}", scene.display())),
+        }
         match copy_player_assets(dir) {
             Ok(_) => {}
             Err(e) => log::warn!("the player prefab will not work in this project: {e}"),
@@ -107,7 +119,8 @@ impl Project {
     pub fn save(&self) -> Result<(), String> {
         let text = ron::ser::to_string_pretty(&self.file, ron::ser::PrettyConfig::default())
             .map_err(|e| e.to_string())?;
-        std::fs::write(&self.path, text).map_err(|e| format!("{}: {e}", self.path.display()))
+        super::utils::write_atomically(&self.path, text)
+            .map_err(|e| format!("{}: {e}", self.path.display()))
     }
 
     /// The first `.fp` file in `dir`.
@@ -219,6 +232,21 @@ mod tests {
         assert_eq!(loaded.file, changed.file);
         // Creating it again opens what is there.
         assert_eq!(Project::create(project.dir()).unwrap().file, changed.file);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_with_scenes_but_no_project_file_keeps_its_main_scene() {
+        let dir = std::env::temp_dir().join(format!("ferrite-project-kept-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        std::fs::write(dir.join(STARTER_SCENE_PATH), "(entities: [])").unwrap();
+        let project = Project::create(&dir).unwrap();
+        assert_eq!(project.file.startup_scene.as_deref(), Some(STARTER_SCENE_PATH));
+        assert_eq!(
+            std::fs::read_to_string(dir.join(STARTER_SCENE_PATH)).unwrap(),
+            "(entities: [])"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

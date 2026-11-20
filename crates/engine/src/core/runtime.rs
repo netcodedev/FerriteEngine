@@ -158,6 +158,8 @@ impl Layer for GameLayer {
         if application::take_restart_request() {
             net::disconnect();
             self.scene = load_scene(self.startup.as_deref());
+            // The next frame's time starts after the loading.
+            window.calculate_frametime();
         }
         self.scene.update(delta_time);
         self.scene.render(window);

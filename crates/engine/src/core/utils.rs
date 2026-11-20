@@ -70,3 +70,37 @@ impl<T: Clone + ToString + FromStr> DataSource<T> {
         }
     }
 }
+
+/// Write `contents` to `path` whole or not at all: into a file next to it
+/// first, which then replaces it. A crash or a full disk while saving leaves
+/// the file as it was, not cut off.
+pub fn write_atomically(path: &std::path::Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
+    let mut partial = path.as_os_str().to_owned();
+    partial.push(".partial");
+    let partial = std::path::PathBuf::from(partial);
+    let written = std::fs::write(&partial, contents).and_then(|()| std::fs::rename(&partial, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    written
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::write_atomically;
+
+    #[test]
+    fn a_file_is_replaced_whole_and_nothing_is_left_beside_it() {
+        let dir = std::env::temp_dir().join(format!("ferrite-write-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("scene.ron");
+        write_atomically(&path, "first").unwrap();
+        write_atomically(&path, "second").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        let files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(files, ["scene.ron"]);
+        // Into a folder that is not there: an error, and no file.
+        assert!(write_atomically(&dir.join("missing").join("x.ron"), "x").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

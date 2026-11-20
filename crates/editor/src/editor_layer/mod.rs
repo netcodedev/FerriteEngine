@@ -350,6 +350,7 @@ impl EditorLayer {
                         far: 1000.0,
                         speed: 10.0,
                         free: true,
+                    sensitivity: ferrite::core::camera::DEFAULT_MOUSE_SENSITIVITY,
                     }],
                 ),
                 entity("sky light", vec![ComponentData::default_sky_light()]),
@@ -374,6 +375,7 @@ impl EditorLayer {
                     far: 1000.0,
                     speed: 10.0,
                     free: true,
+                    sensitivity: ferrite::core::camera::DEFAULT_MOUSE_SENSITIVITY,
                 }],
             ),
             EntityTemplate::SkyLight => (

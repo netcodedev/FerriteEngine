@@ -4,7 +4,7 @@
 //! `#[derive(Script)]` struct and every `impl TerrainGenerator for ...` in
 //! those top-level files. Without the variable there are none.
 
-use std::{env, fs, path::PathBuf};
+use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 #[allow(dead_code)]
 #[path = "src/scan.rs"]
@@ -14,6 +14,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=FERRITE_SCRIPTS");
     let mut modules = String::new();
     let mut registrations = String::new();
+    // Scenes save a script by its struct's name: the module of each name.
+    let mut script_modules: BTreeMap<String, String> = BTreeMap::new();
     if let Some(dir) = env::var_os("FERRITE_SCRIPTS").map(PathBuf::from) {
         // Files added or removed change the folder.
         println!("cargo:rerun-if-changed={}", dir.display());
@@ -40,7 +42,8 @@ fn main() {
             println!("cargo:rerun-if-changed={}", file.display());
             let Some(module) = module else {
                 println!(
-                    "cargo:warning={} is not a valid module name and is left out",
+                    "cargo:warning={} is not a valid module name (a Rust keyword or a name the \
+                     scripts crate uses) and is left out; rename it",
                     file.display()
                 );
                 continue;
@@ -48,6 +51,15 @@ fn main() {
             modules.push_str(&format!("#[path = {:?}]\npub mod {module};\n", file.to_string_lossy()));
             let source = fs::read_to_string(&file).unwrap_or_default();
             for script in scan::script_structs(&source) {
+                if let Some(first) = script_modules.get(&script) {
+                    println!(
+                        "cargo:warning=the script {script} in {} has the name of the script in \
+                         {first} and is left out; scenes save scripts by name, so rename one",
+                        file.display()
+                    );
+                    continue;
+                }
+                script_modules.insert(script.clone(), module.clone());
                 registrations.push_str(&format!("    registry.register::<{module}::{script}>();\n"));
             }
             for world in scan::terrain_generators(&source) {
@@ -58,7 +70,7 @@ fn main() {
     let code = format!(
         "{modules}\n\
          #[allow(unused_variables)]\n\
-         pub fn register(registry: &mut ferrite::core::script::ScriptRegistry) {{\n\
+         pub fn register(registry: &mut ::ferrite::core::script::ScriptRegistry) {{\n\
          {registrations}}}\n"
     );
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("scripts.rs");

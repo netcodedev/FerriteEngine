@@ -86,4 +86,7 @@ pub struct Scene {
     shadow_eye: Cell<Option<cgmath::Point3<f32>>>,
     /// Work queued with `Scene::defer`, run once every entity is updated.
     deferred: Vec<Box<dyn FnOnce(&mut Scene)>>,
+    /// Different for every scene made, so that the update loop sees when
+    /// an entity's update replaced the whole scene (a level was loaded).
+    generation: u64,
 }

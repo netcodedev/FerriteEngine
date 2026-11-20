@@ -39,7 +39,11 @@ impl Behaviour for Rotator {
 ```
 
 Save it as `scripts/rotator.rs`. The file name becomes the module name, so
-it has to be snake_case; nothing has to be registered anywhere. Do not
+it has to be snake_case and cannot be a Rust keyword (`move.rs`,
+`type.rs`) or `ferrite`, `core` or `std` (such a file is left out with a
+build warning); nothing has to be registered anywhere. Scenes save a
+script by its struct's name alone, so two scripts in different files
+cannot share a name: the second is left out with a warning. Do not
 derive `Serialize`/`Deserialize` yourself: the derive generates what saving
 needs, and the scripts crate has no direct `serde` dependency.
 
@@ -51,6 +55,11 @@ Parameters can be numbers (shown as float or whole-number fields), `bool`,
 `String`, and short arrays of those (`[f32; 3]` shows as `axis x`,
 `axis y`, `axis z`). The inspector shows the field name with `_` as a space
 (`move_speed` → `move speed`).
+
+Other types serde can save (enums, structs, `Vec`s; derive
+`ferrite::serde::Serialize` and `Deserialize` with
+`#[serde(crate = "ferrite::serde")]`) are saved and loaded too, but are not
+shown in the inspector.
 
 ## The `Behaviour` trait
 
@@ -82,6 +91,11 @@ let manager = scene.find_entity("Sun").and_then(|e| e.script::<LanternManager>()
 // A script on a known entity, to change it.
 if let Some(lantern) = scene.script_mut::<Lantern>(&id) { lantern.lit = true; }
 ```
+
+To add or remove entities from an update, or to load another scene, queue
+the work with `scene.defer(|scene| …)`: it runs once every entity is
+updated this frame. (Doing it directly is safe too, but an entity removed
+or a scene replaced that way may still finish its update this frame.)
 
 Engine components are reached the same way, e.g.
 `entity.get_component_mut::<ShapeComponent>()` or

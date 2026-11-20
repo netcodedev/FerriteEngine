@@ -17,12 +17,11 @@ const POLL_INTERVAL: Duration = Duration::from_millis(700);
 /// cargo puts on the library path). Scripts built against a different one
 /// must not be loaded.
 fn engine_library_path() -> PathBuf {
-    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
-    ferrite::core::script::engine_workspace()
-        .join("target")
-        .join(profile)
-        .join("deps")
-        .join(format!("libferrite_dylib{}", std::env::consts::DLL_SUFFIX))
+    ferrite::core::script::build_dir().join("deps").join(format!(
+        "{}ferrite_dylib{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    ))
 }
 
 /// What identifies a build of the engine library: its GNU build id (a hash

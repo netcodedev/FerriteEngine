@@ -47,9 +47,40 @@ pub fn packaged_library() -> Option<PathBuf> {
 /// Whether `dir` is where the engine's workspace builds to (its `target`
 /// folder, any profile or target triple below it).
 fn is_engine_target(dir: &Path) -> bool {
-    let target = engine_workspace().join("target");
+    let target = target_dir();
+    let target = target.canonicalize().unwrap_or(target);
     let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
     dir.starts_with(&target)
+}
+
+/// Where cargo builds the engine's workspace to: CARGO_TARGET_DIR (kept
+/// for the cargo the editor runs, see `clean_cargo_env`) or its `target`.
+pub fn target_dir() -> PathBuf {
+    target_dir_from(std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from))
+}
+
+fn target_dir_from(variable: Option<PathBuf>) -> PathBuf {
+    match variable.filter(|dir| !dir.as_os_str().is_empty()) {
+        // Relative to where cargo runs: the workspace.
+        Some(dir) => engine_workspace().join(dir),
+        None => engine_workspace().join("target"),
+    }
+}
+
+/// Where cargo puts what it builds of the engine's workspace in this
+/// profile (`target/debug`, say).
+pub fn build_dir() -> PathBuf {
+    let triple = std::env::var("CARGO_BUILD_TARGET").ok();
+    profile_dir(target_dir(), triple.as_deref())
+}
+
+/// Where cargo puts what it builds for this profile: below the target
+/// triple's own folder when CARGO_BUILD_TARGET names one.
+fn profile_dir(target_dir: PathBuf, triple: Option<&str>) -> PathBuf {
+    match triple.filter(|triple| !triple.is_empty()) {
+        Some(triple) => target_dir.join(triple).join(profile()),
+        None => target_dir.join(profile()),
+    }
 }
 
 /// The engine's cargo workspace, where it was built from.
@@ -87,10 +118,7 @@ impl ScriptCrate {
 
     /// Where the built library is.
     pub fn library_path(&self) -> PathBuf {
-        engine_workspace().join("target").join(profile()).join(format!(
-            "lib{SCRIPTS_PACKAGE}{}",
-            std::env::consts::DLL_SUFFIX
-        ))
+        build_dir().join(library_file_name())
     }
 
     /// Compile the scripts. Returns the first compiler error.
@@ -112,14 +140,45 @@ impl ScriptCrate {
             return Ok(());
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let first = stderr
-            .lines()
-            .find(|line| line.contains("error"))
-            .unwrap_or("the build failed");
-        // Paths of the script files, shown relative to the project.
-        let first = first.replace(&format!("{}/", self.sources.display()), "scripts/");
-        Err(first.trim().to_string())
+        Err(first_error(&stderr, Some(&self.sources)))
     }
+}
+
+/// The library's file name on this platform: `libferrite_scripts.so`,
+/// `ferrite_scripts.dll`, ...
+fn library_file_name() -> String {
+    format!(
+        "{}{SCRIPTS_PACKAGE}{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    )
+}
+
+/// The first error in what `cargo build --message-format=short` wrote, not
+/// a warning that mentions "error". Paths below `sources` (the scripts
+/// folder) are shown as `scripts/...`.
+pub(crate) fn first_error(stderr: &str, sources: Option<&Path>) -> String {
+    let is_error = |line: &str| {
+        let line = line.trim_start();
+        // `error: ...`, or `path:line:col: error[E0425]: ...`.
+        line.starts_with("error")
+            || line
+                .split_once(": ")
+                .is_some_and(|(_, message)| message.starts_with("error"))
+    };
+    let first = stderr.lines().find(|line| is_error(line)).unwrap_or("the build failed");
+    let mut first = first.trim().to_string();
+    if let Some(sources) = sources {
+        let shown = sources.display().to_string();
+        // Windows' canonical paths start with `\\?\`, which cargo leaves out.
+        let plain = shown.strip_prefix(r"\\?\").unwrap_or(&shown).to_string();
+        for prefix in [&shown, &plain] {
+            for separator in ['/', '\\'] {
+                first = first.replace(&format!("{prefix}{separator}"), "scripts/");
+            }
+        }
+    }
+    first
 }
 
 /// Whether `name` is a variable cargo sets for a program it runs (`cargo
@@ -161,10 +220,13 @@ pub fn clean_cargo_env(command: &mut Command) {
 /// with; the caller makes sure of that.
 pub fn load_library(path: &Path) -> Result<ScriptRegistry, String> {
     static LOADED: AtomicU32 = AtomicU32::new(0);
+    let loaded = LOADED.fetch_add(1, Ordering::Relaxed);
+    if loaded == 0 {
+        remove_stale_copies();
+    }
     let copy = std::env::temp_dir().join(format!(
-        "ferrite-scripts-{}-{}{}",
+        "{COPY_PREFIX}{}-{loaded}{}",
         std::process::id(),
-        LOADED.fetch_add(1, Ordering::Relaxed),
         std::env::consts::DLL_SUFFIX
     ));
     std::fs::copy(path, &copy).map_err(|e| format!("could not copy {}: {e}", path.display()))?;
@@ -184,8 +246,35 @@ pub fn load_library(path: &Path) -> Result<ScriptRegistry, String> {
             })
     };
     // Mapped by now (or not loaded at all); the file itself is not needed.
+    // (Windows does not remove a loaded library: `remove_stale_copies`
+    // does, when the next editor starts.)
     let _ = std::fs::remove_file(&copy);
     result
+}
+
+/// How the copies `load_library` loads are named in the temp folder.
+const COPY_PREFIX: &str = "ferrite-scripts-";
+
+/// Remove the copies earlier runs left in the temp folder. One still loaded
+/// by a running process is not removed on Windows (it is locked) and stays
+/// loaded elsewhere (its mapping does not need the file).
+fn remove_stale_copies() {
+    let own = format!("{COPY_PREFIX}{}-", std::process::id());
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name.starts_with(COPY_PREFIX)
+            && !name.starts_with(&own)
+            && name.ends_with(std::env::consts::DLL_SUFFIX)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -200,6 +289,48 @@ mod tests {
         assert!(is_engine_target(&target.join("debug")));
         assert!(is_engine_target(&target.join("x86_64-pc-windows-gnu/release")));
         assert!(!is_engine_target(&std::env::temp_dir().join("exported-game")));
+    }
+
+    #[test]
+    fn the_library_is_found_where_cargo_builds_it() {
+        let workspace = engine_workspace();
+        assert_eq!(target_dir_from(None), workspace.join("target"));
+        assert_eq!(target_dir_from(Some("".into())), workspace.join("target"));
+        assert_eq!(target_dir_from(Some("out".into())), workspace.join("out"));
+        let elsewhere = std::env::temp_dir().join("ferrite-target");
+        assert_eq!(target_dir_from(Some(elsewhere.clone())), elsewhere);
+        assert_eq!(
+            profile_dir(elsewhere.clone(), Some("x86_64-pc-windows-gnu")),
+            elsewhere.join("x86_64-pc-windows-gnu").join(profile())
+        );
+        assert_eq!(profile_dir(elsewhere.clone(), None), elsewhere.join(profile()));
+        let file = library_file_name();
+        assert!(file.starts_with(std::env::consts::DLL_PREFIX));
+        assert!(file.ends_with(std::env::consts::DLL_SUFFIX));
+        assert!(file.contains(SCRIPTS_PACKAGE));
+    }
+
+    #[test]
+    fn the_first_error_is_reported_not_a_warning_that_mentions_one() {
+        let stderr = "\
+   Compiling ferrite_scripts v0.1.0
+/p/scripts/x.rs:3:9: warning: unused variable: `error_count`
+/p/scripts/y.rs:7:1: error[E0425]: cannot find value `z` in this scope
+error: could not compile `ferrite_scripts` (lib) due to 1 previous error";
+        assert_eq!(
+            first_error(stderr, Some(Path::new("/p/scripts"))),
+            "scripts/y.rs:7:1: error[E0425]: cannot find value `z` in this scope"
+        );
+        let windows = r"C:\p\scripts\y.rs:7:1: error[E0425]: oops";
+        assert_eq!(
+            first_error(windows, Some(Path::new(r"\\?\C:\p\scripts"))),
+            "scripts/y.rs:7:1: error[E0425]: oops"
+        );
+        assert_eq!(first_error("warning: about errors", None), "the build failed");
+        assert_eq!(
+            first_error("error: linker `cc` not found", None),
+            "error: linker `cc` not found"
+        );
     }
 
     #[test]

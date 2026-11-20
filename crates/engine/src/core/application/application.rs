@@ -5,6 +5,9 @@ use crate::core::{
 
 use super::{Application, Layer};
 
+/// Seconds a frame counts as at most (see `Application::start`).
+const MAX_FRAME_TIME: f64 = 0.25;
+
 impl Application {
     pub fn new(width: u32, height: u32, title: &str) -> Self {
         Self::with_decorations(width, height, title, true)
@@ -33,6 +36,9 @@ impl Application {
 
     pub fn start(&mut self) {
         let mut shown = false;
+        // The first frame's time starts now, not when the window was made:
+        // loading the first scene in between is not a frame.
+        self.window.calculate_frametime();
         while !self.window.should_close() {
             self.window.clear(
                 self.clear_color,
@@ -48,8 +54,12 @@ impl Application {
                 }
             });
 
+            // Once per frame, the same for every layer. A frame that took
+            // long (a stall, a scene loaded in an update) counts as at most
+            // `MAX_FRAME_TIME`: what moves with time does not jump.
+            let delta_time = self.window.calculate_frametime().min(MAX_FRAME_TIME);
             for layer in &mut self.layers {
-                layer.on_update(&self.window, self.window.calculate_frametime());
+                layer.on_update(&self.window, delta_time);
             }
             // Vertex arrays dropped this frame (text meshes of a rebuilt
             // UI, unloaded models), whatever the scene holds.

@@ -26,7 +26,7 @@ use ron::Value;
 
 use super::{
     project::{Project, PROJECT_EXTENSION},
-    script::engine_workspace,
+    script::{engine_workspace, first_error, target_dir},
 };
 
 /// Folders of a project the game needs at runtime.
@@ -104,12 +104,35 @@ pub fn export(
 
     progress("Copying the game...");
     let saves = prepare_folder(&target)?;
-    let mut built = engine_workspace().join("target");
+    let copied = copy_game(project, platform, &name, &target, progress);
+    // Whatever failed, the saves go back into the folder: they are the
+    // game's worlds, not something to rebuild.
+    let restored = match saves {
+        Some(saves) => std::fs::rename(&saves, target.join(SAVES)).map_err(|e| {
+            format!("could not put {} back into {}: {e}", saves.display(), target.display())
+        }),
+        None => Ok(()),
+    };
+    copied?;
+    restored?;
+    Ok(target)
+}
+
+/// Copy the built game, the project's folders and its project file into
+/// `target`, an empty folder.
+fn copy_game(
+    project: &Project,
+    platform: Platform,
+    name: &str,
+    target: &Path,
+    progress: &dyn Fn(&str),
+) -> Result<(), String> {
+    let mut built = target_dir();
     if let Some(triple) = platform.target() {
         built = built.join(triple);
     }
     let built = built.join("release");
-    copy_file(&built.join(platform.exe("game")), &target.join(platform.exe(&name)))?;
+    copy_file(&built.join(platform.exe("game")), &target.join(platform.exe(name)))?;
     copy_file(
         &built.join(platform.exe("server")),
         &target.join(platform.exe(&format!("{name}-server"))),
@@ -122,18 +145,12 @@ pub fn export(
             copy_dir(&from, &target.join(folder))?;
         }
     }
-    if let Some(saves) = saves {
-        std::fs::rename(&saves, target.join(SAVES))
-            .map_err(|e| format!("could not keep {}: {e}", saves.display()))?;
-    }
     let mut file = project.file.clone();
     file.editor = Value::Unit;
     let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default())
         .map_err(|e| e.to_string())?;
     let project_file = target.join(format!("{name}.{PROJECT_EXTENSION}"));
-    std::fs::write(&project_file, text).map_err(|e| format!("{}: {e}", project_file.display()))?;
-    std::fs::write(target.join(MARKER), "").map_err(|e| e.to_string())?;
-    Ok(target)
+    std::fs::write(&project_file, text).map_err(|e| format!("{}: {e}", project_file.display()))
 }
 
 /// What building for `platform` needs on this machine, or what to install.
@@ -177,11 +194,25 @@ fn file_name(name: &str) -> String {
     }
 }
 
-/// Make `target` an empty folder. Only an earlier export, or an empty
-/// folder, is replaced; anything else stays untouched. What the earlier
-/// export saved is moved aside: returned, to be put back.
+/// Make `target` an empty folder, marked as an export's. Only an earlier
+/// export, or an empty folder, is replaced; anything else stays untouched.
+/// What the earlier export saved is moved aside: returned, to be put back.
+/// If this fails, the saves are back where they were.
 fn prepare_folder(target: &Path) -> Result<Option<PathBuf>, String> {
-    let mut kept = None;
+    let aside = target.with_extension("saves-kept");
+    let saves = target.join(SAVES);
+    // Left by an export that failed before it could put them back: the
+    // world the game had then.
+    let mut kept = aside.is_dir().then(|| aside.clone());
+    if kept.is_some() && saves.is_dir() {
+        return Err(format!(
+            "{} holds the saves of an earlier export that did not finish, and {} has saves \
+             too; keep one of them (move it to {}), remove the other, and export again",
+            aside.display(),
+            target.display(),
+            saves.display()
+        ));
+    }
     if target.exists() {
         let empty = std::fs::read_dir(target)
             .map(|mut entries| entries.next().is_none())
@@ -192,17 +223,25 @@ fn prepare_folder(target: &Path) -> Result<Option<PathBuf>, String> {
                 target.display()
             ));
         }
-        let saves = target.join(SAVES);
         if saves.is_dir() {
-            let aside = target.with_extension("saves-kept");
-            let _ = std::fs::remove_dir_all(&aside);
             std::fs::rename(&saves, &aside)
                 .map_err(|e| format!("could not keep {}: {e}", saves.display()))?;
-            kept = Some(aside);
+            kept = Some(aside.clone());
         }
-        std::fs::remove_dir_all(target).map_err(|e| format!("{}: {e}", target.display()))?;
+        if let Err(e) = std::fs::remove_dir_all(target) {
+            // Some of it is still there (a running game's executable, on
+            // Windows): leave it an export, with its saves.
+            let _ = std::fs::create_dir_all(target);
+            let _ = std::fs::write(target.join(MARKER), "");
+            if kept.is_some() {
+                let _ = std::fs::rename(&aside, &saves);
+            }
+            return Err(format!("{}: {e}", target.display()));
+        }
     }
     std::fs::create_dir_all(target).map_err(|e| format!("{}: {e}", target.display()))?;
+    // Marked first: an export that fails halfway may still be replaced.
+    std::fs::write(target.join(MARKER), "").map_err(|e| format!("{}: {e}", target.display()))?;
     Ok(kept)
 }
 
@@ -226,11 +265,7 @@ fn build(project: &Project, platform: Platform) -> Result<(), String> {
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let first = stderr
-        .lines()
-        .find(|line| line.contains("error"))
-        .unwrap_or("the build failed");
-    Err(first.trim().to_string())
+    Err(first_error(&stderr, Some(project.scripts().sources())))
 }
 
 fn copy_file(from: &Path, to: &Path) -> Result<(), String> {
@@ -280,8 +315,19 @@ mod tests {
         std::fs::create_dir_all(dir.join(SAVES)).unwrap();
         std::fs::write(dir.join(SAVES).join("world.sav"), "w").unwrap();
         let kept = prepare_folder(&dir).unwrap().unwrap();
-        assert!(std::fs::read_dir(&dir).unwrap().next().is_none());
+        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(left, [MARKER]);
         assert!(kept.join("world.sav").is_file());
+
+        // An export that failed after that left them aside: the next one
+        // takes them, and does not throw them away.
+        assert_eq!(prepare_folder(&dir).unwrap(), Some(kept.clone()));
+        assert!(kept.join("world.sav").is_file());
+        // Unless the game saved a new world since: then it asks.
+        std::fs::create_dir_all(dir.join(SAVES)).unwrap();
+        assert!(prepare_folder(&dir).is_err());
+        assert!(kept.join("world.sav").is_file());
+        assert!(dir.join(SAVES).is_dir());
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&kept);
     }

@@ -243,7 +243,7 @@ impl AssetDatabase {
             .meta
             .to_ron()
             .map_err(|e| AssetError::Format(path.clone(), e.to_string()))?;
-        fs::write(&path, text).map_err(|e| AssetError::Io(path, e))
+        crate::core::utils::write_atomically(&path, text).map_err(|e| AssetError::Io(path, e))
     }
 }
 

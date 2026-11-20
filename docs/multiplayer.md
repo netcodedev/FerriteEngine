@@ -50,12 +50,38 @@ The byte versions are `request`, `take_events`, `take_requests` and
 The server keeps every event of a channel, so a player who joins later gets
 them all first. `replace_history` / `replace_history_value` replace a
 channel's history with a snapshot to keep it short; `save_world(path)`
-writes the histories and `load_world(path)` carries on from them.
+writes the histories and `load_world(path)` carries on from them (all of
+them: the per-channel queue limit of 10,000 events does not apply to a
+loaded world). The server logs a warning when the history passes 8 MiB,
+and again at every doubling: a game that never snapshots makes every join
+slower and every save bigger.
+
+## Limits
+
+- **Joining.** A player who joins gets the `Welcome` at once and then the
+  history, handed to its reliable channel a bit per update (at most
+  256 KiB, and only while the channel has room), so a long history takes
+  a while but never overflows the connection. Events made meanwhile are
+  queued behind it, so the order stays the same.
+- **Channel memory.** The reliable channels hold up to 32 MiB sent but
+  not yet acknowledged (renet's default is 5 MiB; a peer whose channel
+  overflows is disconnected). The scene a server shares has to fit.
+- **Requests.** A client may send requests of at most 64 KiB, and at most
+  240 requests and 1 MiB of them per second. More are dropped, with a
+  warning in the server's log.
+
+The messages themselves are unchanged (the protocol id is the same).
 
 ## Connecting
 
 `net::host(port)` makes the game a server, `net::connect(address)` joins
-one, `net::disconnect()` leaves. `is_server`, `is_client`, `local_id` and
+one, `net::disconnect()` leaves.
+
+Who a player is (where the server puts it when it comes back) is kept in
+the project's `saves/player.id`, locked while the game runs. A second game
+of the same project on the same machine (play mode in the editor and a
+player started with `--connect`) is another player, kept in
+`saves/player-2.id`, and so on. `is_server`, `is_client`, `local_id` and
 `players` tell a script where it stands.
 
 ## On the wire

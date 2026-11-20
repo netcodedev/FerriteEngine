@@ -442,7 +442,7 @@ fn component_catalog() -> serde_json::Value {
         })
         .collect();
     for name in script::names() {
-        let entry = match script::create(&name, &ron::Value::Unit) {
+        let entry = match script::create(&name, &script::ScriptData::default()) {
             Ok(component) => {
                 let ron = component
                     .to_data()

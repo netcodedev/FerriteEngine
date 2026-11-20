@@ -541,7 +541,7 @@ mod tests {
         for r in &rays { physics.cast_ray_where(*r, [0.0, -1.0, 0.0], 400.0, |_, _| true); }
         let indexed = t.elapsed().as_secs_f64() * 1e6 / rays.len() as f64;
         let t = std::time::Instant::now();
-        for r in &rays { physics.cast_ray_where(*r, [0.7071, 0.0, 0.7071], 60.0, |_, _| true); }
+        for r in &rays { physics.cast_ray_where(*r, [std::f32::consts::FRAC_1_SQRT_2, 0.0, std::f32::consts::FRAC_1_SQRT_2], 60.0, |_, _| true); }
         let level = t.elapsed().as_secs_f64() * 1e6 / rays.len() as f64;
         println!("per ray: every collider {brute:.1} us, indexed down {indexed:.2} us, indexed level 60 m {level:.2} us");
     }

@@ -108,6 +108,19 @@ thread_local! {
     static TEMPLATE: RefCell<Option<EntityData>> = const { RefCell::new(None) };
 }
 
+/// Forget what players look like (a new session, maybe in another scene
+/// or project): taken again from the local player.
+pub(super) fn forget_template() {
+    TEMPLATE.with(|t| *t.borrow_mut() = None);
+}
+
+/// What players look like, from the local player of `scene` (the scene a
+/// server sent, say), or not known until there is one.
+pub(super) fn refresh_template(scene: &Scene) {
+    let template = find(scene.get_entities(), &is_local_player).and_then(template_of);
+    TEMPLATE.with(|t| *t.borrow_mut() = template);
+}
+
 /// The entity itself, not one below it (`get_component` looks into
 /// children too).
 fn is_local_player(entity: &Entity) -> bool {
