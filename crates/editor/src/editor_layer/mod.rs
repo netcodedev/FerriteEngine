@@ -73,6 +73,9 @@ pub(crate) struct EditorLayer {
     frame_count: u64,
     /// Scene as it was when play mode started; restored on stop.
     play_snapshot: Option<SceneFile>,
+    /// Whether the scene had unsaved edits when play mode started; edits
+    /// made while playing are undone on stop.
+    dirty_before_play: bool,
     /// Cursor mode to apply on the next event (commands run in `on_update`
     /// have no access to the GLFW window).
     pending_cursor: Option<CursorMode>,
@@ -211,6 +214,7 @@ impl EditorLayer {
             gpu_timer: None,
             frame_count: 0,
             play_snapshot: None,
+            dirty_before_play: false,
             pending_cursor: None,
             pending_quit: false,
             pending_screenshots: Vec::new(),
@@ -441,6 +445,8 @@ impl EditorLayer {
 
     fn replace_scene(&mut self, scene: Scene) {
         self.scene = scene;
+        // Entity ids may be the same, but the entities are new.
+        self.state.borrow_mut().scene_generation += 1;
         // The viewport re-installs its camera on the next update.
     }
 
@@ -467,9 +473,11 @@ impl EditorLayer {
                     self.pending_screenshots.push((pending, shot));
                 }
             }
+            // Apply any commands the request queued (Play, Save, component
+            // removals, ...) before the next one is checked against the
+            // scene: parallel requests arrive in the same frame.
+            self.run_commands();
         }
-        // Apply any Play/Stop/Save commands bridge requests queued.
-        self.run_commands();
     }
 
     /// Finish any screenshot requests on the queue by reading the
@@ -493,7 +501,8 @@ impl EditorLayer {
         }
     }
 
-    fn save(&mut self, path: PathBuf) {
+    /// Save the scene to `path`; false (and a status message) if that failed.
+    fn save(&mut self, path: PathBuf) -> bool {
         match self.scene.save_to_path(&path) {
             Ok(()) => {
                 self.remember_scene(&path);
@@ -501,11 +510,14 @@ impl EditorLayer {
                 state.set_status(format!("Saved {}", path.display()));
                 state.scene_path = Some(path);
                 state.dirty = false;
+                true
             }
-            Err(e) => self
-                .state
-                .borrow_mut()
-                .set_status(format!("Could not save {}: {e}", path.display())),
+            Err(e) => {
+                self.state
+                    .borrow_mut()
+                    .set_status(format!("Could not save {}: {e}", path.display()));
+                false
+            }
         }
     }
 
@@ -553,23 +565,7 @@ impl Layer for EditorLayer {
         if let Some(status) = self.exporter.poll() {
             self.state.borrow_mut().set_status(status);
         }
-        // The game asked to end: in the editor that ends play mode, never
-        // the editor.
-        if ferrite::core::application::take_quit_request()
-            && self.state.borrow().mode == Mode::Play
-        {
-            self.state.borrow_mut().push(Command::Stop);
-            self.run_commands();
-        }
-        // The game asked to start over: play again from the scene as it
-        // was when play mode started.
-        if ferrite::core::application::take_restart_request()
-            && self.state.borrow().mode == Mode::Play
-        {
-            self.state.borrow_mut().push(Command::Stop);
-            self.state.borrow_mut().push(Command::Play);
-            self.run_commands();
-        }
+        self.handle_game_requests();
         self.save_settings_if_changed();
         let (show_stats, show_widgets, show_assets, show_console, workspace) = {
             let s = self.state.borrow();
@@ -622,6 +618,9 @@ impl Layer for EditorLayer {
             }
             Mode::Play => {
                 self.scene.update(delta_time);
+                // Scripts ask to quit or restart from their update, too:
+                // take that before the application sees it.
+                self.handle_game_requests();
             }
         }
         self.apply_viewport_aspect(&layout);
@@ -700,8 +699,24 @@ impl Layer for EditorLayer {
                 window.maximize();
             }
         }
+        // Closed from outside (Alt+F4, the taskbar): ask about unsaved edits
+        // like the title bar's close button does.
+        if let WindowEvent::Close = event {
+            if !self.pending_quit {
+                window.set_should_close(false);
+                self.state
+                    .borrow_mut()
+                    .push(Command::ConfirmDiscard(Box::new(Command::Quit)));
+                self.run_commands();
+                self.apply_pending_cursor(window);
+            }
+            return;
+        }
+        // A minimized window reports no (or a tiny) size: keep the last one.
         let (width, height) = window.get_size();
-        self.window_state = Some(((width.max(1) as u32, height.max(1) as u32), window.is_maximized()));
+        if !window.is_iconified() && width > 0 && height > 0 {
+            self.window_state = Some(((width as u32, height as u32), window.is_maximized()));
+        }
         self.apply_pending_cursor(window);
 
         let mode = self.state.borrow().mode;
@@ -789,6 +804,24 @@ impl EditorLayer {
                 Err(e) => eprintln!("capture failed: {e}"),
             }
         }
+    }
+
+    /// The game asked to end or to start over. In the editor that ends play
+    /// mode (or plays again from the scene as it was when play mode
+    /// started), never the editor.
+    fn handle_game_requests(&mut self) {
+        let quit = ferrite::core::application::take_quit_request();
+        let restart = ferrite::core::application::take_restart_request();
+        if !(quit || restart) || self.state.borrow().mode != Mode::Play {
+            return;
+        }
+        if quit {
+            self.state.borrow_mut().push(Command::Stop);
+        } else if restart {
+            self.state.borrow_mut().push(Command::Stop);
+            self.state.borrow_mut().push(Command::Play);
+        }
+        self.run_commands();
     }
 
     fn apply_pending_cursor(&mut self, window: &mut glfw::Window) {

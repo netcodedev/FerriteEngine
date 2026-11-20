@@ -281,10 +281,10 @@ impl UIElement for AssetPreview {
                     render_skeleton(rigged, &vp, &view, hot);
                     let positions = rigged.skeleton.world_positions(&rigged.root());
                     let size = rigged.radius * 0.012;
-                    if let Some(joint) = self.hovered_joint {
-                        render_thick_lines(&vp, &diamond(positions[joint], size * 1.6), HANDLE_HOT_COLOR, &view, 2);
+                    if let Some(&at) = self.hovered_joint.and_then(|joint| positions.get(joint)) {
+                        render_thick_lines(&vp, &diamond(at, size * 1.6), HANDLE_HOT_COLOR, &view, 2);
                     }
-                    if let Some(joint) = self.selected_joint() {
+                    if let Some(joint) = self.selected_joint().filter(|joint| *joint < positions.len()) {
                         render_thick_lines(&vp, &diamond(positions[joint], size * 2.0), SELECTED_COLOR, &view, 2);
                         let radius = Self::ring_radius(rigged);
                         let hot = self.ring_drag.as_ref().map(|d| d.axis).or(self.hovered_ring);

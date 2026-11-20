@@ -138,7 +138,7 @@ pub(super) fn begin_drag(
     if gizmo == GizmoMode::Scale {
         return begin_scale(scene, id, handle, ray, size);
     }
-    let axis = AXES[handle];
+    let axis = *AXES.get(handle)?;
     let world = scene.get_world_transform(&id)?;
     let parent = scene.get_parent_world_transform(&id)?;
     let center = Point3::from_vec(world.w.truncate());

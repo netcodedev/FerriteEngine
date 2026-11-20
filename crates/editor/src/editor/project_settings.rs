@@ -38,13 +38,27 @@ impl Default for EditorSettings {
     }
 }
 
+/// Smallest window size restored from the project file, so a bad saved size
+/// (from a minimized window, say) does not leave the editor unusable.
+pub const MIN_WINDOW: (u32, u32) = (640, 360);
+
 impl EditorSettings {
     /// What the project file holds, or the defaults.
     pub fn from_value(value: &ferrite::ron::Value) -> Self {
-        match value {
+        let settings: Self = match value {
             ferrite::ron::Value::Unit => Self::default(),
             value => value.clone().into_rust().unwrap_or_default(),
-        }
+        };
+        settings.sanitized()
+    }
+
+    /// These settings with sizes the editor could not be used with replaced.
+    fn sanitized(mut self) -> Self {
+        self.panels = self.panels.sanitized();
+        self.window = self
+            .window
+            .map(|(width, height)| (width.max(MIN_WINDOW.0), height.max(MIN_WINDOW.1)));
+        self
     }
 
     pub fn to_value(&self) -> ferrite::ron::Value {
@@ -84,5 +98,20 @@ impl EditorSettings {
         for (title, open) in super::stats::section_titles().zip(&state.stats_open) {
             open.write(!self.closed_stats_sections.iter().any(|closed| closed == title));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tiny_saved_window_opens_at_a_usable_size() {
+        let saved = EditorSettings {
+            window: Some((1, 1)),
+            ..EditorSettings::default()
+        };
+        let loaded = EditorSettings::from_value(&saved.to_value());
+        assert_eq!(loaded.window, Some(MIN_WINDOW));
     }
 }

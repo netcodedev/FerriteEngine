@@ -58,6 +58,9 @@ impl Window {
         window.set_cursor_pos_polling(true);
         window.set_framebuffer_size_polling(true);
         window.set_char_polling(true);
+        // Only reported: the window still closes on its own unless a layer
+        // clears `should_close` again (the editor asks about unsaved edits).
+        window.set_close_polling(true);
         window.set_cursor_mode(glfw::CursorMode::Disabled);
         window.set_cursor_pos(0.0, 0.0);
 

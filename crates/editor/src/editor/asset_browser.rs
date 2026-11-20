@@ -373,6 +373,7 @@ impl UIElement for AssetBrowser {
             (rect.y + rect.h - tree_top - 6.0).max(10.0),
         ));
 
+        let mut rebuilt = false;
         {
             // Short-lived: commands and loading code use the database too.
             let database = assets::database();
@@ -380,12 +381,18 @@ impl UIElement for AssetBrowser {
             if self.built_for != Some(changes) {
                 self.rebuild(&database);
                 self.built_for = Some(changes);
+                rebuilt = true;
             }
             self.details.set_text(self.details_text(&database));
         }
 
-        let selection = self.selection.read();
-        if selection != self.last_selection {
+        let mut selection = self.selection.read();
+        // Also after a rebuild: the selected asset may be gone.
+        if rebuilt && selection != NO_SELECTION && !self.rows.contains_key(&selection) {
+            selection = NO_SELECTION;
+            self.selection.write(selection);
+        }
+        if selection != self.last_selection || rebuilt {
             self.last_selection = selection;
             let selected = match self.rows.get(&selection) {
                 Some(Row::Asset(id)) => Some(AssetRef::whole(*id)),

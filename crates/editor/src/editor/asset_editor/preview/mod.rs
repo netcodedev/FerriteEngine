@@ -231,6 +231,10 @@ impl AssetPreview {
 
     fn load(&mut self) {
         self.selected = None;
+        // Hover is only updated on cursor moves: what it points at may not
+        // exist in the new model.
+        self.hovered_joint = None;
+        self.hovered_ring = None;
         self.touched.clear();
         self.posed_for = None;
         self.ring_drag = None;

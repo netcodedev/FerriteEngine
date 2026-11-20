@@ -20,7 +20,7 @@ use ferrite_ui::ui::{
     },
     theme, UIElement,
 };
-use glfw::{Glfw, WindowEvent};
+use glfw::{Action, Glfw, MouseButton, WindowEvent};
 
 use super::{send, Command, GizmoMode, Mode, Shared, Workspace};
 
@@ -377,6 +377,13 @@ impl UIElement for Toolbar {
         glfw: &mut Glfw,
         event: &WindowEvent,
     ) -> bool {
+        // The release that ends an asset drag belongs to the drag layer
+        // (after the toolbar in event order), wherever it happens.
+        if let WindowEvent::MouseButton(MouseButton::Button1, Action::Release, _) = event {
+            if self.state.borrow().drag.as_ref().is_some_and(|drag| drag.active) {
+                return false;
+            }
+        }
         let mut handled = false;
         for widget in self.widgets_mut() {
             if widget.handle_events(scene, window, glfw, event) {
