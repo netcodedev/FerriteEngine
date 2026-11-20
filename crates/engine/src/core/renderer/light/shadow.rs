@@ -22,7 +22,7 @@ use crate::core::renderer::framebuffer;
 
 /// Most lights with shadows per frame; must match `MAX_SHADOWED_LIGHTS`
 /// in `pbr/lighting.glsl` only in that layers above it never appear.
-pub const MAX_SHADOWED_LIGHTS: usize = 4;
+pub const MAX_SHADOWED_LIGHTS: usize = 8;
 /// Texels per side of each cube face.
 pub const SHADOW_RESOLUTION: u32 = 512;
 /// Near plane of the cube faces; must match `LIGHT_SHADOW_NEAR` in
@@ -339,11 +339,16 @@ mod tests {
 
     #[test]
     fn the_nearest_casters_get_layers() {
-        let mut lights: Vec<LightSource> = (0..6).map(|i| point_at(i as f32 * 30.0)).collect();
+        let count = MAX_SHADOWED_LIGHTS + 2;
+        let mut lights: Vec<LightSource> = (0..count).map(|i| point_at(i as f32 * 30.0)).collect();
         lights[1].casts_shadows = false;
         assign(&mut lights, Point3::origin());
         let layers: Vec<Option<u32>> = lights.iter().map(|l| l.shadow_layer).collect();
-        assert_eq!(layers, [Some(0), None, Some(1), Some(2), Some(3), None]);
+        // The one that casts none is skipped, the farthest gets none.
+        let mut want: Vec<Option<u32>> = vec![Some(0), None];
+        want.extend((1..MAX_SHADOWED_LIGHTS as u32).map(Some));
+        want.push(None);
+        assert_eq!(layers, want);
     }
 
     #[test]
