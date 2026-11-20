@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, rc::Rc};
 
-use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3, Vector4, Zero};
+use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Transform, Vector3, Vector4, Zero};
 use russimp_ng::node::Node;
 
 use crate::core::renderer::line::{Line, LineRenderer};
@@ -106,6 +106,45 @@ impl Model {
         let mut joints = Vec::new();
         collect(root, None, &mut joints);
         Some(super::ik::Skeleton::new(joints))
+    }
+
+    /// Bend the two-bone limb ending in the bone `end` (its name without
+    /// namespace, e.g. `LeftFoot`) of the model drawn at `transform` so
+    /// that the bone moves `weight` of the way to `target`, the middle joint
+    /// (knee, elbow) bending towards `pole`; world space. Run it after the
+    /// animation has posed the model. Whether the model has such a limb.
+    pub fn reach_limb(
+        &mut self,
+        transform: &Matrix4<f32>,
+        end: &str,
+        target: Point3<f32>,
+        pole: Vector3<f32>,
+        weight: f32,
+    ) -> bool {
+        let Some(mut skeleton) = self.skeleton() else {
+            return false;
+        };
+        let Some(joint) = skeleton
+            .joints
+            .iter()
+            .position(|joint| super::ik::base_name(&joint.name) == end)
+        else {
+            return false;
+        };
+        let root = self.root_transform(transform);
+        let Some(inverse) = root.invert() else {
+            return false;
+        };
+        let moved = skeleton.reach_towards(
+            joint,
+            inverse.transform_point(target),
+            inverse.transform_vector(pole),
+            weight,
+        );
+        if moved {
+            self.apply_skeleton(&skeleton);
+        }
+        moved
     }
 
     /// Pose the bones of every mesh as `skeleton` says, by name.
