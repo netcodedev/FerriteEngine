@@ -118,7 +118,7 @@ impl GlDevice {
     }
 
     fn bind_framebuffer(&self, target: TargetRef) {
-        unsafe { crate::core::renderer::framebuffer::bind(gl::FRAMEBUFFER, framebuffer_of(target)) };
+        unsafe { gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer_of(target)) };
         // GL converts to sRGB on write only with `FRAMEBUFFER_SRGB`, which
         // is on exactly while a target with an sRGB colour attachment is
         // drawn into (the window is not one).
@@ -679,7 +679,7 @@ impl Device for GlDevice {
                 Raw::Sampler(_) => {}
                 Raw::Target(id) => {
                     self.targets.borrow_mut().remove(&(id as GLuint));
-                    crate::core::renderer::framebuffer::delete(&[id as GLuint]);
+                    gl::DeleteFramebuffers(1, &(id as GLuint));
                 }
                 Raw::Program(id) => {
                     self.locations.borrow_mut().remove(&(id as GLuint));

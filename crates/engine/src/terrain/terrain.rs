@@ -805,7 +805,6 @@ impl Terrain {
     /// Set the uniforms of the terrain's shader that hold for every chunk:
     /// the sun, sky and weather, and the sea's level.
     fn set_uniforms(&self, scene: &Scene, shader: &Shader) {
-        shader.bind();
         let water_line = self.source.as_ref().and_then(|s| s.sea_level()).unwrap_or(NO_WATER_LINE);
         shader.set_uniform_1f("waterLine", water_line);
         if let Some(skylight) = scene.get_component::<SkyLight>() {
@@ -1080,7 +1079,6 @@ impl Component for Terrain {
             let under = self.under_ground(eye);
             shader.set_uniform_1f("horizonHole", if under { load - HORIZON_HOLE_MARGIN } else { 0.0 });
             mesh.render(shader, &Matrix4::from_scale(1.0), None);
-            shader.bind();
             shader.set_uniform_1i("isHorizon", 0);
             // The models standing on it.
             if !depth_pass::is_active() && !ssao::in_depth_pass() && !under {

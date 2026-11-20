@@ -49,17 +49,6 @@ impl Shader {
         self.program.pipeline(desc)
     }
 
-    /// Make this the program drawn with by OpenGL code that does not draw
-    /// through a pipeline yet. Uniforms need no binding.
-    pub fn bind(&self) {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        unsafe {
-            gl::UseProgram(self.id());
-        }
-    }
-
     fn set(&self, name: &str, value: gfx::UniformValue) {
         gfx::device().set_uniform(self.program.raw(), name, value);
     }

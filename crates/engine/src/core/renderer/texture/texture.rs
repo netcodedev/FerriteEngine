@@ -151,31 +151,6 @@ impl Texture {
             gfx::bind_texture(slot, texture, sampler);
         }
     }
-
-    /// Bind it to the GL texture unit made active with `glActiveTexture`
-    /// (code that has not moved to `bind_to` yet).
-    pub fn bind(&self) {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        let mut unit = 0;
-        unsafe { gl::GetIntegerv(gl::ACTIVE_TEXTURE, &mut unit) };
-        self.bind_to(unit as u32 - gl::TEXTURE0);
-    }
-
-    /// Unbind whatever is bound to the active GL texture unit.
-    pub fn unbind_target(&self) {
-        Texture::unbind();
-    }
-
-    pub fn unbind() {
-        if gfx::backend() != gfx::BackendKind::OpenGl {
-            return;
-        }
-        let mut unit = 0;
-        unsafe { gl::GetIntegerv(gl::ACTIVE_TEXTURE, &mut unit) };
-        gfx::unbind_texture(unit as u32 - gl::TEXTURE0, TextureKind::D2);
-    }
 }
 
 impl TextureRenderer {

@@ -144,7 +144,6 @@ impl Ssao {
         let blur_shader = Shader::new(vertex, include_str!("blur.glsl"));
 
         // Uniforms that never change, set on the program once.
-        occlusion_shader.bind();
         for (i, sample) in sample_kernel().iter().enumerate() {
             occlusion_shader.set_uniform_3f(&format!("kernel[{i}]"), sample[0], sample[1], sample[2]);
         }
