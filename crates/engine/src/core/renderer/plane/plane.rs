@@ -1,8 +1,7 @@
-use gl::types::{GLint, GLintptr, GLsizei, GLsizeiptr, GLvoid};
-
 use crate::core::{
+    gfx,
     primitives::{Position, Region, Size},
-    renderer::shader::{Shader, VertexAttributes},
+    renderer::shader::{DynamicVertexArray, Shader, VertexAttributes},
 };
 
 use super::{Plane, PlaneBuilder, PlaneRenderer, PlaneVertex};
@@ -37,7 +36,7 @@ impl PlaneRenderer {
     /// Draw `planes` in their order, in as few draw calls as fit the
     /// stream buffer (one, usually), as if each were drawn on its own.
     pub fn render_batch<'a>(planes: impl IntoIterator<Item = &'a Plane>) {
-        if crate::core::headless::is_headless() {
+        if !gfx::is_drawing() {
             return;
         }
         let mut renderer = RENDERER.lock().unwrap();
@@ -52,59 +51,45 @@ impl PlaneRenderer {
             for chunk in vertices.chunks(STREAM_PLANES * 4) {
                 renderer.draw(chunk);
             }
-            unsafe { gl::BindVertexArray(0) };
         }
         renderer.scratch = vertices;
     }
 
     fn bind(&mut self) {
-        let (vao, vbo, _) = *self.buffers.get_or_insert_with(create_buffers);
-        self.shader.bind();
+        let desc = gfx::PipelineDesc {
+            vertex_layouts: vec![DynamicVertexArray::<PlaneVertex>::layout()],
+            depth: gfx::DepthState::LESS,
+            blend: Some(gfx::BlendState::ALPHA),
+            ..Default::default()
+        };
+        gfx::set_pipeline(self.shader.pipeline(&desc));
         let size = (self.width, self.height);
         if self.projection_for != Some(size) {
             let ortho = cgmath::ortho(0.0, self.width, self.height, 0.0, -100.0, 100.0);
             self.shader.set_uniform_mat4("projection", &ortho);
             self.projection_for = Some(size);
         }
-        unsafe {
-            gl::BindVertexArray(vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::Enable(gl::DEPTH_TEST);
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-        }
+        let (vertices, indices) = self.buffers.get_or_insert_with(create_buffers);
+        gfx::set_vertex_buffer(0, vertices, 0, std::mem::size_of::<PlaneVertex>() as u32);
+        gfx::set_index_buffer(indices, gfx::IndexFormat::U32);
     }
 
     /// Stream `vertices` (whole planes, at most `STREAM_PLANES`) and draw
-    /// them. The buffer is bound.
+    /// them. The buffers are bound.
     fn draw(&mut self, vertices: &[PlaneVertex]) {
         let planes = vertices.len() / 4;
         let stride = std::mem::size_of::<PlaneVertex>();
-        unsafe {
-            if self.written + planes > STREAM_PLANES {
-                // Orphan it: the GPU keeps what it still draws from.
-                gl::BufferData(
-                    gl::ARRAY_BUFFER,
-                    (STREAM_PLANES * 4 * stride) as GLsizeiptr,
-                    std::ptr::null(),
-                    gl::STREAM_DRAW,
-                );
-                self.written = 0;
-            }
-            gl::BufferSubData(
-                gl::ARRAY_BUFFER,
-                (self.written * 4 * stride) as GLintptr,
-                (vertices.len() * stride) as GLsizeiptr,
-                vertices.as_ptr() as *const GLvoid,
-            );
-            gl::DrawElementsBaseVertex(
-                gl::TRIANGLES,
-                (planes * 6) as GLsizei,
-                gl::UNSIGNED_INT,
-                std::ptr::null(),
-                (self.written * 4) as GLint,
-            );
+        let Some((buffer, _)) = self.buffers.as_mut() else {
+            return;
+        };
+        if self.written + planes > STREAM_PLANES {
+            // A fresh store: the GPU keeps what it still draws from.
+            buffer.replace(gfx::as_bytes(vertices));
+            self.written = 0;
+        } else {
+            buffer.write(self.written * 4 * stride, gfx::as_bytes(vertices));
         }
+        gfx::draw_indexed(0, (planes * 6) as u32, (self.written * 4) as i32);
         self.written += planes;
     }
 
@@ -129,49 +114,16 @@ impl PlaneRenderer {
     }
 }
 
-/// The vertex array, the stream buffer and the index buffer of
-/// `STREAM_PLANES` quads.
-fn create_buffers() -> (u32, u32, u32) {
-    let (mut vao, mut vbo, mut ibo) = (0, 0, 0);
+/// The stream vertex buffer and the index buffer of `STREAM_PLANES`
+/// quads.
+fn create_buffers() -> (gfx::Buffer, gfx::Buffer) {
     let stride = std::mem::size_of::<PlaneVertex>();
     let indices: Vec<u32> = (0..STREAM_PLANES as u32)
         .flat_map(|plane| QUAD.map(|i| plane * 4 + i))
         .collect();
-    unsafe {
-        gl::GenVertexArrays(1, &mut vao);
-        gl::GenBuffers(1, &mut vbo);
-        gl::GenBuffers(1, &mut ibo);
-        gl::BindVertexArray(vao);
-        gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-        gl::BufferData(
-            gl::ARRAY_BUFFER,
-            (STREAM_PLANES * 4 * stride) as GLsizeiptr,
-            std::ptr::null(),
-            gl::STREAM_DRAW,
-        );
-        let mut offset = 0;
-        for (location, (size, _)) in PlaneVertex::get_vertex_attributes().into_iter().enumerate() {
-            gl::EnableVertexAttribArray(location as u32);
-            gl::VertexAttribPointer(
-                location as u32,
-                size as GLint,
-                gl::FLOAT,
-                gl::FALSE,
-                stride as GLsizei,
-                offset as *const GLvoid,
-            );
-            offset += size * std::mem::size_of::<f32>();
-        }
-        gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ibo);
-        gl::BufferData(
-            gl::ELEMENT_ARRAY_BUFFER,
-            (indices.len() * std::mem::size_of::<u32>()) as GLsizeiptr,
-            indices.as_ptr() as *const GLvoid,
-            gl::STATIC_DRAW,
-        );
-        gl::BindVertexArray(0);
-    }
-    (vao, vbo, ibo)
+    let vertices = gfx::Buffer::new(gfx::BufferUsage::VERTEX, gfx::BufferMemory::Dynamic, STREAM_PLANES * 4 * stride);
+    let indices = gfx::Buffer::from_slice(gfx::BufferUsage::INDEX, gfx::BufferMemory::Static, &indices);
+    (vertices, indices)
 }
 
 impl PlaneBuilder {
@@ -311,14 +263,8 @@ impl Plane {
 }
 
 impl VertexAttributes for PlaneVertex {
-    fn get_vertex_attributes() -> Vec<(usize, gl::types::GLuint)> {
-        vec![
-            (3, gl::FLOAT),
-            (4, gl::FLOAT),
-            (4, gl::FLOAT),
-            (4, gl::FLOAT),
-            (4, gl::FLOAT),
-            (1, gl::FLOAT),
-        ]
+    fn vertex_formats() -> Vec<crate::core::gfx::VertexFormat> {
+        use crate::core::gfx::VertexFormat::*;
+        vec![F32x3, F32x4, F32x4, F32x4, F32x4, F32]
     }
 }

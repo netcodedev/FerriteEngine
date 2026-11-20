@@ -1,4 +1,3 @@
-use gl::types::GLuint;
 use rusttype::{gpu_cache::Cache, PositionedGlyph};
 
 use crate::core::renderer::shader::Shader;
@@ -28,7 +27,7 @@ pub enum Fonts {
 pub struct TextRenderer {
     cache: Cache<'static>,
     shader: Shader,
-    texture_buffer: Texture,
+    texture_buffer: crate::core::gfx::Texture,
     pub width: u32,
     height: u32,
     /// The size the shader's projection was last set for.
@@ -67,6 +66,4 @@ pub struct TextVertex {
     texture_coords: (f32, f32),
 }
 
-struct Texture {
-    id: GLuint,
-}
+

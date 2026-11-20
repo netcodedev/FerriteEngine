@@ -640,7 +640,8 @@ impl Device for GlDevice {
         }
         self.current_vao.set(p.vao);
         self.current_topology.set(topology(p.desc.topology));
-        self.apply_state(&p.desc);
+        self.stencil_reference.set(super::stencil_reference());
+        self.apply_state(&super::resolve_pipeline(&p.desc));
     }
 
     fn set_stencil_reference(&self, reference: u8) {

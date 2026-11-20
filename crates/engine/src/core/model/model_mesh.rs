@@ -66,21 +66,12 @@ impl ModelMesh {
 
     pub fn render(&self, shader: &Shader, position: Matrix4<f32>, scale: Option<f32>) {
         if let Some(vertex_array) = &self.vertex_array {
-            vertex_array.bind();
             let mut model = position;
             if let Some(scale) = scale {
                 model = model * cgmath::Matrix4::from_scale(scale);
             }
             shader.set_uniform_mat4("model", &model);
-            unsafe {
-                gl::DrawElements(
-                    gl::TRIANGLES,
-                    self.indices.len() as i32,
-                    gl::UNSIGNED_INT,
-                    std::ptr::null(),
-                );
-                DynamicVertexArray::<ModelMeshVertex>::unbind();
-            }
+            vertex_array.draw();
         }
     }
 
@@ -137,14 +128,9 @@ fn vertex_weights(weights: Option<&Vec<(usize, f32)>>) -> ((u32, u32, u32, u32),
 }
 
 impl VertexAttributes for ModelMeshVertex {
-    fn get_vertex_attributes() -> Vec<(usize, gl::types::GLuint)> {
-        vec![
-            (3, gl::FLOAT),
-            (3, gl::FLOAT),
-            (2, gl::FLOAT),
-            (4, gl::UNSIGNED_INT),
-            (4, gl::FLOAT),
-        ]
+    fn vertex_formats() -> Vec<crate::core::gfx::VertexFormat> {
+        use crate::core::gfx::VertexFormat::*;
+        vec![F32x3, F32x3, F32x2, U32x4, F32x4]
     }
 }
 

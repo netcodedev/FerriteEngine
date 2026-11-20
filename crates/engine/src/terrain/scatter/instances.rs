@@ -614,7 +614,7 @@ impl ScatterInstances {
             shader.set_uniform_mat4("parentTransform", parent_transform);
             if !depth_only {
                 let lit_for = in_pass.then(|| LitFor {
-                    program: shader.id,
+                    program: shader.id(),
                     pass: current_pass(),
                     view_projection: *AsRef::<[f32; 16]>::as_ref(view_projection),
                     to_view: crate::core::renderer::hdr::draws_to_view(),

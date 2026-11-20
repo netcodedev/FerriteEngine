@@ -24,6 +24,7 @@ use crate::core::{
         component::{Component, Property, PropertyValue},
         Entity,
     },
+    gfx,
     mouse_picker::MousePicker,
     physics::rigidbody::RigidBody,
     renderer::{
@@ -1020,11 +1021,14 @@ impl Component for Terrain {
                 &look.shader
             }
         };
-        shader.bind();
+        let ground = gfx::PipelineDesc {
+            vertex_layouts: vec![DynamicVertexArray::<super::mesher::TerrainVertex>::layout()],
+            depth: gfx::DepthState::LESS,
+            cull: gfx::Cull::Back,
+            ..Default::default()
+        };
+        gfx::set_pipeline(shader.pipeline(&ground));
         shader.set_uniform_mat4("viewProjection", view_projection);
-        unsafe {
-            gl::Enable(gl::CULL_FACE);
-        }
         // Every pass picks the same level of detail for a chunk, by its
         // distance from the camera: the shadows fall from the ground that
         // is drawn, and the depth prepass matches the shading pass.
@@ -1063,7 +1067,7 @@ impl Component for Terrain {
         if let (Some(mesh), Some(eye), true) = (self.horizon.mesh(), eye, hdr::draws_to_view()) {
             let depth_only = !std::ptr::eq(shader, &look.shader);
             let shader = if depth_only { &look.horizon_depth_shader } else { shader };
-            shader.bind();
+            gfx::set_pipeline(shader.pipeline(&ground));
             if depth_only {
                 shader.set_uniform_mat4("viewProjection", view_projection);
             }
@@ -1087,9 +1091,6 @@ impl Component for Terrain {
                     self.far_scatter.draw(view_projection, &lighting, eye);
                 }
             }
-        }
-        unsafe {
-            gl::Disable(gl::CULL_FACE);
         }
     }
 
@@ -1161,34 +1162,15 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
         self.indices = self.indices.as_ref().map(|_| Vec::new());
     }
 
+    /// Draw it with the pipeline set (whose program is `shader`'s).
     pub fn render(&self, shader: &Shader, transform: &Matrix4<f32>, scale: Option<f32>) {
-        unsafe {
-            gl::Enable(gl::DEPTH_TEST);
-        }
-        shader.bind();
         let mut model = transform.clone();
         if let Some(scale) = scale {
             model = model * cgmath::Matrix4::from_scale(scale);
         }
         shader.set_uniform_mat4("model", &model);
-
         if let Some(vertex_array) = &self.vertex_array {
-            vertex_array.bind();
-            unsafe {
-                if self.indices.is_some() {
-                    gl::DrawElements(
-                        gl::TRIANGLES,
-                        vertex_array.get_element_count() as i32,
-                        gl::UNSIGNED_INT,
-                        std::ptr::null(),
-                    );
-                } else {
-                    gl::DrawArrays(gl::TRIANGLES, 0, vertex_array.get_element_count() as i32);
-                }
-            }
-        }
-        unsafe {
-            gl::Disable(gl::DEPTH_TEST);
+            vertex_array.draw();
         }
     }
 

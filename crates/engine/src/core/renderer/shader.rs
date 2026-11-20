@@ -1,39 +1,24 @@
 use cgmath::{Array, Matrix};
 use gl::types::*;
-use std::{cell::RefCell, collections::HashMap, ffi::CString, ptr};
+use std::{cell::RefCell, collections::HashMap, ffi::CString};
 
+use crate::core::gfx::{self, PipelineDesc, StepMode, VertexFormat, VertexLayout};
+
+/// A linked program, with uniforms set by name. Setting uniforms by name
+/// is OpenGL only (it goes away when the shaders move to uniform blocks,
+/// see docs/render-backends.md); the program itself is a `gfx::Program`.
 pub struct Shader {
-    pub id: GLuint,
+    program: gfx::Program,
     /// Uniform locations looked up so far, by name: asking the driver (and
     /// building a C string for it) on every set is a hot path, as uniforms
     /// are set per draw.
     locations: RefCell<HashMap<String, GLint>>,
 }
 
-impl Drop for Shader {
-    /// Delete the program. Renderers that own one come and go (streamed
-    /// in, rebuilt on every script reload): kept, their
-    /// programs piled up in the driver, a few hundred KB of memory each.
-    /// Only while a GL context is current: shaders in thread-locals are
-    /// dropped when the thread ends, after the window and its context are
-    /// gone.
-    fn drop(&mut self) {
-        if self.id == 0 || crate::core::headless::is_headless() {
-            return;
-        }
-        if unsafe { glfw::ffi::glfwGetCurrentContext() }.is_null() {
-            return;
-        }
-        unsafe {
-            gl::DeleteProgram(self.id);
-        }
-    }
-}
-
+/// Vertices and (optionally) indices on the GPU, drawn with one layout.
 pub struct DynamicVertexArray<T> {
-    id: GLuint,
-    vbo: GLuint,
-    ebo: GLuint,
+    vertices: Option<gfx::Buffer>,
+    indices: Option<gfx::Buffer>,
     /// What was buffered: vertices, and indices if any. The data itself
     /// lives on the GPU only.
     vertex_count: usize,
@@ -41,25 +26,45 @@ pub struct DynamicVertexArray<T> {
     vertex_type: std::marker::PhantomData<T>,
 }
 
+/// The attributes of a vertex type, interleaved in this order at
+/// locations 0, 1, 2…
 pub trait VertexAttributes {
-    fn get_vertex_attributes() -> Vec<(usize, GLuint)>;
+    fn vertex_formats() -> Vec<VertexFormat>;
 }
 
 impl Shader {
     #[track_caller]
     pub fn new(vertex_source: &str, fragment_source: &str) -> Self {
+        let label = std::panic::Location::caller().to_string();
         Shader {
-            id: Shader::create_shader(vertex_source, fragment_source),
+            program: gfx::Program::labelled(vertex_source, fragment_source, &label)
+                .unwrap_or_else(gfx::Program::empty),
             locations: RefCell::new(HashMap::new()),
         }
     }
 
+    /// The GL program name (0 if it failed to build).
+    pub fn id(&self) -> GLuint {
+        self.program.raw() as GLuint
+    }
+
+    pub fn program(&self) -> &gfx::Program {
+        &self.program
+    }
+
+    /// This program with `desc`'s fixed-function state.
+    pub fn pipeline(&self, desc: &PipelineDesc) -> gfx::Pipeline {
+        self.program.pipeline(desc)
+    }
+
+    /// Make this the program uniforms are set on (and drawn with, for code
+    /// not drawing through a pipeline yet).
     pub fn bind(&self) {
-        if crate::core::headless::is_headless() {
+        if gfx::backend() != gfx::BackendKind::OpenGl {
             return;
         }
         unsafe {
-            gl::UseProgram(self.id);
+            gl::UseProgram(self.id());
         }
     }
 
@@ -70,7 +75,7 @@ impl Shader {
             return location;
         }
         let location = match CString::new(name) {
-            Ok(c_name) => unsafe { gl::GetUniformLocation(self.id, c_name.as_ptr()) },
+            Ok(c_name) => unsafe { gl::GetUniformLocation(self.id(), c_name.as_ptr()) },
             Err(_) => -1,
         };
         self.locations.borrow_mut().insert(name.to_owned(), location);
@@ -78,7 +83,7 @@ impl Shader {
     }
 
     pub fn set_uniform_1fv(&self, name: &str, values: &[f32]) {
-        if crate::core::headless::is_headless() {
+        if gfx::backend() != gfx::BackendKind::OpenGl {
             return;
         }
         unsafe {
@@ -88,7 +93,7 @@ impl Shader {
     }
 
     pub fn set_uniform_mat4(&self, name: &str, matrix: &cgmath::Matrix4<f32>) {
-        if crate::core::headless::is_headless() {
+        if gfx::backend() != gfx::BackendKind::OpenGl {
             return;
         }
         unsafe {
@@ -98,7 +103,7 @@ impl Shader {
     }
 
     pub fn set_uniform_mat4_array(&self, name: &str, matrices: &[cgmath::Matrix4<f32>]) {
-        if crate::core::headless::is_headless() {
+        if gfx::backend() != gfx::BackendKind::OpenGl {
             return;
         }
         unsafe {
@@ -113,7 +118,7 @@ impl Shader {
     }
 
     pub fn set_uniform_1i(&self, name: &str, value: i32) {
-        if crate::core::headless::is_headless() {
+        if gfx::backend() != gfx::BackendKind::OpenGl {
             return;
         }
         unsafe {
@@ -123,7 +128,7 @@ impl Shader {
     }
 
     pub fn set_uniform_1f(&self, name: &str, value: f32) {
-        if crate::core::headless::is_headless() {
+        if gfx::backend() != gfx::BackendKind::OpenGl {
             return;
         }
         unsafe {
@@ -133,7 +138,7 @@ impl Shader {
     }
 
     pub fn set_uniform_2i(&self, name: &str, int1: i32, int2: i32) {
-        if crate::core::headless::is_headless() {
+        if gfx::backend() != gfx::BackendKind::OpenGl {
             return;
         }
         unsafe {
@@ -143,7 +148,7 @@ impl Shader {
     }
 
     pub fn set_uniform_2f(&self, name: &str, float1: f32, float2: f32) {
-        if crate::core::headless::is_headless() {
+        if gfx::backend() != gfx::BackendKind::OpenGl {
             return;
         }
         unsafe {
@@ -153,7 +158,7 @@ impl Shader {
     }
 
     pub fn set_uniform_3f(&self, name: &str, float1: f32, float2: f32, float3: f32) {
-        if crate::core::headless::is_headless() {
+        if gfx::backend() != gfx::BackendKind::OpenGl {
             return;
         }
         unsafe {
@@ -163,7 +168,7 @@ impl Shader {
     }
 
     pub fn set_uniform_4f(&self, name: &str, float1: f32, float2: f32, float3: f32, float4: f32) {
-        if crate::core::headless::is_headless() {
+        if gfx::backend() != gfx::BackendKind::OpenGl {
             return;
         }
         unsafe {
@@ -173,135 +178,13 @@ impl Shader {
     }
 
     pub fn set_uniform_3fv(&self, name: &str, value: &cgmath::Vector3<f32>) {
-        if crate::core::headless::is_headless() {
+        if gfx::backend() != gfx::BackendKind::OpenGl {
             return;
         }
         unsafe {
             let location = self.location(name);
             gl::Uniform3fv(location, 1, value.as_ptr());
         }
-    }
-
-    /// Compiles and links a program. On failure the info log is reported
-    /// (with the offending source lines) and 0 is returned, so the caller
-    /// draws nothing instead of crashing.
-    #[track_caller]
-    pub fn create_shader(vertex_shader_source: &str, fragment_shader_source: &str) -> GLuint {
-        if crate::core::headless::is_headless() {
-            return 0;
-        }
-        let caller = std::panic::Location::caller();
-        unsafe {
-            let vertex_shader = compile_stage(gl::VERTEX_SHADER, vertex_shader_source, caller);
-            let fragment_shader =
-                compile_stage(gl::FRAGMENT_SHADER, fragment_shader_source, caller);
-            let (Some(vertex_shader), Some(fragment_shader)) = (vertex_shader, fragment_shader)
-            else {
-                vertex_shader.map(|s| gl::DeleteShader(s));
-                fragment_shader.map(|s| gl::DeleteShader(s));
-                return 0;
-            };
-
-            let shader_program = gl::CreateProgram();
-            gl::AttachShader(shader_program, vertex_shader);
-            gl::AttachShader(shader_program, fragment_shader);
-            gl::LinkProgram(shader_program);
-            // The shaders live on in the program; flag them for deletion now.
-            gl::DeleteShader(vertex_shader);
-            gl::DeleteShader(fragment_shader);
-
-            let mut success = gl::FALSE as GLint;
-            gl::GetProgramiv(shader_program, gl::LINK_STATUS, &mut success);
-            if success != gl::TRUE as GLint {
-                let mut len: GLint = 0;
-                gl::GetProgramiv(shader_program, gl::INFO_LOG_LENGTH, &mut len);
-                let mut buffer = vec![0u8; len.max(1) as usize];
-                let mut written: GLsizei = 0;
-                gl::GetProgramInfoLog(
-                    shader_program,
-                    buffer.len() as GLsizei,
-                    &mut written,
-                    buffer.as_mut_ptr() as *mut GLchar,
-                );
-                buffer.truncate(written.max(0) as usize);
-                report_shader_error(&format!(
-                    "shader program (created at {caller}) failed to link:\n{}",
-                    String::from_utf8_lossy(&buffer).trim_end()
-                ));
-                gl::DeleteProgram(shader_program);
-                return 0;
-            }
-
-            shader_program
-        }
-    }
-}
-
-/// Compiles one stage; on failure reports the log and returns `None`.
-unsafe fn compile_stage(
-    stage: GLenum,
-    source: &str,
-    caller: &std::panic::Location<'_>,
-) -> Option<GLuint> {
-    let stage_name = match stage {
-        gl::VERTEX_SHADER => "vertex",
-        gl::FRAGMENT_SHADER => "fragment",
-        _ => "unknown",
-    };
-    let c_source = match CString::new(source.as_bytes()) {
-        Ok(c) => c,
-        Err(_) => {
-            report_shader_error(&format!(
-                "{stage_name} shader (created at {caller}) contains a NUL byte"
-            ));
-            return None;
-        }
-    };
-    let shader = gl::CreateShader(stage);
-    gl::ShaderSource(shader, 1, &c_source.as_ptr(), ptr::null());
-    gl::CompileShader(shader);
-
-    let mut success = gl::FALSE as GLint;
-    gl::GetShaderiv(shader, gl::COMPILE_STATUS, &mut success);
-    if success == gl::TRUE as GLint {
-        return Some(shader);
-    }
-    let mut len: GLint = 0;
-    gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &mut len);
-    let mut buffer = vec![0u8; len.max(1) as usize];
-    let mut written: GLsizei = 0;
-    gl::GetShaderInfoLog(
-        shader,
-        buffer.len() as GLsizei,
-        &mut written,
-        buffer.as_mut_ptr() as *mut GLchar,
-    );
-    buffer.truncate(written.max(0) as usize);
-    gl::DeleteShader(shader);
-    let log = String::from_utf8_lossy(&buffer);
-    report_shader_error(&format!(
-        "{stage_name} shader (created at {caller}) failed to compile:\n{}",
-        annotate_info_log(&log, source)
-    ));
-    None
-}
-
-fn report_shader_error(message: &str) {
-    // Many objects compile the same source (one shader per model), so report
-    // each distinct error only once.
-    static REPORTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-    if let Ok(mut reported) = REPORTED.lock() {
-        if reported.iter().any(|m| m == message) {
-            return;
-        }
-        reported.push(message.to_owned());
-    }
-    // Use the engine's logger when one is installed, otherwise stderr, so the
-    // error is never swallowed.
-    if log::log_enabled!(log::Level::Error) {
-        log::error!("{message}");
-    } else {
-        eprintln!("[shader error] {message}");
     }
 }
 
@@ -377,136 +260,72 @@ mod tests {
     }
 }
 
-/// GL objects of vertex arrays dropped since the last
-/// `delete_released_vertex_arrays`: a vertex array may be dropped where no
-/// GL context is current (on a loader thread, or after the window closed),
-/// so it only notes its objects here.
-static RELEASED: std::sync::Mutex<Vec<[GLuint; 3]>> = std::sync::Mutex::new(Vec::new());
-
-impl<T> Drop for DynamicVertexArray<T> {
-    fn drop(&mut self) {
-        if self.id != 0 || self.vbo != 0 || self.ebo != 0 {
-            if let Ok(mut released) = RELEASED.lock() {
-                released.push([self.id, self.vbo, self.ebo]);
-            }
-        }
-    }
-}
-
-/// Delete the GL objects of the vertex arrays dropped so far. Call where
-/// the GL context is current: the application does, every frame (and the
-/// terrain, as it streams chunks in and out).
+/// Kept for callers of the old deferred deletion: buffers now free
+/// themselves through `gfx::collect_garbage`.
 pub fn delete_released_vertex_arrays() {
-    let released = match RELEASED.lock() {
-        Ok(mut released) if !released.is_empty() => std::mem::take(&mut *released),
-        _ => return,
-    };
-    if crate::core::headless::is_headless() {
-        return;
-    }
-    unsafe {
-        for [vao, vbo, ebo] in released {
-            gl::DeleteVertexArrays(1, &vao);
-            gl::DeleteBuffers(1, &vbo);
-            gl::DeleteBuffers(1, &ebo);
-        }
-    }
+    gfx::collect_garbage();
 }
 
 impl<T: VertexAttributes + Clone> DynamicVertexArray<T> {
     pub fn new() -> Self {
-        let mut vao = 0;
-        let mut vbo = 0;
-        let mut ebo = 0;
-        if !crate::core::headless::is_headless() {
-            unsafe {
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut vbo);
-            gl::GenBuffers(1, &mut ebo);
-            }
-        }
         DynamicVertexArray {
-            id: vao,
-            vbo,
-            ebo,
+            vertices: None,
+            indices: None,
             vertex_count: 0,
             index_count: None,
             vertex_type: std::marker::PhantomData,
         }
     }
 
+    /// The vertex layout of `T` (interleaved at locations 0, 1, 2…, with
+    /// the stride of `T` itself).
+    pub fn layout() -> VertexLayout {
+        let mut layout = VertexLayout::packed(0, StepMode::Vertex, &T::vertex_formats());
+        layout.stride = std::mem::size_of::<T>() as u32;
+        layout
+    }
+
     pub fn buffer_data(&mut self, data: &Vec<T>, indices: &Option<Vec<u32>>) {
         self.vertex_count = data.len();
         self.index_count = indices.as_ref().map(Vec::len);
-        if crate::core::headless::is_headless() {
-            return;
-        }
-        self.bind();
-        unsafe {
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
-            let mut current_attrib = 0;
-            let mut offset = 0;
-            for (size, gl_type) in T::get_vertex_attributes() {
-                gl::EnableVertexAttribArray(current_attrib);
-                match gl_type {
-                    gl::FLOAT => {
-                        gl::VertexAttribPointer(
-                            current_attrib,
-                            size as i32,
-                            gl::FLOAT,
-                            gl::FALSE,
-                            std::mem::size_of::<T>() as i32,
-                            offset as *const _,
-                        );
-                        offset += size * std::mem::size_of::<f32>();
-                    }
-                    gl::UNSIGNED_INT => {
-                        gl::VertexAttribIPointer(
-                            current_attrib,
-                            size as i32,
-                            gl::UNSIGNED_INT,
-                            std::mem::size_of::<T>() as i32,
-                            offset as *const _,
-                        );
-                        offset += size * std::mem::size_of::<u32>();
-                    }
-                    _ => {}
-                }
-                current_attrib += 1;
-            }
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (data.len() * std::mem::size_of::<T>()) as GLsizeiptr,
-                data.as_ptr() as *const GLvoid,
-                gl::STATIC_DRAW,
-            );
-            if let Some(indices) = indices {
-                gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, self.ebo);
-                gl::BufferData(
-                    gl::ELEMENT_ARRAY_BUFFER,
-                    (indices.len() * std::mem::size_of::<u32>()) as GLsizeiptr,
-                    indices.as_ptr() as *const GLvoid,
-                    gl::STATIC_DRAW,
-                );
-            }
-            // Unbind VBO and VAO (optional, but good practice)
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-        }
+        let usage = gfx::BufferUsage::VERTEX | gfx::BufferUsage::RAY_TRACING_INPUT;
+        self.vertices = Some(gfx::Buffer::from_slice(usage, gfx::BufferMemory::Static, data));
+        self.indices = indices.as_ref().map(|indices| {
+            let usage = gfx::BufferUsage::INDEX | gfx::BufferUsage::RAY_TRACING_INPUT;
+            gfx::Buffer::from_slice(usage, gfx::BufferMemory::Static, indices)
+        });
     }
+
     pub fn get_element_count(&self) -> usize {
         self.index_count.unwrap_or(self.vertex_count)
     }
 
+    /// Bind the buffers to the current pipeline (vertex slot 0).
     pub fn bind(&self) {
-        unsafe {
-            gl::BindVertexArray(self.id);
+        let Some(vertices) = &self.vertices else {
+            return;
+        };
+        gfx::set_vertex_buffer(0, vertices, 0, std::mem::size_of::<T>() as u32);
+        if let Some(indices) = &self.indices {
+            gfx::set_index_buffer(indices, gfx::IndexFormat::U32);
         }
     }
 
-    pub fn unbind() {
-        unsafe {
-            gl::BindVertexArray(0);
+    /// Draw it all with the current pipeline.
+    pub fn draw(&self) {
+        self.draw_range(0, self.get_element_count() as u32);
+    }
+
+    /// Draw `count` elements from `first` (indices, or vertices without).
+    pub fn draw_range(&self, first: u32, count: u32) {
+        if self.vertices.is_none() {
+            return;
+        }
+        self.bind();
+        if self.indices.is_some() {
+            gfx::draw_indexed(first, count, 0);
+        } else {
+            gfx::draw(first, count);
         }
     }
 }

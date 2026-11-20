@@ -5,16 +5,16 @@ use crate::core::primitives::{Position, Size};
 use crate::core::renderer::shader::{DynamicVertexArray, VertexAttributes};
 use crate::core::renderer::text::Fonts;
 
-use super::{Font, Shader, Text, TextMesh, TextRenderer, TextVertex, Texture};
+use super::{Font, Shader, Text, TextMesh, TextRenderer, TextVertex};
+use crate::core::gfx;
 
 use lazy_static::lazy_static;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicU64, Ordering},
     Mutex, OnceLock,
 };
 
 /// See `TextRenderer::set_wireframe`.
-static WIREFRAME: AtomicBool = AtomicBool::new(false);
 
 /// Side of the glyph atlas, in texels.
 const ATLAS_SIZE: u32 = 2048;
@@ -274,7 +274,7 @@ impl TextRenderer {
         TextRenderer {
             cache,
             shader,
-            texture_buffer: Texture::new(ATLAS_SIZE as i32, ATLAS_SIZE as i32),
+            texture_buffer: new_atlas(ATLAS_SIZE),
             projection_for: None,
             width,
             height,
@@ -294,29 +294,24 @@ impl TextRenderer {
     /// (`glPolygonMode(GL_LINE)`), so it fills its glyphs anyway and puts
     /// the mode back after. Saves asking GL for the mode per text.
     pub fn set_wireframe(wireframe: bool) {
-        WIREFRAME.store(wireframe, Ordering::Relaxed);
+        gfx::set_wireframe(wireframe);
     }
 
     pub fn render(text: &Text) -> (i32, i32) {
-        if crate::core::headless::is_headless() {
+        if !gfx::is_drawing() {
             return (0, 0);
         }
         let mut renderer = RENDERER.lock().unwrap();
         // Text is filled in the wireframe view too.
-        let wireframe = WIREFRAME.load(Ordering::Relaxed);
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0);
-            renderer.texture_buffer.bind();
-            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-            if wireframe {
-                gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
-            }
-        }
-
-        text.mesh.vertex_array.bind();
-
-        // set shader uniforms
-        renderer.shader.bind();
+        let desc = gfx::PipelineDesc {
+            vertex_layouts: vec![DynamicVertexArray::<TextVertex>::layout()],
+            depth: gfx::DepthState::LESS,
+            blend: Some(gfx::BlendState::ALPHA),
+            polygon: gfx::PolygonMode::Solid,
+            ..Default::default()
+        };
+        gfx::set_pipeline(renderer.shader.pipeline(&desc));
+        gfx::bind_texture(0, &renderer.texture_buffer, &gfx::SamplerDesc::LINEAR_CLAMP);
         let size = (renderer.width, renderer.height);
         if renderer.projection_for != Some(size) {
             let projection =
@@ -330,30 +325,7 @@ impl TextRenderer {
         renderer
             .shader
             .set_uniform_3f("offset", text.x as f32, text.y as f32, text.z as f32);
-
-        unsafe {
-            // draw text
-            gl::Enable(gl::DEPTH_TEST);
-            gl::Disable(gl::CULL_FACE);
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            gl::DrawArrays(
-                gl::TRIANGLES,
-                0,
-                text.mesh.vertex_array.get_element_count() as i32,
-            );
-
-            // cleanup
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-            gl::Disable(gl::BLEND);
-            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
-
-            if wireframe {
-                gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
-            }
-        }
+        text.mesh.vertex_array.draw();
         (text.max_x, text.max_y)
     }
 
@@ -381,15 +353,10 @@ impl TextRenderer {
         font_id: usize,
         glyph: PositionedGlyph<'static>,
     ) -> Option<(Rect<f32>, Rect<i32>)> {
-        if crate::core::headless::is_headless() {
+        if !gfx::is_drawing() {
             return None;
         }
         let mut renderer = RENDERER.lock().unwrap();
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0);
-            renderer.texture_buffer.bind();
-            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-        }
         let renderer = &mut *renderer;
         // The cache only keeps the glyphs of the latest queue for sure: when
         // full, it drops the oldest and writes over them, which texts built
@@ -399,19 +366,11 @@ impl TextRenderer {
             renderer.cache.queue_glyph(font_id, glyph.clone());
             let written = &mut renderer.written;
             let mut overwrote = false;
-            let result = renderer.cache.cache_queued(|rect, data| unsafe {
+            let atlas = &renderer.texture_buffer;
+            let result = renderer.cache.cache_queued(|rect, data| {
                 overwrote |= write_over(written, rect);
-                gl::TexSubImage2D(
-                    gl::TEXTURE_2D,
-                    0,
-                    rect.min.x as i32,
-                    rect.min.y as i32,
-                    rect.width() as i32,
-                    rect.height() as i32,
-                    gl::RED,
-                    gl::UNSIGNED_BYTE,
-                    data.as_ptr() as *const std::ffi::c_void,
-                );
+                let region = gfx::Rect::new(rect.min.x as i32, rect.min.y as i32, rect.width(), rect.height());
+                atlas.write(0, region, 0, 1, gfx::UploadFormat::R8, data);
             });
             match result {
                 Ok(_) if !overwrote => break,
@@ -490,57 +449,16 @@ impl TextMesh {
 }
 
 impl VertexAttributes for TextVertex {
-    fn get_vertex_attributes() -> Vec<(usize, gl::types::GLuint)> {
-        vec![(3, gl::FLOAT), (2, gl::FLOAT)]
+    fn vertex_formats() -> Vec<crate::core::gfx::VertexFormat> {
+        use crate::core::gfx::VertexFormat::*;
+        vec![F32x3, F32x2]
     }
 }
 
-impl Texture {
-    pub fn new(width: i32, height: i32) -> Texture {
-        if crate::core::headless::is_headless() {
-            return Texture { id: 0 };
-        }
-        let mut texture_buffer = 0;
-        let data = vec![0u8; width as usize * height as usize];
-        unsafe {
-            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-            gl::GenTextures(1, &mut texture_buffer);
-            gl::BindTexture(gl::TEXTURE_2D, texture_buffer);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-            gl::TexImage2D(
-                gl::TEXTURE_2D,
-                0,
-                gl::R8 as i32,
-                width,
-                height,
-                0,
-                gl::RED,
-                gl::UNSIGNED_BYTE,
-                data.as_ptr() as *const std::ffi::c_void,
-            );
-            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
-        }
-
-        Texture { id: texture_buffer }
-    }
-
-    pub fn bind(&self) {
-        unsafe {
-            gl::BindTexture(gl::TEXTURE_2D, self.id);
-        }
-    }
-}
-
-impl Drop for Texture {
-    fn drop(&mut self) {
-        if crate::core::headless::is_headless() {
-            return ;
-        }
-        unsafe {
-            gl::DeleteTextures(1, &self.id);
-        }
-    }
+/// The glyph atlas: one red channel, cleared.
+fn new_atlas(size: u32) -> gfx::Texture {
+    let texture = gfx::Texture::new(gfx::TextureDesc::d2(gfx::Format::R8, size, size));
+    let zeros = vec![0u8; size as usize * size as usize];
+    texture.write(0, gfx::Rect::sized(size, size), 0, 1, gfx::UploadFormat::R8, &zeros);
+    texture
 }

@@ -4,6 +4,7 @@ use cgmath::{InnerSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
 use glfw::{Action, Glfw, Key, WindowEvent};
 
 use crate::core::{
+    gfx,
     entity::{
         component::{
             camera_component::CameraComponent, missing_component::MissingComponent, Component,
@@ -656,6 +657,7 @@ impl Scene {
             }
             if depth_prepass {
                 unsafe { gl::DepthFunc(gl::LEQUAL) };
+                gfx::set_pass_overrides(gfx::PassOverrides { depth_less_equal: true, ..gfx::pass_overrides() });
             }
             ViewFrustum::begin_counting();
             for entity in self.entities.iter() {
@@ -665,6 +667,7 @@ impl Scene {
             self.render_snow_layer(&view_projection, false);
             if depth_prepass {
                 unsafe { gl::DepthFunc(gl::LESS) };
+                gfx::set_pass_overrides(gfx::PassOverrides { depth_less_equal: false, ..gfx::pass_overrides() });
             }
             // Transparent pass — runs after every entity's opaque geometry is
             // in the depth buffer, so water with depth-write enabled correctly
@@ -693,9 +696,12 @@ impl Scene {
                 gl::DepthFunc(gl::ALWAYS);
                 gl::DepthMask(gl::FALSE);
             }
+            let before = gfx::pass_overrides();
+            gfx::set_pass_overrides(gfx::PassOverrides { depth_ignored: true, ..before });
             for entity in self.entities.iter() {
                 entity.render_overlay(self);
             }
+            gfx::set_pass_overrides(before);
             unsafe {
                 gl::DepthMask(gl::TRUE);
                 gl::DepthFunc(gl::LESS);

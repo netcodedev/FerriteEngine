@@ -158,6 +158,97 @@ pub fn wireframe() -> bool {
     WIREFRAME.load(Ordering::Relaxed)
 }
 
+/// What the running pass changes about every pipeline drawn in it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct PassOverrides {
+    /// Only depth is drawn (shadow maps, the depth prepass): no colour
+    /// writes.
+    pub depth_only: bool,
+    /// The depth was drawn by a prepass: what draws `LESS` draws `LEQUAL`,
+    /// so the same surfaces pass again.
+    pub depth_less_equal: bool,
+    /// Everything passes the depth test and writes no depth (2D overlays
+    /// drawn in the order given).
+    pub depth_ignored: bool,
+    /// Stencil clipping (the UI's nested clip rectangles).
+    pub stencil: StencilMode,
+}
+
+/// How draws use the stencil buffer while a pass override says so.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum StencilMode {
+    #[default]
+    Off,
+    /// Draw only where the stencil equals the value.
+    Test(u8),
+    /// Draw nothing visible: where the stencil equals `reference`, apply
+    /// `op` to it (whatever the depth test says).
+    Write { reference: u8, op: StencilOp },
+}
+
+thread_local! {
+    static OVERRIDES: Cell<PassOverrides> = const { Cell::new(PassOverrides { depth_only: false, depth_less_equal: false, depth_ignored: false, stencil: StencilMode::Off }) };
+}
+
+pub fn pass_overrides() -> PassOverrides {
+    OVERRIDES.with(|o| o.get())
+}
+
+pub fn set_pass_overrides(overrides: PassOverrides) {
+    OVERRIDES.with(|o| o.set(overrides));
+}
+
+/// `desc` as drawn under the pass overrides.
+pub fn resolve_pipeline(desc: &PipelineDesc) -> PipelineDesc {
+    let o = pass_overrides();
+    let mut desc = desc.clone();
+    if o.depth_only {
+        desc.color_write = false;
+        desc.blend = None;
+    }
+    if o.depth_less_equal && desc.depth.func == CompareFunc::Less {
+        desc.depth.func = CompareFunc::LessEqual;
+    }
+    if o.depth_ignored && desc.depth.test {
+        desc.depth.func = CompareFunc::Always;
+        desc.depth.write = false;
+    }
+    match o.stencil {
+        StencilMode::Off => {}
+        StencilMode::Test(_) => {
+            desc.stencil = Some(StencilState {
+                func: CompareFunc::Equal,
+                pass: StencilOp::Keep,
+                fail: StencilOp::Keep,
+                depth_fail: StencilOp::Keep,
+                read_mask: 0xFF,
+                write_mask: 0,
+            });
+        }
+        StencilMode::Write { op, .. } => {
+            desc.color_write = false;
+            desc.depth.write = false;
+            desc.stencil = Some(StencilState {
+                func: CompareFunc::Equal,
+                pass: op,
+                fail: StencilOp::Keep,
+                depth_fail: op,
+                read_mask: 0xFF,
+                write_mask: 0xFF,
+            });
+        }
+    }
+    desc
+}
+
+/// The stencil reference the pass overrides ask for.
+pub fn stencil_reference() -> u8 {
+    match pass_overrides().stencil {
+        StencilMode::Off => 0,
+        StencilMode::Test(r) | StencilMode::Write { reference: r, .. } => r,
+    }
+}
+
 /// Make `device` this thread's device. Done once, by the window.
 pub fn init(device: Box<dyn Device>) {
     let device: &'static dyn Device = Box::leak(device);
@@ -251,7 +342,8 @@ impl Buffer {
         Buffer { raw, size, usage, memory }
     }
 
-    pub fn from_slice<T: Copy>(usage: BufferUsage, memory: BufferMemory, data: &[T]) -> Self {
+    /// `T` must be plain data (numbers, `#[repr(C)]` structs of them).
+    pub fn from_slice<T>(usage: BufferUsage, memory: BufferMemory, data: &[T]) -> Self {
         Self::with_data(usage, memory, as_bytes(data))
     }
 
@@ -305,9 +397,10 @@ impl Drop for Buffer {
     }
 }
 
-/// The bytes of a slice of plain values.
-pub fn as_bytes<T: Copy>(data: &[T]) -> &[u8] {
-    // SAFETY: T is Copy (plain data); the bytes are only read.
+/// The bytes of a slice of plain values (numbers, `#[repr(C)]` structs
+/// of them).
+pub fn as_bytes<T>(data: &[T]) -> &[u8] {
+    // SAFETY: the bytes are only read; callers pass plain data.
     unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data)) }
 }
 
