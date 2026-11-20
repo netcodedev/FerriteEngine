@@ -119,6 +119,15 @@ const OUT_OF_PALM: f32 = 0.025;
 /// Beyond the arm's length the other hand lets go, all of it once the
 /// grip is this much (a part of the arm's length) further away.
 const LET_GO_OVER: f32 = 0.15;
+/// A hand turned about the forearm (against how the animation holds it)
+/// is turned half at the wrist, there at most `WRIST_TWIST_MAX` radians,
+/// and the rest at the forearm, at most `FOREARM_TWIST_MAX` (as an arm
+/// turns the hand mostly by turning the forearm): a rig without twist
+/// bones pinches a joint twisted far (the skin of a twisted wrist goes
+/// thin as an hourglass). Twist beyond both is left out.
+const WRIST_TWIST_SHARE: f32 = 0.5;
+const WRIST_TWIST_MAX: f32 = 45.0 * std::f32::consts::PI / 180.0;
+const FOREARM_TWIST_MAX: f32 = 90.0 * std::f32::consts::PI / 180.0;
 
 /// The fist of one hand in world space: where a handle lies in it, which
 /// way the thumb, the knuckles and the palm face.
@@ -361,7 +370,7 @@ fn reach(
         return false;
     };
     let other = hand.other();
-    // Both fists and the arm, from the pose as the animation left it.
+    // Both fists, from the pose as the animation left it.
     let positions = skeleton.world_positions(root);
     let (Some(held), Some(before)) = (
         fist(skeleton, hand, &positions),
@@ -369,17 +378,176 @@ fn reach(
     ) else {
         return false;
     };
+    // The other fist faces as the holding one does (both thumbs towards
+    // the head); its palm is mirrored.
+    let centre = place(grip, &held).transform_point(other_point.into());
+    close_fist(
+        skeleton,
+        root,
+        &inverse_root,
+        &positions,
+        other,
+        &before,
+        centre,
+        held.thumb,
+        held.knuckles,
+        weight,
+    )
+}
+
+/// A hand closing around a bar (a steering wheel's rim, a rail), in world
+/// space: see `grasp`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Grasp {
+    /// Where the bar lies in the fist.
+    pub centre: Point3<f32>,
+    /// The bar's direction out of the fist on the thumb's side.
+    pub thumb: Vector3<f32>,
+    /// Which way the knuckles face (from the wrist towards the fingers);
+    /// only its part square to `thumb` counts.
+    pub knuckles: Vector3<f32>,
+}
+
+/// `hand` of the character `model` (drawn at `transform`) reaches for the
+/// bar of `grasp` and closes around it, `weight` of the way (0: as the
+/// animation has it, 1: fully): the arm bends by two-bone inverse
+/// kinematics, the hand turns so its fist faces as `grasp` says. Out of the
+/// arm's reach it lets go. Run it after the animation has posed the model.
+/// Whether it moved the hand.
+pub fn grasp(
+    model: &mut Model,
+    transform: &Matrix4<f32>,
+    hand: Hand,
+    grasp: &Grasp,
+    weight: f32,
+) -> bool {
+    let Some(mut skeleton) = model.skeleton() else {
+        return false;
+    };
+    let moved = grasp_with(
+        &mut skeleton,
+        &model.root_transform(transform),
+        hand,
+        grasp,
+        weight,
+    );
+    if moved {
+        model.apply_skeleton(&skeleton);
+    }
+    moved
+}
+
+/// `grasp` on `skeleton`, drawn at `root` (the model's root transform).
+fn grasp_with(
+    skeleton: &mut Skeleton,
+    root: &Matrix4<f32>,
+    hand: Hand,
+    grasp: &Grasp,
+    weight: f32,
+) -> bool {
+    if !(weight > 0.0) {
+        return false;
+    }
+    let finite = |v: Vector3<f32>| v.x.is_finite() && v.y.is_finite() && v.z.is_finite();
+    let thumb = grasp.thumb.normalize();
+    let knuckles = grasp.knuckles - thumb * grasp.knuckles.dot(thumb);
+    let knuckles = knuckles.normalize();
+    if !(finite(thumb) && finite(knuckles) && finite(grasp.centre.to_vec())) {
+        return false;
+    }
+    let Some(inverse_root) = root.invert() else {
+        return false;
+    };
+    let positions = skeleton.world_positions(root);
+    let Some(before) = fist(skeleton, hand, &positions) else {
+        return false;
+    };
+    let Some(forearm) = skeleton.chain_ending_at(before.hand).and_then(|chain| match chain.kind {
+        ChainKind::TwoBone { mid, .. } => Some(mid),
+        ChainKind::Ccd { .. } => None,
+    }) else {
+        return false;
+    };
+    // How the animation holds the hand against the forearm.
+    let globals = skeleton.globals();
+    let held = Quaternion::from(rotation_of(&globals[forearm])).conjugate()
+        * Quaternion::from(rotation_of(&globals[before.hand]));
+    let moved = close_fist(
+        skeleton,
+        root,
+        &inverse_root,
+        &positions,
+        hand,
+        &before,
+        grasp.centre,
+        thumb,
+        knuckles,
+        weight,
+    );
+    if moved {
+        spread_twist(skeleton, forearm, before.hand, held);
+    }
+    moved
+}
+
+/// Turn the forearm about itself by part of the hand's twist (about the
+/// forearm, against `held`: the hand's rotation relative to the forearm as
+/// the animation has it), so the wrist is not twisted alone (see
+/// `WRIST_TWIST_SHARE`); the hand keeps its place and, but for twist over
+/// the limits, its orientation. In skeleton space.
+fn spread_twist(skeleton: &mut Skeleton, forearm: usize, hand: usize, held: Quaternion<f32>) {
+    let globals = skeleton.globals();
+    let elbow = Point3::from_vec(globals[forearm].w.truncate());
+    let wrist = Point3::from_vec(globals[hand].w.truncate());
+    let axis = wrist - elbow;
+    if axis.magnitude2() < 1e-12 {
+        return;
+    }
+    let axis = axis.normalize();
+    let now = Quaternion::from(rotation_of(&globals[hand]));
+    let untwisted = Quaternion::from(rotation_of(&globals[forearm])) * held;
+    let mut difference = now * untwisted.conjugate();
+    if difference.s < 0.0 {
+        difference = -difference;
+    }
+    let twist = 2.0 * difference.v.dot(axis).atan2(difference.s);
+    if !twist.is_finite() {
+        return;
+    }
+    let at_wrist = (twist * WRIST_TWIST_SHARE).clamp(-WRIST_TWIST_MAX, WRIST_TWIST_MAX);
+    let at_forearm = (twist - at_wrist).clamp(-FOREARM_TWIST_MAX, FOREARM_TWIST_MAX);
+    let dropped = twist - at_wrist - at_forearm;
+    // The forearm turns about the line to the wrist: the hand stays where
+    // it is and turns along; it is turned back by that, less what is
+    // dropped.
+    skeleton.turn(forearm, Quaternion::from_axis_angle(axis, Rad(at_forearm)));
+    skeleton.turn(hand, Quaternion::from_axis_angle(axis, Rad(-at_forearm - dropped)));
+}
+
+/// Close the fist of `hand` (`before`, as the pose has it; `positions` are
+/// the pose's joints in world space) around `centre`, its thumb and
+/// knuckles facing these (unit, square) directions, `weight` of the way.
+/// Beyond the arm's length it lets go. Whether it moved the hand.
+#[allow(clippy::too_many_arguments)]
+fn close_fist(
+    skeleton: &mut Skeleton,
+    root: &Matrix4<f32>,
+    inverse_root: &Matrix4<f32>,
+    positions: &[Point3<f32>],
+    hand: Hand,
+    before: &Fist,
+    centre: Point3<f32>,
+    thumb: Vector3<f32>,
+    knuckles: Vector3<f32>,
+    weight: f32,
+) -> bool {
     let Some(chain) = skeleton.chain_ending_at(before.hand) else {
         return false;
     };
     let ChainKind::TwoBone { upper, mid } = chain.kind else {
         return false;
     };
-    // The other fist faces as the holding one does (both thumbs towards
-    // the head); its palm is mirrored.
-    let (thumb, knuckles) = (held.thumb, held.knuckles);
-    let palm = palm_of(other, thumb, knuckles);
-    let centre = place(grip, &held).transform_point(other_point.into());
+    let palm = palm_of(hand, thumb, knuckles);
     let wanted = centre - knuckles * (before.length * ALONG_FINGERS) - palm * OUT_OF_PALM;
 
     // As far as the arm reaches: beyond its length the hand lets go.
@@ -398,7 +566,7 @@ fn reach(
     skeleton.solve(&chain, inverse_root.transform_point(wrist));
 
     // Then turn the hand so its fist faces that way.
-    if let Some(now) = fist(skeleton, other, &skeleton.world_positions(root)) {
+    if let Some(now) = fist(skeleton, hand, &skeleton.world_positions(root)) {
         let have = frame(now.thumb, now.knuckles);
         let want = frame(thumb, knuckles);
         let world = want * have.transpose();
@@ -606,6 +774,115 @@ mod tests {
         }
         // The comparison covered hands that reached, not only early outs.
         assert!(moved >= 16, "{moved}");
+    }
+
+    #[test]
+    fn a_hand_closes_around_a_bar_where_and_as_it_is_told() {
+        let roots = [
+            Matrix4::identity(),
+            Matrix4::from_translation(Vector3::new(3.0, 0.5, -2.0))
+                * Matrix4::from(Quaternion::from_axis_angle(Vector3::unit_y(), Rad(2.1))),
+        ];
+        for root in &roots {
+            for (hand, x) in [(Hand::Left, 1.0), (Hand::Right, -1.0)] {
+                // In front of the shoulder, within the arm's reach (the rig
+                // faces +z): a wheel's rim at shoulder height.
+                let local_centre = Point3::new(0.25 * x, 1.25, 0.45);
+                let thumb = root.transform_vector(Vector3::new(0.0, 1.0, 0.0));
+                let knuckles = root.transform_vector(Vector3::new(0.3 * x, 0.2, 1.0));
+                let target = Grasp {
+                    centre: root.transform_point(local_centre),
+                    thumb,
+                    knuckles,
+                };
+                let mut skeleton = humanoid(0.5);
+                assert!(grasp_with(&mut skeleton, root, hand, &target, 1.0));
+                let now = fist(&skeleton, hand, &skeleton.world_positions(root)).unwrap();
+                assert!(
+                    (now.centre - target.centre).magnitude() < 0.01,
+                    "{hand:?}: fist at {:?}, wanted {:?}",
+                    now.centre,
+                    target.centre
+                );
+                assert!(now.thumb.dot(thumb.normalize()) > 0.99, "{hand:?} thumb {:?}", now.thumb);
+                let square = (knuckles - thumb * knuckles.dot(thumb)).normalize();
+                assert!(now.knuckles.dot(square) > 0.99, "{hand:?} knuckles {:?}", now.knuckles);
+
+                // Half the weight: the wrist half of the way there.
+                let mut half = humanoid(0.5);
+                let before = fist(&half, hand, &half.world_positions(root)).unwrap();
+                assert!(grasp_with(&mut half, root, hand, &target, 0.5));
+                let wrist = half.world_positions(root)[before.hand];
+                let full = skeleton.world_positions(root)[before.hand];
+                let from = humanoid(0.5).world_positions(root)[before.hand];
+                assert!((wrist - (from + (full - from) * 0.5)).magnitude() < 0.01);
+            }
+        }
+    }
+
+    /// The twist (radians) of joint `child` about the line from `parent`
+    /// to it, in `after` against `before`, relative to `parent`.
+    fn twist_between(before: &Skeleton, after: &Skeleton, parent: usize, child: usize) -> f32 {
+        let q = |s: &Skeleton, j: usize| Quaternion::from(rotation_of(&s.globals()[j]));
+        let held = q(before, parent).conjugate() * q(before, child);
+        let p = after.positions();
+        let axis = (p[child] - p[parent]).normalize();
+        let mut d = q(after, child) * (q(after, parent) * held).conjugate();
+        if d.s < 0.0 {
+            d = -d;
+        }
+        2.0 * d.v.dot(axis).atan2(d.s)
+    }
+
+    #[test]
+    fn a_hand_turned_far_about_the_forearm_is_not_twisted_at_the_wrist_alone() {
+        let root = Matrix4::identity();
+        let before = humanoid(0.3);
+        let positions = before.world_positions(&root);
+        let [wrist, ..] = hand_joints(&before, Hand::Left).unwrap();
+        let ChainKind::TwoBone { upper, mid } = before.chain_ending_at(wrist).unwrap().kind else {
+            panic!("an arm");
+        };
+        let fist_now = fist(&before, Hand::Left, &positions).unwrap();
+        // Where the fist is, its knuckles as they are, but rolled 150°
+        // about the forearm.
+        let axis = (positions[wrist] - positions[mid]).normalize();
+        let roll = Quaternion::from_axis_angle(axis, Rad(150f32.to_radians()));
+        let target = Grasp {
+            centre: fist_now.centre,
+            thumb: roll * fist_now.thumb,
+            knuckles: roll * fist_now.knuckles,
+        };
+        let mut after = before.clone();
+        assert!(grasp_with(&mut after, &root, Hand::Left, &target, 1.0));
+        let at_wrist = twist_between(&before, &after, mid, wrist);
+        let at_forearm = twist_between(&before, &after, upper, mid);
+        assert!(at_wrist.abs() <= WRIST_TWIST_MAX + 1e-3, "wrist {}", at_wrist.to_degrees());
+        assert!(at_forearm.to_degrees().abs() > 60.0, "forearm {}", at_forearm.to_degrees());
+        // The hand stays where it holds.
+        let now = fist(&after, Hand::Left, &after.world_positions(&root)).unwrap();
+        assert!((now.centre - target.centre).magnitude() < 0.03, "{:?}", now.centre);
+    }
+
+    #[test]
+    fn a_hand_does_not_grasp_beyond_its_reach_nor_without_directions() {
+        let root = Matrix4::identity();
+        let far = Grasp {
+            centre: Point3::new(0.3, 1.2, 5.0),
+            thumb: Vector3::unit_y(),
+            knuckles: Vector3::unit_z(),
+        };
+        let mut skeleton = humanoid(0.0);
+        let before = locals_bits(&skeleton);
+        assert!(!grasp_with(&mut skeleton, &root, Hand::Left, &far, 1.0));
+        let flat = Grasp {
+            centre: Point3::new(0.25, 1.25, 0.45),
+            thumb: Vector3::unit_y(),
+            knuckles: Vector3::unit_y(),
+        };
+        assert!(!grasp_with(&mut skeleton, &root, Hand::Left, &flat, 1.0));
+        assert!(!grasp_with(&mut skeleton, &root, Hand::Left, &Grasp { knuckles: Vector3::unit_z(), ..flat }, 0.0));
+        assert_eq!(locals_bits(&skeleton), before);
     }
 
     #[test]

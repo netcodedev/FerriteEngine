@@ -312,6 +312,39 @@ impl Skeleton {
         }
     }
 
+    /// Bend the two-bone limb ending in the joint `end` (its parent and
+    /// grandparent bones bend: shin and thigh, forearm and upper arm) so
+    /// that `end` moves `weight` of the way to `target`, the middle joint
+    /// bending towards `pole`; `end` keeps its orientation. All in skeleton
+    /// space. Whether `end` has two bones above it.
+    pub fn reach_towards(
+        &mut self,
+        end: usize,
+        target: Point3<f32>,
+        pole: Vector3<f32>,
+        weight: f32,
+    ) -> bool {
+        let weight = weight.clamp(0.0, 1.0);
+        let Some(mid) = self.bone_parent(end) else {
+            return false;
+        };
+        let Some(upper) = self.bone_parent(mid) else {
+            return false;
+        };
+        if !(weight > 0.0) || !finite_point(target) || !finite_vector(pole) {
+            return false;
+        }
+        let from = self.positions()[end];
+        let chain = IkChain {
+            label: base_name(&self.joints[end].name).to_string(),
+            end,
+            kind: ChainKind::TwoBone { upper, mid },
+            pole,
+        };
+        self.solve(&chain, from + (target - from) * weight);
+        true
+    }
+
     /// The direction the character faces, from its heels to its toes
     /// (+Z if it has no feet with toes).
     fn forward(&self, positions: &[Point3<f32>]) -> Vector3<f32> {
@@ -411,6 +444,14 @@ impl Skeleton {
     }
 }
 
+fn finite_point(p: Point3<f32>) -> bool {
+    p.x.is_finite() && p.y.is_finite() && p.z.is_finite()
+}
+
+fn finite_vector(v: Vector3<f32>) -> bool {
+    v.x.is_finite() && v.y.is_finite() && v.z.is_finite()
+}
+
 fn linear(m: &Matrix4<f32>) -> Matrix3<f32> {
     Matrix3::from_cols(m.x.truncate(), m.y.truncate(), m.z.truncate())
 }
@@ -488,6 +529,36 @@ mod tests {
         skeleton.solve(&chain, Point3::new(0.2, -5.0, 0.0));
         let p = skeleton.positions();
         assert!((p[3] - Point3::new(0.2, 0.0, 0.0)).magnitude() < 1e-3, "{:?}", p[3]);
+    }
+
+    #[test]
+    fn a_limb_reaches_with_its_middle_joint_bent_towards_the_pole() {
+        let mut skeleton = leg();
+        // A sitting leg: the foot ahead of the hips and low, the knee up.
+        let target = Point3::new(0.2, 1.2, 1.5);
+        assert!(skeleton.reach_towards(3, target, Vector3::unit_y(), 1.0));
+        let p = skeleton.positions();
+        assert!((p[3] - target).magnitude() < 1e-3, "foot at {:?}", p[3]);
+        let line = p[1] + (target - p[1]) * ((p[2] - p[1]).dot(target - p[1]) / (target - p[1]).magnitude2());
+        assert!(p[2].y > line.y + 0.1, "knee {:?} above the hip-foot line {line:?}", p[2]);
+        assert!(((p[2] - p[1]).magnitude() - 1.0).abs() < 1e-4);
+        // The foot keeps pointing forward.
+        assert!(((p[4] - p[3]) - Vector3::new(0.0, 0.0, 0.3)).magnitude() < 1e-3);
+
+        // Half the weight: half of the way.
+        let mut half = leg();
+        let from = half.positions()[3];
+        assert!(half.reach_towards(3, target, Vector3::unit_y(), 0.5));
+        let wanted = from + (target - from) * 0.5;
+        assert!((half.positions()[3] - wanted).magnitude() < 1e-3);
+
+        // No weight, no limb, or no number: nothing moves.
+        let mut still = leg();
+        let before = still.locals();
+        assert!(!still.reach_towards(3, target, Vector3::unit_y(), 0.0));
+        assert!(!still.reach_towards(1, target, Vector3::unit_y(), 1.0));
+        assert!(!still.reach_towards(3, Point3::new(f32::NAN, 0.0, 0.0), Vector3::unit_y(), 1.0));
+        assert_eq!(still.locals(), before);
     }
 
     #[test]
