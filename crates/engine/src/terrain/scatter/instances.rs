@@ -71,6 +71,43 @@ fn depth_shader() -> std::rc::Rc<Shader> {
     })
 }
 
+/// What the lighting uniforms of a scatter program were last set for:
+/// the program, the pass (see `ScatterInstances::new_pass`), its view and
+/// how it draws. Every chunk's instances of every layer share a program,
+/// and the light is the same for all of them within a pass.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct LitFor {
+    pub(super) program: u32,
+    pub(super) pass: u64,
+    pub(super) view_projection: [f32; 16],
+    pub(super) to_view: bool,
+    pub(super) linear: bool,
+    pub(super) ssao_depth: bool,
+}
+
+thread_local! {
+    static PASS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static LIT_FOR: std::cell::Cell<Option<LitFor>> = const { std::cell::Cell::new(None) };
+}
+
+/// The pass counted by `ScatterInstances::new_pass`.
+pub(super) fn current_pass() -> u64 {
+    PASS.with(|pass| pass.get())
+}
+
+/// Whether the lighting has to be set for `lit_for` (`None`: always, as
+/// for a preview, and the next pass sets it again): not if it was set
+/// for the same already. Noted as set from here on.
+pub(super) fn lighting_needed(lit_for: Option<LitFor>) -> bool {
+    LIT_FOR.with(|lit| {
+        let needed = lit_for.is_none() || lit.get() != lit_for;
+        if needed {
+            lit.set(lit_for);
+        }
+        needed
+    })
+}
+
 /// Edge of the squares instances are culled and tiered by, in metres.
 const CELL_SIZE: f32 = 16.0;
 
@@ -521,7 +558,7 @@ impl Component for ScatterInstances {
             eye: lighting.camera_position,
             shadow: !in_view,
         };
-        self.draw(view_projection, parent_transform, &lighting, lod);
+        self.draw_lit(view_projection, parent_transform, &lighting, lod, true);
     }
 
     fn handle_event(&mut self, _: &mut glfw::Glfw, _: &mut glfw::Window, _: &WindowEvent) {}
@@ -532,6 +569,12 @@ impl Component for ScatterInstances {
 }
 
 impl ScatterInstances {
+    /// A new pass begins (the terrain calls this before its chunks are
+    /// drawn): the lighting is set on the scatter program again, once.
+    pub fn new_pass() {
+        PASS.with(|pass| pass.set(pass.get().wrapping_add(1)));
+    }
+
     /// Draw the instances. Needs no scene, so previews can use it too.
     pub fn draw(
         &self,
@@ -539,6 +582,19 @@ impl ScatterInstances {
         parent_transform: &Matrix4<f32>,
         lighting: &Lighting,
         lod: LodChoice,
+    ) {
+        self.draw_lit(view_projection, parent_transform, lighting, lod, false);
+    }
+
+    /// `draw`; with `in_pass`, `lighting` is the scene's for this pass and
+    /// is set on the program only if it was not yet in this pass.
+    fn draw_lit(
+        &self,
+        view_projection: &Matrix4<f32>,
+        parent_transform: &Matrix4<f32>,
+        lighting: &Lighting,
+        lod: LodChoice,
+        in_pass: bool,
     ) {
         if self.is_empty() {
             return;
@@ -557,7 +613,17 @@ impl ScatterInstances {
             shader.set_uniform_mat4("viewProjection", view_projection);
             shader.set_uniform_mat4("parentTransform", parent_transform);
             if !depth_only {
-                lighting.apply(shader);
+                let lit_for = in_pass.then(|| LitFor {
+                    program: shader.id,
+                    pass: current_pass(),
+                    view_projection: *AsRef::<[f32; 16]>::as_ref(view_projection),
+                    to_view: crate::core::renderer::hdr::draws_to_view(),
+                    linear: crate::core::renderer::hdr::writes_linear(),
+                    ssao_depth: crate::core::renderer::ssao::in_depth_pass(),
+                });
+                if lighting_needed(lit_for) {
+                    lighting.apply(shader);
+                }
             }
 
             unsafe {

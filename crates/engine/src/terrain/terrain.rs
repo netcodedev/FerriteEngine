@@ -991,6 +991,8 @@ impl Component for Terrain {
         view_projection: &Matrix4<f32>,
         transform: &Matrix4<f32>,
     ) {
+        // The chunks' scattered models draw after this, in the same pass.
+        ScatterInstances::new_pass();
         let Some(look) = &self.look else {
             return;
         };
@@ -1090,15 +1092,15 @@ impl Component for Terrain {
         // Transparent pass — water and other overlays. Runs after every
         // entity's opaque geometry is in the depth buffer (terrain, player,
         // props), so water correctly depth-tests against all of them.
-        for child in entity.get_children() {
-            if let Some(chunk) = child.get_own_component::<TerrainChunk>() {
-                // The drawn bounds hold the water, which may lie above
-                // the chunk's own box.
-                if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_drawn_bounds()) {
-                    chunk.draw_water(scene, view_projection, parent_transform);
-                }
-            }
-        }
+        // The program and what holds for every chunk are set up once.
+        let chunks = entity.get_children().iter().filter_map(|child| {
+            let chunk = child.get_own_component::<TerrainChunk>()?;
+            // The drawn bounds hold the water, which may lie above the
+            // chunk's own box.
+            let water = chunk.water(parent_transform)?;
+            ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_drawn_bounds()).then_some(water)
+        });
+        water::draw(chunks, scene, view_projection, None);
         // The water beyond the chunks, after theirs (it lies under it where
         // both are).
         let eye = scene.get_active_camera().map(|camera| camera.get_camera().get_eye_position());
@@ -1110,7 +1112,7 @@ impl Component for Terrain {
                 hole: if self.under_ground(eye) { load - HORIZON_HOLE_MARGIN } else { 0.0 },
                 loaded: self.loaded.raw(),
             };
-            water::draw(far_water, scene, view_projection, &Matrix4::from_scale(1.0), Some(far));
+            water::draw([(far_water, Matrix4::from_scale(1.0))], scene, view_projection, Some(far));
         }
     }
 

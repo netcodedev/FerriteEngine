@@ -71,3 +71,30 @@ fn an_asset_and_a_file_scatter_to_different_spots() {
     assert!(ScatterLayer::new(ScatterLayerData::file("  ", 1.0)).is_unused());
     assert!(!whole.is_unused());
 }
+
+#[test]
+fn the_lighting_is_set_once_per_program_and_pass() {
+    use super::instances::{current_pass, lighting_needed, LitFor};
+    let lit_for = |program: u32, to_view: bool| LitFor {
+        program,
+        pass: current_pass(),
+        view_projection: [1.0; 16],
+        to_view,
+        linear: true,
+        ssao_depth: false,
+    };
+    ScatterInstances::new_pass();
+    assert!(lighting_needed(Some(lit_for(3, true))));
+    // The other chunks and layers of the pass.
+    assert!(!lighting_needed(Some(lit_for(3, true))));
+    // Another way of drawing, or another program.
+    assert!(lighting_needed(Some(lit_for(3, false))));
+    assert!(lighting_needed(Some(lit_for(4, false))));
+    // The next pass, even with the same view.
+    ScatterInstances::new_pass();
+    assert!(lighting_needed(Some(lit_for(4, false))));
+    assert!(!lighting_needed(Some(lit_for(4, false))));
+    // Set for something else (a preview): set again after it.
+    assert!(lighting_needed(None));
+    assert!(lighting_needed(Some(lit_for(4, false))));
+}

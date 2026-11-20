@@ -257,13 +257,13 @@ impl TerrainChunk {
         }
     }
 
-    /// Draw the chunk's water, over the opaque scene.
-    pub fn draw_water(&self, scene: &Scene, view_projection: &Matrix4<f32>, parent_transform: &Matrix4<f32>) {
-        if let Some(water_mesh) = &self.water_mesh {
-            let corner = self.position();
-            let model = parent_transform * Matrix4::from_translation(Vector3::new(corner.x, corner.y, corner.z));
-            water::draw(water_mesh, scene, view_projection, &model, None);
-        }
+    /// The chunk's water and where it is drawn, under `parent_transform`
+    /// (see `water::draw`).
+    pub fn water(&self, parent_transform: &Matrix4<f32>) -> Option<(&ChunkMesh<WaterVertex>, Matrix4<f32>)> {
+        let water_mesh = self.water_mesh.as_ref()?;
+        let corner = self.position();
+        let model = parent_transform * Matrix4::from_translation(Vector3::new(corner.x, corner.y, corner.z));
+        Some((water_mesh, model))
     }
 }
 
