@@ -22,18 +22,20 @@ use std::{
 };
 
 use cgmath::{Matrix4, Point3};
-use gl::types::{GLsizei, GLsizeiptr, GLuint, GLvoid};
 
-use crate::core::renderer::{
-    pbr::{self, Lighting},
-    shader::Shader,
+use crate::core::{
+    gfx,
+    renderer::{
+        pbr::{self, Lighting},
+        shader::Shader,
+    },
 };
 
 use super::{
     chunk::scatter_spots,
     columns::{ColumnMap, COLUMNS_GLSL},
     horizon::{self, HeightGrid, SINK},
-    scatter::{impostor::FRAMES, pick_variant_index, spot_key, Scatter, ScatterModel, ScatterSpec},
+    scatter::{impostor::{self, FRAMES}, pick_variant_index, spot_key, Scatter, ScatterModel, ScatterSpec},
     shaders::HAZE_GLSL,
     source::TerrainSource,
     CHUNK_SIZE,
@@ -196,21 +198,21 @@ impl PartialEq for Key {
 struct Batch {
     model: Rc<ScatterModel>,
     variant: usize,
-    vao: GLuint,
-    instances: GLuint,
-    count: GLsizei,
+    /// `[x, y, z, turn, scale]` of each model (`instance_layout`).
+    instances: gfx::Buffer,
+    count: u32,
 }
 
-impl Drop for Batch {
-    fn drop(&mut self) {
-        if crate::core::headless::is_headless() {
-            return;
-        }
-        unsafe {
-            gl::DeleteVertexArrays(1, &self.vao);
-            gl::DeleteBuffers(1, &self.instances);
-        }
-    }
+/// A card's corner (0..1 across and up) at location 0.
+fn corner_layout() -> gfx::VertexLayout {
+    gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[gfx::VertexFormat::F32x2])
+}
+
+/// A model: where it stands and how it is turned (location 1), and how
+/// large it is drawn (location 2).
+fn instance_layout() -> gfx::VertexLayout {
+    use gfx::VertexFormat::*;
+    gfx::VertexLayout::packed(1, gfx::StepMode::Instance, &[F32x4, F32])
 }
 
 /// The far models a terrain draws; see the module.
@@ -235,7 +237,7 @@ pub struct FarScatter {
     pending: Option<Pending>,
     batches: Vec<Batch>,
     /// The corners of a picture's card, shared by every batch.
-    corners: GLuint,
+    corners: Option<gfx::Buffer>,
     /// Which columns around the camera's carry their chunks' own models.
     planted: ColumnMap,
     shader: Option<Shader>,
@@ -247,7 +249,7 @@ impl FarScatter {
             made: None,
             pending: None,
             batches: Vec::new(),
-            corners: 0,
+            corners: None,
             planted: ColumnMap::new(),
             shader: None,
         }
@@ -373,53 +375,21 @@ impl FarScatter {
                 ),
             )
         });
-        unsafe {
-            if self.corners == 0 {
-                let corners: [f32; 8] = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
-                gl::GenBuffers(1, &mut self.corners);
-                gl::BindBuffer(gl::ARRAY_BUFFER, self.corners);
-                gl::BufferData(
-                    gl::ARRAY_BUFFER,
-                    std::mem::size_of_val(&corners) as GLsizeiptr,
-                    corners.as_ptr() as *const GLvoid,
-                    gl::STATIC_DRAW,
-                );
-            }
-            for (spec, variants) in specs.iter().zip(placed) {
-                for (variant, models) in variants.into_iter().enumerate() {
-                    if models.is_empty() {
-                        continue;
-                    }
-                    let (mut vao, mut instances) = (0, 0);
-                    gl::GenVertexArrays(1, &mut vao);
-                    gl::GenBuffers(1, &mut instances);
-                    gl::BindVertexArray(vao);
-                    gl::BindBuffer(gl::ARRAY_BUFFER, self.corners);
-                    gl::EnableVertexAttribArray(0);
-                    gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 8, std::ptr::null());
-                    gl::BindBuffer(gl::ARRAY_BUFFER, instances);
-                    gl::BufferData(
-                        gl::ARRAY_BUFFER,
-                        (models.len() * 20) as GLsizeiptr,
-                        models.as_ptr() as *const GLvoid,
-                        gl::STATIC_DRAW,
-                    );
-                    gl::EnableVertexAttribArray(1);
-                    gl::VertexAttribPointer(1, 4, gl::FLOAT, gl::FALSE, 20, std::ptr::null());
-                    gl::VertexAttribDivisor(1, 1);
-                    gl::EnableVertexAttribArray(2);
-                    gl::VertexAttribPointer(2, 1, gl::FLOAT, gl::FALSE, 20, 16 as *const GLvoid);
-                    gl::VertexAttribDivisor(2, 1);
-                    gl::BindVertexArray(0);
-                    gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-                    self.batches.push(Batch {
-                        model: spec.model.clone(),
-                        variant,
-                        vao,
-                        instances,
-                        count: models.len() as GLsizei,
-                    });
+        self.corners.get_or_insert_with(|| {
+            let corners: [f32; 8] = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+            gfx::Buffer::from_slice(gfx::BufferUsage::VERTEX, gfx::BufferMemory::Static, &corners)
+        });
+        for (spec, variants) in specs.iter().zip(placed) {
+            for (variant, models) in variants.into_iter().enumerate() {
+                if models.is_empty() {
+                    continue;
                 }
+                self.batches.push(Batch {
+                    model: spec.model.clone(),
+                    variant,
+                    instances: gfx::Buffer::from_slice(gfx::BufferUsage::VERTEX, gfx::BufferMemory::Static, &models),
+                    count: models.len() as u32,
+                });
             }
         }
     }
@@ -435,7 +405,18 @@ impl FarScatter {
         for batch in &self.batches {
             batch.model.impostors();
         }
-        shader.bind();
+        let Some(corners) = &self.corners else {
+            return;
+        };
+        // Cards facing the camera, drawn as the ground is (`LEQUAL`: the
+        // depth may be drawn already), from both sides.
+        let desc = gfx::PipelineDesc {
+            vertex_layouts: vec![corner_layout(), instance_layout()],
+            topology: gfx::Topology::TriangleStrip,
+            depth: gfx::DepthState::LEQUAL,
+            ..Default::default()
+        };
+        gfx::set_pipeline(shader.pipeline(&desc));
         lighting.apply(shader);
         shader.set_uniform_mat4("viewProjection", view_projection);
         shader.set_uniform_3f("viewer", eye.x, eye.y, eye.z);
@@ -443,49 +424,23 @@ impl FarScatter {
         shader.set_uniform_1i("frames", FRAMES as i32);
         shader.set_uniform_1i("albedoMap", 0);
         shader.set_uniform_1i("normalMap", 1);
-        unsafe {
-            gl::Enable(gl::DEPTH_TEST);
-            gl::DepthFunc(gl::LEQUAL);
-            gl::DepthMask(gl::TRUE);
-            gl::Disable(gl::CULL_FACE);
-            for batch in &self.batches {
-                let Some(impostor) = batch.model.impostors().get(batch.variant) else {
-                    continue;
-                };
-                if impostor.albedo == 0 {
-                    continue;
-                }
-                shader.bind();
-                shader.set_uniform_3f("card", impostor.half_width, impostor.bottom, impostor.top);
-                gl::ActiveTexture(gl::TEXTURE0);
-                gl::BindTexture(gl::TEXTURE_2D_ARRAY, impostor.albedo);
-                gl::ActiveTexture(gl::TEXTURE1);
-                gl::BindTexture(gl::TEXTURE_2D_ARRAY, impostor.normal);
-                gl::BindVertexArray(batch.vao);
-                gl::DrawArraysInstanced(gl::TRIANGLE_STRIP, 0, 4, batch.count);
-            }
-            gl::BindVertexArray(0);
-            gl::ActiveTexture(gl::TEXTURE2);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::ActiveTexture(gl::TEXTURE1);
-            gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
-            gl::Enable(gl::CULL_FACE);
+        gfx::set_vertex_buffer(0, corners, 0, corner_layout().stride);
+        for batch in &self.batches {
+            let Some(impostor) = batch.model.impostors().get(batch.variant) else {
+                continue;
+            };
+            let (Some(albedo), Some(normal)) = (&impostor.albedo, &impostor.normal) else {
+                continue;
+            };
+            shader.set_uniform_3f("card", impostor.half_width, impostor.bottom, impostor.top);
+            gfx::bind_texture(0, albedo, &impostor::SAMPLER);
+            gfx::bind_texture(1, normal, &impostor::SAMPLER);
+            gfx::set_vertex_buffer(1, &batch.instances, 0, instance_layout().stride);
+            gfx::draw_instanced(0, 4, 0, batch.count);
         }
-    }
-}
-
-impl Drop for FarScatter {
-    fn drop(&mut self) {
-        self.batches.clear();
-        if !crate::core::headless::is_headless() {
-            unsafe {
-                if self.corners != 0 {
-                    gl::DeleteBuffers(1, &self.corners);
-                }
-            }
-        }
+        gfx::unbind_texture(2, gfx::TextureKind::D2);
+        gfx::unbind_texture(1, gfx::TextureKind::D2Array);
+        gfx::unbind_texture(0, gfx::TextureKind::D2Array);
     }
 }
 
