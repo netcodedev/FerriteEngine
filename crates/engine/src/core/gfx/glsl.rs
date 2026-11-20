@@ -5,41 +5,29 @@
 //! texture unit, which Vulkan's GLSL does not allow. Rather than rewrite
 //! every shader, a program's two stages are rewritten together:
 //!
+//! Everything goes into descriptor set 0, which Vulkan fills with push
+//! descriptors at draw time (only one set of a pipeline may be pushed):
+//!
 //! - every loose non-opaque uniform of either stage becomes a member of
 //!   one std140 block, `FerriteParams`, declared identically in both
-//!   (set 3, binding 0); its layout is computed here, so the by-name
-//!   setters write the right bytes;
-//! - every loose sampler gets a binding of its own in set 2 (the texture
-//!   unit the program points it at with a uniform set decides, at draw
-//!   time, what is bound there); one with an explicit `binding` keeps it
-//!   as its unit;
-//! - buffer blocks with `binding = n` get the set their slot range maps
-//!   to (see `slot_set`);
+//!   (binding `PARAMS_BINDING`); its layout is computed here, so the
+//!   by-name setters write the right bytes;
+//! - every loose sampler gets a binding of its own below
+//!   `BUFFER_BINDING_BASE` (the texture unit the program points it at
+//!   with a uniform set decides, at draw time, what is bound there); one
+//!   with an explicit `binding` keeps it as its unit and binding;
+//! - buffer blocks with `binding = n` get `BUFFER_BINDING_BASE + n`;
 //! - `gl_VertexID`/`gl_InstanceID` become Vulkan's `gl_VertexIndex`/
 //!   `gl_InstanceIndex` (the engine draws them from 0, where they agree),
 //!   and the version becomes 4.60.
 
 use std::collections::HashMap;
 
-/// Descriptor set of the loose uniforms' block.
-pub const PARAMS_SET: u32 = 3;
-pub const PARAMS_BINDING: u32 = 0;
-/// Descriptor set of the loose samplers.
-pub const SAMPLER_SET: u32 = 2;
-/// Bindings below this in the sampler set are samplers; buffer slots
-/// mapped into a set start here.
-pub const BUFFER_BINDING_BASE: u32 = 16;
-
-/// The descriptor set a binding slot belongs to (see `gfx`'s module docs)
-/// and the binding within it.
-pub fn slot_set(slot: u32) -> (u32, u32) {
-    match slot {
-        0..=7 => (2, slot),
-        8..=15 => (1, slot - 8),
-        16..=31 => (0, slot - 16),
-        _ => (3, slot.saturating_sub(32) + 1),
-    }
-}
+/// Binding of the loose uniforms' block.
+pub const PARAMS_BINDING: u32 = 48;
+/// Bindings below this are samplers; buffer slot `n` is bound at this
+/// plus `n`.
+pub const BUFFER_BINDING_BASE: u32 = 32;
 
 /// A member of the params block.
 #[derive(Clone, Debug, PartialEq)]
@@ -300,10 +288,7 @@ pub fn to_vulkan(vertex: &str, fragment: &str) -> Result<VulkanProgram, String> 
                 if samplers.iter().any(|s| s.name == d.name) {
                     continue;
                 }
-                let binding = match d.binding {
-                    Some(unit) => slot_set(unit).1.max(0),
-                    None => samplers.iter().filter(|s| s.fixed_unit.is_none()).count() as u32,
-                };
+                let binding = d.binding.unwrap_or(0);
                 samplers.push(Sampler { name: d.name.clone(), binding, fixed_unit: d.binding });
                 continue;
             }
@@ -342,7 +327,7 @@ pub fn to_vulkan(vertex: &str, fragment: &str) -> Result<VulkanProgram, String> 
     let block = if params.is_empty() {
         String::new()
     } else {
-        let mut b = format!("layout(std140, set = {PARAMS_SET}, binding = {PARAMS_BINDING}) uniform FerriteParams {{\n");
+        let mut b = format!("layout(std140, set = 0, binding = {PARAMS_BINDING}) uniform FerriteParams {{\n");
         for (d, p) in params.iter().map(|p| (declaration_of(&per_stage, &p.name), p)) {
             let ty = d.map(|d| d.ty.clone()).unwrap_or_default();
             if p.is_array {
@@ -361,11 +346,7 @@ pub fn to_vulkan(vertex: &str, fragment: &str) -> Result<VulkanProgram, String> 
         for d in found {
             let replacement = if is_opaque(&d.ty) {
                 let s = samplers.iter().find(|s| s.name == d.name).expect("collected above");
-                let set = match s.fixed_unit {
-                    Some(unit) => slot_set(unit).0,
-                    None => SAMPLER_SET,
-                };
-                format!("layout(set = {set}, binding = {}) uniform {} {};", s.binding, d.ty, d.name)
+                format!("layout(set = 0, binding = {}) uniform {} {};", s.binding, d.ty, d.name)
             } else {
                 String::new()
             };
@@ -422,8 +403,7 @@ fn rebind_blocks(source: &str, buffers: &mut Vec<BufferBlock>) -> String {
                 let is_block = !rest.contains("sampler") && !rest.trim_end().ends_with(';')
                     || rest.contains('{');
                 if let (Some(slot), true) = (layout_binding(inner), is_block) {
-                    let (set, binding) = slot_set(slot);
-                    let binding = if set == 2 || set == 0 || set == 1 { binding + BUFFER_BINDING_BASE } else { binding };
+                    let (set, binding) = (0, BUFFER_BINDING_BASE + slot);
                     let parts: Vec<String> = inner
                         .split(',')
                         .filter(|p| p.split_once('=').map_or(true, |(k, _)| k.trim() != "binding" && k.trim() != "set"))
@@ -537,19 +517,11 @@ void main() { color = texture(image, uv) * float(mode) + vec4(offset, 1.0); }
         assert_eq!((image.binding, image.fixed_unit), (0, None));
         let noise = p.sampler("noise").unwrap();
         assert_eq!(noise.fixed_unit, Some(17));
-        assert!(p.fragment.contains("layout(set = 2, binding = 0) uniform sampler2D image;"));
-        assert!(p.fragment.contains("layout(set = 0, binding = 1) uniform sampler3D noise;"));
-        assert!(p.fragment.contains("layout(std140, set = 2, binding = 17) uniform Lights"), "{}", p.fragment);
-        assert!(p.fragment.contains("layout(std430, set = 2, binding = 19) readonly buffer Ranges"), "{}", p.fragment);
+        assert!(p.fragment.contains("layout(set = 0, binding = 0) uniform sampler2D image;"));
+        assert!(p.fragment.contains("layout(set = 0, binding = 17) uniform sampler3D noise;"));
+        assert!(p.fragment.contains("layout(std140, set = 0, binding = 33) uniform Lights"), "{}", p.fragment);
+        assert!(p.fragment.contains("layout(std430, set = 0, binding = 35) readonly buffer Ranges"), "{}", p.fragment);
         assert_eq!(p.buffers.len(), 2);
-    }
-
-    #[test]
-    fn slots_map_onto_sets() {
-        assert_eq!(slot_set(3), (2, 3));
-        assert_eq!(slot_set(11), (1, 3));
-        assert_eq!(slot_set(17), (0, 1));
-        assert_eq!(slot_set(32), (3, 1));
     }
 
     #[test]
