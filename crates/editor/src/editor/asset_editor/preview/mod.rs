@@ -45,6 +45,23 @@ mod ui;
 /// Seconds the settings have to stay untouched before the preview loads
 /// the model again (typing a scale would otherwise reload per digit).
 pub(super) const RELOAD_DELAY: f32 = 0.35;
+
+/// Since when `wanted` has been wanted: `pending` keeps the key last seen
+/// and when it came. Every new edit (a new key) starts the wait again, so
+/// the reload waits for the last edit, not the first.
+pub(super) fn settled_since<K: PartialEq + Copy>(
+    pending: &mut Option<(Instant, K)>,
+    wanted: K,
+    now: Instant,
+) -> Instant {
+    match pending {
+        Some((since, key)) if *key == wanted => *since,
+        _ => {
+            *pending = Some((now, wanted));
+            now
+        }
+    }
+}
 /// Camera distance in model radii at which a model fits the view.
 pub(super) const DEFAULT_ZOOM: f32 = 3.6;
 /// Longest edge (px) a texture is shown at, room permitting.
@@ -101,8 +118,9 @@ pub struct AssetPreview {
     shown_for: Option<(AssetId, u64)>,
     /// `(asset, variant)` the camera was framed for.
     framed_for: Option<(AssetId, usize)>,
-    /// When a reload became necessary.
-    pending_since: Option<Instant>,
+    /// The `(asset, preview counter)` waiting to be shown, and since when
+    /// it is wanted (see `settled_since`).
+    pending_since: Option<(Instant, Option<(AssetId, u64)>)>,
     message: Text,
     hint: Text,
     orbit: Orbit,
@@ -893,5 +911,25 @@ impl AssetPreview {
             radius * 40.0,
         );
         projection * Matrix4::look_at_rh(eye, center, Vector3::unit_y())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::settled_since;
+
+    #[test]
+    fn the_wait_starts_again_with_every_edit() {
+        let t0 = Instant::now();
+        let later = |ms| t0 + Duration::from_millis(ms);
+        let mut pending = None;
+        assert_eq!(settled_since(&mut pending, 1, t0), t0);
+        // The same edit still waits from when it came.
+        assert_eq!(settled_since(&mut pending, 1, later(200)), t0);
+        // Another edit: from now.
+        assert_eq!(settled_since(&mut pending, 2, later(250)), later(250));
+        assert_eq!(settled_since(&mut pending, 2, later(500)), later(250));
     }
 }
