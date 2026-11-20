@@ -193,6 +193,18 @@ pub enum Command {
     CloseGraphEditor,
 }
 
+/// An agent at the controls (see `BridgeRequest::AgentControl`).
+pub struct AgentControl {
+    pub note: Option<String>,
+    pub since: std::time::Instant,
+    /// The agent's last request: control it gave no word of for
+    /// `AGENT_TIMEOUT` ends by itself (the agent may have stopped).
+    pub last_seen: std::time::Instant,
+}
+
+/// See `AgentControl::last_seen`.
+pub const AGENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 pub struct EditorState {
     /// Selected entity id, shared with the hierarchy tree (`NO_SELECTION`
     /// when empty).
@@ -223,6 +235,9 @@ pub struct EditorState {
     /// The latest status message, kept after it fades from the screen (for
     /// tools asking what happened, e.g. over the MCP bridge).
     last_status: Option<String>,
+    /// An agent at the controls, shown in the toolbar and around the
+    /// viewport.
+    pub agent: Option<AgentControl>,
     /// What the last script build or load said.
     pub scripts_message: Option<String>,
     pub commands: Vec<Command>,
@@ -276,6 +291,7 @@ impl EditorState {
             scene_generation: 0,
             status: None,
             last_status: None,
+            agent: None,
             scripts_message: None,
             commands: Vec::new(),
             layout: layout::Layout::compute(

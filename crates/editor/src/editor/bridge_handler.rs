@@ -74,6 +74,10 @@ pub enum Dispatch {
 }
 
 pub fn dispatch(request: BridgeRequest, pending: PendingRequest, cx: Context) -> Dispatch {
+    // Any request keeps an agent's control alive.
+    if let Some(agent) = cx.state.agent.as_mut() {
+        agent.last_seen = std::time::Instant::now();
+    }
     let response = match request {
         BridgeRequest::Screenshot {
             source,
@@ -137,6 +141,16 @@ fn respond(request: BridgeRequest, cx: Context) -> BridgeResponse {
             Ok(json!({ "building": true, "check": "editor_status → scripts_message" }))
         }
         BridgeRequest::Focus { id } => focus(scene, state, id),
+        BridgeRequest::AgentControl { active, note } => {
+            let now = std::time::Instant::now();
+            if active {
+                let since = state.agent.as_ref().map_or(now, |a| a.since);
+                state.agent = Some(super::AgentControl { note: note.filter(|n| !n.trim().is_empty()), since, last_seen: now });
+            } else if state.agent.take().is_some() {
+                state.set_status("The agent gave the controls back");
+            }
+            Ok(agent_json(state))
+        }
         BridgeRequest::SetDebugViews {
             vsync,
             freeze_culling,
@@ -208,6 +222,18 @@ fn entity_exists(scene: &Scene, id: u64) -> Result<EntityHandle, String> {
         .ok_or_else(|| format!("no entity {id} (see editor_list_entities)"))
 }
 
+/// Whether an agent is at the controls, and what for.
+fn agent_json(state: &EditorState) -> serde_json::Value {
+    match &state.agent {
+        Some(agent) => json!({
+            "active": true,
+            "note": agent.note,
+            "seconds": agent.since.elapsed().as_secs(),
+        }),
+        None => json!({ "active": false }),
+    }
+}
+
 fn status(scene: &Scene, state: &EditorState) -> serde_json::Value {
     let mode = match state.mode {
         Mode::Edit => "edit",
@@ -229,6 +255,7 @@ fn status(scene: &Scene, state: &EditorState) -> serde_json::Value {
         "has_camera": has_camera,
         "performance": state.stats.to_json(),
         "debug_views": state.debug.to_json(),
+        "agent_control": agent_json(state),
         "recent_logs": recent_logs(),
     })
 }

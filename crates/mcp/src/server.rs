@@ -105,7 +105,11 @@ fn handle_request(state: &State, method: &str, params: Value, id: Value) -> Resp
                 "serverInfo": {
                     "name": "ferrite-mcp",
                     "version": env!("CARGO_PKG_VERSION"),
-                }
+                },
+                "instructions": "Before you work the running editor (move its camera, fly, play, \
+                    take a series of screenshots), call editor_agent_control with active: true and a \
+                    short note, so the user sees an agent is at the controls; call it with active: \
+                    false as soon as you are done."
             }),
         ),
         "ping" => Response::ok(id, json!({})),

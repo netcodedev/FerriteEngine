@@ -284,6 +284,20 @@ pub fn catalog() -> Vec<Tool> {
             &[],
         ),
         tool(
+            "editor_agent_control",
+            "Tell the user you are taking the editor's controls, or giving them back. Call it with \
+             active: true BEFORE anything that moves the camera, flies, plays, takes a series of \
+             screenshots or otherwise works the editor (editor_set_view, editor_play, \
+             viewport_screenshot runs...), with a short note of what you do (e.g. \"measuring \
+             a flight over the town\"); the editor then shows that an agent is at the controls \
+             and must not be disturbed. Call it with active: false as soon as you are done, so \
+             the user knows they can move the camera again. Control you give no word of (no \
+             request at all) for a minute ends by itself. editor_status reports it \
+             (agent_control).",
+            json!({"active": {"type": "boolean"}, "note": {"type": "string"}}),
+            &["active"],
+        ),
+        tool(
             "editor_set_debug_views",
             "Switch VSync and the renderer's debug views, as the editor's Performance panel does; \
              what is left out stays. freeze_culling keeps culling the camera's view as it is \

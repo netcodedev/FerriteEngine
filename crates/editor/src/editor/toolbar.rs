@@ -55,6 +55,13 @@ pub struct Toolbar {
     spinner: Vec<Plane>,
     spinning: bool,
     started: Instant,
+    /// While an agent is at the controls (MCP): a sign beside play/stop
+    /// and a frame around the viewport.
+    agent_sign: Plane,
+    agent_icon: Text,
+    agent_text: Text,
+    agent_frame: [Plane; 4],
+    agent_shown: bool,
 }
 
 /// Window menu entries, checked while the panel is shown.
@@ -193,6 +200,14 @@ impl Toolbar {
                 .collect(),
             spinning: false,
             started: Instant::now(),
+            agent_sign: PlaneBuilder::new()
+                .color(theme::WARNING)
+                .border_radius_uniform(theme::RADIUS)
+                .build(),
+            agent_icon: theme::icon(icons::SPARKLES, 14.0, theme::BG_APP),
+            agent_text: theme::text("", theme::FONT_SIZE_SMALL + 0.5, theme::BG_APP),
+            agent_frame: std::array::from_fn(|_| PlaneBuilder::new().color(theme::WARNING).build()),
+            agent_shown: false,
         }
     }
 
@@ -307,6 +322,46 @@ impl UIElement for Toolbar {
         let play_x = (viewport.x + viewport.w * 0.5 - play_w * 0.5).max(coords_end + 16.0);
         self.play_button.set_offset(Offset { x: play_x, y });
 
+        // An agent at the controls: say so beside play/stop and frame the
+        // viewport. Control it gave no word of for a while ends.
+        let agent = {
+            let mut state = self.state.borrow_mut();
+            if state.agent.as_ref().is_some_and(|a| a.last_seen.elapsed() > super::AGENT_TIMEOUT) {
+                state.agent = None;
+                state.set_status("The agent's control ended: no word from it for a minute");
+            }
+            state.agent.as_ref().map(|a| match &a.note {
+                Some(note) => format!("Agent at the controls - please don't touch  ·  {note}"),
+                None => "Agent at the controls - please don't touch".to_string(),
+            })
+        };
+        self.agent_shown = agent.is_some();
+        let mut sign_end = play_x + play_w;
+        if let Some(label) = agent {
+            self.agent_text.set_content(&label);
+            let text_w = self.agent_text.measure_width();
+            let sign_x = play_x + play_w + 12.0;
+            let sign_w = text_w + 40.0;
+            self.agent_sign.set_position(Position::new(sign_x, y, 2.0));
+            self.agent_sign.set_size(Size::new(sign_w, BUTTON_HEIGHT));
+            let iy = rect.y + theme::center_y(&self.agent_icon, rect.h);
+            self.agent_icon.prepare_render_at(Position::new(sign_x + 10.0, iy, 3.0));
+            let ty = rect.y + theme::center_y(&self.agent_text, rect.h);
+            self.agent_text.prepare_render_at(Position::new(sign_x + 30.0, ty, 3.0));
+            sign_end = sign_x + sign_w;
+            let t = 3.0;
+            let (vx, vy, vw, vh) = (viewport.x, viewport.y, viewport.w, viewport.h);
+            for (plane, (px, py, w, h)) in self.agent_frame.iter_mut().zip([
+                (vx, vy, vw, t),
+                (vx, vy + vh - t, vw, t),
+                (vx, vy, t, vh),
+                (vx + vw - t, vy, t, vh),
+            ]) {
+                plane.set_position(Position::new(px, py, 50.0));
+                plane.set_size(Size::new(w, h));
+            }
+        }
+
         // What the terrain is still busy with, unless something else is
         // being said.
         let loading = scene
@@ -319,7 +374,7 @@ impl UIElement for Toolbar {
         });
         self.status.set_content(&status);
         let status_w = self.status.measure_width();
-        let status_x = (rect.x + rect.w - status_w - 12.0).max(play_x + play_w + 36.0);
+        let status_x = (rect.x + rect.w - status_w - 12.0).max(sign_end + 36.0);
         let sy = rect.y + theme::center_y(&self.status, rect.h);
         self.status
             .prepare_render_at(Position::new(status_x, sy, 2.0));
@@ -355,6 +410,14 @@ impl UIElement for Toolbar {
             widget.render();
         }
         self.coords.render();
+        if self.agent_shown {
+            self.agent_sign.render();
+            self.agent_icon.render();
+            self.agent_text.render();
+            for plane in &self.agent_frame {
+                plane.render();
+            }
+        }
         self.status_icon.render();
         self.status.render();
         if self.spinning {

@@ -118,6 +118,14 @@ pub enum BridgeRequest {
         #[serde(default)]
         pitch_deg: Option<f32>,
     },
+    /// An agent takes the controls (moves the camera, takes screenshots,
+    /// plays) or gives them back: the editor shows it, so the user keeps
+    /// their hands off meanwhile. `note` says what the agent is doing.
+    AgentControl {
+        active: bool,
+        #[serde(default)]
+        note: Option<String>,
+    },
     /// Switch VSync and the renderer's debug views (as the editor's
     /// Performance panel does); what is left out stays.
     SetDebugViews {
