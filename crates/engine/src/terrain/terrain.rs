@@ -73,7 +73,8 @@ struct WorldMap {
     version: u64,
     /// Being made: for which version.
     pending: Option<(u64, Receiver<Option<RgbaImage>>)>,
-    /// Whether anyone asked for it (the editor does); none is made before.
+    /// Whether anyone asked for it since the last update (the editor's map
+    /// view does, every frame it is shown); none is made otherwise.
     wanted: bool,
 }
 
@@ -116,6 +117,9 @@ impl WorldMap {
             });
             self.pending = Some((self.version, rx));
         }
+        // Asked again by whoever still shows it: once nobody does, a changed
+        // world no longer makes a new map in the background.
+        self.wanted = false;
     }
 }
 
@@ -369,7 +373,8 @@ impl Terrain {
     /// The latest picture of the world from above (see
     /// `TerrainSource::map_image`) and its version, which changes with
     /// every new picture. Asking starts making it (and remaking it whenever
-    /// the world changes); the first call usually returns `None`.
+    /// the world changes, while it is asked for every frame); the first call
+    /// usually returns `None`.
     pub fn world_map(&mut self) -> Option<(u64, Arc<RgbaImage>)> {
         self.map.wanted = true;
         self.map.image.clone()
@@ -1191,5 +1196,38 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
         } else {
             self.vertices.len() / 3
         }
+    }
+}
+
+#[cfg(test)]
+mod world_map_tests {
+    use std::sync::Arc;
+
+    use super::WorldMap;
+    use crate::terrain::{
+        hills::{Hills, HillsSettings},
+        source::{TerrainGenerator, TerrainSource},
+    };
+
+    #[test]
+    fn a_map_is_only_made_while_it_is_asked_for() {
+        let source: Arc<dyn TerrainSource> = Hills::create(2, HillsSettings::default());
+        let mut map = WorldMap::new();
+        map.update(&source);
+        assert!(map.pending.is_none(), "nobody asked");
+
+        map.wanted = true;
+        map.update(&source);
+        assert!(map.pending.is_some());
+        assert!(!map.wanted, "asked again by whoever still shows it");
+
+        // The world changes while nobody shows the map: nothing is made.
+        map.invalidate();
+        map.update(&source);
+        assert!(map.pending.is_none());
+        // Shown again: made again.
+        map.wanted = true;
+        map.update(&source);
+        assert!(map.pending.is_some());
     }
 }
