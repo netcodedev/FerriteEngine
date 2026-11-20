@@ -281,6 +281,19 @@ impl<R: Send + 'static> Streamer<R> {
         None
     }
 
+    /// The columns loaded and whether in detail, to hand on to a streamer
+    /// that takes over (see `adopt`); this one counts as having none.
+    pub fn take_loaded(&mut self) -> HashMap<ColumnKey, bool> {
+        std::mem::take(&mut self.loaded)
+    }
+
+    /// Count `loaded` as loaded already (another streamer made them): only
+    /// what is missing is made, and they are let go as usual.
+    pub fn adopt(&mut self, loaded: HashMap<ColumnKey, bool>) {
+        self.loaded.extend(loaded);
+        self.anchor = None;
+    }
+
     /// Whether `column` is loaded (its result was taken).
     pub fn is_loaded(&self, column: ColumnKey) -> bool {
         self.loaded.contains_key(&column)
@@ -467,6 +480,35 @@ mod tests {
         }
         assert_eq!(got.len(), expected);
         assert_eq!(streamer.in_flight(), 0);
+    }
+
+    #[test]
+    fn adopted_columns_are_not_made_again() {
+        let radius = StreamRadius { load: 300.0, unload: 428.0, detail: 100.0 };
+        let mut first = Streamer::new(2, radius, |column, detail| (column, detail));
+        first.update(10.0, 10.0);
+        let expected = within(300.0, 10.0, 10.0);
+        wait_for(&mut first, expected);
+        let loaded = first.take_loaded();
+        assert_eq!(loaded.len(), expected);
+        drop(first);
+        let mut second = Streamer::new(2, radius, |column, detail| (column, detail));
+        let adopted: HashSet<ColumnKey> = loaded.keys().copied().collect();
+        second.adopt(loaded);
+        assert!(second.update(10.0, 10.0).is_empty());
+        assert_eq!(second.in_flight(), 0);
+        assert_eq!(second.loaded_count(), expected);
+        // Moving on, only the new columns come.
+        second.update(300.0, 10.0);
+        let start = Instant::now();
+        let mut got = Vec::new();
+        while start.elapsed() < Duration::from_secs(10) && second.in_flight() > 0 {
+            second.receive(Duration::from_secs(1), |c, _| got.push(c));
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(!got.is_empty());
+        // New columns, or adopted ones made again in detail.
+        assert!(got.iter().all(|c| !adopted.contains(c) || column_distance(*c, 300.0, 10.0) <= 100.0));
     }
 
     #[test]

@@ -23,6 +23,9 @@ pub struct PropertyInfo {
     pub range: Option<(f32, f32)>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<Vec<String>>,
+    /// A button: set it `true` to do what it names (it reads `false`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub action: bool,
 }
 
 /// One component on an entity.

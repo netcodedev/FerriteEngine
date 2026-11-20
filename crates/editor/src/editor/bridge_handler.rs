@@ -337,6 +337,7 @@ fn property_to_wire(p: Property) -> PropertyInfo {
         read_only: p.read_only,
         range: p.range,
         options: p.options,
+        action: p.action,
     }
 }
 
@@ -668,6 +669,10 @@ fn set_property(
     let name = property.name.to_string();
     let before = property.value.clone();
     component.set_property(&name, wanted.clone());
+    // A button: done, and it reads `false` again.
+    if property.action {
+        return Ok(json!({ "name": name, "done": true }));
+    }
 
     let after = component
         .properties()

@@ -13,6 +13,7 @@ pub use rapier3d;
 pub use russimp_ng;
 pub use ron;
 pub use serde;
+pub use bincode;
 
 // Lets `#[derive(Script)]` refer to `::ferrite` inside the engine as well.
 extern crate self as ferrite;

@@ -349,8 +349,10 @@ impl UIElement for Toolbar {
             let ty = rect.y + theme::center_y(&self.agent_text, rect.h);
             self.agent_text.prepare_render_at(Position::new(sign_x + 30.0, ty, 3.0));
             sign_end = sign_x + sign_w;
+            // Just outside the viewport (over the panels' edges), so the
+            // agent's own screenshots of the viewport do not show it.
             let t = 3.0;
-            let (vx, vy, vw, vh) = (viewport.x, viewport.y, viewport.w, viewport.h);
+            let (vx, vy, vw, vh) = (viewport.x - t, viewport.y - t, viewport.w + 2.0 * t, viewport.h + 2.0 * t);
             for (plane, (px, py, w, h)) in self.agent_frame.iter_mut().zip([
                 (vx, vy, vw, t),
                 (vx, vy + vh - t, vw, t),

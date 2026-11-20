@@ -455,6 +455,12 @@ impl ScriptRegistry {
         self.terrains.insert(G::NAME.to_string(), GeneratorEntry::of::<G>());
     }
 
+    /// `register_terrain`, with the hash of the scripts that make the
+    /// world (see `GeneratorEntry::fingerprint`).
+    pub fn register_terrain_hashed<G: TerrainGenerator>(&mut self, source_hash: u64) {
+        self.terrains.insert(G::NAME.to_string(), GeneratorEntry::of_hashed::<G>(source_hash));
+    }
+
     pub fn len(&self) -> usize {
         self.scripts.len()
     }

@@ -66,6 +66,10 @@ enum Field {
         source: DataSource<bool>,
         last: bool,
     },
+    /// A button (`Property::action`): set when clicked.
+    Action {
+        source: DataSource<bool>,
+    },
     Text {
         source: DataSource<String>,
         last: String,
@@ -531,6 +535,22 @@ impl InspectorPanel {
                     widgets = vec![UI::input_sized(source.clone(), Size::new(value_w.min(140.0), 24.0))];
                     Field::Int { source, last: *v }
                 }
+                PropertyValue::Bool(_) if property.action => {
+                    // Clicking sets it; the next sync hands it to the
+                    // component, which reads `false` again after.
+                    let source = DataSource::new(false);
+                    let clicked = source.clone();
+                    let mut button = Button::new(
+                        Position::default(),
+                        Size::new(10.0, 24.0),
+                        Box::new(move |_| clicked.write(true)),
+                    );
+                    button.set_style(ButtonStyle::Secondary);
+                    button.set_label(&property.name);
+                    button.fit(24.0);
+                    widgets = vec![Box::new(button)];
+                    Field::Action { source }
+                }
                 PropertyValue::Bool(v) => {
                     let source = DataSource::new(*v);
                     widgets = vec![UI::checkbox(source.clone())];
@@ -566,7 +586,9 @@ impl InspectorPanel {
         // value.
         let mut widgets_in_order = extra;
         widgets_in_order.append(&mut widgets);
-        let row = Box::new(FieldRow::new(&property.name, widgets_in_order));
+        // A button names itself.
+        let label: &str = if property.action { "" } else { &property.name };
+        let row = Box::new(FieldRow::new(label, widgets_in_order));
         self.properties.push(PropertyBinding {
             component,
             name: property.name,
@@ -696,6 +718,13 @@ impl InspectorPanel {
                     } else if actual != *last {
                         source.write(actual);
                         *last = actual;
+                    }
+                }
+                // Does something; changes nothing saved.
+                (Field::Action { source }, _) => {
+                    if source.read() {
+                        source.write(false);
+                        component.set_property(&binding.name, PropertyValue::Bool(true));
                     }
                 }
                 (Field::Bool { source, last }, PropertyValue::Bool(actual)) => {

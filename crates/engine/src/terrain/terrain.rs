@@ -226,6 +226,12 @@ pub struct Terrain {
     error: Option<String>,
     /// `generators::version()` the world was last made at.
     generators_version: u64,
+    /// The fingerprint (`GeneratorEntry::fingerprint`) of the world made:
+    /// scripts loaded again with the same one keep the loaded chunks.
+    fingerprint: Option<u64>,
+    /// Set by the "regenerate world" button: make it again from scratch,
+    /// without its cache.
+    regenerate_asked: bool,
     /// Countdown until the world is made again for edited settings; set to
     /// make it on the next update.
     reseed_in: Option<f64>,
@@ -333,6 +339,8 @@ impl Terrain {
             source: None,
             error: None,
             generators_version: generators::version(),
+            fingerprint: None,
+            regenerate_asked: false,
             reseed_in: Some(0.0),
             scatter: Scatter::new(Vec::new()),
             show_colliders: false,
@@ -457,6 +465,44 @@ impl Terrain {
         }
     }
 
+    /// Whether the world wanted is the one made (same fingerprint), so that
+    /// what is loaded of it can stay.
+    fn same_world(&self) -> Option<GeneratorEntry> {
+        let entry = self.entry()?;
+        (self.source.is_some() && self.fingerprint == Some(entry.fingerprint(self.seed, &self.settings))).then_some(entry)
+    }
+
+    /// The scripts were loaded again and the world is the same: make the
+    /// source again from the new scripts (its cache makes that quick) and
+    /// keep every loaded chunk, the horizon and the scattered models; the
+    /// streaming goes on from the loaded columns.
+    fn refresh_source(&mut self, scene: &mut Scene, entity: &mut Entity, entry: GeneratorEntry) {
+        let started = std::time::Instant::now();
+        match entry.create(self.seed, &self.settings) {
+            Ok(source) => {
+                if let Some(old) = self.source.take() {
+                    old.clear_scene(scene, entity);
+                }
+                let loaded = self.streamer.as_mut().map(Streamer::take_loaded).unwrap_or_default();
+                let kept = loaded.len();
+                // Its workers stop; columns they were making are asked for
+                // again from the new source.
+                self.streamer = None;
+                let mut streamer = Self::start_streaming(&source);
+                streamer.adopt(loaded);
+                self.streamer = Some(streamer);
+                self.source = Some(source);
+                self.generators_version = generators::version();
+                self.error = None;
+                log::info!(
+                    "terrain: scripts reloaded, world unchanged: kept {kept} columns ({} ms)",
+                    started.elapsed().as_millis()
+                );
+            }
+            Err(_) => self.regenerate(scene, entity),
+        }
+    }
+
     /// Throw away every chunk (with its colliders and scattered models) and
     /// make the world again from the current generator, seed and settings.
     fn regenerate(&mut self, scene: &mut Scene, entity: &mut Entity) {
@@ -476,12 +522,20 @@ impl Terrain {
             old.clear_scene(scene, entity);
         }
         self.generators_version = generators::version();
+        self.fingerprint = None;
         self.map.invalidate();
         self.horizon.invalidate();
         self.far_scatter.invalidate();
         exposure::world_changed();
         let made = match self.entry() {
-            Some(entry) => entry.create(self.seed, &self.settings),
+            Some(entry) => {
+                let fingerprint = entry.fingerprint(self.seed, &self.settings);
+                if std::mem::take(&mut self.regenerate_asked) {
+                    generators::clear_world_cache(fingerprint);
+                }
+                self.fingerprint = Some(fingerprint);
+                entry.create(self.seed, &self.settings)
+            }
             None => Err(format!("no world '{}' is loaded", self.generator)),
         };
         match made {
@@ -870,7 +924,10 @@ impl Component for Terrain {
             Some(remaining) if remaining > 0.0 => self.reseed_in = Some(remaining),
             Some(_) => {
                 self.reseed_in = None;
-                self.regenerate(scene, entity);
+                match self.same_world().filter(|_| !self.regenerate_asked) {
+                    Some(entry) => self.refresh_source(scene, entity, entry),
+                    None => self.regenerate(scene, entity),
+                }
             }
             None => {}
         }
@@ -955,6 +1012,7 @@ impl Component for Terrain {
             properties.push(Property::choice("map", shown, layers));
         }
         properties.push(Property::bool("show colliders", self.show_colliders));
+        properties.push(Property::action("regenerate world"));
         properties.extend(self.scatter.properties());
         properties
     }
@@ -987,6 +1045,11 @@ impl Component for Terrain {
                 }
             }
             ("show colliders", PropertyValue::Bool(v)) => self.show_colliders = v,
+            ("regenerate world", PropertyValue::Bool(true)) => {
+                self.regenerate_asked = true;
+                self.reseed_in = Some(0.0);
+            }
+            ("regenerate world", PropertyValue::Bool(false)) => {}
             (name, value) => {
                 let Some(entry) = self.entry() else {
                     return;

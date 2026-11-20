@@ -20,6 +20,9 @@ pub struct Property {
     pub range: Option<(f32, f32)>,
     /// For text values: the allowed choices; tools show a picker.
     pub options: Option<Vec<String>>,
+    /// A bool that is always `false` and that tools show as a button:
+    /// setting it `true` does the thing its name says (see `action`).
+    pub action: bool,
 }
 
 impl Property {
@@ -30,6 +33,7 @@ impl Property {
             read_only: false,
             range: None,
             options: None,
+            action: false,
         }
     }
 
@@ -47,6 +51,7 @@ impl Property {
             read_only: false,
             range: None,
             options: None,
+            action: false,
         }
     }
 
@@ -57,6 +62,7 @@ impl Property {
             read_only: false,
             range: None,
             options: None,
+            action: false,
         }
     }
 
@@ -68,6 +74,7 @@ impl Property {
             read_only: false,
             range: None,
             options: None,
+            action: false,
         }
     }
 
@@ -83,6 +90,16 @@ impl Property {
             read_only: false,
             range: None,
             options: Some(options),
+            action: false,
+        }
+    }
+
+    /// A button named `name`: clicking it sets the property to `true`
+    /// (the component does what it names; it reads `false` again).
+    pub fn action(name: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            action: true,
+            ..Self::bool(name, false)
         }
     }
 
