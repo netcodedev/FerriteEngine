@@ -6,13 +6,18 @@
 use std::time::Instant;
 
 use cgmath::{InnerSpace, Point3};
-use gl::types::*;
 
 use super::{Footprint, MAX_FOOTPRINTS, SNOW_TRAIL_UNIT};
-use crate::core::renderer::{framebuffer, shader::Shader};
+use crate::core::{
+    gfx::{self, Format, Load, SamplerDesc, TextureDesc, TextureKind},
+    renderer::shader::Shader,
+};
 
 /// Texels per side.
 const SIZE: i32 = 1024;
+/// Mipmapped: the snow layer's coarser rings read the trails blurred to
+/// their spacing (`snowDentLod`).
+const SAMPLER: SamplerDesc = SamplerDesc::LINEAR_CLAMP.mipmapped();
 /// Metres the map spans per side (about 5 cm per texel).
 const EXTENT: f32 = 48.0;
 /// The map moves in steps of this many texels: a power of two, so the
@@ -30,13 +35,24 @@ void main() {
 }";
 
 struct Target {
-    framebuffer: GLuint,
-    texture: GLuint,
+    texture: gfx::Texture,
+    target: gfx::RenderTarget,
+}
+
+impl Target {
+    fn new() -> Self {
+        let size = SIZE as u32;
+        let texture = gfx::Texture::new(TextureDesc::d2(Format::RG16F, size, size).with_mips(0));
+        let target = gfx::RenderTarget::new(&[texture.attachment(0, None)], None);
+        gfx::begin_pass(target.reference(), (size, size), Load::Color([0.0; 4]), Load::Keep);
+        gfx::end_pass();
+        texture.generate_mips();
+        Target { texture, target }
+    }
 }
 
 pub struct SnowTrails {
     shader: Shader,
-    vao: GLuint,
     targets: [Target; 2],
     /// Which target holds the current trails.
     current: usize,
@@ -51,12 +67,9 @@ impl SnowTrails {
             VERTEX,
             &format!("#version 460 core\n{}", include_str!("snow_update.glsl")),
         );
-        let mut vao = 0;
-        unsafe { gl::GenVertexArrays(1, &mut vao) };
-        let targets = [Self::target(), Self::target()];
+        let targets = [Target::new(), Target::new()];
         Self {
             shader,
-            vao,
             targets,
             current: 0,
             origin: None,
@@ -64,56 +77,10 @@ impl SnowTrails {
         }
     }
 
-    fn target() -> Target {
-        let (mut framebuffer, mut texture) = (0, 0);
-        unsafe {
-            gl::GenTextures(1, &mut texture);
-            gl::BindTexture(gl::TEXTURE_2D, texture);
-            gl::TexImage2D(
-                gl::TEXTURE_2D,
-                0,
-                gl::RG16F as GLint,
-                SIZE,
-                SIZE,
-                0,
-                gl::RG,
-                gl::FLOAT,
-                std::ptr::null(),
-            );
-            // Mipmapped: the snow layer's coarser rings read the trails
-            // blurred to their spacing (`snowDentLod`).
-            gl::TexParameteri(
-                gl::TEXTURE_2D,
-                gl::TEXTURE_MIN_FILTER,
-                gl::LINEAR_MIPMAP_LINEAR as GLint,
-            );
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as GLint);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as GLint);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as GLint);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::GenFramebuffers(1, &mut framebuffer);
-            framebuffer::bind(gl::FRAMEBUFFER, framebuffer);
-            gl::FramebufferTexture2D(
-                gl::FRAMEBUFFER,
-                gl::COLOR_ATTACHMENT0,
-                gl::TEXTURE_2D,
-                texture,
-                0,
-            );
-            gl::DrawBuffer(gl::COLOR_ATTACHMENT0);
-            gl::ClearColor(0.0, 0.0, 0.0, 0.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
-            framebuffer::bind(gl::FRAMEBUFFER, 0);
-            gl::BindTexture(gl::TEXTURE_2D, texture);
-            gl::GenerateMipmap(gl::TEXTURE_2D);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-        }
-        Target { framebuffer, texture }
-    }
-
     /// Move the map along with the camera at `eye`, fill the trails in by
     /// what fell since the last update (`snowfall` 0..1) and press in
-    /// `footprints`. Leaves the default framebuffer bound.
+    /// `footprints`. The pass that was running goes on after, with the
+    /// viewport over all of its target.
     pub fn update(&mut self, eye: Point3<f32>, snowfall: f32, footprints: &[Footprint]) {
         let texel = EXTENT / SIZE as f32;
         let corner = |v: f32| {
@@ -130,10 +97,13 @@ impl SnowTrails {
         self.last_update = Instant::now();
 
         let shader = &self.shader;
-        shader.bind();
-        shader.set_uniform_1i("previous", 0);
-        shader.set_uniform_2f("origin", origin[0] as f32 * texel, origin[1] as f32 * texel);
-        shader.set_uniform_1f("texel", texel);
+        // A triangle over the whole map (from `gl_VertexID`), always
+        // filled: it computes the map.
+        let desc = gfx::PipelineDesc {
+            depth: gfx::DepthState::OFF,
+            polygon: gfx::PolygonMode::Solid,
+            ..Default::default()
+        };
         // The shader takes `MAX_FOOTPRINTS` at a time: one step per batch,
         // the first also moving the map and filling it in.
         let batches: Vec<&[Footprint]> = if footprints.is_empty() {
@@ -148,6 +118,12 @@ impl SnowTrails {
             } else {
                 ([0, 0], 0.0)
             };
+            let size = SIZE as u32;
+            gfx::begin_pass(self.targets[to].target.reference(), (size, size), Load::Keep, Load::Keep);
+            gfx::set_pipeline(shader.pipeline(&desc));
+            shader.set_uniform_1i("previous", 0);
+            shader.set_uniform_2f("origin", origin[0] as f32 * texel, origin[1] as f32 * texel);
+            shader.set_uniform_1f("texel", texel);
             shader.set_uniform_2i("shift", shift[0], shift[1]);
             shader.set_uniform_1f("refill", refill);
             shader.set_uniform_1i("stampCount", footprints.len() as i32);
@@ -166,26 +142,13 @@ impl SnowTrails {
                 );
                 shader.set_uniform_1f(&format!("stampLength[{i}]"), footprint.length);
             }
-            unsafe {
-                framebuffer::bind(gl::FRAMEBUFFER, self.targets[to].framebuffer);
-                gl::Viewport(0, 0, SIZE, SIZE);
-                gl::Disable(gl::DEPTH_TEST);
-                gl::Disable(gl::BLEND);
-                gl::ActiveTexture(gl::TEXTURE0);
-                gl::BindTexture(gl::TEXTURE_2D, self.targets[from].texture);
-                gl::BindVertexArray(self.vao);
-                gl::DrawArrays(gl::TRIANGLES, 0, 3);
-                gl::BindVertexArray(0);
-            }
+            gfx::bind_texture(0, &self.targets[from].texture, &SAMPLER);
+            gfx::draw(0, 3);
+            gfx::end_pass();
             self.current = to;
         }
-        unsafe {
-            gl::BindTexture(gl::TEXTURE_2D, self.targets[self.current].texture);
-            gl::GenerateMipmap(gl::TEXTURE_2D);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::Enable(gl::DEPTH_TEST);
-            framebuffer::bind(gl::FRAMEBUFFER, 0);
-        }
+        gfx::unbind_texture(0, TextureKind::D2);
+        self.targets[self.current].texture.generate_mips();
     }
 
     /// World x, z of the map's corner and the metres it spans.
@@ -196,22 +159,6 @@ impl SnowTrails {
     }
 
     pub fn bind(&self) {
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0 + SNOW_TRAIL_UNIT);
-            gl::BindTexture(gl::TEXTURE_2D, self.targets[self.current].texture);
-            gl::ActiveTexture(gl::TEXTURE0);
-        }
-    }
-}
-
-impl Drop for SnowTrails {
-    fn drop(&mut self) {
-        unsafe {
-            for target in &self.targets {
-                framebuffer::delete(&[target.framebuffer]);
-                gl::DeleteTextures(1, &target.texture);
-            }
-            gl::DeleteVertexArrays(1, &self.vao);
-        }
+        gfx::bind_texture(SNOW_TRAIL_UNIT, &self.targets[self.current].texture, &SAMPLER);
     }
 }

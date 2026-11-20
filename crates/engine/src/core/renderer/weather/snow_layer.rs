@@ -14,13 +14,15 @@
 //! seen from above, `exposure.rs`) and the trail map (`snow.rs`).
 
 use cgmath::{Matrix4, Point3};
-use gl::types::*;
 
 use super::{WeatherMaps, WEATHER_MAPS_GLSL};
-use crate::core::renderer::{
-    pbr::{Lighting, LIGHTING_GLSL},
-    shader::Shader,
-    sky,
+use crate::core::{
+    gfx,
+    renderer::{
+        pbr::{Lighting, LIGHTING_GLSL},
+        shader::Shader,
+        sky,
+    },
 };
 
 /// Cells per side of every ring (even, and twice even, so the rings line
@@ -66,13 +68,13 @@ const MIN_UNDER_PRINT: f32 = 0.03;
 
 pub struct SnowLayer {
     shader: Shader,
-    vao: GLuint,
-    vbo: GLuint,
-    ebo: GLuint,
+    /// The grid's vertices (x, z in cells) and indices.
+    vertices: gfx::Buffer,
+    indices: gfx::Buffer,
     /// Indices of the whole grid, at the start of the index buffer.
-    full_count: i32,
+    full_count: u32,
     /// Indices of the grid without its middle (`in_hole`), after them.
-    ring_count: i32,
+    ring_count: u32,
 }
 
 /// Cells (on each axis) of a ring that the next finer ring always covers,
@@ -142,39 +144,19 @@ impl SnowLayer {
                 }
             }
         }
-        let full_count = (CELLS * CELLS * 6) as i32;
-        let (mut vao, mut vbo, mut ebo) = (0, 0, 0);
-        unsafe {
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut vbo);
-            gl::GenBuffers(1, &mut ebo);
-            gl::BindVertexArray(vao);
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (vertices.len() * std::mem::size_of::<f32>()) as GLsizeiptr,
-                vertices.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-            gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ebo);
-            gl::BufferData(
-                gl::ELEMENT_ARRAY_BUFFER,
-                (indices.len() * std::mem::size_of::<u32>()) as GLsizeiptr,
-                indices.as_ptr() as *const _,
-                gl::STATIC_DRAW,
-            );
-            gl::EnableVertexAttribArray(0);
-            gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 0, std::ptr::null());
-            gl::BindVertexArray(0);
-        }
+        let full_count = (CELLS * CELLS * 6) as u32;
         Self {
             shader,
-            vao,
-            vbo,
-            ebo,
+            vertices: gfx::Buffer::from_slice(gfx::BufferUsage::VERTEX, gfx::BufferMemory::Static, &vertices),
+            indices: gfx::Buffer::from_slice(gfx::BufferUsage::INDEX, gfx::BufferMemory::Static, &indices),
             full_count,
-            ring_count: indices.len() as i32 - full_count,
+            ring_count: indices.len() as u32 - full_count,
         }
+    }
+
+    /// The grid's vertices: x, z (in cells) at location 0.
+    fn layout() -> gfx::VertexLayout {
+        gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[gfx::VertexFormat::F32x2])
     }
 
     /// Draw the layer around `eye` into the bound target, if enough snow
@@ -197,7 +179,14 @@ impl SnowLayer {
             return;
         }
         let shader = &self.shader;
-        shader.bind();
+        let desc = gfx::PipelineDesc {
+            vertex_layouts: vec![Self::layout()],
+            depth: gfx::DepthState::LEQUAL,
+            ..Default::default()
+        };
+        gfx::set_pipeline(shader.pipeline(&desc));
+        gfx::set_vertex_buffer(0, &self.vertices, 0, Self::layout().stride);
+        gfx::set_index_buffer(&self.indices, gfx::IndexFormat::U32);
         lighting.apply(shader);
         shader.set_uniform_mat4("viewProjection", view_projection);
         shader.set_uniform_1f("cells", CELLS as f32);
@@ -206,15 +195,6 @@ impl SnowLayer {
         shader.set_uniform_1i("flatLayer", flat as i32);
         shader.set_uniform_1f("uTime", sky::seconds());
         shader.set_uniform_1f("cloudType", cloud_type);
-        unsafe {
-            // Whatever drew before may have left these otherwise.
-            gl::Enable(gl::DEPTH_TEST);
-            gl::DepthFunc(gl::LEQUAL);
-            gl::DepthMask(gl::TRUE);
-            gl::Disable(gl::BLEND);
-            gl::Disable(gl::CULL_FACE);
-            gl::BindVertexArray(self.vao);
-        }
         for level in 0..LEVELS {
             let (center, spacing) = ring(level, eye);
             shader.set_uniform_2f("levelCenter", center[0], center[1]);
@@ -236,27 +216,9 @@ impl SnowLayer {
             let (count, first) = if level == 0 {
                 (self.full_count, 0)
             } else {
-                (self.ring_count, self.full_count as usize)
+                (self.ring_count, self.full_count)
             };
-            unsafe {
-                gl::DrawElements(
-                    gl::TRIANGLES,
-                    count,
-                    gl::UNSIGNED_INT,
-                    (first * std::mem::size_of::<u32>()) as *const _,
-                );
-            }
-        }
-        unsafe { gl::BindVertexArray(0) };
-    }
-}
-
-impl Drop for SnowLayer {
-    fn drop(&mut self) {
-        unsafe {
-            gl::DeleteBuffers(1, &self.vbo);
-            gl::DeleteBuffers(1, &self.ebo);
-            gl::DeleteVertexArrays(1, &self.vao);
+            gfx::draw_indexed(first, count, 0);
         }
     }
 }
