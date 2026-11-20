@@ -5,7 +5,7 @@ use ferrite::core::{
     primitives::{Offset, Position, Region, Size},
     renderer::{
         plane::{Plane, PlaneBuilder},
-        text::{icons, Text as FerriteText},
+        text::{icons, Text as FerriteText, TextRenderer},
     },
     scene::Scene,
     utils::DataSource,
@@ -61,6 +61,9 @@ pub struct TreeView {
     font_size: f32,
     frame: Plane,
     dirty: bool,
+    /// The glyph atlas the rows' texts were laid out with: when it is
+    /// cleared they are laid out again.
+    atlas: u64,
 }
 
 impl TreeView {
@@ -86,6 +89,7 @@ impl TreeView {
             font_size: 14.0,
             frame,
             dirty: true,
+            atlas: 0,
         }
     }
 
@@ -96,7 +100,12 @@ impl TreeView {
         }
     }
 
+    /// Panels call this every frame: only a real change lays the rows out
+    /// again.
     pub fn set_size(&mut self, size: Size) {
+        if self.region.size == size {
+            return;
+        }
         self.region.size = size;
         self.frame.set_size(size);
         self.clamp_scroll();
@@ -104,7 +113,11 @@ impl TreeView {
     }
 
     pub fn set_position(&mut self, position: Position) {
-        self.region.position = Position::new(position.x, position.y, self.region.position.z);
+        let position = Position::new(position.x, position.y, self.region.position.z);
+        if self.region.position == position {
+            return;
+        }
+        self.region.position = position;
         self.dirty = true;
     }
 
@@ -166,6 +179,7 @@ impl TreeView {
             return;
         }
         self.dirty = false;
+        self.atlas = TextRenderer::atlas_generation();
         let visible = self.visible_items();
         let z = self.region.position.z;
         while self.rows.len() < visible.len() {
@@ -268,6 +282,9 @@ impl TreeView {
 
 impl UIElement for TreeView {
     fn update(&mut self, _scene: &mut Scene) {
+        if self.atlas != TextRenderer::atlas_generation() {
+            self.dirty = true;
+        }
         self.layout();
         for i in 0..self.rows.len() {
             let color = self.row_color(i);
@@ -285,7 +302,14 @@ impl UIElement for TreeView {
     fn render(&self) {
         self.frame.render();
         crate::ui::clip::push(&self.frame);
+        // Rows scrolled out of view would be clipped away entirely.
+        let top = self.region.get_absolute_position().y;
+        let bottom = top + self.region.size.height;
         for row in &self.rows {
+            let y = row.region.position.y;
+            if y + row.region.size.height < top || y > bottom {
+                continue;
+            }
             row.bg.render();
             row.arrow.render();
             row.icon.render();
@@ -369,5 +393,60 @@ impl UIElement for TreeView {
         self.region.position.z = z_index;
         self.frame.set_z_index(z_index);
         self.dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tree() -> TreeView {
+        ferrite::core::headless::enable();
+        let mut tree = TreeView::new(Position::default(), Size::new(200.0, 100.0), DataSource::new(NO_SELECTION));
+        tree.set_items(
+            (1..=20)
+                .map(|id| TreeItem {
+                    id,
+                    label: format!("item {id}"),
+                    depth: 0,
+                    has_children: false,
+                    icon: None,
+                })
+                .collect(),
+        );
+        tree
+    }
+
+    #[test]
+    fn the_same_rect_every_frame_lays_out_once() {
+        let mut scene = Scene::new();
+        let mut tree = tree();
+        tree.set_position(Position::new(10.0, 20.0, 1.0));
+        tree.set_size(Size::new(200.0, 100.0));
+        tree.update(&mut scene);
+        assert!(!tree.dirty);
+        tree.set_position(Position::new(10.0, 20.0, 1.0));
+        tree.set_size(Size::new(200.0, 100.0));
+        assert!(!tree.dirty, "nothing changed");
+
+        tree.set_position(Position::new(10.0, 30.0, 1.0));
+        assert!(tree.dirty);
+        tree.update(&mut scene);
+        assert_eq!(tree.rows[0].region.position.y, 30.0);
+        tree.set_size(Size::new(200.0, 60.0));
+        assert!(tree.dirty);
+        tree.update(&mut scene);
+        assert_eq!(tree.rows.len(), 20);
+    }
+
+    #[test]
+    fn a_cleared_glyph_atlas_lays_the_rows_out_again() {
+        let mut scene = Scene::new();
+        let mut tree = tree();
+        tree.update(&mut scene);
+        // As if laid out before the atlas was last cleared.
+        tree.atlas = TextRenderer::atlas_generation().wrapping_sub(1);
+        tree.update(&mut scene);
+        assert_eq!(tree.atlas, TextRenderer::atlas_generation());
     }
 }
