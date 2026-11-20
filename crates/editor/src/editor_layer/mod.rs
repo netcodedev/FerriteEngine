@@ -660,7 +660,7 @@ impl Layer for EditorLayer {
         let render_ms = render_start.elapsed().as_secs_f32() * 1000.0;
         window.reset_viewport();
         // UI depth must not be tested against the 3D scene.
-        window.clear_mask(gl::DEPTH_BUFFER_BIT);
+        ferrite::core::gfx::clear(ferrite::core::gfx::Planes::DEPTH, [0.0; 4], 1.0);
 
         let ui_start = Instant::now();
         self.ui.update(&mut self.scene);
@@ -865,21 +865,10 @@ fn capture_viewport(
     use ferrite::core::mcp_bridge::BridgeResponse;
     let w = width.max(1) as usize;
     let h = height.max(1) as usize;
-    let mut buffer = vec![0u8; w * h * 3];
-    unsafe {
-        gl::PixelStorei(gl::PACK_ALIGNMENT, 1);
-        gl::ReadBuffer(gl::BACK);
-        gl::ReadPixels(
-            x,
-            y,
-            width,
-            height,
-            gl::RGB,
-            gl::UNSIGNED_BYTE,
-            buffer.as_mut_ptr() as *mut _,
-        );
-    }
-    // glReadPixels is bottom-left origin; flip rows so the PNG is upright.
+    use ferrite::core::gfx;
+    let rgba = gfx::read_pixels(gfx::TargetRef::Window, gfx::Rect::new(x, y, w as u32, h as u32));
+    let buffer: Vec<u8> = rgba.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+    // Rows come bottom first; flip them so the PNG is upright.
     let row = w * 3;
     let mut flipped = vec![0u8; buffer.len()];
     for r in 0..h {

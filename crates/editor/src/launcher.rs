@@ -75,7 +75,7 @@ impl Launcher {
     /// the user opened or created.
     pub fn update(&mut self, window: &Window) -> Option<Project> {
         // The whole window; the editor leaves the viewport on its 3D view.
-        unsafe { gl::Viewport(0, 0, window.width as i32, window.height as i32) };
+        window.reset_viewport();
         let (w, h) = (window.width as f32, window.height as f32);
         let x = ((w - BUTTON_WIDTH) / 2.0).floor();
         let top = (h / 2.0 - 110.0).floor();

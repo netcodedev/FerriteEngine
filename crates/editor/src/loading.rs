@@ -119,7 +119,7 @@ impl Loading {
     }
 
     fn draw(&mut self, window: &Window) {
-        unsafe { gl::Viewport(0, 0, window.width as i32, window.height as i32) };
+        window.reset_viewport();
         let (w, h) = (window.width as f32, window.height as f32);
         let x = (w / 2.0 - 140.0).floor();
         let y = (h / 2.0 - 40.0).floor();

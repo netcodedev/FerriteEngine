@@ -3,7 +3,7 @@
 //! with switches for the renderer's debug views (culling frozen, ambient
 //! occlusion, the sun's shadow maps).
 
-use std::{collections::VecDeque, ffi::CStr, time::Instant};
+use std::{collections::VecDeque, time::Instant};
 
 use ferrite::core::{
     view_frustum::{Culled, ViewFrustum},
@@ -46,11 +46,11 @@ impl Smoothed {
     }
 }
 
-/// GPU time of a block of GL commands via `GL_TIME_ELAPSED` queries. A
-/// small ring of queries is used so results are read frames later, without
-/// stalling the pipeline.
+/// GPU time of a block of commands from two timestamps. A small ring of
+/// query pairs is used so results are read frames later, without stalling
+/// the pipeline.
 pub struct GpuTimer {
-    queries: [u32; 4],
+    queries: Vec<ferrite::core::gfx::Queries>,
     issued: [bool; 4],
     next: usize,
     active: bool,
@@ -59,12 +59,8 @@ pub struct GpuTimer {
 
 impl GpuTimer {
     pub fn new() -> Self {
-        let mut queries = [0u32; 4];
-        unsafe {
-            gl::GenQueries(queries.len() as i32, queries.as_mut_ptr());
-        }
         Self {
-            queries,
+            queries: (0..4).map(|_| ferrite::core::gfx::Queries::new(2)).collect(),
             issued: [false; 4],
             next: 0,
             active: false,
@@ -73,18 +69,11 @@ impl GpuTimer {
     }
 
     pub fn begin(&mut self) {
-        // Collect any finished results before reusing a query object.
+        // Collect any finished results before reusing a query pair.
         for i in 0..self.queries.len() {
             if self.issued[i] {
-                let mut available = 0;
-                unsafe {
-                    gl::GetQueryObjectiv(self.queries[i], gl::QUERY_RESULT_AVAILABLE, &mut available);
-                }
-                if available != 0 {
-                    let mut ns: u64 = 0;
-                    unsafe {
-                        gl::GetQueryObjectui64v(self.queries[i], gl::QUERY_RESULT, &mut ns);
-                    }
+                if let Some(times) = self.queries[i].read() {
+                    let ns = times[1].saturating_sub(times[0]);
                     self.last_ms = Some(ns as f32 / 1_000_000.0);
                     self.issued[i] = false;
                 }
@@ -95,9 +84,7 @@ impl GpuTimer {
             self.active = false;
             return;
         }
-        unsafe {
-            gl::BeginQuery(gl::TIME_ELAPSED, self.queries[self.next]);
-        }
+        self.queries[self.next].timestamp(0);
         self.active = true;
     }
 
@@ -105,9 +92,7 @@ impl GpuTimer {
         if !self.active {
             return;
         }
-        unsafe {
-            gl::EndQuery(gl::TIME_ELAPSED);
-        }
+        self.queries[self.next].timestamp(1);
         self.issued[self.next] = true;
         self.next = (self.next + 1) % self.queries.len();
         self.active = false;
@@ -307,65 +292,21 @@ fn read_memory() -> Memory {
     }
 }
 
-fn has_extension(name: &str) -> bool {
-    let mut count = 0;
-    unsafe {
-        gl::GetIntegerv(gl::NUM_EXTENSIONS, &mut count);
-    }
-    (0..count.max(0) as u32).any(|i| unsafe {
-        let ptr = gl::GetStringi(gl::EXTENSIONS, i);
-        !ptr.is_null() && CStr::from_ptr(ptr as *const _).to_bytes() == name.as_bytes()
-    })
-}
-
-/// VRAM `(used, total)` from NVIDIA's `GL_NVX_gpu_memory_info`, or an
-/// approximation from `GL_ATI_meminfo` (AMD/Mesa), which only reports free
-/// memory.
 fn read_gpu_memory() -> Option<(u64, u64)> {
-    const NVX_TOTAL: u32 = 0x9048;
-    const NVX_AVAILABLE: u32 = 0x9049;
-    const ATI_TEXTURE_FREE: u32 = 0x87FC;
-    if has_extension("GL_NVX_gpu_memory_info") {
-        let (mut total, mut available) = (0, 0);
-        unsafe {
-            gl::GetIntegerv(NVX_TOTAL, &mut total);
-            gl::GetIntegerv(NVX_AVAILABLE, &mut available);
-        }
-        // Drivers that only pretend to have it (Mesa's llvmpipe) answer -1.
-        let total = total.max(0) as u64 * 1024;
-        let available = available.max(0) as u64 * 1024;
-        return Some((total.saturating_sub(available), total));
-    }
-    if has_extension("GL_ATI_meminfo") {
-        let mut info = [0i32; 4];
-        unsafe {
-            gl::GetIntegerv(ATI_TEXTURE_FREE, info.as_mut_ptr());
-        }
-        // [free in pool, largest free block, aux free, largest aux block]
-        // No total is reported; show free memory as "used = 0 of free".
-        return Some((0, info[0].max(0) as u64 * 1024));
-    }
-    None
-}
-
-fn gl_string(name: u32) -> String {
-    unsafe {
-        let ptr = gl::GetString(name);
-        if ptr.is_null() {
-            return "unknown".into();
-        }
-        CStr::from_ptr(ptr as *const _).to_string_lossy().into_owned()
-    }
+    ferrite::core::gfx::device().video_memory()
 }
 
 fn read_gl_info() -> GlInfo {
+    use ferrite::core::gfx;
+    let described = gfx::device().describe();
+    let (renderer, version) = described.split_once(", ").unwrap_or((described.as_str(), ""));
     GlInfo {
-        renderer: gl_string(gl::RENDERER),
-        version: gl_string(gl::VERSION)
-            .split_whitespace()
-            .take(3)
-            .collect::<Vec<_>>()
-            .join(" "),
+        renderer: renderer.to_string(),
+        version: format!(
+            "{} {}",
+            gfx::backend().name(),
+            version.split_whitespace().take(3).collect::<Vec<_>>().join(" ")
+        ),
     }
 }
 

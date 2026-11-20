@@ -789,7 +789,6 @@ dependencies = [
  "ferrite",
  "ferrite-ui",
  "ferrite_dylib",
- "gl",
  "glfw",
  "image",
  "libloading 0.9.1",
@@ -828,7 +827,6 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "ferrite",
- "gl",
  "glfw",
  "image",
  "log",

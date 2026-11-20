@@ -48,8 +48,12 @@ pub enum Raw {
 /// The backend interface. Every method is called on the render thread.
 pub trait Device {
     fn kind(&self) -> BackendKind;
-    /// Renderer, vendor and version, for diagnostics.
+    /// Renderer and API version (`"<renderer>, <version>"`), for diagnostics.
     fn describe(&self) -> String;
+    /// Video memory `(used, total)` in bytes, where the driver tells.
+    fn video_memory(&self) -> Option<(u64, u64)> {
+        None
+    }
 
     fn create_buffer(&self, usage: BufferUsage, memory: BufferMemory, size: usize, data: Option<&[u8]>) -> RawId;
     /// Replace `data.len()` bytes at `offset`. `orphan` hands the driver a
@@ -794,6 +798,22 @@ pub fn draw_indexed_instanced(first_index: u32, indices: u32, base_vertex: i32, 
     if indices > 0 && instances > 0 {
         device().draw_indexed(first_index, indices, base_vertex, first_instance, instances);
     }
+}
+
+/// Draw into `rect` of the current target only (scissored), cleared to
+/// `color` and far depth: an editor preview inside the window.
+pub fn begin_region(rect: Rect, color: [f32; 4]) {
+    set_scissor(Some(rect));
+    set_viewport(rect);
+    clear(Planes::COLOR_DEPTH, color, 1.0);
+}
+
+/// Leave a region: its depth is cleared (no 3D depth stays behind for
+/// what is drawn over it), and the viewport is `full` again.
+pub fn end_region(full: Rect) {
+    clear(Planes::DEPTH, [0.0; 4], 1.0);
+    set_scissor(None);
+    set_viewport(full);
 }
 
 pub fn clear(planes: Planes, color: [f32; 4], depth: f32) {

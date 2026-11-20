@@ -328,6 +328,40 @@ impl Device for GlDevice {
         }
     }
 
+    /// From NVIDIA's `GL_NVX_gpu_memory_info`, or approximated from
+    /// `GL_ATI_meminfo` (AMD/Mesa), which only reports free memory.
+    fn video_memory(&self) -> Option<(u64, u64)> {
+        const NVX_TOTAL: u32 = 0x9048;
+        const NVX_AVAILABLE: u32 = 0x9049;
+        const ATI_TEXTURE_FREE: u32 = 0x87FC;
+        let has_extension = |name: &str| {
+            let mut count = 0;
+            unsafe { gl::GetIntegerv(gl::NUM_EXTENSIONS, &mut count) };
+            (0..count.max(0) as u32).any(|i| unsafe {
+                let ptr = gl::GetStringi(gl::EXTENSIONS, i);
+                !ptr.is_null() && std::ffi::CStr::from_ptr(ptr as *const _).to_bytes() == name.as_bytes()
+            })
+        };
+        if has_extension("GL_NVX_gpu_memory_info") {
+            let (mut total, mut available) = (0, 0);
+            unsafe {
+                gl::GetIntegerv(NVX_TOTAL, &mut total);
+                gl::GetIntegerv(NVX_AVAILABLE, &mut available);
+            }
+            // Drivers that only pretend to have it (Mesa's llvmpipe) answer -1.
+            let total = total.max(0) as u64 * 1024;
+            let available = available.max(0) as u64 * 1024;
+            return Some((total.saturating_sub(available), total));
+        }
+        if has_extension("GL_ATI_meminfo") {
+            let mut info = [0i32; 4];
+            unsafe { gl::GetIntegerv(ATI_TEXTURE_FREE, info.as_mut_ptr()) };
+            // Free memory only: shown as "0 used of the free".
+            return Some((0, info[0].max(0) as u64 * 1024));
+        }
+        None
+    }
+
     fn create_buffer(&self, _usage: BufferUsage, memory: BufferMemory, size: usize, data: Option<&[u8]>) -> RawId {
         let mut buffer = 0;
         unsafe {
