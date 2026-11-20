@@ -300,14 +300,11 @@ fn read_gl_info() -> GlInfo {
     use ferrite::core::gfx;
     let described = gfx::device().describe();
     let (renderer, version) = described.split_once(", ").unwrap_or((described.as_str(), ""));
-    GlInfo {
-        renderer: renderer.to_string(),
-        version: format!(
-            "{} {}",
-            gfx::backend().name(),
-            version.split_whitespace().take(3).collect::<Vec<_>>().join(" ")
-        ),
-    }
+    // "4.6.0 NVIDIA 615.78" (GL) or "Vulkan 1.4.351 (driver)": the API
+    // and its version.
+    let name = gfx::backend().name();
+    let number = version.trim_start_matches(name).split_whitespace().next().unwrap_or("");
+    GlInfo { renderer: renderer.to_string(), version: format!("{name} {number}").trim().to_string() }
 }
 
 fn bytes(value: Option<u64>) -> String {
@@ -765,7 +762,7 @@ const SECTIONS: &[(&str, &str, &[(Key, &str)])] = &[
         icons::MONITOR,
         &[
             (Key::GpuName, "GPU"),
-            (Key::GlVersion, "OpenGL"),
+            (Key::GlVersion, "Graphics API"),
             (Key::Window, "Window"),
             (Key::Viewport, "Viewport"),
             (Key::Mode, "Mode"),
