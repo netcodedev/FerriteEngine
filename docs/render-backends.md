@@ -1,0 +1,200 @@
+# Render backends: plan
+
+Status: plan (2026-11-20), work on branch `feat/render-backends`.
+
+Goal: the engine renders through a backend-agnostic layer (`gfx`) with two
+backends, the existing OpenGL renderer and a new Vulkan one (`ash`),
+chosen at start-up, so the two can be compared frame for frame. The layer
+is shaped so hardware ray tracing (Vulkan `VK_KHR_acceleration_structure`,
+`ray_query`, `ray_tracing_pipeline`) can be added later without another
+rewrite.
+
+Non-goals for now: ray tracing itself, multithreaded command recording,
+switching backends while running, macOS/Metal.
+
+## Where we start
+
+An inventory of the GL use (2026-11-20):
+
+- ~1000 raw `gl::` calls in ~52 files: engine renderer and terrain (~925),
+  editor (~83: outline, previews, stats, screenshots), engine-ui (~22:
+  stencil clipping, popups). Game scripts, `game`, `server` and `mcp` call
+  no GL.
+- Drawing is immediate: every `Component::render` issues GL calls in the
+  pass `Scene::render_passes_lit` runs. The pass is told through globals
+  (`depth_pass::is_active`, the bound framebuffer via
+  `framebuffer::bound_draw`, `ssao::in_depth_pass`, exposure/ground flags).
+- Pipeline state is toggled ad hoc and often left changed; later code
+  relies on it (see the inventory notes in this file's history).
+- 32 vertex+fragment programs, 53 GLSL files, assembled in Rust by
+  `concat!`/`format!`, ~200 loose uniforms set by name, samplers on fixed
+  texture units 0–18, four buffer blocks (lights, cluster grid/ranges/
+  indices). Game scripts supply terrain shaders at runtime
+  (`TerrainSource::shaders`) and get the GL `Shader` in `load_textures`.
+- GL conventions baked in: depth in [-1,1] (shader math in ssao, blur,
+  water, particles, lighting cascades and cube shadows, weather maps,
+  precipitation; Rust projections and unprojections), bottom-left origin
+  (`gl_FragCoord`, viewport rects, `ReadPixels` flips), an 8× MSAA default
+  framebuffer with stencil that is read back for screenshots.
+
+## Decisions
+
+1. **One layer, two backends, chosen at start-up.** `gfx` lives in the
+   engine crate (`core/gfx`). The device is a backend enum
+   (`Gl(GlDevice) | Vulkan(VkDevice)`) behind free functions on a
+   thread-local, like today's global GL context; resources are typed
+   handles (`BufferId`, `TextureId`, `SamplerId`, `PipelineId`,
+   `ShaderId`, `RenderTargetId`) into slot maps. Selection:
+   `--renderer vulkan|gl` / `FERRITE_RENDERER`, saved per project later.
+   Default stays GL until Vulkan reaches parity.
+
+2. **Vulkan 1.3 with dynamic rendering**, no `VkRenderPass` objects;
+   `gpu-allocator` for memory; `ash-window`-style surface creation through
+   GLFW's `vulkan` feature (window created with `ClientApi(NoApi)`).
+   Two frames in flight. Deferred destruction of every resource by frame
+   index (today only vertex arrays are deferred).
+
+3. **Same conventions in both backends, so shaders and Rust math are
+   shared:**
+   - Depth range [0,1] everywhere: GL gets
+     `glClipControl(LOWER_LEFT, ZERO_TO_ONE)` (GL 4.5); projections come
+     from one `gfx::math` (`perspective`, `ortho`, unproject) instead of
+     cgmath's; the eight shader formulas that assume [-1,1] are fixed.
+     (Reversed Z is a later, separate step.)
+   - Image rows: row 0 is NDC y = −1 in both APIs, and so is
+     `gl_FragCoord`'s origin, so offscreen rendering and sampling agree
+     without flipping. Vulkan sets the front face to clockwise to match
+     GL's counter-clockwise, and flips once when the final image goes to
+     the swapchain.
+   - The "window" is an offscreen target in both backends (colour with
+     the window's sample count, depth-stencil, resolve), presented at the
+     end of the frame. Screenshots read that target, so the MCP bridge
+     works the same on both.
+
+4. **Pipelines are objects.** A `PipelineDesc` (shader, vertex layout,
+   topology, depth test/func/write, blend, cull, colour mask, polygon
+   mode, target formats, sample count) is hashed and cached. GL applies
+   the difference to the last state (and stops leaking state); Vulkan
+   creates a `VkPipeline` (with a pipeline cache). Viewport and scissor
+   are dynamic. Stencil ops for the UI clipping are part of the desc.
+
+5. **Binding model: four fixed sets**, so GL and Vulkan see the same
+   layout:
+   - set 0 *frame*: frame UBO (camera, sun/moon, clouds, weather, SSAO,
+     exposure…), lights UBO, cluster buffers, shadow maps, SSAO result,
+     weather maps, cloud noise, loaded-columns map.
+   - set 1 *pass*: pass UBO (view-projection, pass kind, …) and pass
+     inputs (opaque scene colour/depth, cloud targets).
+   - set 2 *material*: material UBO + textures (PBR maps, terrain arrays,
+     impostor arrays).
+   - set 3 *draw*: per-draw data larger than push constants (bones).
+   Per-draw constants (model matrix, tint, flags; ≤128 bytes) are push
+   constants in Vulkan and a UBO at a reserved binding in GL. Uniform data
+   is written into a per-frame ring buffer (`gfx::frame_uniforms`).
+   In GLSL this is written once with macros: `SET(s, b)` expands to
+   `layout(set = s, binding = b)` for Vulkan and to
+   `layout(binding = s * 16 + b)` for GL; `PUSH_CONSTANTS` likewise.
+
+6. **Shaders: one GLSL 4.60 source, compiled at runtime.** A small
+   preprocessor resolves `#include "name"` against a registry of engine
+   sources and script-supplied sources, adds defines and the stage, and
+   checks interfaces. GL compiles the text as today (no SPIR-V needed,
+   hot reload unchanged); Vulkan compiles it to SPIR-V with `shaderc`
+   (linked statically from `libshaderc_combined.a`, so exported games
+   need nothing extra). A test compiles every engine shader for both
+   targets, so SPIR-V breakage shows up in `cargo test` long before the
+   Vulkan backend draws. Ray tracing stages (`GL_EXT_ray_tracing`) need
+   only new stage kinds later.
+
+7. **Pass context is explicit.** `Scene` begins each pass with a
+   `PassDesc` (kind: SunShadow, LightShadow, Exposure, Ground, Prepass,
+   Opaque, Transparent, Overlay, Preview…; target; view-projection). The
+   existing query functions (`depth_pass::is_active`, `hdr::draws_to_view`,
+   `ssao::in_depth_pass`, `exposure::in_*_pass`) stay as a facade over
+   it, so components and scripts keep working; nothing reads GL state to
+   find out where it draws.
+
+8. **Script API stays source compatible where it can.**
+   `Component::render`/`render_transparent`/`render_overlay`,
+   `Model::render`, `render_meshes`, `set_tint`, `generated::build_model`,
+   `ScatterInstances::draw`, `LineRenderer`, `Text`, `Plane`,
+   `Texture::new/load_material_map/share` keep their signatures.
+   `TerrainSource::shaders()` keeps returning GLSL, now using the
+   include/macro conventions; `load_textures(&Shader)` becomes
+   `load_textures() -> TerrainTextures` (per-layer parameters go into the
+   terrain material UBO instead of `set_uniform` calls). The demo is
+   updated in the same change.
+
+9. **Ray tracing readiness, without building it yet:**
+   - Meshes become engine resources (`MeshId`: vertex + index buffers,
+     layout, bounds) created through `gfx`, with a `keep_for_rt` usage
+     flag (Vulkan: `SHADER_DEVICE_ADDRESS` +
+     `ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY`), so a BLAS can be
+     built from GPU buffers without keeping CPU copies.
+   - Every opaque draw goes through one submission function
+     (`gfx::draw_mesh(mesh, material, transform, …)`), which is where a
+     later frame collector gathers TLAS instances.
+   - Materials become bindless-friendly (material index + texture
+     indices), which is what hit shaders need.
+
+## Stages
+
+Each stage ends with the editor running the demo and a screenshot
+comparison against the stage before.
+
+### A. `gfx` core on GL
+- `core/gfx`: device enum, handles and slot maps, buffers (static,
+  dynamic, stream/ring), textures (2D, 2D array, 3D, cube array; all
+  formats in use; mips, sub-updates), samplers (incl. compare), render
+  targets (colour/depth attachments, layers, MSAA, resolve, blits),
+  pipelines and the state cache, the encoder (`begin_pass`,
+  `set_pipeline`, `bind`, `push_constants`, `draw*`, `end_pass`),
+  timestamp queries, readback, deferred destruction.
+- Window target and present; `glClipControl` and `gfx::math`
+  projections; fix the [-1,1] shader formulas.
+- Shader preprocessor with `#include`, defines and stage injection;
+  `Shader` keeps `set_uniform_*` as a GL-only shim for now so the port can
+  be done file by file.
+
+### B. Port everything onto `gfx`
+In dependency order: shader/vertex arrays/textures/framebuffers →
+models and the PBR path → terrain, water, scatter, far scatter,
+impostors → sky, HDR, SSAO, shadows, lights → weather (exposure,
+shelter, snow, snow layer, precipitation), particles → line, plane,
+text, texture renderer, debug views → engine-ui (stencil clip) →
+editor (outline, previews, stats, screenshots). Afterwards no file
+outside `core/gfx/backend/gl` calls `gl::`. Explicit `PassDesc`
+replaces the global pass flags.
+
+### C. Uniform blocks and SPIR-V
+Move every program to the set layout above: frame/pass/material UBOs,
+push constants, explicit locations for all varyings and outputs,
+`gl_VertexIndex`/`gl_InstanceIndex` via macros, no implicit-LOD
+sampling in vertex stages. Remove the `set_uniform_*` shim. Add
+`shaderc` and the test that builds every shader to SPIR-V (engine
+shaders and the demo's terrain shader).
+
+### D. Vulkan backend
+Instance/device (with validation layers in debug builds), swapchain,
+frames in flight, `gpu-allocator`, the `gfx` resource and encoder
+implementation, pipeline cache, timestamps, readback, present with the
+flip. Then pass by pass to parity with GL, comparing screenshots.
+Editor statistics show the backend and its GPU/CPU frame times.
+
+## Verification
+
+- `cargo test` (engine, scripts) green at every commit.
+- Reference frames: the editor captures the demo scene from fixed
+  editor cameras (`FERRITE_CAPTURE`), with the clock frozen, before
+  stage A; after each stage the same frames are captured and compared
+  per pixel (small tolerance for MSAA/precision; differences shown as
+  images, not judged from numbers alone).
+- Vulkan: no validation errors in a session through the demo (walk,
+  drive, night, snow, editor previews).
+
+## Open questions (for later, not blocking)
+
+- Reversed Z for the far terrain (precision) once both backends share
+  one projection.
+- Whether the GL backend should eventually also consume SPIR-V
+  (`ARB_gl_spirv`) instead of GLSL text.
