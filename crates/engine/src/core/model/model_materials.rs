@@ -24,6 +24,19 @@ impl Model {
             .and_then(|m| Self::material_name(m))
     }
 
+    /// The file's material a model asset's slot `slot` named `name` stands
+    /// for: slot `i` is material `i` of the file, unless the names say the
+    /// slot list is out of step with the file (sidecars written before
+    /// every material of the file had a slot); then the one of that name.
+    pub fn file_material_index(&self, slot: usize, name: &str) -> usize {
+        if self.material_name_at(slot).is_none_or(|n| n == name) {
+            return slot;
+        }
+        (0..self.model.materials.len())
+            .find(|&i| self.material_name_at(i).as_deref() == Some(name))
+            .unwrap_or(slot)
+    }
+
     /// The material at a material index.
     pub fn material(&self, idx: usize) -> Option<&Material> {
         self.materials.get(idx)

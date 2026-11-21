@@ -863,7 +863,7 @@ fn describe(entry: &AssetEntry) -> String {
             "{}  ·  Model  ·  {}  ·  {}  ·  {source}",
             entry.meta.name,
             count(model.variants.len(), "variant"),
-            count(model.materials.len(), "material"),
+            count(model.materials.iter().filter(|m| !m.unused).count(), "material"),
         ),
         AssetKind::Animation(animation) => {
             format!("{}  ·  Animation  ·  {}  ·  {source}", entry.meta.name, count(animation.clips.len(), "clip"))

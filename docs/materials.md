@@ -357,7 +357,22 @@ says so here.
   Refresh: every slot without a material gets
   `<model>_<material>.material.ron` beside the model. Materials of models a
   scatter graph plants with wind get `wind: 1` (they swayed as a whole
-  before). The demo has 387 of them.
+  before). The demo had 387 of them.
+- Since 2026-11-21 (evening) slots that load alike share one material:
+  same folder, same slot name, same properties in the file
+  (`MaterialOutline::fingerprint`), same maps found by name, same legacy
+  settings and wind (`SlotKey` in `material/asset.rs`). Such a material is
+  named after the material alone (`wood.material.ron`); a model added
+  later reuses the one every such slot in the folder already has, and a
+  `<model>_<material>` it now shares is renamed `<material>`. Textures stay
+  `Auto` (equal keys make `Auto` resolve the same).
+- Slots no mesh uses (Assimp's `DefaultMaterial` of OBJ files) are marked
+  `unused: true` and get no material; the model inspector hides them.
+- Slot `i` is the file's material `i`; sidecars from before every material
+  had a slot (the demo's building parts) are matched by name instead
+  (`Model::file_material_index`). The demo's building parts now share
+  `Holz` and `Beton` (fixed texture assets with AO) in
+  `models/building/`; their 24 short slot lists were filled up.
 - Import makes them too; re-importing keeps existing ones.
 - New materials and graphs: the asset browser's "Material" / "Graph"
   buttons and the MCP tool `editor_material_create` (into

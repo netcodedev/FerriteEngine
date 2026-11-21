@@ -394,6 +394,7 @@ pub fn apply_to_model(model: &mut Model, slots: &[MaterialSettings]) {
     predecode_textures(slots.iter().filter_map(|slot| slot.material));
     for (index, slot) in slots.iter().enumerate() {
         let Some(id) = slot.material else { continue };
+        let index = model.file_material_index(index, &slot.name);
         let auto = model.file_material(index).cloned();
         if let Some(material) = material_for_asset(id, auto.as_ref()) {
             model.set_material(index, material);
@@ -414,38 +415,241 @@ pub fn imported_material(material_name: &str) -> MaterialFile {
 /// A file name for a model's material: `<model>_<material>`, letters,
 /// digits, `-` and `_` only.
 pub fn material_file_name(model_stem: &str, material_name: &str) -> String {
-    let clean = |s: &str| -> String {
-        let s: String = s
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-            .collect();
-        s.trim_matches('_').to_string()
-    };
-    let material = clean(material_name);
-    let material = if material.is_empty() { "Material".to_string() } else { material };
-    format!("{}_{material}{MATERIAL_SUFFIX}", clean(model_stem))
+    format!("{}_{}{MATERIAL_SUFFIX}", clean_file_name(model_stem), material_stem(material_name))
+}
+
+/// A file name for a material several models share: `<material>`.
+pub fn shared_material_file_name(material_name: &str) -> String {
+    format!("{}{MATERIAL_SUFFIX}", material_stem(material_name))
+}
+
+fn material_stem(material_name: &str) -> String {
+    let material = clean_file_name(material_name);
+    if material.is_empty() {
+        "Material".to_string()
+    } else {
+        material
+    }
+}
+
+/// Letters, digits, `-` and `_` only.
+fn clean_file_name(s: &str) -> String {
+    let s: String = s
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    s.trim_matches('_').to_string()
 }
 
 /// Give every material slot of model asset `model_id` that has none a
-/// material asset of its own, written next to the model. Slots that have
-/// one keep it (and the user's edits). The asset's own map overrides and
-/// foliage flags (from before materials) go into the new materials.
-/// Returns how many were made.
+/// material asset, written next to the model. Slots that have one keep it
+/// (and the user's edits); slots no mesh uses get none. Slots that load
+/// alike share one (see `ensure_all_model_materials`). The asset's own map
+/// overrides and foliage flags (from before materials) go into the new
+/// materials. Returns how many were made.
 pub fn ensure_model_materials(database: &mut AssetDatabase, model_id: AssetId) -> Result<usize, String> {
-    ensure_model_materials_with(database, model_id, false)
+    let windy = models_planted_with_wind(database);
+    let (made, problems) = ensure_models(database, &[model_id], &windy);
+    match problems.into_iter().next() {
+        Some(problem) => Err(problem),
+        None => Ok(made),
+    }
 }
 
-/// `ensure_model_materials`; with `windy`, the new materials sway in the
-/// wind (`wind` 1): the model is planted by a scatter output with wind,
-/// which swayed the whole model before materials had wind of their own.
-fn ensure_model_materials_with(database: &mut AssetDatabase, model_id: AssetId, windy: bool) -> Result<usize, String> {
-    let entry = database.get(model_id).ok_or_else(|| format!("asset {model_id} does not exist"))?.clone();
-    let Some(settings) = entry.meta.as_model() else {
-        return Ok(0);
-    };
-    if settings.materials.iter().all(|m| m.material.is_some()) {
-        return Ok(0);
+/// `ensure_model_materials` for every model asset of the project (the
+/// move to material assets). Materials of models a scatter graph plants
+/// with wind sway in the wind (`wind` 1: the whole model swayed before
+/// materials had wind of their own).
+///
+/// Slots of models in one folder that load alike (same material name, same
+/// properties in the file, same maps found by name, same legacy settings
+/// and wind) share one material asset, named after the material: the
+/// building parts of a game all made from one `.mtl` get one `wood`
+/// material to change in one place, not one per part. A material that
+/// already serves every model with such a slot in the folder is reused.
+///
+/// Returns how many materials were made and one message per model that
+/// failed.
+pub fn ensure_all_model_materials(database: &mut AssetDatabase) -> (usize, Vec<String>) {
+    let models: Vec<AssetId> = database
+        .iter()
+        .filter(|e| e.meta.as_model().is_some_and(|m| m.materials.iter().any(|s| s.needs_material())))
+        .map(|e| e.meta.id)
+        .collect();
+    if models.is_empty() {
+        return (0, Vec::new());
     }
+    let windy = models_planted_with_wind(database);
+    ensure_models(database, &models, &windy)
+}
+
+/// What decides how a model's material slot loads while every texture of
+/// its material is `Auto`: slots with the same key look the same, so they
+/// can share one material asset.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct SlotKey {
+    /// The model's folder (texture references are relative to it).
+    dir: std::path::PathBuf,
+    name: String,
+    /// `ModelOutline`'s fingerprint of the file's material.
+    fingerprint: u64,
+    /// Maps the loader finds by name for it.
+    maps_by_name: Vec<(crate::core::model::material_maps::MapKind, std::path::PathBuf)>,
+    /// Settings from before materials (they go into the material).
+    legacy: [Option<AssetId>; 5],
+    legacy_foliage: Option<bool>,
+    windy: bool,
+}
+
+/// The key of each of `entry`'s slots, `None` for a slot no mesh uses
+/// (or whose material the file no longer has). `None` when the file
+/// cannot be read.
+fn slot_keys(entry: &assets::AssetEntry, windy: bool) -> Option<Vec<Option<SlotKey>>> {
+    use crate::core::model::{material_maps, outline};
+    let settings = entry.meta.as_model()?;
+    let found = outline::inspect(&entry.source_path()).ok()?;
+    let stem = Path::new(&entry.meta.source).file_stem()?.to_string_lossy().into_owned();
+    let keys = settings
+        .materials
+        .iter()
+        .enumerate()
+        .map(|(index, slot)| {
+            // As `Model::file_material_index` finds it.
+            let material = match found.materials.get(index) {
+                Some(m) if m.name == slot.name => Some(m),
+                _ => found.materials.iter().find(|m| m.name == slot.name),
+            };
+            let material = material?;
+            if !material.used {
+                return None;
+            }
+            let name = (!material.name.is_empty()).then_some(material.name.as_str());
+            let prefixes = material_maps::name_prefixes(name, &stem);
+            let files = material_maps::images_with_prefix(&entry.dir, &prefixes);
+            Some(SlotKey {
+                dir: entry.dir.clone(),
+                name: slot.name.clone(),
+                fingerprint: material.fingerprint,
+                maps_by_name: material_maps::find_maps(&files, &prefixes),
+                legacy: [slot.base_color, slot.normal, slot.roughness, slot.metallic, slot.occlusion],
+                legacy_foliage: slot.legacy_foliage,
+                windy,
+            })
+        })
+        .collect();
+    Some(keys)
+}
+
+/// The material a slot with `key` would share: the one every model of the
+/// folder with such a slot already uses. Several different ones: none (the
+/// user chose per model).
+fn existing_shares(
+    database: &AssetDatabase,
+    dirs: &std::collections::HashSet<std::path::PathBuf>,
+    skip: &std::collections::HashSet<AssetId>,
+    windy: &std::collections::HashSet<AssetId>,
+) -> HashMap<SlotKey, AssetId> {
+    let mut seen: HashMap<SlotKey, Option<AssetId>> = HashMap::new();
+    let models: Vec<&assets::AssetEntry> = database
+        .iter()
+        .filter(|e| dirs.contains(&e.dir) && !skip.contains(&e.meta.id))
+        .filter(|e| e.meta.as_model().is_some_and(|m| m.materials.iter().any(|s| s.material.is_some())))
+        .collect();
+    for entry in models {
+        let Some(keys) = slot_keys(entry, windy.contains(&entry.meta.id)) else {
+            continue;
+        };
+        for (key, slot) in keys.into_iter().zip(&entry.meta.as_model().expect("a model").materials) {
+            let (Some(key), Some(material)) = (key, slot.material) else {
+                continue;
+            };
+            seen.entry(key)
+                .and_modify(|known| {
+                    if *known != Some(material) {
+                        *known = None;
+                    }
+                })
+                .or_insert(Some(material));
+        }
+    }
+    seen.into_iter()
+        .filter_map(|(key, material)| Some((key, material?)))
+        .filter(|(_, material)| database.get(*material).is_some())
+        .collect()
+}
+
+/// Give the slots of `models` that need one a material asset; see
+/// `ensure_all_model_materials`.
+fn ensure_models(
+    database: &mut AssetDatabase,
+    models: &[AssetId],
+    windy: &std::collections::HashSet<AssetId>,
+) -> (usize, Vec<String>) {
+    let mut problems = Vec::new();
+    // Each model with the keys of its slots (None: unreadable, no sharing).
+    let mut pending: Vec<(assets::AssetEntry, Option<Vec<Option<SlotKey>>>)> = Vec::new();
+    for &id in models {
+        match database.get(id) {
+            Some(entry) if entry.meta.as_model().is_some_and(|m| m.materials.iter().any(|s| s.needs_material())) => {
+                let keys = slot_keys(entry, windy.contains(&id));
+                pending.push((entry.clone(), keys));
+            }
+            Some(_) => {}
+            None => problems.push(format!("model {id}: asset {id} does not exist")),
+        }
+    }
+    // How many waiting slots share each key: those get a material named
+    // after the material alone.
+    let mut counts: HashMap<SlotKey, usize> = HashMap::new();
+    for (entry, keys) in &pending {
+        let Some(keys) = keys else { continue };
+        for (key, slot) in keys.iter().zip(&entry.meta.as_model().expect("a model").materials) {
+            if let (Some(key), true) = (key, slot.needs_material()) {
+                *counts.entry(key.clone()).or_default() += 1;
+            }
+        }
+    }
+    let dirs = pending.iter().map(|(e, _)| e.dir.clone()).collect();
+    let skip = pending.iter().map(|(e, _)| e.meta.id).collect();
+    let mut shared = existing_shares(database, &dirs, &skip, windy);
+
+    let mut made = 0;
+    for (entry, keys) in pending {
+        let id = entry.meta.id;
+        match ensure_slots(database, entry, keys, windy.contains(&id), &counts, &mut shared) {
+            Ok(n) => made += n,
+            Err(e) => problems.push(format!("model {id}: {e}")),
+        }
+    }
+    (made, problems)
+}
+
+/// A material made for one model (`<model>_<material>`) that another
+/// model now shares is renamed `<material>`, if that name is free.
+fn name_after_material(database: &mut AssetDatabase, id: AssetId, material_name: &str) {
+    let Some(entry) = database.get(id) else { return };
+    let shared = shared_material_file_name(material_name);
+    let made_for_one = entry.meta.source.ends_with(&format!("_{shared}"));
+    if made_for_one && !entry.dir.join(&shared).exists() {
+        if let Err(e) = database.rename(id, &material_stem(material_name)) {
+            log::warn!("material {}: {e}", entry_name(database, id));
+        }
+    }
+}
+
+fn entry_name(database: &AssetDatabase, id: AssetId) -> String {
+    database.get(id).map(|e| e.meta.name.clone()).unwrap_or_else(|| id.to_string())
+}
+
+/// One model of `ensure_models`.
+fn ensure_slots(
+    database: &mut AssetDatabase,
+    entry: assets::AssetEntry,
+    keys: Option<Vec<Option<SlotKey>>>,
+    windy: bool,
+    counts: &HashMap<SlotKey, usize>,
+    shared: &mut HashMap<SlotKey, AssetId>,
+) -> Result<usize, String> {
     let stem = Path::new(&entry.meta.source)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -453,68 +657,70 @@ fn ensure_model_materials_with(database: &mut AssetDatabase, model_id: AssetId, 
         .to_string();
     let mut meta = entry.meta.clone();
     let mut made = 0;
-    let mut taken: Vec<String> = Vec::new();
-    {
-        let settings = meta.as_model_mut().expect("a model");
-        for slot in settings.materials.iter_mut().filter(|m| m.material.is_none()) {
-            let mut file = imported_material(&slot.name);
-            if let Some(foliage) = slot.legacy_foliage {
-                file.foliage = foliage;
-            }
-            if windy {
-                file.params.insert(standard::params::WIND.into(), ParamSetting::Float(Param::Fixed(1.0)));
-            }
-            for (map, param) in [
-                (slot.base_color, standard::params::BASE_COLOR_MAP),
-                (slot.normal, standard::params::NORMAL_MAP),
-                (slot.roughness, standard::params::ROUGHNESS_MAP),
-                (slot.metallic, standard::params::METALLIC_MAP),
-                (slot.occlusion, standard::params::OCCLUSION_MAP),
-            ] {
-                if let Some(id) = map {
-                    file.params.insert(param.into(), ParamSetting::Texture(TextureSetting::Asset(id)));
-                }
-            }
-            let first = material_file_name(&stem, &slot.name);
-            let base = first.trim_end_matches(MATERIAL_SUFFIX).to_string();
-            let mut file_name = first;
-            let mut n = 2;
-            while taken.contains(&file_name) || entry.dir.join(&file_name).exists() {
-                file_name = format!("{base}_{n}{MATERIAL_SUFFIX}");
-                n += 1;
-            }
-            taken.push(file_name.clone());
-            let path = entry.dir.join(&file_name);
-            file.save(&path)?;
-            let id = database.import(&path).map_err(|e| e.to_string())?;
-            slot.material = Some(id);
-            slot.clear_legacy();
-            made += 1;
+    let settings = meta.as_model_mut().expect("a model");
+    for (index, slot) in settings.materials.iter_mut().enumerate() {
+        if !slot.needs_material() {
+            continue;
         }
+        let key = match &keys {
+            // No mesh uses it: nothing to draw, no material.
+            Some(keys) if keys[index].is_none() => {
+                slot.unused = true;
+                slot.clear_legacy();
+                continue;
+            }
+            Some(keys) => keys[index].clone(),
+            None => None,
+        };
+        if let Some(&material) = key.as_ref().and_then(|k| shared.get(k)) {
+            name_after_material(database, material, &slot.name);
+            slot.material = Some(material);
+            slot.clear_legacy();
+            continue;
+        }
+        let mut file = imported_material(&slot.name);
+        if let Some(foliage) = slot.legacy_foliage {
+            file.foliage = foliage;
+        }
+        if windy {
+            file.params.insert(standard::params::WIND.into(), ParamSetting::Float(Param::Fixed(1.0)));
+        }
+        for (map, param) in [
+            (slot.base_color, standard::params::BASE_COLOR_MAP),
+            (slot.normal, standard::params::NORMAL_MAP),
+            (slot.roughness, standard::params::ROUGHNESS_MAP),
+            (slot.metallic, standard::params::METALLIC_MAP),
+            (slot.occlusion, standard::params::OCCLUSION_MAP),
+        ] {
+            if let Some(id) = map {
+                file.params.insert(param.into(), ParamSetting::Texture(TextureSetting::Asset(id)));
+            }
+        }
+        let sharing = key.as_ref().is_some_and(|k| counts.get(k).copied().unwrap_or(0) > 1);
+        let first = if sharing {
+            shared_material_file_name(&slot.name)
+        } else {
+            material_file_name(&stem, &slot.name)
+        };
+        let base = first.trim_end_matches(MATERIAL_SUFFIX).to_string();
+        let mut file_name = first;
+        let mut n = 2;
+        while entry.dir.join(&file_name).exists() {
+            file_name = format!("{base}_{n}{MATERIAL_SUFFIX}");
+            n += 1;
+        }
+        let path = entry.dir.join(&file_name);
+        file.save(&path)?;
+        let id = database.import(&path).map_err(|e| e.to_string())?;
+        slot.material = Some(id);
+        slot.clear_legacy();
+        if let Some(key) = key {
+            shared.insert(key, id);
+        }
+        made += 1;
     }
     database.update(meta).map_err(|e| e.to_string())?;
     Ok(made)
-}
-
-/// `ensure_model_materials` for every model asset of the project (the
-/// move to material assets). Returns how many materials were made and
-/// one message per model that failed.
-pub fn ensure_all_model_materials(database: &mut AssetDatabase) -> (usize, Vec<String>) {
-    let models: Vec<AssetId> = database
-        .iter()
-        .filter(|e| e.meta.as_model().is_some_and(|m| m.materials.iter().any(|s| s.material.is_none())))
-        .map(|e| e.meta.id)
-        .collect();
-    let windy = models_planted_with_wind(database);
-    let mut made = 0;
-    let mut problems = Vec::new();
-    for id in models {
-        match ensure_model_materials_with(database, id, windy.contains(&id)) {
-            Ok(n) => made += n,
-            Err(e) => problems.push(format!("model {id}: {e}")),
-        }
-    }
-    (made, problems)
 }
 
 /// Make a new material (Standard PBR, defaults) or material graph (a copy

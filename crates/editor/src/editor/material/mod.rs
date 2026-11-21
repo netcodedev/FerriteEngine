@@ -454,17 +454,18 @@ impl MaterialEdit {
 /// The first model asset with a slot drawn with material `id`, loaded (its
 /// file's materials), and the slot. Must run on the render thread.
 fn load_user_of(id: AssetId) -> Option<(ferrite::core::model::Model, usize)> {
-    let (path, scale, index) = {
+    let (path, scale, index, name) = {
         let database = assets::database();
         let found = database.iter().find_map(|e| {
             let model = e.meta.as_model()?;
             let index = model.materials.iter().position(|m| m.material == Some(id))?;
-            Some((e.source_path(), model.scale, index))
+            Some((e.source_path(), model.scale, index, model.materials[index].name.clone()))
         });
         found?
     };
     let path = path.to_string_lossy().replace('\\', "/");
     let mut model = ferrite::core::model::ModelBuilder::from_file(&path).ok()?.with_scale(scale).build();
     model.init();
+    let index = model.file_material_index(index, &name);
     Some((model, index))
 }

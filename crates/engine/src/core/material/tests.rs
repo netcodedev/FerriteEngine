@@ -257,3 +257,148 @@ fn parameters_have_names_for_people() {
     assert_eq!(super::edit::property_label("two_sided", &graph), "Two-Sided");
     assert_eq!(super::edit::property_label("param:3:default", &graph), "Default");
 }
+
+mod sharing {
+    use std::path::Path;
+
+    use crate::core::assets::{database::tests::TempDir, AssetDatabase, AssetId, AssetKind};
+
+    use super::super::asset::{self, MaterialFile};
+
+    /// A cube-ish OBJ drawn with `materials` from `lib`, one face each.
+    fn write_obj(path: &Path, lib: &str, materials: &[&str]) {
+        let mut text = format!("mtllib {lib}\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvn 0 0 1\n");
+        for material in materials {
+            text += &format!("usemtl {material}\nf 1/1/1 2/2/1 3/3/1\nf 1/1/1 3/3/1 4/1/1\n");
+        }
+        std::fs::write(path, text).unwrap();
+    }
+
+    fn write_mtl(path: &Path, materials: &[(&str, &str)]) {
+        let text: String = materials.iter().map(|(name, kd)| format!("newmtl {name}\nKd {kd}\n\n")).collect();
+        std::fs::write(path, text).unwrap();
+    }
+
+    fn materials(database: &AssetDatabase) -> Vec<String> {
+        let mut names: Vec<String> = database
+            .iter()
+            .filter(|e| matches!(e.meta.kind, AssetKind::Material(_)))
+            .map(|e| e.meta.source.clone())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn slot(database: &AssetDatabase, model: AssetId, name: &str) -> Option<AssetId> {
+        let settings = database.get(model).unwrap().meta.as_model().unwrap().clone();
+        settings.materials.iter().find(|s| s.name == name).unwrap().material
+    }
+
+    /// Building parts made from one `.mtl`: one material per material of
+    /// the library, not one per part; Assimp's default material, which no
+    /// face uses, gets none.
+    #[test]
+    fn parts_from_one_library_share_their_materials() {
+        let project = TempDir::new("share-parts");
+        let folder = project.0.join("models").join("building");
+        std::fs::create_dir_all(&folder).unwrap();
+        write_mtl(&folder.join("building.mtl"), &[("wood", "0.6 0.4 0.2"), ("concrete", "0.7 0.7 0.7")]);
+        write_obj(&folder.join("wall_wood.obj"), "building.mtl", &["wood"]);
+        write_obj(&folder.join("beam.obj"), "building.mtl", &["wood", "concrete"]);
+        write_obj(&folder.join("stairs.obj"), "building.mtl", &["concrete"]);
+
+        let mut database = AssetDatabase::new(&project.0);
+        let (added, problems) = database.register_new_files();
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(added >= 3);
+        let (_, problems) = asset::ensure_all_model_materials(&mut database);
+        assert!(problems.is_empty(), "{problems:?}");
+
+        assert_eq!(materials(&database), vec!["concrete.material.ron", "wood.material.ron"]);
+        let model = |name: &str| database.find_by_source(&folder.join(name)).unwrap();
+        let (wall, beam, stairs) = (model("wall_wood.obj"), model("beam.obj"), model("stairs.obj"));
+        assert_eq!(slot(&database, wall, "wood"), slot(&database, beam, "wood"));
+        assert_eq!(slot(&database, stairs, "concrete"), slot(&database, beam, "concrete"));
+        assert_ne!(slot(&database, beam, "wood"), slot(&database, beam, "concrete"));
+        // Every slot no face uses is marked, and stays without a material.
+        for id in [wall, beam, stairs] {
+            for s in &database.get(id).unwrap().meta.as_model().unwrap().materials {
+                assert_eq!(s.material.is_none(), s.unused, "{}", s.name);
+                assert!(!s.needs_material());
+            }
+        }
+        // A second run finds nothing to do.
+        assert_eq!(asset::ensure_all_model_materials(&mut database).0, 0);
+
+        // A part added later shares what is there.
+        write_obj(&folder.join("post_wood.obj"), "building.mtl", &["wood"]);
+        let post = database.import(&folder.join("post_wood.obj")).unwrap();
+        assert_eq!(slot(&database, post, "wood"), slot(&database, wall, "wood"));
+        assert_eq!(materials(&database).len(), 2);
+    }
+
+    /// Materials only share when they load the same: another colour in
+    /// another library, or a user's own choice per model, keep them apart.
+    #[test]
+    fn different_materials_of_the_same_name_stay_apart() {
+        let project = TempDir::new("share-apart");
+        let folder = project.0.join("models").join("mixed");
+        std::fs::create_dir_all(&folder).unwrap();
+        write_mtl(&folder.join("light.mtl"), &[("wood", "0.9 0.8 0.6")]);
+        write_mtl(&folder.join("dark.mtl"), &[("wood", "0.3 0.2 0.1")]);
+        write_obj(&folder.join("a.obj"), "light.mtl", &["wood"]);
+        write_obj(&folder.join("b.obj"), "dark.mtl", &["wood"]);
+
+        let mut database = AssetDatabase::new(&project.0);
+        let (_, problems) = database.register_new_files();
+        assert!(problems.is_empty(), "{problems:?}");
+        let a = database.find_by_source(&folder.join("a.obj")).unwrap();
+        let b = database.find_by_source(&folder.join("b.obj")).unwrap();
+        assert_ne!(slot(&database, a, "wood"), slot(&database, b, "wood"));
+        assert_eq!(materials(&database), vec!["a_wood.material.ron", "b_wood.material.ron"]);
+
+        // A third model like `a`: shares a's material, which is now named
+        // after the material alone.
+        write_obj(&folder.join("c.obj"), "light.mtl", &["wood"]);
+        let c = database.import(&folder.join("c.obj")).unwrap();
+        assert_eq!(slot(&database, c, "wood"), slot(&database, a, "wood"));
+        assert_eq!(materials(&database), vec!["b_wood.material.ron", "wood.material.ron"]);
+        let shared = database.get(slot(&database, a, "wood").unwrap()).unwrap();
+        assert!(MaterialFile::load(&shared.source_path()).is_ok());
+    }
+
+    /// A sidecar from before every material of the file had a slot (the
+    /// demo's concrete parts: `DefaultMaterial`, `concrete` for a file with
+    /// `DefaultMaterial`, `wood`, `concrete`): slots go by name.
+    #[test]
+    fn slots_out_of_step_with_the_file_go_by_name() {
+        let project = TempDir::new("share-stale");
+        let folder = project.0.join("models").join("building");
+        std::fs::create_dir_all(&folder).unwrap();
+        write_mtl(&folder.join("building.mtl"), &[("wood", "0.6 0.4 0.2"), ("concrete", "0.7 0.7 0.7")]);
+        write_obj(&folder.join("door.obj"), "building.mtl", &["concrete"]);
+        let mut database = AssetDatabase::new(&project.0);
+        database.register_new_files();
+        let door = database.find_by_source(&folder.join("door.obj")).unwrap();
+
+        // Make it look old: two slots, no materials.
+        let mut meta = database.get(door).unwrap().meta.clone();
+        let slots = &mut meta.as_model_mut().unwrap().materials;
+        slots.retain(|s| s.name != "wood");
+        for s in slots.iter_mut() {
+            s.material = None;
+            s.unused = false;
+        }
+        database.update(meta).unwrap();
+        for e in database.iter().filter(|e| matches!(e.meta.kind, AssetKind::Material(_))).map(|e| e.meta.id).collect::<Vec<_>>() {
+            database.delete(e, crate::core::assets::Removal::Permanent).unwrap();
+        }
+
+        let (made, problems) = asset::ensure_all_model_materials(&mut database);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(made, 1);
+        assert!(slot(&database, door, "concrete").is_some());
+        let settings = database.get(door).unwrap().meta.as_model().unwrap().clone();
+        assert!(settings.materials.iter().find(|s| s.name != "concrete").unwrap().unused);
+    }
+}

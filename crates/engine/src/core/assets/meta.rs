@@ -117,6 +117,10 @@ pub struct MaterialSettings {
     /// `material::asset::ensure_all_model_materials`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<AssetId>,
+    /// No mesh of the file is drawn with this material (Assimp's default
+    /// material of an OBJ file): it gets no material asset of its own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unused: bool,
     // From before materials (2026-11-21): texture assets per map and the
     // foliage flag, read so they move into the new material assets, never
     // written again.
@@ -179,6 +183,12 @@ impl MaterialSettings {
             MaterialMap::Metallic => self.metallic,
             MaterialMap::Occlusion => self.occlusion,
         }
+    }
+
+    /// Whether the slot still waits for a material asset (see
+    /// `material::asset::ensure_model_materials`).
+    pub fn needs_material(&self) -> bool {
+        self.material.is_none() && !self.unused
     }
 
     /// Forget the legacy fields (they moved into a material asset).

@@ -169,6 +169,13 @@ pub struct MaterialOutline {
     /// File names of the textures the material refers to (not embedded
     /// ones), without folders.
     pub texture_files: Vec<String>,
+    /// Whether a mesh of the file is drawn with it. Assimp adds a default
+    /// material to OBJ files that nothing may use.
+    pub used: bool,
+    /// Hash of all of the material's properties (colours, texture
+    /// references, ...): two materials with the same one load the same
+    /// from files in the same folder.
+    pub fingerprint: u64,
 }
 
 pub struct ClipOutline {
@@ -348,7 +355,8 @@ pub fn inspect(path: &Path) -> Result<ModelOutline, String> {
     let materials = scene
         .materials
         .iter()
-        .map(|material| {
+        .enumerate()
+        .map(|(index, material)| {
             let mut texture_files: Vec<String> = Vec::new();
             for property in &material.properties {
                 if property.key != "$tex.file" {
@@ -370,6 +378,8 @@ pub fn inspect(path: &Path) -> Result<ModelOutline, String> {
             MaterialOutline {
                 name: material_name(material).unwrap_or_default(),
                 texture_files,
+                used: scene.meshes.iter().any(|mesh| mesh.material_index as usize == index),
+                fingerprint: material_fingerprint(material),
             }
         })
         .collect();
@@ -382,9 +392,23 @@ pub fn inspect(path: &Path) -> Result<ModelOutline, String> {
     })
 }
 
+/// See `MaterialOutline::fingerprint`.
+fn material_fingerprint(material: &Material) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for property in &material.properties {
+        property.key.hash(&mut hasher);
+        property.index.hash(&mut hasher);
+        format!("{:?}", property.semantic).hash(&mut hasher);
+        format!("{:?}", property.data).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
 
     fn outline(unit: f32, size: f32) -> ModelOutline {
         ModelOutline {

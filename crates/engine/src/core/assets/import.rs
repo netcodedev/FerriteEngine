@@ -287,6 +287,7 @@ impl AssetDatabase {
                     .into_iter()
                     .map(|m| MaterialSettings {
                         name: m.name,
+                        unused: !m.used,
                         ..Default::default()
                     })
                     .collect(),
@@ -644,8 +645,10 @@ mod tests {
         assert!(!file.foliage);
         assert!(file.params.is_empty());
         assert_eq!(file.graph, crate::core::material::asset::GraphRef::default());
-        // The model, its texture and a material per slot.
-        assert_eq!(database.len(), 2 + model.materials.len());
+        // The model, its texture and a material per slot a mesh uses
+        // (Assimp's own default material, if any, gets none).
+        assert_eq!(database.len(), 2 + model.materials.iter().filter(|m| !m.unused).count());
+        assert!(model.materials.iter().all(|m| m.material.is_some() != m.unused));
         assert_eq!(non_material(&database), 2);
 
         // The copied model still loads: its texture reference resolves.

@@ -475,6 +475,10 @@ impl AssetInspector {
 
             // One section per material.
             for (index, material) in model.materials.iter().enumerate() {
+                // A material no mesh of the file uses (Assimp's default one).
+                if material.unused && material.material.is_none() {
+                    continue;
+                }
                 let title = if material.name.is_empty() {
                     format!("Material {}", index + 1)
                 } else {
