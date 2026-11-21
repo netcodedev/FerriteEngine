@@ -580,7 +580,11 @@ impl ScatterInstances {
                 ScatterRange::Landscape => 0.0,
             };
             let eye = lighting.camera_position;
-            shader.set_uniform_3f("detailFade", eye.x, eye.z, range);
+            shader.set_uniform_4f("detailFade", eye.x, eye.z, range, self.spec.fade);
+            shader.set_uniform_1i(
+                "fadeThin",
+                matches!(self.spec.fade_mode, super::graph::FadeMode::Thin) as i32,
+            );
             let (direction, strength) = WIND;
             shader.set_uniform_4f("wind", direction[0], direction[1], strength, wind_clock());
             shader.set_uniform_1f("windAmount", self.spec.wind);

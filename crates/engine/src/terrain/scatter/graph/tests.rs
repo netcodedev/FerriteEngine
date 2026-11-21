@@ -50,6 +50,8 @@ fn grass() -> NodeKind {
         wind: 1.0,
         tint: 0.0,
         normals_up: 0.0,
+        fade: 0.2,
+        fade_mode: FadeMode::Shrink,
     })
 }
 
@@ -502,8 +504,13 @@ fn every_kind_explains_itself_and_names_only_settings_it_has() {
     for kind in NodeKind::catalog() {
         let text = kind.description();
         assert!(text.len() > 30, "{}", kind.label());
-        // Settings in backticks are the node's own.
-        let names: Vec<String> = kind.properties().iter().map(|p| p.name.to_string()).collect();
+        // Settings in backticks are the node's own (a spawn mesh's in either
+        // range: detail ones show only with a detail range).
+        let mut names: Vec<String> = kind.properties().iter().map(|p| p.name.to_string()).collect();
+        if let NodeKind::SpawnMesh(spawn) = &kind {
+            let detail = NodeKind::SpawnMesh(SpawnMesh { range: ScatterRange::Detail { distance: 60.0 }, ..spawn.clone() });
+            names.extend(detail.properties().iter().map(|p| p.name.to_string()));
+        }
         for quoted in text.split('`').skip(1).step_by(2) {
             assert!(names.iter().any(|n| n == quoted), "{}: `{quoted}`", kind.label());
         }
@@ -705,4 +712,18 @@ fn a_clearance_keeps_the_ground_bare_around_its_feature() {
     assert_eq!(near(&soft, 5.5, 9.0), near(&hard, 5.5, 9.0));
     // A feature the world has none of within reach keeps everything.
     assert_eq!(clear("power lines", 50.0, 0.0, false).len(), 1600);
+}
+
+#[test]
+fn outputs_from_before_fade_settings_fade_as_they_did() {
+    // A spawn mesh written before `fade` and `fade_mode` existed.
+    let old = "(nodes: [(id: 0, kind: SpawnMesh((asset: None, range: Detail(distance: 60.0), collision: false, shadows: false, wind: 1.0)))], wires: [])";
+    let graph = ScatterGraph::from_ron(old).unwrap();
+    let (_, spawn) = graph.outputs().next().unwrap();
+    assert_eq!((spawn.fade, spawn.fade_mode), (0.2, FadeMode::Shrink));
+    // Detail outputs show both; landscape ones neither.
+    let names = |kind: &NodeKind| kind.properties().into_iter().map(|p| p.name.to_string()).collect::<Vec<_>>();
+    assert!(names(&grass()).contains(&"fade mode".to_string()));
+    let landscape = NodeKind::SpawnMesh(SpawnMesh { range: ScatterRange::Landscape, ..match grass() { NodeKind::SpawnMesh(s) => s, _ => unreachable!() } });
+    assert!(!names(&landscape).contains(&"fade".to_string()));
 }

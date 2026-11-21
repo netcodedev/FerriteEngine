@@ -126,6 +126,38 @@ pub struct SpawnMesh {
     /// like the ground rather than as upright cards.
     #[serde(default)]
     pub normals_up: f32,
+    /// Detail range: the share of `distance`, at its far end, over which
+    /// the models fade away (0..1).
+    #[serde(default = "default_fade")]
+    pub fade: f32,
+    /// How they fade away there.
+    #[serde(default)]
+    pub fade_mode: FadeMode,
+}
+
+/// How a detail output's models fade away towards the end of their range.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FadeMode {
+    /// Each shrinks to nothing about its base.
+    #[default]
+    Shrink,
+    /// They thin out: each vanishes whole at its own point of the fade.
+    Thin,
+}
+
+impl FadeMode {
+    pub const NAMES: [&'static str; 2] = ["shrink", "thin"];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            FadeMode::Shrink => "shrink",
+            FadeMode::Thin => "thin",
+        }
+    }
+}
+
+fn default_fade() -> f32 {
+    0.2
 }
 
 fn yes() -> bool {
@@ -336,7 +368,9 @@ impl NodeKind {
             }
             NodeKind::SpawnMesh(_) => {
                 "Plants its `model` at every point that arrives. Landscape `range`: over all loaded ground, \
-                 with colliders and far pictures (trees). Detail: only near the camera (grass)."
+                 with colliders and far pictures (trees). Detail: only within `distance` of the camera \
+                 (grass), fading away over the last `fade` of it as the `fade mode` says: shrink, or thin \
+                 out."
             }
         }
     }
@@ -508,6 +542,8 @@ impl ScatterGraph {
                 wind: 0.0,
                 tint: 0.0,
                 normals_up: 0.0,
+                fade: default_fade(),
+                fade_mode: FadeMode::Shrink,
             }),
         ])
     }

@@ -234,6 +234,8 @@ impl Scatter {
                     shadows: output.spawn.shadows,
                     wind: output.spawn.wind.clamp(0.0, 1.0),
                     normals_up: output.spawn.normals_up.clamp(0.0, 1.0),
+                    fade: output.spawn.fade.clamp(0.0, 1.0),
+                    fade_mode: output.spawn.fade_mode,
                 };
                 // The same graph twice would plant the very same; once.
                 if !specs.iter().any(|s| s.same_as(&spec)) {

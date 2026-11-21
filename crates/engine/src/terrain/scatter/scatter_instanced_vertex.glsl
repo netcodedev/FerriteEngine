@@ -13,10 +13,13 @@ layout (location = 6) in vec4 instanceCol3;
 
 uniform mat4 viewProjection;
 uniform mat4 parentTransform;
-// Detail instances (grass): the camera's x and z, and the range they are
-// planted to; they shrink about their base from 80 % of it to nothing at
-// it. A range of 0: not a detail instance.
-uniform vec3 detailFade;
+// Detail instances (grass): the camera's x and z, the range they are
+// planted to, and the share of it at its end over which they fade away. A
+// range of 0: not a detail instance. They shrink about their base, or with
+// `fadeThin` each vanishes whole at its own point of the fade (a number of
+// its own, from where it stands), so they thin out.
+uniform vec4 detailFade;
+uniform int fadeThin;
 // The wind: direction (x, z), strength, and the time in seconds; and how
 // much these models sway in it (0: not at all).
 uniform vec4 wind;
@@ -39,7 +42,17 @@ void main() {
     float shrink = 1.0;
     if (detailFade.z > 0.0) {
         vec2 base = (modelTransform * vec4(0.0, 0.0, 0.0, 1.0)).xz;
-        shrink = 1.0 - smoothstep(0.8 * detailFade.z, detailFade.z, distance(base, detailFade.xy));
+        float start = detailFade.z * (1.0 - clamp(detailFade.w, 0.0, 1.0));
+        float d = distance(base, detailFade.xy);
+        // No fade share: a hard edge (smoothstep is undefined for equal
+        // edges).
+        float left = start < detailFade.z ? 1.0 - smoothstep(start, detailFade.z, d) : (d < detailFade.z ? 1.0 : 0.0);
+        if (fadeThin == 1) {
+            float own = fract(sin(dot(base, vec2(12.9898, 78.233))) * 43758.5453);
+            shrink = own < left ? 1.0 : 0.0;
+        } else {
+            shrink = left;
+        }
     }
     vec4 worldPos = modelTransform * vec4(position * shrink, 1.0);
     if (windAmount > 0.0) {
