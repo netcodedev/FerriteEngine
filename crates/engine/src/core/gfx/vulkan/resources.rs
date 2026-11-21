@@ -101,7 +101,12 @@ impl State {
         let (buffer, allocation) = self.raw_buffer(
             chunk_size,
             vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::UNIFORM_BUFFER,
-            MemoryLocation::CpuToGpu,
+            // Only read by transfer copies: plain cached system memory.
+            // `CpuToGpu` picks the GPU's own memory behind the PCIe window
+            // where it can (resizable BAR); writing hundreds of MB of
+            // freshly mapped pages there crawled at ~100 MB/s and stalled
+            // the editor for seconds while scenes and thumbnails loaded.
+            MemoryLocation::GpuToCpu,
             "frame memory",
         )?;
         let ptr = allocation.mapped_ptr()?.as_ptr() as *mut u8;
@@ -151,6 +156,7 @@ impl State {
     /// `data` in this frame's staging memory: buffer and offset.
     fn stage(&mut self, data: &[u8]) -> Option<(vk::Buffer, u64)> {
         let (buffer, offset, ptr) = self.arena_alloc(data.len() as u64, 16)?;
+        crate::core::spike_probe::STAGED_BYTES.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len()) };
         Some((buffer, offset))
     }

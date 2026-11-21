@@ -77,10 +77,17 @@ pub fn load(shader: &Shader, layers: &[TerrainLayer]) -> Vec<Texture> {
         layers.iter().enumerate().all(|(i, l)| l.stand_in.is_none_or(|s| s < i)),
         "stand-ins come before what they stand in for"
     );
-    let loaded: Vec<Option<MaterialImages>> = layers
-        .iter()
-        .map(|layer| load_images(&Path::new(FOLDER).join(layer.folder), layer.stand_in.is_none()))
-        .collect();
+    // Each layer's maps on a thread of its own (and those decoded side by
+    // side): one after the other they held the editor's first frame up.
+    let loaded: Vec<Option<MaterialImages>> = std::thread::scope(|scope| {
+        let workers: Vec<_> = layers
+            .iter()
+            .map(|layer| {
+                scope.spawn(move || load_images(&Path::new(FOLDER).join(layer.folder), layer.stand_in.is_none()))
+            })
+            .collect();
+        workers.into_iter().map(|w| w.join().ok().flatten()).collect()
+    });
     if layers.is_empty() || layers.iter().zip(&loaded).any(|(layer, images)| layer.stand_in.is_none() && images.is_none()) {
         shader.set_uniform_1i("hasTerrainTextures", 0);
         return Vec::new();
@@ -217,10 +224,12 @@ pub fn load_images(folder: &Path, needed: bool) -> Option<MaterialImages> {
         .collect();
     let prefix = common_prefix(&names);
     let maps = material_maps::find_maps(&files, &[prefix]);
+    let paths: Vec<PathBuf> = maps.iter().map(|(_, path)| path.clone()).collect();
+    let decoded = std::cell::RefCell::new(crate::core::renderer::texture::decode::decode_files(&paths));
     let read = |kind: MapKind| {
         let (_, path) = maps.iter().find(|(k, _)| *k == kind)?;
-        match image::open(path) {
-            Ok(image) => Some(image.to_rgba8()),
+        match decoded.borrow_mut().remove(path)? {
+            Ok(image) => Some(image),
             Err(e) => {
                 log::warn!("terrain: could not read {}: {e}", path.display());
                 None

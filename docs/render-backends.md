@@ -218,6 +218,31 @@ when Vulkan cannot start):
 - Left over against GL: alpha-tested foliage covers slightly fewer pixels
   (isolated pixels across tree crowns), cause not found yet.
 
+### Upload staging in system memory (2026-11-21)
+
+The per-frame staging memory that buffer and texture uploads go through
+used to be `MemoryLocation::CpuToGpu`. With resizable BAR that is the GPU's
+own memory behind the PCIe window; writing freshly mapped pages there ran
+at ~60–100 MB/s, so loading the demo's start scene (0.7 GB and 1.1 GB of
+uploads in two frames) stalled the editor for 12 s and 17 s, and each
+asset browser thumbnail for ~3 s. Staging is only read by transfer copies,
+so it now lives in cached system memory (`GpuToCpu`, always coherent in
+gpu-allocator): the same frames take 2.5 s and 1.5 s, a thumbnail 5–100 ms.
+Found with `perf record -e cpu-clock:u` (call graphs are refused at
+`perf_event_paranoid=2`): `rep movsb` in libc took ~100 % of the main
+thread during the stalls. `FERRITE_SPIKES` now also prints the MB staged
+per slow frame.
+
+Then the same frames were mostly JPEG and PNG decoding of model and
+terrain maps, one file after the other on the main thread. Loaders now
+gather the files first and decode them on all cores
+(`renderer::texture::decode`): `Model::init` (external, by-name and
+embedded maps), the texture assets of a model's material assets
+(`material::asset::apply_to_model`) and the terrain layers. The demo's
+start: 0.6 / 2.3 / 1.3 s frames → 0.37 / 1.3 / 0.8 s. What is left in them
+has no single hot spot (drawing, trimesh mass properties for colliders,
+the 1.1 GB of uploads).
+
 ## Verification
 
 - `cargo test` (engine, scripts) green at every commit.

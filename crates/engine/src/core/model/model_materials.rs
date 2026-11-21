@@ -259,15 +259,64 @@ pub(super) fn map_texture_type(map: MaterialMap) -> TextureType {
     }
 }
 
+thread_local! {
+    /// Image files decoded ahead (`predecode`), taken by `read_image`.
+    static PREDECODED: std::cell::RefCell<HashMap<std::path::PathBuf, crate::core::renderer::texture::decode::Decoded>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// Decode these image files on all cores now; `read_image` takes them from
+/// here. `forget_predecoded` drops what was not taken.
+pub(super) fn predecode(paths: &[std::path::PathBuf]) {
+    if paths.is_empty() {
+        return;
+    }
+    let decoded = crate::core::renderer::texture::decode::decode_files(paths);
+    PREDECODED.with(|p| p.borrow_mut().extend(decoded));
+}
+
+pub(super) fn forget_predecoded() {
+    PREDECODED.with(|p| p.borrow_mut().clear());
+}
+
 pub(super) fn read_image(path: &std::path::Path) -> Option<image::RgbaImage> {
-    let bytes = std::fs::read(path).ok()?;
-    match image::load_from_memory(&bytes) {
-        Ok(image) => Some(image.to_rgba8()),
+    let decoded = PREDECODED
+        .with(|p| p.borrow_mut().remove(path))
+        .unwrap_or_else(|| {
+            if !path.is_file() {
+                return Err("no such file".into());
+            }
+            crate::core::renderer::texture::decode::decode_file(path)
+        });
+    match decoded {
+        Ok(image) => Some(image),
         Err(e) => {
-            log::warn!("model: could not read texture {}: {e}", path.display());
+            if path.is_file() {
+                log::warn!("model: could not read texture {}: {e}", path.display());
+            }
             None
         }
     }
+}
+
+/// The image files `maps_by_name` will read for the maps in `wanted`:
+/// those maps, and the opacity map when the colour map is among them.
+pub(super) fn files_by_name(
+    material_name: Option<&str>,
+    model_stem: &str,
+    model_dir: &str,
+    wanted: &[MaterialMap],
+) -> Vec<std::path::PathBuf> {
+    let prefixes = material_maps::name_prefixes(material_name, model_stem);
+    let files = material_maps::images_with_prefix(std::path::Path::new(model_dir), &prefixes);
+    material_maps::find_maps(&files, &prefixes)
+        .into_iter()
+        .filter(|(kind, _)| match kind.slot() {
+            Some(map) => wanted.contains(&map),
+            None => *kind == MapKind::Opacity && wanted.contains(&MaterialMap::BaseColor),
+        })
+        .map(|(_, path)| path)
+        .collect()
 }
 
 /// Upload an image as the map in `slot`; only the colour map is sRGB.

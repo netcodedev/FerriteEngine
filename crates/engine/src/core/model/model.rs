@@ -26,7 +26,8 @@ use crate::core::{
 
 use super::{
     model_materials::{
-        canonical_slot, map_texture_type, maps_by_name, read_image, texture_candidates, upload_map,
+        canonical_slot, files_by_name, forget_predecoded, map_texture_type, maps_by_name, predecode, read_image,
+        texture_candidates, upload_map,
     },
     Model, ModelBuilder, ModelMesh, ModelMeshVertex,
 };
@@ -115,7 +116,11 @@ impl Model {
         // Texture files by path and colour space, as uploaded: materials
         // often share one (an atlas), which is then read and uploaded once.
         let mut loaded: HashMap<(String, bool), usize> = HashMap::new();
-        for material in materials {
+        // Every image the materials below will read, decoded on all cores
+        // first: one after the other on this thread, a scene's maps held
+        // the editor for seconds.
+        let mut embedded_images = self.predecode_maps();
+        for (material_index, material) in materials.iter().enumerate() {
             let mut per_material: HashMap<TextureType, Texture> = HashMap::new();
 
             // 1) Embedded textures — russimp populates `material.textures` only
@@ -126,12 +131,13 @@ impl Model {
                 if per_material.contains_key(&slot) {
                     continue;
                 }
-                if let DataContent::Bytes(texture_data) = &tex.data {
-                    match image::load_from_memory(texture_data.as_slice()) {
-                        Ok(image) => {
-                            per_material.insert(slot.clone(), upload_map(image.to_rgba8(), &slot));
+                if let DataContent::Bytes(_) = &tex.data {
+                    match embedded_images.remove(&(material_index, slot.clone())) {
+                        Some(Ok(image)) => {
+                            per_material.insert(slot.clone(), upload_map(image, &slot));
                         }
-                        Err(e) => log::warn!("model: embedded texture unreadable: {e}"),
+                        Some(Err(e)) => log::warn!("model: embedded texture unreadable: {e}"),
+                        None => {}
                     }
                 }
             }
@@ -193,6 +199,7 @@ impl Model {
                 .collect();
             all_maps.push(per_material);
         }
+        forget_predecoded();
         self.materials = self.materials_from_maps(all_maps);
         self.file_materials = self.materials.clone();
         for mesh in &self.model.meshes {
@@ -258,6 +265,59 @@ impl Model {
             max = Point3::new(max.x.max(v.x), max.y.max(v.y), max.z.max(v.z));
         }
         Some((min, max))
+    }
+
+    /// Decode on all cores what `init` will read: the external maps (the
+    /// first candidate on disk), those found by name for the slots still
+    /// empty (kept for `read_image`), and the embedded ones, returned by
+    /// (material, slot).
+    fn predecode_maps(
+        &self,
+    ) -> HashMap<(usize, TextureType), crate::core::renderer::texture::decode::Decoded> {
+        use crate::core::renderer::texture::decode;
+        let mut files = Vec::new();
+        let mut embedded: Vec<((usize, TextureType), Vec<u8>)> = Vec::new();
+        for (index, material) in self.model.materials.iter().enumerate() {
+            let mut slots: Vec<TextureType> = Vec::new();
+            for (tex_type, texture) in &material.textures {
+                let slot = canonical_slot(tex_type);
+                if slots.contains(&slot) {
+                    continue;
+                }
+                if let DataContent::Bytes(bytes) = &texture.borrow().data {
+                    embedded.push(((index, slot.clone()), bytes.clone()));
+                    slots.push(slot);
+                }
+            }
+            for property in &material.properties {
+                if property.key != "$tex.file" {
+                    continue;
+                }
+                let slot = canonical_slot(&property.semantic);
+                if slots.contains(&slot) {
+                    continue;
+                }
+                let PropertyTypeInfo::String(raw_path) = &property.data else {
+                    continue;
+                };
+                let found = texture_candidates(raw_path, &self.model_dir)
+                    .into_iter()
+                    .find(|candidate| std::path::Path::new(candidate).is_file());
+                if let Some(path) = found {
+                    files.push(std::path::PathBuf::from(path));
+                    slots.push(slot);
+                }
+            }
+            let missing: Vec<MaterialMap> =
+                MaterialMap::ALL.into_iter().filter(|map| !slots.contains(&map_texture_type(*map))).collect();
+            if !missing.is_empty() {
+                let name = Self::material_name(material);
+                files.extend(files_by_name(name.as_deref(), &self.name, &self.model_dir, &missing));
+            }
+        }
+        predecode(&files);
+        let decoded = decode::decode_all(&embedded, |(_, bytes)| decode::decode_bytes(bytes));
+        embedded.into_iter().map(|(key, _)| key).zip(decoded).collect()
     }
 
     pub(super) fn material_name(material: &russimp_ng::material::Material) -> Option<String> {

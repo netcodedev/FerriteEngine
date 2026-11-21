@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell};
 
 use crate::core::{gfx, renderer::shader::Shader};
 
+pub mod decode;
 pub mod texture;
 
 /// A texture loaded or allocated after it was made (`Texture::new`, then

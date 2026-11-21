@@ -231,6 +231,51 @@ pub fn material_file(id: AssetId) -> Option<(Rc<MaterialFile>, String)> {
     Some((file, name))
 }
 
+thread_local! {
+    /// Texture asset files decoded ahead (`predecode_textures`), taken by
+    /// `texture_asset`.
+    static PREDECODED: RefCell<HashMap<std::path::PathBuf, crate::core::renderer::texture::decode::Decoded>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Decode on all cores the texture assets the material assets `materials`
+/// use and that are not loaded yet, for `texture_asset` to take: one by
+/// one, a model's materials held the editor up while a scene loaded.
+fn predecode_textures(materials: impl Iterator<Item = AssetId>) {
+    let mut ids = Vec::new();
+    for material in materials {
+        let Some((file, _)) = material_file(material) else { continue };
+        for setting in file.params.values() {
+            if let ParamSetting::Texture(TextureSetting::Asset(id)) = setting {
+                ids.push(*id);
+            }
+        }
+    }
+    let paths: Vec<std::path::PathBuf> = {
+        let database = assets::database();
+        ids.iter()
+            .filter_map(|id| database.get(*id).map(|e| (*id, e.source_path(), e.revision)))
+            .filter(|(id, _, revision)| {
+                // Loaded already, in either colour space.
+                !TEXTURES.with(|t| {
+                    let t = t.borrow();
+                    [true, false].iter().any(|c| t.get(&(*id, *c)).is_some_and(|(r, _)| r == revision))
+                })
+            })
+            .map(|(_, path, _)| path)
+            .collect()
+    };
+    if paths.len() < 2 {
+        return;
+    }
+    let decoded = crate::core::renderer::texture::decode::decode_files(&paths);
+    PREDECODED.with(|p| {
+        let mut p = p.borrow_mut();
+        p.clear();
+        p.extend(decoded);
+    });
+}
+
 /// A texture asset, loaded once (per colour space) and shared.
 pub fn texture_asset(id: AssetId, color: bool) -> Option<Texture> {
     let (path, revision) = {
@@ -243,9 +288,11 @@ pub fn texture_asset(id: AssetId, color: bool) -> Option<Texture> {
     }) {
         return Some(texture);
     }
-    let bytes = std::fs::read(&path).ok()?;
-    let image = match image::load_from_memory(&bytes) {
-        Ok(image) => image.to_rgba8(),
+    let decoded = PREDECODED
+        .with(|p| p.borrow_mut().remove(&path))
+        .unwrap_or_else(|| crate::core::renderer::texture::decode::decode_file(&path));
+    let image = match decoded {
+        Ok(image) => image,
         Err(e) => {
             log::warn!("material: texture {}: {e}", path.display());
             return None;
@@ -314,6 +361,7 @@ pub fn material_for_asset(id: AssetId, auto: Option<&Material>) -> Option<Materi
 /// what the loader made of them.
 pub fn apply_to_model(model: &mut Model, slots: &[MaterialSettings]) {
     model.reset_materials();
+    predecode_textures(slots.iter().filter_map(|slot| slot.material));
     for (index, slot) in slots.iter().enumerate() {
         let Some(id) = slot.material else { continue };
         let auto = model.file_material(index).cloned();
@@ -321,6 +369,8 @@ pub fn apply_to_model(model: &mut Model, slots: &[MaterialSettings]) {
             model.set_material(index, material);
         }
     }
+    // What no material took (a file that failed) is not kept around.
+    PREDECODED.with(|p| p.borrow_mut().clear());
 }
 
 /// The material file a material of a model file starts as: Standard PBR,
