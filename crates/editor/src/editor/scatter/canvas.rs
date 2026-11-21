@@ -45,6 +45,10 @@ const MIN_ZOOM: f32 = 0.3;
 const MAX_ZOOM: f32 = 2.0;
 const DOUBLE_CLICK: f32 = 0.35;
 const Z: f32 = 2.0;
+/// How many of the topmost nodes get depth levels of their own (see
+/// `stacking`); the ones below share the lowest. Each takes two whole
+/// levels (text keeps whole depths only), all of them under the overlays.
+const OWN_LEVELS: usize = 8;
 /// The add menu: rows shown at most, and their height.
 const MENU_ROWS: usize = 14;
 const MENU_ROW_H: f32 = 22.0;
@@ -273,6 +277,8 @@ pub struct ScatterCanvas {
     hover_wire: Option<Wire>,
     /// The node under the cursor and since when (for its tooltip).
     hover_since: Option<(NodeId, Instant)>,
+    /// Node indices from bottom to top, as last laid out.
+    stacking: Vec<usize>,
     tip: Tip,
     cursor: (f32, f32),
     last_click: Option<Instant>,
@@ -340,6 +346,7 @@ impl ScatterCanvas {
             hover_pin: None,
             hover_wire: None,
             hover_since: None,
+            stacking: Vec::new(),
             tip: Tip::new(),
             cursor: (0.0, 0.0),
             last_click: None,
@@ -412,12 +419,20 @@ impl ScatterCanvas {
         );
     }
 
+    /// The graph's nodes from bottom to top: in graph order, the selected
+    /// ones last (on top).
+    fn stacking(e: &ScatterEdit) -> Vec<usize> {
+        let (selected, rest): (Vec<usize>, Vec<usize>) =
+            (0..e.graph.nodes.len()).partition(|&i| e.selection.contains(&e.graph.nodes[i].id));
+        rest.into_iter().chain(selected).collect()
+    }
+
     fn node_at(&self, x: f32, y: f32) -> Option<NodeId> {
         self.with_edit(|e| {
-            e.graph
-                .nodes
-                .iter()
+            Self::stacking(e)
+                .into_iter()
                 .rev()
+                .map(|i| &e.graph.nodes[i])
                 .find(|n| self.node_rect(n.position).contains(x, y))
                 .map(|n| n.id)
         })
@@ -427,7 +442,7 @@ impl ScatterCanvas {
     fn pin_at(&self, x: f32, y: f32) -> Option<(NodeId, Side, u8)> {
         let reach = (PIN_RADIUS + 4.0) * self.zoom.max(0.7);
         self.with_edit(|e| {
-            for node in e.graph.nodes.iter().rev() {
+            for node in Self::stacking(e).into_iter().rev().map(|i| &e.graph.nodes[i]) {
                 let pins = (0..node.kind.inputs().len())
                     .map(|p| (Side::In, p as u8))
                     .chain((0..node.kind.outputs().len()).map(|p| (Side::Out, p as u8)));
@@ -764,7 +779,22 @@ impl UIElement for ScatterCanvas {
         let zoom_changed = (zoom - self.zoom_applied).abs() > 1e-3;
         let hover_node = self.hover_node;
         let hover_pin = self.hover_pin;
+        // The topmost nodes each in depth levels of their own, so
+        // overlapping nodes do not interleave their parts; the selected ones
+        // on top. Text keeps whole depths only: each node takes two whole
+        // levels, its planes between them, its text on the upper one.
+        self.stacking = self.with_edit(Self::stacking).unwrap_or_default();
+        let count = self.stacking.len();
+        let mut level = vec![0usize; nodes.len()];
+        for (rank, &i) in self.stacking.iter().enumerate() {
+            if let Some(l) = level.get_mut(i) {
+                *l = (rank + OWN_LEVELS).saturating_sub(count);
+            }
+        }
         for (i, node) in nodes.iter().enumerate() {
+            let z = Z + 1.0 + 2.0 * level[i] as f32;
+            // Body, title bar, pins between the node's levels; text on top.
+            let layer = |k: f32| if k >= 3.0 { z + 1.0 } else { z + k * 0.25 };
             let r = self.node_rect(node.position);
             let pin_centers: Vec<(f32, f32)> = self
                 .nodes
@@ -776,7 +806,7 @@ impl UIElement for ScatterCanvas {
             };
             let selected = selection.contains(&node.id);
             let hovered = hover_node == Some(node.id);
-            visual.body.set_position(Position::new(r.x, r.y, Z + 1.0));
+            visual.body.set_position(Position::new(r.x, r.y, layer(0.0)));
             visual.body.set_size(Size::new(r.w, r.h));
             visual.body.border_color = if selected {
                 theme::ACCENT
@@ -786,12 +816,12 @@ impl UIElement for ScatterCanvas {
                 theme::BORDER
             };
             visual.body.border_thickness = if selected { 2.0 } else { 1.0 };
-            visual.bar.set_position(Position::new(r.x, r.y, Z + 2.0));
+            visual.bar.set_position(Position::new(r.x, r.y, layer(1.0)));
             visual.bar.set_size(Size::new(r.w, TITLE_H * zoom));
             visual.bar.set_color(kind_color(&node.kind));
             let pr = PIN_RADIUS * zoom.max(0.7);
             for ((side, pin, plane, label), (cx, cy)) in visual.pins.iter_mut().zip(pin_centers) {
-                plane.set_position(Position::new(cx - pr, cy - pr, Z + 3.0));
+                plane.set_position(Position::new(cx - pr, cy - pr, layer(2.0)));
                 plane.set_size(Size::new(pr * 2.0, pr * 2.0));
                 let lit = hover_pin == Some((node.id, *side, *pin));
                 plane.set_color(if lit { theme::ACCENT } else { theme::BG_FIELD });
@@ -804,8 +834,8 @@ impl UIElement for ScatterCanvas {
                         Side::In => cx + pr + 4.0 * zoom,
                         Side::Out => cx - pr - 4.0 * zoom - w,
                     };
-                    label.prepare_render_at(Position::new(lx, cy - 7.0 * zoom, Z + 4.0));
-                    label.set_z_index(Z + 4.0);
+                    label.prepare_render_at(Position::new(lx, cy - 7.0 * zoom, layer(3.0)));
+                    label.set_z_index(layer(3.0));
                 }
             }
             if zoom_changed {
@@ -815,9 +845,9 @@ impl UIElement for ScatterCanvas {
             }
             visual.title.set_content(node.kind.label());
             visual.title.set_color(theme::TEXT);
-            visual.title.prepare_render_at(Position::new(r.x + 12.0 * zoom, r.y + 5.0 * zoom, Z + 4.0));
+            visual.title.prepare_render_at(Position::new(r.x + 12.0 * zoom, r.y + 5.0 * zoom, layer(3.0)));
             visual.summary.set_content(&summary(&node.kind));
-            visual.summary.prepare_render_at(Position::new(r.x + 16.0 * zoom, r.y + 34.0 * zoom, Z + 4.0));
+            visual.summary.prepare_render_at(Position::new(r.x + 16.0 * zoom, r.y + 34.0 * zoom, layer(3.0)));
             let count = match &counts {
                 Counts::Done(counts) => counts.get(&node.id).map_or("—".to_string(), |c| format!("{c} points")),
                 Counts::Working => "…".to_string(),
@@ -825,9 +855,9 @@ impl UIElement for ScatterCanvas {
             };
             visual.count.set_content(&count);
             visual.count.set_color(if matches!(counts, Counts::Done(_)) { theme::SUCCESS } else { theme::TEXT_DIM });
-            visual.count.prepare_render_at(Position::new(r.x + 16.0 * zoom, r.y + 56.0 * zoom, Z + 4.0));
+            visual.count.prepare_render_at(Position::new(r.x + 16.0 * zoom, r.y + 56.0 * zoom, layer(3.0)));
             for text in [&mut visual.title, &mut visual.summary, &mut visual.count] {
-                text.set_z_index(Z + 4.0);
+                text.set_z_index(layer(3.0));
             }
         }
         if zoom_changed {
@@ -915,7 +945,8 @@ impl UIElement for ScatterCanvas {
             }
         }
 
-        for node in &self.nodes {
+        // Bottom to top, so blended edges fall over what lies below.
+        for node in self.stacking.iter().filter_map(|&i| self.nodes.get(i)) {
             node.body.render();
             node.bar.render();
             for (_, _, plane, label) in &node.pins {
