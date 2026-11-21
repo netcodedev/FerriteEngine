@@ -34,7 +34,9 @@ use crate::editor::{
     },
     asset_browser::AssetBrowser,
     console::ConsolePanel,
-    scatter::{self, canvas::ScatterCanvas, inspector::ScatterInspector, preview::ScatterPreview},
+    scatter::{self, inspector::ScatterInspector, preview::ScatterPreview},
+    graph_canvas::GraphCanvas,
+    material::{inspector::MaterialInspector, preview::MaterialPreview},
     asset_editor::{AssetInspector, AssetPreview},
     bridge_handler::{self, Dispatch},
     dialogs::{self, ModalHost},
@@ -143,13 +145,14 @@ impl EditorLayer {
         // Also ahead of the panels: it has to see the release that ends a
         // drag before the panel under the cursor does.
         add(&mut ui, Box::new(DragLayer::new(state.clone())));
-        let (scene_panels, anim_panels, asset_panels, scatter_panels, browser_panel) = {
+        let (scene_panels, anim_panels, asset_panels, scatter_panels, material_panels, browser_panel) = {
             let s = state.borrow();
             (
                 s.scene_panels.clone(),
                 s.anim_panels.clone(),
                 s.asset_panels.clone(),
                 s.scatter_panels.clone(),
+                s.material_panels.clone(),
                 s.browser_panel.clone(),
             )
         };
@@ -170,13 +173,21 @@ impl EditorLayer {
         }
         // Scatter graph workspace.
         for panel in [
-            Box::new(ScatterCanvas::new(state.clone())) as Box<dyn UIElement>,
+            Box::new(GraphCanvas::new(state.clone(), scatter::canvas::host())) as Box<dyn UIElement>,
             Box::new(ScatterInspector::new(state.clone())),
             Box::new(ScatterPreview::new(state.clone())),
         ] {
             add(&mut ui, Box::new(ToggleWindow::new(scatter_panels.clone(), panel)));
         }
-        // Shared by the scene, asset and scatter graph workspaces.
+        // Material workspace.
+        for panel in [
+            Box::new(GraphCanvas::new(state.clone(), crate::editor::material::canvas::host())) as Box<dyn UIElement>,
+            Box::new(MaterialInspector::new(state.clone())),
+            Box::new(MaterialPreview::new(state.clone())),
+        ] {
+            add(&mut ui, Box::new(ToggleWindow::new(material_panels.clone(), panel)));
+        }
+        // Shared by the scene, asset, scatter graph and material workspaces.
         add(
             &mut ui,
             Box::new(ToggleWindow::new(
@@ -612,8 +623,15 @@ impl Layer for EditorLayer {
                 s.workspace,
             )
         };
+        let material_graph = self.state.borrow().material.as_ref().is_some_and(|e| e.is_graph());
         let right = match workspace {
             Workspace::Animation | Workspace::ScatterGraph => RightColumn::Preview,
+            Workspace::Material if material_graph => RightColumn::Preview,
+            // The settings on the left, the preview in the main area.
+            Workspace::Material => RightColumn::Panels {
+                stats: false,
+                widgets: false,
+            },
             Workspace::Scene => RightColumn::Panels {
                 stats: show_stats,
                 widgets: show_widgets,

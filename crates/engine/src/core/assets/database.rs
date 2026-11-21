@@ -322,8 +322,7 @@ pub(crate) mod tests {
                 }],
                 materials: vec![MaterialSettings {
                     name: "Bark".into(),
-                    base_color: Some(texture),
-                    foliage: false,
+                    material: Some(texture),
                     ..Default::default()
                 }],
                 clips: Vec::new(),

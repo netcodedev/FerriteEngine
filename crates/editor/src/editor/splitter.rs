@@ -190,7 +190,7 @@ impl Splitter {
                 let width = (layout.window_w - x).clamp(MIN_COLUMN, max).round();
                 match workspace {
                     Workspace::Scene | Workspace::Asset => sizes.stats = width,
-                    Workspace::Animation | Workspace::ScatterGraph => sizes.preview = width,
+                    Workspace::Animation | Workspace::ScatterGraph | Workspace::Material => sizes.preview = width,
                 }
             }
         }

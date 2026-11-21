@@ -9,6 +9,7 @@ pub mod graphics;
 pub mod spike_probe;
 pub mod headless;
 pub mod logging;
+pub mod material;
 pub mod mcp_bridge;
 pub mod model;
 pub mod mouse_picker;

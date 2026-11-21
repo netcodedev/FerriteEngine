@@ -4,7 +4,7 @@ use std::{
 };
 
 use cgmath::{Matrix4, Point3, Quaternion, Vector3};
-use russimp_ng::{material::TextureType, scene::Scene};
+use russimp_ng::scene::Scene;
 
 use crate::core::renderer::{
     shader::DynamicVertexArray,
@@ -22,8 +22,8 @@ pub mod generated;
 pub mod grip;
 pub mod material_maps;
 mod model;
-mod model_geometry;
-mod model_materials;
+pub(crate) mod model_geometry;
+pub mod model_materials;
 mod model_mesh;
 mod model_skeleton;
 pub mod outline;
@@ -35,14 +35,19 @@ pub struct Model {
     /// several primitives, an FBX mesh split per material): lookups by
     /// name (variants, parts) take every mesh of that name.
     meshes: Vec<(String, ModelMesh)>,
-    /// Textures grouped by material index. A mesh selects its set via
-    /// `ModelMesh::material_index`. Storing them in a single flat map (as the
-    /// older code did) caused later materials to overwrite earlier ones so
-    /// every mesh ended up sampling the last-loaded texture set.
-    textures: Vec<HashMap<TextureType, Texture>>,
+    /// Materials by the file's material index. A mesh selects its own via
+    /// `ModelMesh::material_index`.
+    materials: Vec<crate::core::material::Material>,
+    /// What the loader made of the file's materials, before material
+    /// assets replaced them (see `material::asset::apply_to_model`).
+    file_materials: Vec<crate::core::material::Material>,
     /// Texture files several materials refer to, loaded once: the
     /// materials hold `share`d handles on these (see `Model::init`).
     shared_textures: Vec<Texture>,
+    /// Every map `init` found (the owning handles): materials hold shared
+    /// handles, so replacing a material (with a material asset's) never
+    /// frees a texture another one still draws with.
+    map_textures: Vec<Texture>,
     /// File name without extension; names the variant of a model that holds
     /// just one.
     name: String,
@@ -82,6 +87,8 @@ pub struct SubmeshData {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
+    /// RGBA8, red lowest (see `model_geometry::pack_color`).
+    pub colors: Vec<u32>,
     pub indices: Vec<u32>,
     pub material_index: usize,
 }
@@ -108,6 +115,8 @@ struct ModelMeshVertex {
     texture_coords: (f32, f32),
     bone_ids: (u32, u32, u32, u32),
     bone_weights: (f32, f32, f32, f32),
+    /// RGBA8, red lowest.
+    color: u32,
 }
 
 struct ModelMesh {

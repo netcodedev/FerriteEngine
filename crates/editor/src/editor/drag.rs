@@ -20,7 +20,9 @@ use ferrite::core::{
 use ferrite_ui::ui::{element_handle::UIElementHandle, theme, UIElement};
 use glfw::{Action, Glfw, MouseButton, WindowEvent};
 
-use super::{asset_editor::TextureSlot, layout::Rect, send, Command, Shared};
+use ferrite::core::material::asset::TextureSetting;
+
+use super::{layout::Rect, send, Command, Shared};
 
 /// Cursor travel (px) after which a press on an asset becomes a drag.
 const DRAG_THRESHOLD: f32 = 5.0;
@@ -47,6 +49,7 @@ pub enum DragKind {
     Model,
     Texture,
     Animation,
+    Material,
 }
 
 /// What dropping an asset on a target does.
@@ -58,8 +61,12 @@ pub enum DropAction {
         entity: EntityHandle,
         layer: Option<usize>,
     },
-    /// Use a texture asset for a material of the asset being edited.
-    MaterialTexture { material: usize, slot: TextureSlot },
+    /// Draw a material slot of the model asset being edited with a
+    /// material asset.
+    ModelMaterial { material: usize },
+    /// Use a texture asset for a texture parameter of the material being
+    /// edited.
+    MaterialTexture { param: String },
     /// Make this entity show a model asset.
     EntityModel(EntityHandle),
     /// Add an entity showing a model asset to the scene.
@@ -72,6 +79,7 @@ impl DropAction {
             DropAction::ScatterLayer { .. }
             | DropAction::EntityModel(_)
             | DropAction::SpawnModel => drag.kind == DragKind::Model,
+            DropAction::ModelMaterial { .. } => drag.kind == DragKind::Material,
             DropAction::MaterialTexture { .. } => drag.kind == DragKind::Texture,
         }
     }
@@ -83,10 +91,13 @@ impl DropAction {
                 layer: *layer,
                 asset,
             },
-            DropAction::MaterialTexture { material, slot } => Command::SetAssetTexture {
+            DropAction::ModelMaterial { material } => Command::SetModelMaterial {
                 material: *material,
-                slot: *slot,
-                texture: Some(asset.id),
+                asset: Some(asset.id),
+            },
+            DropAction::MaterialTexture { param } => Command::SetMaterialTexture {
+                param: param.clone(),
+                texture: TextureSetting::Asset(asset.id),
             },
             DropAction::EntityModel(entity) => Command::SetEntityModel {
                 entity: *entity,
@@ -353,23 +364,15 @@ mod tests {
                 w: 100.0,
                 h: 26.0,
             },
-            action: DropAction::MaterialTexture {
-                material: 1,
-                slot: TextureSlot::Normal,
-            },
+            action: DropAction::MaterialTexture { param: "normal_map".into() },
         };
         let targets = vec![slot];
         assert!(target_at(&targets, &drag(true), 10.0, 10.0).is_none());
         let hit = target_at(&targets, &drag(false), 10.0, 10.0).unwrap();
         match hit.action.command(AssetRef::whole(AssetId::from(4))) {
-            Command::SetAssetTexture {
-                material,
-                slot,
-                texture,
-            } => {
-                assert_eq!(material, 1);
-                assert_eq!(slot, TextureSlot::Normal);
-                assert_eq!(texture, Some(AssetId::from(4)));
+            Command::SetMaterialTexture { param, texture } => {
+                assert_eq!(param, "normal_map");
+                assert_eq!(texture, TextureSetting::Asset(AssetId::from(4)));
             }
             other => panic!("unexpected command {other:?}"),
         }

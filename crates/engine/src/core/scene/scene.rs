@@ -494,6 +494,8 @@ impl Scene {
         crate::core::renderer::sky::noise::bind();
         self.frame_lighting.set(None);
         self.frame_lighting.set(Lighting::from_scene(self));
+        // Every pass of the frame sways models by the same clock.
+        crate::core::material::wind::set_clock(crate::core::renderer::weather::seconds());
         profiler::begin_frame();
         self.render_passes_lit(window);
         profiler::end_frame();

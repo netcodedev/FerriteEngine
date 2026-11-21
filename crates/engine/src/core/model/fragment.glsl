@@ -1,7 +1,3 @@
-in vec3 Normal;
-in vec3 WorldPos;
-in vec2 TexCoords;
-
 out vec4 FragColor;
 
 // 1: a see-through silhouette in this colour instead of the material (a
@@ -17,7 +13,7 @@ void main()
         FragColor = vec4(tint.rgb * light, tint.a);
         return;
     }
-    FragColor = shadePbr(WorldPos, Normal, TexCoords);
+    FragColor = shadeMaterial(materialInputs());
     if (useTint == 2) {
         FragColor.a *= tint.a;
     }

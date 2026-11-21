@@ -51,7 +51,14 @@ const LOD_DIST_FAR: f32 = 250.0;
 /// locations 0, 1 and 2.
 fn vertex_layout() -> gfx::VertexLayout {
     use gfx::VertexFormat::*;
-    gfx::VertexLayout::packed(0, gfx::StepMode::Vertex, &[F32x3, F32x3, F32x2])
+    // Position, normal, UV at 0..2; the colour at 7 (3..6 are the
+    // instance's).
+    let attribute = |location, format, offset| gfx::VertexAttribute { location, format, offset };
+    gfx::VertexLayout::new(
+        36,
+        gfx::StepMode::Vertex,
+        &[attribute(0, F32x3, 0), attribute(1, F32x3, 12), attribute(2, F32x2, 24), attribute(7, U32, 32)],
+    )
 }
 
 /// An instance: its transform's columns at locations 3 to 6.

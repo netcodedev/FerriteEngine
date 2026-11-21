@@ -11,13 +11,14 @@ use russimp_ng::{
 
 use crate::core::{
     gfx,
+    material::{wind, Material, Pipeline},
     view_frustum::{Culled, ViewFrustum},
     assets::MaterialMap,
     renderer::{
         depth_pass,
         hdr,
-        pbr::{self, Lighting},
-        shader::{DynamicVertexArray, Shader},
+        pbr::Lighting,
+        shader::DynamicVertexArray,
         ssao,
         texture::Texture,
     },
@@ -48,23 +49,6 @@ fn triangle_indices(faces: &[russimp_ng::face::Face]) -> Vec<u32> {
         .filter(|f| f.0.len() == 3)
         .flat_map(|f| [f.0[0], f.0[1], f.0[2]])
         .collect()
-}
-
-thread_local! {
-    /// Every model's depth-only program (see `depth_pass`): its vertices
-    /// skinned as `vertex.glsl` does, the colour map's cut-out, no light.
-    static DEPTH_SHADER: Shader = Shader::new(
-        include_str!("vertex.glsl"),
-        depth_pass::ALPHA_TEST_FRAGMENT,
-    );
-    /// Every model's colour program: one for all of them (compiling the
-    /// PBR shader per model took seconds for a level of shapes). What
-    /// differs per model (transforms, bones, tint, material) is set on
-    /// every draw.
-    static COLOR_SHADER: Shader = Shader::new(
-        include_str!("vertex.glsl"),
-        &pbr::fragment_source(include_str!("fragment.glsl")),
-    );
 }
 
 impl Model {
@@ -102,13 +86,13 @@ impl Model {
     /// A model of an assimp scene made some other way (see `generated`):
     /// `name` as a file's stem, maps looked for next to it in `model_dir`.
     pub(super) fn from_scene<P: Into<Point3<f32>>>(scene: Scene, name: String, model_dir: String, position: P) -> Model {
-        // Compiled with the first model, as each model's own program was.
-        COLOR_SHADER.with(|_| ());
         Model {
             model: scene,
             meshes: Vec::new(),
-            textures: Vec::new(),
+            materials: Vec::new(),
+            file_materials: Vec::new(),
             shared_textures: Vec::new(),
+            map_textures: Vec::new(),
             name,
             model_dir,
             position: position.into(),
@@ -125,8 +109,9 @@ impl Model {
     pub fn init(&mut self) {
         self.pose_changed();
         let materials = &self.model.materials;
-        self.textures = Vec::with_capacity(materials.len());
+        let mut all_maps: Vec<HashMap<TextureType, Texture>> = Vec::with_capacity(materials.len());
         self.shared_textures.clear();
+        self.map_textures.clear();
         // Texture files by path and colour space, as uploaded: materials
         // often share one (an atlas), which is then read and uploaded once.
         let mut loaded: HashMap<(String, bool), usize> = HashMap::new();
@@ -195,9 +180,21 @@ impl Model {
                 }
             }
 
-            self.textures.push(per_material);
+            // The model keeps the textures; materials hold handles on them,
+            // so replacing a material (with a material asset's, say) never
+            // frees a texture another material still draws with.
+            let per_material = per_material
+                .into_iter()
+                .map(|(slot, texture)| {
+                    let handle = texture.share();
+                    self.map_textures.push(texture);
+                    (slot, handle)
+                })
+                .collect();
+            all_maps.push(per_material);
         }
-        self.apply_gltf_factors();
+        self.materials = self.materials_from_maps(all_maps);
+        self.file_materials = self.materials.clone();
         for mesh in &self.model.meshes {
             let indices = triangle_indices(&mesh.faces);
             if indices.is_empty() {
@@ -237,6 +234,7 @@ impl Model {
                     .flat_map(|v| vec![v.x, v.y, v.z])
                     .collect(),
                 texture_coords,
+                super::model_geometry::vertex_colors(mesh),
                 root_bone,
                 mesh.material_index as usize,
             );
@@ -340,12 +338,10 @@ impl Model {
         if opacity <= 0.001 || depth_pass::is_active() {
             return;
         }
-        COLOR_SHADER.with(|shader| {
-            if !see_inside {
-                self.draw_meshes_as(shader, Look::DepthOnly, meshes, lighting, parent_transform, camera_projection);
-            }
-            self.draw_meshes_as(shader, Look::Faded(opacity), meshes, lighting, parent_transform, camera_projection);
-        });
+        if !see_inside {
+            self.draw_meshes_as(Look::DepthOnly, meshes, lighting, parent_transform, camera_projection);
+        }
+        self.draw_meshes_as(Look::Faded(opacity), meshes, lighting, parent_transform, camera_projection);
     }
 
     /// Draw only the `meshes` named (see `variant_meshes`), tinted as
@@ -386,16 +382,12 @@ impl Model {
         if depth_only && tint.is_some() {
             return;
         }
-        let shader = if depth_only { &DEPTH_SHADER } else { &COLOR_SHADER };
-        shader.with(|shader| {
-            self.draw_meshes(shader, depth_only, only, tint, lighting, parent_transform, camera_projection);
-        });
+        self.draw_meshes(depth_only, only, tint, lighting, parent_transform, camera_projection);
     }
 
     #[allow(clippy::too_many_arguments)]
     fn draw_meshes(
         &self,
-        shader: &Shader,
         depth_only: bool,
         only: Option<&std::collections::HashSet<String>>,
         tint: Option<[f32; 4]>,
@@ -408,12 +400,11 @@ impl Model {
             (false, Some(tint)) => Look::Tint(tint),
             (false, None) => Look::Normal,
         };
-        self.draw_meshes_as(shader, look, only, lighting, parent_transform, camera_projection);
+        self.draw_meshes_as(look, only, lighting, parent_transform, camera_projection);
     }
 
     fn draw_meshes_as(
         &self,
-        shader: &Shader,
         look: Look,
         only: Option<&std::collections::HashSet<String>>,
         lighting: &Lighting,
@@ -421,44 +412,19 @@ impl Model {
         camera_projection: &Matrix4<f32>,
     ) {
         let depth_only = matches!(look, Look::DepthPass);
-        let mut desc = gfx::PipelineDesc {
-            vertex_layouts: crate::core::gfx::Layouts::of(&[DynamicVertexArray::<ModelMeshVertex>::layout()]),
-            depth: gfx::DepthState::LESS,
-            cull: gfx::Cull::Back,
-            ..Default::default()
-        };
-        match look {
-            // A tinted model is see-through and writes no depth.
-            Look::Tint(_) => {
-                desc.blend = Some(gfx::BlendState::ALPHA);
-                desc.depth.write = false;
-            }
-            Look::DepthOnly => desc.color_write = false,
-            // Over its own depth (if drawn first: only the front-most
-            // surface) and what is opaque.
-            Look::Faded(_) => {
-                desc.blend = Some(gfx::BlendState::ALPHA);
-                desc.depth = gfx::DepthState { write: false, ..gfx::DepthState::LEQUAL };
-            }
-            Look::Normal | Look::DepthPass => {}
-        }
-        gfx::set_pipeline(shader.pipeline(&desc));
-        if !depth_only {
-            lighting.apply(shader);
-        }
+        let pipeline = if depth_only { Pipeline::MeshDepth } else { Pipeline::Mesh };
         // Shadow maps and the editor's selection mask draw into their own
         // framebuffers and keep every bone. The ambient occlusion's depth
         // pass has its own too, but sees what the camera sees.
         let draws_to_screen = hdr::draws_to_view() || ssao::in_depth_pass();
-        shader
-            .set_uniform_mat4("viewProjection", &camera_projection);
         let (mode, [r, g, b, a]) = match look {
             Look::Tint(tint) => (1, tint),
             Look::Faded(opacity) => (2, [1.0, 1.0, 1.0, opacity]),
             _ => (0, [1.0; 4]),
         };
-        shader.set_uniform_1i("useTint", mode);
-        shader.set_uniform_4f("tint", r, g, b, a);
+        // The program and culling set up last: meshes of materials of the
+        // same graph (most of them) share them.
+        let mut current: Option<(u32, bool)> = None;
         for (index, (name, mesh)) in self.meshes.iter().enumerate() {
             let shown = match only {
                 Some(only) => only.contains(name),
@@ -469,6 +435,54 @@ impl Model {
             }
             if !mesh.is_buffered() {
                 panic!("Mesh is not buffered");
+            }
+            let fallback;
+            let material = match self.materials.get(mesh.material_index) {
+                Some(material) => material,
+                None => {
+                    fallback = Material::standard();
+                    &fallback
+                }
+            };
+            if depth_only && !material.shadows && !draws_to_screen {
+                continue;
+            }
+            let shader = material.program(pipeline);
+            let shader = &*shader;
+            if current != Some((shader.id(), material.two_sided)) {
+                current = Some((shader.id(), material.two_sided));
+                let mut desc = gfx::PipelineDesc {
+                    vertex_layouts: crate::core::gfx::Layouts::of(&[DynamicVertexArray::<ModelMeshVertex>::layout()]),
+                    depth: gfx::DepthState::LESS,
+                    cull: if material.two_sided { gfx::Cull::None } else { gfx::Cull::Back },
+                    ..Default::default()
+                };
+                match look {
+                    // A tinted model is see-through and writes no depth.
+                    Look::Tint(_) => {
+                        desc.blend = Some(gfx::BlendState::ALPHA);
+                        desc.depth.write = false;
+                    }
+                    Look::DepthOnly => desc.color_write = false,
+                    // Over its own depth (if drawn first: only the front-most
+                    // surface) and what is opaque.
+                    Look::Faded(_) => {
+                        desc.blend = Some(gfx::BlendState::ALPHA);
+                        desc.depth = gfx::DepthState { write: false, ..gfx::DepthState::LEQUAL };
+                    }
+                    Look::Normal | Look::DepthPass => {}
+                }
+                gfx::set_pipeline(shader.pipeline(&desc));
+                if !depth_only {
+                    lighting.apply(shader);
+                    shader.set_uniform_1i("useTint", mode);
+                    shader.set_uniform_4f("tint", r, g, b, a);
+                } else {
+                    let eye = lighting.camera_position;
+                    shader.set_uniform_3f("cameraPosition", eye.x, eye.y, eye.z);
+                }
+                shader.set_uniform_mat4("viewProjection", camera_projection);
+                wind::apply(shader, 1.0);
             }
             if let Some(root_bone) = &mesh.root_bone {
                 let collapse = draws_to_screen && !self.hidden_bones.is_empty();
@@ -500,7 +514,7 @@ impl Model {
                 shader
                     .set_uniform_mat4_array("boneTransforms", &vec![Matrix4::identity()]);
             }
-            pbr::bind_material(shader, self.textures.get(mesh.material_index));
+            material.bind(shader);
             mesh.render(
                 shader,
                 parent_transform * Matrix4::from_translation(self.position.to_vec().into()),
@@ -719,8 +733,8 @@ mod tests {
             let index = (0..model.material_count())
                 .find(|&i| model.material_name_at(i).as_deref() == Some(name))
                 .expect(name);
-            let maps = model.material_textures(index).unwrap();
-            assert!(maps.contains_key(&TextureType::Diffuse), "{name}");
+            let material = model.material(index).unwrap();
+            assert!(material.texture("base_color_map").is_some(), "{name}");
         }
     }
 

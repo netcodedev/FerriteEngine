@@ -69,23 +69,21 @@ fn anchors_of_the_asset_are_added_renamed_and_removed() {
 }
 
 #[test]
-fn giving_a_material_a_texture_marks_the_asset_changed() {
+fn giving_a_slot_a_material_marks_the_asset_changed() {
     let mut edit = edit();
-    let texture = AssetId::from(9);
-    edit.set_texture(0, TextureSlot::Normal, Some(texture));
-    let material = &edit.meta.as_model().unwrap().materials[0];
-    assert_eq!(material.normal, Some(texture));
-    assert_eq!(material.base_color, None);
+    let material = AssetId::from(9);
+    edit.set_material(0, Some(material));
+    assert_eq!(edit.meta.as_model().unwrap().materials[0].material, Some(material));
     assert!(edit.dirty);
     assert_eq!((edit.structure, edit.preview), (1, 1));
 
-    // The same texture again is not a change.
+    // The same material again is not a change.
     edit.dirty = false;
-    edit.set_texture(0, TextureSlot::Normal, Some(texture));
+    edit.set_material(0, Some(material));
     assert!(!edit.dirty);
     assert_eq!((edit.structure, edit.preview), (1, 1));
 
-    // A material that does not exist is ignored.
-    edit.set_texture(7, TextureSlot::BaseColor, Some(texture));
+    // A slot that does not exist is ignored.
+    edit.set_material(7, Some(material));
     assert!(!edit.dirty);
 }

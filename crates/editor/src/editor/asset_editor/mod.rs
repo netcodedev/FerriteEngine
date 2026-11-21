@@ -26,9 +26,6 @@ pub use inspector::*;
 pub use preview::*;
 use rig::*;
 
-/// A texture a material can be given.
-pub use ferrite::core::assets::MaterialMap as TextureSlot;
-
 /// The asset open in the asset workspace.
 pub struct AssetEdit {
     /// Working copy of the asset's sidecar.
@@ -330,8 +327,9 @@ impl AssetEdit {
         }
     }
 
-    /// Give a material a texture (or none, for the automatic one).
-    pub fn set_texture(&mut self, material: usize, slot: TextureSlot, texture: Option<AssetId>) {
+    /// Draw a material slot with a material asset (or what the loader
+    /// makes of the file's material).
+    pub fn set_material(&mut self, material: usize, asset: Option<AssetId>) {
         let Some(material) = self
             .meta
             .as_model_mut()
@@ -339,8 +337,8 @@ impl AssetEdit {
         else {
             return;
         };
-        if material.map(slot) != texture {
-            material.set_map(slot, texture);
+        if material.material != asset {
+            material.material = asset;
             self.dirty = true;
             self.structure += 1;
             self.preview += 1;

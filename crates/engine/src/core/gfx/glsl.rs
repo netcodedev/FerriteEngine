@@ -274,7 +274,8 @@ fn defines(source: &str) -> HashMap<String, String> {
     for statement in strip_comments(source).split(';') {
         let statement: Vec<&str> = statement.lines().filter(|l| !l.trim_start().starts_with('#')).collect();
         let statement = statement.join("\n");
-        let s = statement.trim();
+        // After a function's body: only what follows it.
+        let s = statement.rsplit(['}', '{']).next().unwrap_or("").trim();
         let Some(rest) = s.strip_prefix("const") else { continue };
         let rest = rest.trim();
         let Some(rest) = rest.strip_prefix("int").or_else(|| rest.strip_prefix("uint")) else { continue };

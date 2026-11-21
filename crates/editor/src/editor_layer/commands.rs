@@ -23,6 +23,7 @@ use crate::editor::{
     clip_editor::{self, ClipRequest},
     dialogs,
     export::{self, Exporter},
+    material::MaterialEdit,
     scatter::ScatterEdit,
     Command, GizmoMode, Mode, Workspace,
 };
@@ -149,6 +150,12 @@ impl EditorLayer {
             }
             Command::SaveFirst(then) => {
                 let unsaved = self.unsaved_for(&then);
+                if unsaved.asset && self.state.borrow().material.as_ref().is_some_and(|e| e.dirty()) {
+                    self.run(Command::SaveMaterial);
+                    if self.state.borrow().material.as_ref().is_some_and(|e| e.dirty()) {
+                        return;
+                    }
+                }
                 if unsaved.asset && self.state.borrow().scatter.as_ref().is_some_and(|e| e.dirty()) {
                     self.run(Command::SaveScatter);
                     if self.state.borrow().scatter.as_ref().is_some_and(|e| e.dirty()) {
@@ -304,6 +311,7 @@ impl EditorLayer {
                     let mut problems = database.scan();
                     // Files added by hand since the last look become assets.
                     problems.extend(database.register_new_files().1);
+                    problems.extend(ferrite::core::material::asset::ensure_all_model_materials(&mut database).1);
                     (database.len(), problems)
                 };
                 let mut state = self.state.borrow_mut();
@@ -443,6 +451,7 @@ impl EditorLayer {
                 state.anim_panels.write(workspace == Workspace::Animation);
                 state.asset_panels.write(workspace == Workspace::Asset);
                 state.scatter_panels.write(workspace == Workspace::ScatterGraph);
+                state.material_panels.write(workspace == Workspace::Material);
                 state.browser_panel.write(workspace != Workspace::Animation);
             }
             Command::CloseScatterEditor => {
@@ -503,6 +512,109 @@ impl EditorLayer {
                             spawn.model.clear();
                         }
                     });
+                }
+            }
+            Command::EditAsset { id, .. } if MaterialEdit::handles(id) => {
+                let open = self.state.borrow().material.as_ref().is_some_and(|edit| edit.asset == id);
+                if !open {
+                    let unsaved = self
+                        .state
+                        .borrow()
+                        .material
+                        .as_ref()
+                        .filter(|edit| edit.dirty())
+                        .map(|edit| edit.name.clone());
+                    if let Some(name) = unsaved {
+                        self.state.borrow_mut().set_status(format!("Save or revert '{name}' first"));
+                        self.run(Command::SetWorkspace(Workspace::Material));
+                        return;
+                    }
+                    match MaterialEdit::open(id) {
+                        Ok(edit) => self.state.borrow_mut().material = Some(edit),
+                        Err(e) => {
+                            self.state.borrow_mut().set_status(e);
+                            return;
+                        }
+                    }
+                }
+                self.run(Command::SetWorkspace(Workspace::Material));
+            }
+            Command::CloseMaterialEditor => self.run(Command::SetWorkspace(Workspace::Scene)),
+            Command::NewMaterial { graph } => {
+                let made = ferrite::core::material::asset::create(&mut assets::database(), None, graph);
+                match made {
+                    Ok(id) => self.run(Command::EditAsset { id, variant: None }),
+                    Err(e) => self.state.borrow_mut().set_status(format!("Could not make the material: {e}")),
+                }
+            }
+            Command::SaveMaterial => {
+                let result = self.state.borrow_mut().material.as_mut().map(|edit| edit.save().map(|_| edit.name.clone()));
+                let message = match result {
+                    Some(Ok(name)) => format!("Saved material '{name}'"),
+                    Some(Err(e)) => format!("Could not save the material: {e}"),
+                    None => return,
+                };
+                self.state.borrow_mut().set_status(message);
+            }
+            Command::RevertMaterial => {
+                if let Some(edit) = self.state.borrow_mut().material.as_mut() {
+                    edit.revert();
+                }
+            }
+            Command::MaterialAddMenu => self.state.borrow_mut().material_open_menu = true,
+            Command::MaterialFit => self.state.borrow_mut().material_fit = true,
+            Command::MaterialUndo => {
+                if let Some(edit) = self.state.borrow_mut().material.as_mut() {
+                    edit.undo();
+                }
+            }
+            Command::MaterialRedo => {
+                if let Some(edit) = self.state.borrow_mut().material.as_mut() {
+                    edit.redo();
+                }
+            }
+            Command::MaterialDelete => {
+                if let Some(edit) = self.state.borrow_mut().material.as_mut() {
+                    edit.delete_selection();
+                }
+            }
+            Command::MaterialAddParam => {
+                let mut state = self.state.borrow_mut();
+                if let Some(edit) = state.material.as_mut() {
+                    let taken: Vec<String> = edit.graph().map(|g| g.params.iter().map(|p| p.name.clone()).collect()).unwrap_or_default();
+                    let name = (1..).map(|n| format!("param_{n}")).find(|n| !taken.contains(n)).unwrap_or_default();
+                    let op = serde_json::json!({"op": "add_param", "name": name, "type": "float"});
+                    if let Err(e) = edit.apply_ops(&[op]) {
+                        state.set_status(e);
+                    }
+                }
+            }
+            Command::MaterialRemoveParam(name) => {
+                if let Some(edit) = self.state.borrow_mut().material.as_mut() {
+                    let _ = edit.apply_ops(&[serde_json::json!({"op": "remove_param", "name": name})]);
+                }
+            }
+            Command::PickMaterialTexture { param } => dialogs::pick_material_texture(&self.state, param),
+            Command::SetMaterialTexture { param, texture } => {
+                let mut state = self.state.borrow_mut();
+                if let Some(edit) = state.material.as_mut() {
+                    let value = match texture {
+                        ferrite::core::material::asset::TextureSetting::Auto => "auto".to_string(),
+                        ferrite::core::material::asset::TextureSetting::None => "none".to_string(),
+                        ferrite::core::material::asset::TextureSetting::Asset(id) => id.to_string(),
+                    };
+                    if let Err(e) = edit.set_material_property(
+                        &param,
+                        &ferrite::core::entity::component::PropertyValue::Text(value),
+                    ) {
+                        state.set_status(e);
+                    }
+                }
+            }
+            Command::PickModelMaterial { material } => dialogs::pick_model_material(&self.state, material),
+            Command::SetModelMaterial { material, asset } => {
+                if let Some(edit) = self.state.borrow_mut().asset_edit.as_mut() {
+                    edit.set_material(material, asset);
                 }
             }
             Command::EditAsset { id, .. } if Self::is_scatter_graph(id) => {
@@ -631,18 +743,6 @@ impl EditorLayer {
                     clip.requests.push(request);
                 }
             }
-            Command::PickAssetTexture { material, slot } => {
-                dialogs::pick_asset_texture(&self.state, material, slot)
-            }
-            Command::SetAssetTexture {
-                material,
-                slot,
-                texture,
-            } => {
-                if let Some(edit) = self.state.borrow_mut().asset_edit.as_mut() {
-                    edit.set_texture(material, slot, texture);
-                }
-            }
             Command::SaveGraph => {
                 let result = self.state.borrow_mut().anim.save();
                 match result {
@@ -736,7 +836,8 @@ impl EditorLayer {
         let graph = state.anim.dirty;
         // An unsaved scatter graph counts as an unsaved asset.
         let asset = state.asset_edit.as_ref().is_some_and(|edit| edit.dirty)
-            || state.scatter.as_ref().is_some_and(|edit| edit.dirty());
+            || state.scatter.as_ref().is_some_and(|edit| edit.dirty())
+            || state.material.as_ref().is_some_and(|edit| edit.dirty());
         match then {
             Command::Quit | Command::ExportGame(_) => dialogs::Unsaved {
                 scene: state.dirty,
@@ -801,6 +902,31 @@ impl EditorLayer {
                 (Key::F, false, _) | (Key::Home, false, _) => Some(Command::ScatterFit),
                 (Key::Escape, false, _) => {
                     if let Some(edit) = self.state.borrow_mut().scatter.as_mut() {
+                        edit.select(Vec::new());
+                    }
+                    return true;
+                }
+                _ => None,
+            };
+            return match command {
+                Some(command) => {
+                    self.state.borrow_mut().push(command);
+                    true
+                }
+                None => false,
+            };
+        }
+        if workspace == Workspace::Material {
+            let graph = self.state.borrow().material.as_ref().is_some_and(|e| e.is_graph());
+            let command = match (key, ctrl, shift) {
+                (Key::S, true, _) => Some(Command::SaveMaterial),
+                (Key::Z, true, false) => Some(Command::MaterialUndo),
+                (Key::Z, true, true) | (Key::Y, true, _) => Some(Command::MaterialRedo),
+                (Key::Delete | Key::Backspace, false, _) if graph => Some(Command::MaterialDelete),
+                (Key::Space, false, _) | (Key::A, false, true) if graph => Some(Command::MaterialAddMenu),
+                (Key::F, false, _) | (Key::Home, false, _) if graph => Some(Command::MaterialFit),
+                (Key::Escape, false, _) => {
+                    if let Some(edit) = self.state.borrow_mut().material.as_mut() {
                         edit.select(Vec::new());
                     }
                     return true;

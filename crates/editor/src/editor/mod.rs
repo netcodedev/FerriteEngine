@@ -24,10 +24,12 @@ pub mod dialogs;
 pub mod drag;
 pub mod export;
 pub mod field_row;
+pub mod graph_canvas;
 pub mod graphics_panel;
 pub mod hierarchy;
 pub mod inspector;
 pub mod layout;
+pub mod material;
 pub mod outline;
 pub mod project_settings;
 pub mod scatter;
@@ -55,6 +57,8 @@ pub enum Workspace {
     Asset,
     /// A scatter graph's nodes (see `scatter`).
     ScatterGraph,
+    /// A material or material graph (see `material`).
+    Material,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,18 +154,19 @@ pub enum Command {
     NewClip { model: AssetId, name: String },
     /// Ask the open clip for something (shortcuts).
     Clip(clip_editor::ClipRequest),
-    /// Let the user choose a texture asset for a material of the edited
-    /// asset.
-    PickAssetTexture {
-        material: usize,
-        slot: asset_editor::TextureSlot,
-    },
-    /// Give a material of the edited asset a texture; `None` goes back to
-    /// the automatic one.
-    SetAssetTexture {
-        material: usize,
-        slot: asset_editor::TextureSlot,
-        texture: Option<AssetId>,
+    /// Let the user choose the material asset a material slot of the
+    /// edited model asset is drawn with.
+    PickModelMaterial { material: usize },
+    /// Draw a material slot of the edited model asset with a material
+    /// asset (`None`: what the loader makes of the file's material).
+    SetModelMaterial { material: usize, asset: Option<AssetId> },
+    /// Let the user choose a texture for a texture parameter of the
+    /// material being edited.
+    PickMaterialTexture { param: String },
+    /// Set a texture parameter of the material being edited.
+    SetMaterialTexture {
+        param: String,
+        texture: ferrite::core::material::asset::TextureSetting,
     },
     /// Let the user choose the model asset an entity shows; an entity
     /// without a model component gets one.
@@ -207,6 +212,20 @@ pub enum Command {
     ScatterDelete,
     ScatterCopy,
     ScatterPaste,
+    /// Leave the material workspace (unsaved edits stay in memory).
+    CloseMaterialEditor,
+    SaveMaterial,
+    RevertMaterial,
+    MaterialAddMenu,
+    MaterialFit,
+    MaterialUndo,
+    MaterialRedo,
+    MaterialDelete,
+    /// Make a new material (or material graph) asset and open it.
+    NewMaterial { graph: bool },
+    /// Add a parameter to the open material graph.
+    MaterialAddParam,
+    MaterialRemoveParam(String),
     /// Ask which model a scatter graph's `Spawn mesh` node plants.
     PickScatterModel(ferrite::terrain::scatter::graph::NodeId),
     SetScatterModel {
@@ -238,6 +257,7 @@ pub struct EditorState {
     pub anim_panels: DataSource<bool>,
     pub asset_panels: DataSource<bool>,
     pub scatter_panels: DataSource<bool>,
+    pub material_panels: DataSource<bool>,
     /// The asset browser is part of the scene and the asset workspace.
     pub browser_panel: DataSource<bool>,
     /// The asset open in the asset workspace.
@@ -245,6 +265,11 @@ pub struct EditorState {
     pub anim: anim::AnimEditor,
     /// The scatter graph open in the scatter graph workspace.
     pub scatter: Option<scatter::ScatterEdit>,
+    /// The material or material graph open in the material workspace.
+    pub material: Option<material::MaterialEdit>,
+    /// Asks the material graph canvas to open its add menu, or to fit.
+    pub material_open_menu: bool,
+    pub material_fit: bool,
     /// Asks the scatter canvas to open its add menu, or to fit the view.
     pub scatter_open_menu: bool,
     pub scatter_fit: bool,
@@ -315,10 +340,14 @@ impl EditorState {
             anim_panels: DataSource::new(false),
             asset_panels: DataSource::new(false),
             scatter_panels: DataSource::new(false),
+            material_panels: DataSource::new(false),
             browser_panel: DataSource::new(true),
             asset_edit: None,
             anim: anim::AnimEditor::new(),
             scatter: None,
+            material: None,
+            material_open_menu: false,
+            material_fit: false,
             scatter_open_menu: false,
             scatter_fit: false,
             scatter_preview_3d: true,

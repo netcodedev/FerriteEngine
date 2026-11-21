@@ -340,6 +340,9 @@ impl AssetPreview {
                 }
             }
             AssetKind::ScatterGraph(_) => Shown::Note("A scatter graph. It is edited in the node editor (to come).".into()),
+            AssetKind::Material(_) | AssetKind::MaterialGraph(_) => {
+                Shown::Note("A material. It is edited in the material workspace.".into())
+            }
             AssetKind::Animation(animation) => Shown::Note(format!(
                 "{} animation clip{}. Use them in an animation graph to see them play.",
                 animation.clips.len(),

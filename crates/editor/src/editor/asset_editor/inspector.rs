@@ -47,9 +47,9 @@ pub(super) fn header_button(
 }
 
 /// Name of a texture asset for a slot row.
-fn texture_name(texture: Option<AssetId>) -> String {
-    match texture {
-        None => "automatic".into(),
+fn material_name(material: Option<AssetId>) -> String {
+    match material {
+        None => "from the file".into(),
         Some(id) => assets::database()
             .get(id)
             .map(|entry| entry.meta.name.clone())
@@ -64,7 +64,6 @@ struct Bindings {
     variant: DataSource<u32>,
     /// 0 is "automatic", then the LODs.
     lod: DataSource<u32>,
-    foliage: Vec<DataSource<bool>>,
     /// Length of a clip in seconds.
     length: Option<DataSource<f32>>,
     /// How opaque a clip's model is drawn.
@@ -133,8 +132,8 @@ pub struct AssetInspector {
     revert: Button,
     back: Button,
     bindings: Option<Bindings>,
-    /// Rows a texture asset can be dropped on.
-    slot_rows: Vec<(UIElementHandle, usize, TextureSlot)>,
+    /// Rows a material asset can be dropped on.
+    slot_rows: Vec<(UIElementHandle, usize)>,
     /// `(asset, structure counter, width, clip selection)` the panel was
     /// built for.
     built_for: Option<(AssetId, u64, i32, u64)>,
@@ -239,7 +238,6 @@ impl AssetInspector {
             scale: DataSource::new(1.0),
             variant: DataSource::new(edit.variant as u32),
             lod: DataSource::new(edit.lod.map_or(0, |lod| lod as u32 + 1)),
-            foliage: Vec::new(),
             length: None,
             model_opacity: None,
             grip: None,
@@ -483,62 +481,32 @@ impl AssetInspector {
                     format!("Material: {}", material.name)
                 };
                 let mut section = Section::new(&title, Some(icons::LAYERS), width);
-                for slot in TextureSlot::ALL {
-                    let pick_state = self.state.clone();
-                    let mut pick = Button::new(
+                let pick_state = self.state.clone();
+                let mut pick = Button::new(
+                    Position::default(),
+                    Size::new(24.0, 24.0),
+                    Box::new(move |_| send(&pick_state, Command::PickModelMaterial { material: index })),
+                );
+                pick.set_style(ButtonStyle::Secondary);
+                pick.set_icon(icons::LAYOUT_GRID);
+                pick.set_tooltip("Choose a material asset (or drop one here)");
+                let mut row_widgets: Vec<Box<dyn UIElement>> = vec![Box::new(pick)];
+                if let Some(id) = material.material {
+                    let open_state = self.state.clone();
+                    let mut open = Button::new(
                         Position::default(),
                         Size::new(24.0, 24.0),
-                        Box::new(move |_| {
-                            send(
-                                &pick_state,
-                                Command::PickAssetTexture {
-                                    material: index,
-                                    slot,
-                                },
-                            )
-                        }),
+                        Box::new(move |_| send(&open_state, Command::EditAsset { id, variant: None })),
                     );
-                    pick.set_style(ButtonStyle::Secondary);
-                    pick.set_icon(icons::LAYOUT_GRID);
-                    pick.set_tooltip("Choose a texture asset");
-                    let clear_state = self.state.clone();
-                    let mut clear = Button::new(
-                        Position::default(),
-                        Size::new(24.0, 24.0),
-                        Box::new(move |_| {
-                            send(
-                                &clear_state,
-                                Command::SetAssetTexture {
-                                    material: index,
-                                    slot,
-                                    texture: None,
-                                },
-                            )
-                        }),
-                    );
-                    clear.set_style(ButtonStyle::Danger);
-                    clear.set_icon(icons::X);
-                    clear.set_tooltip("Back to the automatic texture");
-                    let row = Box::new(FieldRow::new(
-                        slot.label(),
-                        vec![
-                            Box::new(pick),
-                            Box::new(clear),
-                            muted(texture_name(material.map(slot))),
-                        ],
-                    ));
-                    self.slot_rows.push((*row.get_handle(), index, slot));
-                    section.add_child(row);
+                    open.set_style(ButtonStyle::Secondary);
+                    open.set_icon(icons::PENCIL);
+                    open.set_tooltip("Edit this material");
+                    row_widgets.push(Box::new(open));
                 }
-                let foliage = DataSource::new(material.foliage);
-                section.add_child(Box::new(FieldRow::new(
-                    "foliage",
-                    vec![
-                        UI::checkbox(foliage.clone()),
-                        muted("no collision".to_string()),
-                    ],
-                )));
-                bindings.foliage.push(foliage);
+                row_widgets.push(muted(material_name(material.material)));
+                let row = Box::new(FieldRow::new("Material", row_widgets));
+                self.slot_rows.push((*row.get_handle(), index));
+                section.add_child(row);
                 self.body.add_child(Box::new(section));
             }
         }
@@ -592,12 +560,6 @@ impl AssetInspector {
                 model.scale = scale;
                 dirty = true;
                 reload = true;
-            }
-            for (material, foliage) in model.materials.iter_mut().zip(&bindings.foliage) {
-                if material.foliage != foliage.read() {
-                    material.foliage = foliage.read();
-                    dirty = true;
-                }
             }
         }
         if let (Some(opacity), Some(clip)) = (&bindings.model_opacity, edit.clip.as_mut()) {
@@ -731,7 +693,7 @@ impl AssetInspector {
     fn register_drop_targets(&self) {
         let panel = self.rect();
         let mut targets = Vec::new();
-        for (handle, material, slot) in &self.slot_rows {
+        for (handle, material) in &self.slot_rows {
             let Some(row) = self.body.get_child(handle) else {
                 continue;
             };
@@ -746,10 +708,7 @@ impl AssetInspector {
             }
             targets.push(DropTarget {
                 rect,
-                action: DropAction::MaterialTexture {
-                    material: *material,
-                    slot: *slot,
-                },
+                action: DropAction::ModelMaterial { material: *material },
             });
         }
         self.state.borrow_mut().drop_targets.extend(targets);

@@ -130,6 +130,7 @@ impl Drop for Application {
         // once the window is dropped: see `Window`'s `Drop`.)
         crate::terrain::scatter::release_gl_resources();
         crate::core::renderer::particles::release_gl_resources();
+        crate::core::material::release_gl_resources();
         crate::core::renderer::run_gl_teardown();
         crate::core::gfx::collect_garbage();
     }
