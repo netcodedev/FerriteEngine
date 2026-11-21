@@ -12,6 +12,7 @@ use crate::core::renderer::{
 };
 
 mod animation;
+pub mod anchor;
 pub mod animation_graph;
 pub mod ik;
 mod bone;

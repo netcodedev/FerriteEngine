@@ -40,7 +40,10 @@ use crate::editor::{
 
 use super::*;
 
+mod references;
 mod ui;
+
+use references::{AnchorDrag, RefModel};
 
 /// Seconds the settings have to stay untouched before the preview loads
 /// the model again (typing a scale would otherwise reload per digit).
@@ -62,6 +65,10 @@ pub(super) fn settled_since<K: PartialEq + Copy>(
         }
     }
 }
+/// Closest and farthest the camera gets to what it looks at, in model
+/// radii (with panning, close enough to look at a hand on a wheel).
+pub(super) const MIN_ZOOM: f32 = 0.03;
+pub(super) const MAX_ZOOM: f32 = 12.0;
 /// Camera distance in model radii at which a model fits the view.
 pub(super) const DEFAULT_ZOOM: f32 = 3.6;
 /// Longest edge (px) a texture is shown at, room permitting.
@@ -73,6 +80,10 @@ struct Orbit {
     /// In multiples of the model's radius.
     zoom: f32,
     dragging: Option<(f64, f64)>,
+    /// Where the camera looks, moved from the model's centre (right or
+    /// middle mouse button).
+    pan: Vector3<f32>,
+    panning: Option<(f64, f64)>,
 }
 
 /// What the preview currently shows.
@@ -129,6 +140,9 @@ pub struct AssetPreview {
     reset_pose: DataSource<bool>,
     skeleton_button: Button,
     reset_button: Button,
+    frame_button: Button,
+    /// Set by the frame button: the camera goes back to the model.
+    frame_request: DataSource<bool>,
     /// Chain whose handle is under the cursor.
     hovered: Option<usize>,
     ik_drag: Option<IkDrag>,
@@ -151,6 +165,18 @@ pub struct AssetPreview {
     posed_for: Option<(f32, u64)>,
     last_tick: Instant,
     z: f32,
+    /// The models of the clip's references (`None` where one failed to
+    /// load), and the `(asset, references counter, preview counter)` they
+    /// were loaded for.
+    refs: Vec<Option<RefModel>>,
+    refs_for: Option<(AssetId, u64, u64)>,
+    anchor_drag: Option<AnchorDrag>,
+    hovered_anchor: Option<AnchorPick>,
+    hovered_anchor_ring: Option<usize>,
+    hovered_anchor_arrow: Option<usize>,
+    /// A press on a reference that orbits unless it ends where it began:
+    /// then it selects the reference (`click_reference`).
+    reference_press: Option<(usize, f64, f64)>,
 }
 
 impl AssetPreview {
@@ -177,6 +203,15 @@ impl AssetPreview {
             Box::new(move |_| reset_flag.write(true)),
         );
         reset_button.set_tooltip("Put every bone back where the file has it");
+        let frame_request = DataSource::new(false);
+        let frame_flag = frame_request.clone();
+        let mut frame_button = header_button(
+            "Center view",
+            icons::SCAN,
+            ButtonStyle::Secondary,
+            Box::new(move |_| frame_flag.write(true)),
+        );
+        frame_button.set_tooltip("Look at the model again (right or middle mouse button moves the view)");
         let timeline = Timeline::new(state.clone());
         Self {
             handle: UIElementHandle::new(),
@@ -186,6 +221,8 @@ impl AssetPreview {
             reset_pose,
             skeleton_button,
             reset_button,
+            frame_button,
+            frame_request,
             hovered: None,
             ik_drag: None,
             selected: None,
@@ -200,13 +237,20 @@ impl AssetPreview {
             posed_for: None,
             last_tick: Instant::now(),
             z: 0.0,
+            refs: Vec::new(),
+            refs_for: None,
+            anchor_drag: None,
+            hovered_anchor: None,
+            hovered_anchor_ring: None,
+            hovered_anchor_arrow: None,
+            reference_press: None,
             shown: Shown::Nothing,
             shown_for: None,
             framed_for: None,
             pending_since: None,
             message: theme::text("", theme::FONT_SIZE, theme::TEXT_MUTED),
             hint: theme::text(
-                "Drag to orbit, scroll to zoom",
+                "Drag to orbit, right or middle mouse to move the view, scroll to zoom",
                 theme::FONT_SIZE_SMALL,
                 theme::TEXT_DIM,
             ),
@@ -215,6 +259,8 @@ impl AssetPreview {
                 pitch: 0.25,
                 zoom: DEFAULT_ZOOM,
                 dragging: None,
+                pan: Vector3::new(0.0, 0.0, 0.0),
+                panning: None,
             },
         }
     }
@@ -256,6 +302,12 @@ impl AssetPreview {
         self.touched.clear();
         self.posed_for = None;
         self.ring_drag = None;
+        self.anchor_drag = None;
+        self.hovered_anchor = None;
+        self.hovered_anchor_ring = None;
+        self.hovered_anchor_arrow = None;
+        self.reference_press = None;
+        self.refs_for = None;
         if self.load_clip() {
             return;
         }
@@ -306,12 +358,12 @@ impl AssetPreview {
         self.hovered = None;
         self.hint.set_content(match self.shown {
             Shown::Rigged(_) => {
-                "Drag a handle to pose, elsewhere to orbit, scroll to zoom"
+                "Drag a handle to pose, elsewhere to orbit; right or middle mouse moves the view, scroll zooms"
             }
             Shown::Held(_) => {
                 "Drag the model to move it in the hand, the blue diamond for the other hand; elsewhere to orbit"
             }
-            _ => "Drag to orbit, scroll to zoom",
+            _ => "Drag to orbit, right or middle mouse to move the view, scroll to zoom",
         });
     }
 
@@ -319,17 +371,11 @@ impl AssetPreview {
     fn load_clip(&mut self) -> bool {
         let model = {
             let state = self.state.borrow();
-            let Some(clip) = state.asset_edit.as_ref().and_then(|edit| edit.clip.as_ref()) else {
+            let Some(edit) = state.asset_edit.as_ref().filter(|edit| edit.clip.is_some()) else {
                 return false;
             };
+            let id = edit.clip_model();
             let database = assets::database();
-            let id = clip.file.model.or_else(|| {
-                let source = database
-                    .root()
-                    .join("models")
-                    .join(ferrite::player::PLAYER_MODEL_FILE);
-                database.find_by_source(&source)
-            });
             id.and_then(|id| database.get(id)).and_then(|entry| {
                 Some((entry.source_path(), entry.meta.as_model()?.clone()))
             })
@@ -376,7 +422,7 @@ impl AssetPreview {
             }
         }
         self.hint.set_content(
-            "Drag a handle or ring to pose, click a joint to select it, elsewhere to orbit",
+            "Drag a handle or ring to pose, click a joint to select it. Click a reference or an anchor, then drag its arrows, diamond or rings, or Shift+drag the model. Drag to orbit, right or middle mouse moves the view",
         );
         true
     }
@@ -397,6 +443,11 @@ impl AssetPreview {
         let Shown::Rigged(rigged) = &self.shown else { return };
         if self.clip_mode {
             let name = joint.map(|j| rigged.skeleton.joints[j].name.clone());
+            if name.is_some() {
+                if let Some(edit) = self.state.borrow_mut().asset_edit.as_mut() {
+                    edit.select_anchor(None);
+                }
+            }
             self.with_clip(|clip| clip.select(name));
         } else {
             self.selected = joint;
@@ -891,7 +942,32 @@ impl AssetPreview {
         self.set_grip(grip);
     }
 
+    /// The centre and radius the camera is framed by, for what is shown.
+    pub(super) fn framing(&self) -> Option<(Point3<f32>, f32)> {
+        match &self.shown {
+            Shown::Model { center, radius, .. } => Some((*center, *radius)),
+            Shown::Rigged(rigged) => Some((rigged.center, rigged.radius)),
+            Shown::Held(held) => Some((held.center, held.radius)),
+            _ => None,
+        }
+    }
+
+    /// Move the camera's target by a cursor move of `(dx, dy)` pixels: the
+    /// model follows the cursor.
+    pub(super) fn pan_by(&mut self, dx: f32, dy: f32) {
+        let Some((_, radius)) = self.framing() else { return };
+        let view = self.view_rect();
+        let o = &self.orbit;
+        let back = Vector3::new(o.pitch.cos() * o.yaw.sin(), o.pitch.sin(), o.pitch.cos() * o.yaw.cos());
+        let right = (-back).cross(Vector3::unit_y()).normalize();
+        let up = right.cross(-back).normalize();
+        // Metres per pixel at the target's distance (38° field of view).
+        let per_pixel = 2.0 * radius * o.zoom * (19.0f32).to_radians().tan() / view.h.max(1.0);
+        self.orbit.pan += (-right * dx + up * dy) * per_pixel;
+    }
+
     fn eye(&self, center: Point3<f32>, radius: f32) -> Point3<f32> {
+        let center = center + self.orbit.pan;
         let o = &self.orbit;
         let distance = radius * o.zoom;
         center
@@ -907,10 +983,12 @@ impl AssetPreview {
         let projection = perspective(
             Deg(38.0),
             view.w / view.h.max(1.0),
-            (radius * 0.02).max(0.001),
+            // Close to the target (zoomed in on a hand) nothing near may be
+            // cut off: the near plane comes with the camera.
+            (radius * self.orbit.zoom * 0.05).clamp(0.0005, radius * 0.02),
             radius * 40.0,
         );
-        projection * Matrix4::look_at_rh(eye, center, Vector3::unit_y())
+        projection * Matrix4::look_at_rh(eye, center + self.orbit.pan, Vector3::unit_y())
     }
 }
 

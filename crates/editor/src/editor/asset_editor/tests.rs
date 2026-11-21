@@ -21,6 +21,7 @@ fn edit() -> AssetEdit {
                 }],
                 clips: Vec::new(),
                 grip: None,
+                anchors: Vec::new(),
             }),
         },
         dir: PathBuf::from("assets/models/test"),
@@ -33,7 +34,38 @@ fn edit() -> AssetEdit {
         holding: false,
         hold_poses: Vec::new(),
         hold_pose: 0,
+        others: Vec::new(),
+        anchor: None,
     }
+}
+
+#[test]
+fn anchors_of_the_asset_are_added_renamed_and_removed() {
+    let mut edit = edit();
+    let id = edit.meta.id;
+    edit.add_anchor(id, None, [0.0, 0.7, 0.0]);
+    edit.add_anchor(id, Some("mixamorig1:Spine2".into()), [0.0; 3]);
+    let names: Vec<String> = edit.anchors(id).into_iter().map(|a| a.name).collect();
+    assert_eq!(names, ["anchor", "Spine2"]);
+    assert!(edit.dirty);
+    // The new one is selected.
+    assert_eq!(edit.anchor, Some(AnchorPick { asset: id, name: "Spine2".into() }));
+
+    // Renaming keeps the selection on it; a taken name is refused.
+    let mut back = edit.anchor_named(id, "Spine2").unwrap();
+    back.name = "back".into();
+    edit.set_anchor(id, "Spine2", back);
+    assert_eq!(edit.anchor.as_ref().map(|p| p.name.as_str()), Some("back"));
+    let mut clash = edit.anchor_named(id, "back").unwrap();
+    clash.name = "anchor".into();
+    edit.set_anchor(id, "back", clash);
+    assert!(edit.anchor_named(id, "back").is_some());
+
+    edit.remove_anchor();
+    assert_eq!(edit.anchors(id).len(), 1);
+    assert_eq!(edit.anchor, None);
+    // Nothing went to other assets.
+    assert!(edit.others.is_empty());
 }
 
 #[test]

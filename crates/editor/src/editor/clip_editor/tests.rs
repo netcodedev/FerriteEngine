@@ -68,3 +68,35 @@ fn saving_carries_the_rest_pose_along() {
     assert_eq!(clip.to_save().rest.len(), 1);
     assert!(clip.file.rest.is_empty());
 }
+
+#[test]
+fn references_count_model_changes_and_follow_renamed_anchors() {
+    use ferrite::core::{
+        assets::AssetId,
+        model::{anchor::ReferenceLink, clip_file::ClipReference},
+    };
+    let (truck, character) = (AssetId::from(1), AssetId::from(2));
+    let mut clip = ClipEdit::new(ClipFile::new(Some(character), 1.0));
+    clip.add_reference(ClipReference {
+        model: truck,
+        link: ReferenceLink::Carries,
+        anchor: Some("seat".into()),
+        model_anchor: Some("hips".into()),
+        opacity: 1.0,
+    });
+    assert_eq!(clip.references, 1);
+    // Another anchor: the same model, nothing to load.
+    let mut changed = clip.file.references[0].clone();
+    changed.link = ReferenceLink::Follows;
+    assert!(clip.set_reference(0, changed.clone()));
+    assert!(!clip.set_reference(0, changed));
+    assert_eq!(clip.references, 1);
+    clip.rename_anchor(truck, Some(character), "seat", "driver seat");
+    clip.rename_anchor(character, Some(character), "hips", "pelvis");
+    let reference = &clip.file.references[0];
+    assert_eq!(reference.anchor.as_deref(), Some("driver seat"));
+    assert_eq!(reference.model_anchor.as_deref(), Some("pelvis"));
+    clip.remove_reference(0);
+    assert!(clip.file.references.is_empty());
+    assert_eq!(clip.references, 2);
+}

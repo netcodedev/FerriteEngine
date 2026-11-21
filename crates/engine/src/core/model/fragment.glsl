@@ -4,8 +4,9 @@ in vec2 TexCoords;
 
 out vec4 FragColor;
 
-// A see-through silhouette in this colour instead of the material (a
-// preview), lit just enough to show its shape.
+// 1: a see-through silhouette in this colour instead of the material (a
+// preview), lit just enough to show its shape. 2: the material as it is,
+// tint.a opaque (a faded model in an editor preview).
 uniform int useTint;
 uniform vec4 tint;
 
@@ -17,4 +18,7 @@ void main()
         return;
     }
     FragColor = shadePbr(WorldPos, Normal, TexCoords);
+    if (useTint == 2) {
+        FragColor.a *= tint.a;
+    }
 }

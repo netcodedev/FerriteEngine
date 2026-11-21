@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetId;
 
-use super::{Animation, Channel};
+use super::{anchor::ReferenceLink, Animation, Channel};
 
 pub const CLIP_FILE_VERSION: u32 = 1;
 /// What the name of a clip file ends with.
@@ -52,6 +52,40 @@ pub struct ClipFile {
     /// so the clip poses the whole body.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rest: Vec<BonePose>,
+    /// Other models the editor shows with the clip (an axe in the hand,
+    /// the truck the character sits in); see `docs/anchors.md`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<ClipReference>,
+    /// How opaque the editor draws the clip's model (1: as it is).
+    #[serde(default = "opaque", skip_serializing_if = "is_opaque")]
+    pub model_opacity: f32,
+}
+
+fn opaque() -> f32 {
+    1.0
+}
+
+fn is_opaque(opacity: &f32) -> bool {
+    *opacity >= 1.0
+}
+
+/// A model shown with a clip in the editor, and how it sits against the
+/// clip's model.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ClipReference {
+    pub model: AssetId,
+    pub link: ReferenceLink,
+    /// The reference's anchor (its origin without); unused when held by
+    /// its grip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    /// The clip model's anchor it goes on (its origin without).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_anchor: Option<String>,
+    /// How opaque the editor draws it (1: as it is), to see the model
+    /// through a truck's door.
+    #[serde(default = "opaque", skip_serializing_if = "is_opaque")]
+    pub opacity: f32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -180,6 +214,8 @@ impl ClipFile {
             duration: duration.max(MIN_DURATION),
             tracks: Vec::new(),
             rest: Vec::new(),
+            references: Vec::new(),
+            model_opacity: 1.0,
         }
     }
 
@@ -505,5 +541,34 @@ mod tests {
             assert!((pose.quaternion().magnitude() - 1.0).abs() < 1e-5);
         }
         assert!((yaw(&keys[0].pose) - 90.0).abs() < 0.01);
+    }
+
+    // R5 (docs/anchors.md)
+    #[test]
+    fn references_are_saved_and_old_files_load_without_them() {
+        use crate::core::model::{anchor::ReferenceLink, grip::Hand};
+        let old = ClipFile::new(None, 1.0);
+        let text = old.to_ron().unwrap();
+        assert!(!text.contains("references"));
+        assert_eq!(ClipFile::from_ron(&text).unwrap(), old);
+        let mut clip = old.clone();
+        clip.references.push(ClipReference {
+            model: AssetId::from(3),
+            link: ReferenceLink::Carries,
+            anchor: Some("driver_seat".into()),
+            model_anchor: None,
+            opacity: 0.4,
+        });
+        clip.references.push(ClipReference {
+            model: AssetId::from(4),
+            link: ReferenceLink::Held(Hand::Left),
+            anchor: None,
+            model_anchor: None,
+            opacity: 1.0,
+        });
+        clip.model_opacity = 0.5;
+        let text = clip.to_ron().unwrap();
+        assert!(text.contains("opacity: 0.4") && !text.contains("opacity: 1.0"));
+        assert_eq!(ClipFile::from_ron(&text).unwrap(), clip);
     }
 }

@@ -112,6 +112,9 @@ pub enum BridgeRequest {
     ReloadScripts,
     /// Point the editor camera at an entity.
     Focus { id: u64 },
+    /// Open an asset (by id, name or source path below the asset folder)
+    /// in the asset workspace, as a double click in the browser does.
+    OpenAsset { asset: String },
     /// Move or turn the editor camera; what is left out stays.
     SetView {
         #[serde(default)]

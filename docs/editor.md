@@ -89,6 +89,14 @@ Leaving play mode restores the scene as it was.
 An entity with an Animation component has **Edit graph** in the inspector,
 which opens the node-based graph editor with a live preview.
 
+## Animation clips and references
+
+A clip made in the editor (`*.clip.ron`) opens in the asset workspace with
+a timeline. Other models can be shown with it to animate against, such as
+an axe in the hand or the truck a character sits in, and anchors (named
+points on model assets where other models go) are placed in the same
+preview. See [anchors.md](anchors.md).
+
 ## The MCP bridge
 
 While a project is open, the editor listens for an MCP server on

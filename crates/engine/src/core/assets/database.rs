@@ -328,6 +328,7 @@ pub(crate) mod tests {
                 }],
                 clips: Vec::new(),
                 grip: None,
+                anchors: Vec::new(),
             }),
         };
         let mut database = AssetDatabase::new(&temp.0);
