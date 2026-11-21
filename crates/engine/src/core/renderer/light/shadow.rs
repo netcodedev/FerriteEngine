@@ -23,7 +23,8 @@ use crate::core::gfx;
 /// Most lights with shadows per frame; must match `MAX_SHADOWED_LIGHTS`
 /// in `pbr/lighting.glsl` only in that layers above it never appear.
 pub const MAX_SHADOWED_LIGHTS: usize = 8;
-/// Texels per side of each cube face.
+/// Texels per side of each cube face, unless the graphics settings say
+/// otherwise.
 pub const SHADOW_RESOLUTION: u32 = 512;
 /// Near plane of the cube faces; must match `LIGHT_SHADOW_NEAR` in
 /// `pbr/lighting.glsl`.
@@ -83,7 +84,9 @@ pub fn assign(lights: &mut [LightSource], eye: Point3<f32>) {
     for light in lights.iter_mut() {
         light.shadow_layer = None;
     }
-    for (layer, &i) in casters.iter().take(MAX_SHADOWED_LIGHTS).enumerate() {
+    // The graphics settings may give fewer lights a shadow.
+    let most = crate::core::graphics::engine().point_shadow_lights.min(MAX_SHADOWED_LIGHTS);
+    for (layer, &i) in casters.iter().take(most).enumerate() {
         lights[i].shadow_layer = Some(layer as u32);
     }
 }
@@ -169,6 +172,8 @@ pub struct LightShadowMaps {
     texture: gfx::Texture,
     /// By `layer * 6 + face`.
     faces: Vec<gfx::RenderTarget>,
+    /// Texels per side of a face.
+    size: u32,
 }
 
 /// Hardware comparison: the shader gets how much of the 2×2 texels around
@@ -176,17 +181,22 @@ pub struct LightShadowMaps {
 const SAMPLER: gfx::SamplerDesc = gfx::SamplerDesc::LINEAR_CLAMP.compare(gfx::CompareFunc::LessEqual);
 
 impl LightShadowMaps {
-    pub fn new() -> Self {
+    /// Faces of `size` texels per side.
+    pub fn new(size: u32) -> Self {
         let desc = gfx::TextureDesc {
             kind: gfx::TextureKind::CubeArray,
             layers: (MAX_SHADOWED_LIGHTS * 6) as u32,
-            ..gfx::TextureDesc::d2(gfx::Format::Depth24, SHADOW_RESOLUTION, SHADOW_RESOLUTION)
+            ..gfx::TextureDesc::d2(gfx::Format::Depth24, size, size)
         };
         let texture = gfx::Texture::new(desc);
         let faces = (0..desc.layers)
             .map(|layer| gfx::RenderTarget::new(&[], Some(texture.attachment(0, Some(layer)))))
             .collect();
-        Self { texture, faces }
+        Self { texture, faces, size }
+    }
+
+    pub fn size(&self) -> u32 {
+        self.size
     }
 
     /// A pass drawing into `face` of `layer`'s cube, cleared; end it with
@@ -195,7 +205,7 @@ impl LightShadowMaps {
         if let Some(target) = self.faces.get(layer as usize * 6 + face) {
             gfx::begin_pass(
                 target.reference(),
-                (SHADOW_RESOLUTION, SHADOW_RESOLUTION),
+                (self.size, self.size),
                 gfx::Load::Keep,
                 gfx::Load::Depth(1.0),
             );

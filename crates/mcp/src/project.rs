@@ -19,6 +19,9 @@ pub struct ProjectFile {
     pub startup_scene: Option<String>,
     #[serde(default = "unit_value", skip_serializing_if = "is_unit")]
     pub editor: ron::Value,
+    /// The engine's graphics section, kept as it is.
+    #[serde(default = "unit_value", skip_serializing_if = "is_unit")]
+    pub graphics: ron::Value,
 }
 
 fn unit_value() -> ron::Value {

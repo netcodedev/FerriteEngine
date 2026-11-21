@@ -136,6 +136,8 @@ uniform sampler2DArrayShadow shadowMap;
 uniform mat4 lightProjections[SHADOW_CASCADES];
 // World size of one texel of each cascade.
 uniform float cascadeTexel[SHADOW_CASCADES];
+// How many of them the graphics settings use, nearest first.
+uniform int shadowCascadeCount;
 // Fraction at a cascade's border over which it fades into the next.
 const float CASCADE_BLEND = 0.1;
 
@@ -187,7 +189,7 @@ float sunShadow(vec3 worldPos, vec3 geometryNormal, vec3 L) {
     if (useShadowMap == 0) {
         return 1.0;
     }
-    for (int i = 0; i < SHADOW_CASCADES; ++i) {
+    for (int i = 0; i < min(shadowCascadeCount, SHADOW_CASCADES); ++i) {
         vec3 p = cascadeCoord(i, worldPos);
         // How far toward the border, 0 at the centre, 1 at the edge.
         float edge = max(abs(p.x * 2.0 - 1.0), abs(p.y * 2.0 - 1.0));
@@ -197,7 +199,7 @@ float sunShadow(vec3 worldPos, vec3 geometryNormal, vec3 L) {
         float shadow = cascadeShadow(i, worldPos, geometryNormal, L);
         float fade = smoothstep(0.98 - CASCADE_BLEND, 0.98, edge);
         if (fade > 0.0) {
-            float next = i + 1 < SHADOW_CASCADES
+            float next = i + 1 < shadowCascadeCount
                 ? cascadeShadow(i + 1, worldPos, geometryNormal, L)
                 : 1.0;
             shadow = mix(shadow, next, fade);

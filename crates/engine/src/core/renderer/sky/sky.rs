@@ -13,10 +13,6 @@ const COMMON_GLSL: &str = include_str!("common.glsl");
 const CLOUD_FIELD_GLSL: &str = super::CLOUD_FIELD_GLSL;
 /// Texture unit the cloud texture is bound to while the sky is drawn.
 const CLOUD_UNIT: u32 = 13;
-/// The clouds are raymarched at 1 / CLOUD_DOWNSCALE of the width and
-/// height: they are soft, and the raymarch is the most expensive part of
-/// the frame.
-const CLOUD_DOWNSCALE: i32 = 2;
 /// Texture unit the clouds of the frame before are bound to while they are
 /// reprojected.
 const HISTORY_UNIT: u32 = 12;
@@ -222,8 +218,12 @@ impl SkyRenderer {
         let viewport = gfx::viewport();
 
         // Cloud pass, into the reduced-size target.
-        let width = (viewport.width as i32 / CLOUD_DOWNSCALE).max(1);
-        let height = (viewport.height as i32 / CLOUD_DOWNSCALE).max(1);
+        // The clouds are raymarched at a fraction of the width and height
+        // (`effects.cloud_downscale`, 2 at High): they are soft, and the
+        // raymarch is the most expensive part of the frame.
+        let downscale = crate::core::graphics::engine().cloud_downscale.max(1);
+        let width = (viewport.width as i32 / downscale).max(1);
+        let height = (viewport.height as i32 / downscale).max(1);
         let r = &mut *r;
         set_uniforms(&r.cloud_shader, &cloud_desc);
         r.cloud_shader.set_uniform_1i("useSceneDepth", scene_depth.is_some() as i32);

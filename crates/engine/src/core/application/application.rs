@@ -39,9 +39,18 @@ impl Application {
         // The first frame's time starts now, not when the window was made:
         // loading the first scene in between is not a frame.
         self.window.calculate_frametime();
+        let mut graphics = crate::core::graphics::Watch::default();
+        let mut vsync = None;
         while !self.window.should_close() {
             use crate::core::gfx;
             let frame_start = std::time::Instant::now();
+            // Graphics settings the window carries out.
+            if let Some(settings) = graphics.changed() {
+                if vsync != Some(settings.engine.vsync) {
+                    vsync = Some(settings.engine.vsync);
+                    crate::core::window::set_vsync(settings.engine.vsync);
+                }
+            }
             gfx::begin_frame();
             let (r, g, b, a) = self.clear_color;
             gfx::begin_window_pass(gfx::Load::Color([r, g, b, a]), gfx::Load::Depth(1.0));
@@ -70,6 +79,15 @@ impl Application {
             gfx::end_frame();
 
             self.window.swap_buffers();
+            // A frame rate cap from the graphics settings: wait out the
+            // rest of the frame's share of a second.
+            let cap = crate::core::graphics::engine().fps_cap;
+            if cap > 0.0 {
+                let share = std::time::Duration::from_secs_f64(1.0 / cap as f64);
+                if let Some(rest) = share.checked_sub(frame_start.elapsed()) {
+                    std::thread::sleep(rest);
+                }
+            }
             crate::core::spike_probe::end_frame(frame_start.elapsed());
             crate::core::diagnostics::end_frame();
             // No layer took the game's request to end: it ends.

@@ -468,6 +468,8 @@ fn pick_lod_index(distance: f32, lod_count: usize) -> usize {
     if lod_count == 0 {
         return 0;
     }
+    // The graphics settings move the distances out or in.
+    let distance = distance / crate::core::graphics::engine().scatter_lod_factor;
     let max_lod = lod_count - 1;
     if distance < LOD_DIST_NEAR {
         return 0;

@@ -259,6 +259,20 @@ impl EditorLayer {
             }
             self.saved_settings = settings;
         }
+        // The graphics panel changes the project's part and the player's
+        // choice (this machine's file) as the user goes.
+        let graphics = ferrite::core::graphics::project_settings();
+        if graphics != self.project.file.graphics {
+            self.project.file.graphics = graphics;
+            if let Err(e) = self.project.save() {
+                log::warn!("could not save the project: {e}");
+            }
+        }
+        if ferrite::core::graphics::unsaved() {
+            if let Err(e) = ferrite::core::graphics::save() {
+                log::warn!("could not save the graphics settings: {e}");
+            }
+        }
     }
 
     /// The project opens with `path` from now on.

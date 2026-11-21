@@ -439,7 +439,7 @@ impl DebugSwitches {
     /// Hand the switches as they are to the renderer and the window (whose
     /// GL context must be current).
     pub fn apply(&self) {
-        ferrite::core::window::set_vsync(self.vsync.read());
+        set_vsync(self.vsync.read());
         ViewFrustum::set_frozen(self.freeze_culling.read());
         debug_views::set_ambient_occlusion(self.ambient_occlusion.read());
         debug_views::set_sun_shadows(self.sun_shadow_maps.read());
@@ -824,7 +824,7 @@ impl StatsPanel {
                     "VSync",
                     self.switches.vsync.clone(),
                     content - 8.0,
-                    Box::new(|on, _| ferrite::core::window::set_vsync(on)),
+                    Box::new(|on, _| set_vsync(on)),
                 )));
             }
             if *title == "Debug views" {
@@ -923,8 +923,23 @@ fn shorten(text: &str, max: usize) -> String {
     }
 }
 
+/// VSync is a graphics setting (`display.vsync`): the switch sets it.
+fn set_vsync(on: bool) {
+    use ferrite::core::graphics;
+    if graphics::engine().vsync != on {
+        if let Err(e) = graphics::set("display.vsync", graphics::SettingValue::Toggle(on)) {
+            log::warn!("{e}");
+        }
+    }
+}
+
 impl UIElement for StatsPanel {
     fn update(&mut self, scene: &mut Scene) {
+        // The switch shows the setting, which the graphics panel changes too.
+        let vsync = ferrite::core::graphics::engine().vsync;
+        if self.switches.vsync.read() != vsync {
+            self.switches.vsync.write(vsync);
+        }
         let rect = self.state.borrow().layout.stats;
         if rect.w <= 0.0 {
             return;

@@ -155,6 +155,8 @@ impl TerrainChunk {
 
     /// The level of detail to draw at `distance` metres from the camera.
     fn lod_at(distance: f32) -> usize {
+        // The graphics settings move the distances out or in.
+        let distance = distance / crate::core::graphics::engine().terrain_lod_factor;
         LOD_DISTANCES
             .iter()
             .position(|&limit| distance < limit)

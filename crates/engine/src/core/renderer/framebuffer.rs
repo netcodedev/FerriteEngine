@@ -121,6 +121,11 @@ impl CascadedShadowMap {
         }
     }
 
+    /// Texels per side of a layer.
+    pub fn layer_size(&self) -> u32 {
+        self.size
+    }
+
     pub fn texture(&self) -> &Texture {
         &self.texture
     }

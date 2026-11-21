@@ -215,8 +215,10 @@ impl Scene {
         if crate::core::headless::is_headless() {
             return;
         }
-        // One square layer per cascade; the scene file's size is a layer's.
-        self.shadow_fbo = Some(CascadedShadowMap::new(width.max(height), SHADOW_CASCADES as u32));
+        // One square layer per cascade. The scene only says that it has
+        // shadows; how big they are is a graphics setting.
+        let size = crate::core::graphics::engine().shadow_map_size;
+        self.shadow_fbo = Some(CascadedShadowMap::new(size, SHADOW_CASCADES as u32));
         self.drawn_cascades.set(None);
         self.shadow_map_size = Some((width, height));
     }
@@ -339,7 +341,13 @@ impl Scene {
             return;
         }
         let mut maps = self.light_shadows.borrow_mut();
-        let maps = maps.get_or_insert_with(LightShadowMaps::new);
+        // Their size is a graphics setting: new maps, every face drawn anew.
+        let size = crate::core::graphics::engine().point_shadow_resolution;
+        if maps.as_ref().is_some_and(|maps| maps.size() != size) {
+            *maps = None;
+            *self.shadow_planner.borrow_mut() = ShadowPlanner::default();
+        }
+        let maps = maps.get_or_insert_with(|| LightShadowMaps::new(size));
         maps.unbind();
         let plan = self.shadow_planner.borrow_mut().plan(&sources);
         let _depth_only = DepthPass::begin();
@@ -413,6 +421,7 @@ impl Scene {
     /// Edit-mode update: no physics, no gameplay — only components that keep
     /// the scene presentable (see `Component::update_in_editor`).
     pub fn update_in_editor(&mut self, delta_time: f64) {
+        self.apply_graphics();
         self.physics_engine.paused_frame();
         self.update_roots(|entity, scene| entity.update_in_editor(scene, delta_time));
         self.run_deferred();
@@ -437,7 +446,19 @@ impl Scene {
             .is_some_and(|fbo| current.is_some() && fbo.0.reference() == current)
     }
 
+    /// Follow the graphics settings where the scene's own targets depend
+    /// on them (the sun's shadow map size). Run by `update` and
+    /// `update_in_editor`.
+    fn apply_graphics(&mut self) {
+        let shadow_size = crate::core::graphics::engine().shadow_map_size;
+        if self.shadow_fbo.as_ref().is_some_and(|fbo| fbo.layer_size() != shadow_size) {
+            self.shadow_fbo = Some(CascadedShadowMap::new(shadow_size, SHADOW_CASCADES as u32));
+            self.drawn_cascades.set(None);
+        }
+    }
+
     pub fn update(&mut self, delta_time: f64) {
+        self.apply_graphics();
         let _probe = Probe(std::time::Instant::now(), &crate::core::spike_probe::UPDATE_US);
         self.physics_engine.begin_frame();
         // Messages in and out, and the other players where they are, before
@@ -521,7 +542,14 @@ impl Scene {
                 };
                 let redraw_all = self.drawn_cascades.get().is_none();
                 let intervals = skylight.shadows().intervals();
+                let in_use = crate::core::graphics::engine().shadow_cascades;
                 for (index, cascade) in current.iter().enumerate() {
+                    // Cascades the settings leave out are not drawn (their
+                    // projection covers nothing, see `SkyLight`).
+                    if index >= in_use {
+                        drawn[index] = *cascade;
+                        continue;
+                    }
                     // The far cascades change little from frame to frame and
                     // are drawn every few frames, staggered; the shaders use
                     // the projection each was drawn with.
@@ -569,9 +597,12 @@ impl Scene {
 
             // Everything the camera sees goes into the HDR target, as big as
             // the viewport, and is tone mapped into the viewport at the end.
-            let hdr_settings = self
+            let mut hdr_settings = self
                 .get_component::<SkyLight>()
                 .map_or_else(HdrSettings::default, |skylight| *skylight.hdr());
+            // The graphics settings may switch bloom off, never on.
+            let knobs = crate::core::graphics::engine();
+            hdr_settings.bloom &= knobs.bloom;
             let mut hdr = self.hdr.borrow_mut();
             let hdr = hdr.get_or_insert_with(Hdr::new);
             profiler::mark(Pass::DepthPrepass);
@@ -585,7 +616,7 @@ impl Scene {
             let ambient_occlusion = self
                 .get_component::<SkyLight>()
                 .map(|skylight| *skylight.ambient_occlusion())
-                .filter(|settings| settings.enabled);
+                .filter(|settings| settings.enabled && knobs.ssao_samples > 0);
             let depth_prepass = match (ambient_occlusion, hdr.view_target()) {
                 (Some(settings), Some((target, width, height))) => {
                     let mut ssao = self.ssao.borrow_mut();
