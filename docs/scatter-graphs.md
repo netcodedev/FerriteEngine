@@ -422,6 +422,11 @@ and variant; frame cost of grass < 2 ms on the user's machine.
      `editor_scatter_graph_edit` can also `select` nodes. Flying the
      preview camera is wired as in the scene's viewport but needs the
      mouse, so it was not tried by me.
+   - **Tooltips** (asked for on 2026-11-21): each kind explains itself
+     (`NodeKind::description`, settings named as the inspector lists
+     them; a test keeps the two in step). The canvas shows it after the
+     cursor rests on a node for half a second, and in the add menu beside
+     the highlighted kind. Not seen by me (needs the mouse).
 
 7. **Demo**: grass graph (meadows: lush biomes, gentle slopes, patches by
    noise, none on roads/water/towns), then stones and bushes with the same

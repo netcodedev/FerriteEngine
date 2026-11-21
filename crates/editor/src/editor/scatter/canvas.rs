@@ -52,6 +52,82 @@ const MENU_W: f32 = 220.0;
 /// Over the panels, under the editor's own popups.
 const OVERLAY_Z: f32 = 30.0;
 
+/// How long the cursor rests on a node before its tooltip shows.
+const TIP_DELAY: f32 = 0.5;
+const TIP_W: f32 = 280.0;
+const TIP_LINES: usize = 7;
+
+/// A tooltip of several lines: a node kind's name and what it does.
+struct Tip {
+    background: Plane,
+    title: Text,
+    lines: Vec<Text>,
+    shown: bool,
+}
+
+impl Tip {
+    fn new() -> Self {
+        Self {
+            background: PlaneBuilder::new()
+                .color(theme::BG_MENU)
+                .border_color(theme::BORDER_STRONG)
+                .border_thickness(1.0)
+                .border_radius_uniform(theme::RADIUS)
+                .build(),
+            title: theme::heading("", theme::FONT_SIZE_SMALL + 0.5, theme::TEXT),
+            lines: (0..TIP_LINES).map(|_| theme::text("", theme::FONT_SIZE_SMALL, theme::TEXT_MUTED)).collect(),
+            shown: false,
+        }
+    }
+
+    /// Show `kind` near `at`, kept inside `bounds`.
+    fn show(&mut self, kind: &NodeKind, at: (f32, f32), bounds: &Rect) {
+        self.title.set_content(kind.label());
+        let text = kind.description().replace('`', "");
+        // Word wrap to the tooltip's width.
+        let inner = TIP_W - 20.0;
+        let mut wrapped: Vec<String> = Vec::new();
+        let mut line = String::new();
+        for word in text.split_whitespace() {
+            let candidate = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
+            if !line.is_empty() && self.lines[0].measure_str(&candidate) > inner {
+                wrapped.push(std::mem::replace(&mut line, word.to_string()));
+            } else {
+                line = candidate;
+            }
+        }
+        if !line.is_empty() {
+            wrapped.push(line);
+        }
+        wrapped.truncate(TIP_LINES);
+        let line_h = 17.0;
+        let h = 12.0 + 20.0 + wrapped.len() as f32 * line_h + 8.0;
+        let x = (at.0 + 16.0).min(bounds.x + bounds.w - TIP_W - 4.0).max(bounds.x + 4.0);
+        let y = (at.1 + 18.0).min(bounds.y + bounds.h - h - 4.0).max(bounds.y + 4.0);
+        self.background.set_position(Position::new(x, y, OVERLAY_Z + 4.0));
+        self.background.set_size(Size::new(TIP_W, h));
+        self.title.prepare_render_at(Position::new(x + 10.0, y + 8.0, OVERLAY_Z + 5.0));
+        self.title.set_z_index(OVERLAY_Z + 5.0);
+        for (i, text) in self.lines.iter_mut().enumerate() {
+            text.set_content(wrapped.get(i).map_or("", String::as_str));
+            text.prepare_render_at(Position::new(x + 10.0, y + 30.0 + i as f32 * line_h, OVERLAY_Z + 5.0));
+            text.set_z_index(OVERLAY_Z + 5.0);
+        }
+        self.shown = true;
+    }
+
+    fn render(&self) {
+        if !self.shown {
+            return;
+        }
+        self.background.render();
+        self.title.render();
+        for text in &self.lines {
+            text.render();
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Side {
     In,
@@ -195,6 +271,9 @@ pub struct ScatterCanvas {
     hover_node: Option<NodeId>,
     hover_pin: Option<(NodeId, Side, u8)>,
     hover_wire: Option<Wire>,
+    /// The node under the cursor and since when (for its tooltip).
+    hover_since: Option<(NodeId, Instant)>,
+    tip: Tip,
     cursor: (f32, f32),
     last_click: Option<Instant>,
 }
@@ -260,6 +339,8 @@ impl ScatterCanvas {
             hover_node: None,
             hover_pin: None,
             hover_wire: None,
+            hover_since: None,
+            tip: Tip::new(),
             cursor: (0.0, 0.0),
             last_click: None,
         }
@@ -754,6 +835,29 @@ impl UIElement for ScatterCanvas {
         if let Some(menu) = &mut self.menu {
             menu.layout();
         }
+        // Tooltips: the add menu's highlighted kind beside the menu, or the
+        // node the cursor has rested on.
+        self.tip.shown = false;
+        let bounds = self.area();
+        if let Some(menu) = &self.menu {
+            if let Some(kind) = menu.choices().get(menu.index) {
+                let r = menu.rect();
+                let beside = if r.x + r.w + TIP_W + 8.0 <= bounds.x + bounds.w { r.x + r.w - 12.0 } else { r.x - TIP_W - 20.0 };
+                self.tip.show(kind, (beside, r.y - 18.0), &bounds);
+            }
+        } else if self.drag.is_none() {
+            match (self.hover_node, self.hover_since) {
+                (Some(id), Some((since_id, since))) if id == since_id => {
+                    if since.elapsed().as_secs_f32() >= TIP_DELAY {
+                        if let Some(kind) = nodes.iter().find(|n| n.id == id).map(|n| n.kind.clone()) {
+                            self.tip.show(&kind, self.cursor, &bounds);
+                        }
+                    }
+                }
+                (Some(id), _) => self.hover_since = Some((id, Instant::now())),
+                (None, _) => self.hover_since = None,
+            }
+        }
         for button in &mut self.buttons {
             button.update(scene);
         }
@@ -848,6 +952,7 @@ impl UIElement for ScatterCanvas {
         if let Some(menu) = &self.menu {
             menu.render();
         }
+        self.tip.render();
     }
 
     fn handle_events(&mut self, scene: &mut Scene, window: &mut glfw::Window, glfw: &mut Glfw, event: &WindowEvent) -> bool {
@@ -963,6 +1068,8 @@ impl UIElement for ScatterCanvas {
             }
             WindowEvent::MouseButton(MouseButton::Button1, Action::Press, mods) => {
                 let (x, y) = self.cursor;
+                // A click puts the tooltip away until the cursor rests again.
+                self.hover_since = self.hover_node.map(|id| (id, Instant::now()));
                 if !area.contains(x, y) {
                     return rect.contains(x, y);
                 }

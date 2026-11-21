@@ -233,6 +233,66 @@ impl NodeKind {
         }
     }
 
+    /// What the node does, in a few sentences, for tooltips. Settings are
+    /// named in backticks, as the inspector lists them.
+    pub fn description(&self) -> &'static str {
+        match self {
+            NodeKind::SurfacePoints { .. } => {
+                "Lays points evenly over the ground: one per grid square of `spacing` metres, moved at random \
+                 by up to `jitter` of it. The start for dense things such as grass."
+            }
+            NodeKind::RandomPoints { .. } => {
+                "Lays random points, so many `per hectare`, on the very spots the terrain's scatter layers \
+                 use. The start for sparse things such as trees."
+            }
+            NodeKind::Slope { .. } => {
+                "Keeps points where the ground is between `min` and `max` degrees steep. Beyond, over `soft` \
+                 degrees, their density fades out; a Density cut later decides which of those stay."
+            }
+            NodeKind::Height { .. } => {
+                "Keeps points standing between `min` and `max` metres high. Beyond, over `soft` metres, their \
+                 density fades out; a Density cut later decides which of those stay."
+            }
+            NodeKind::WorldChance { .. } => {
+                "Lowers each point's density to what the world allows for this `tag` there: none on water, \
+                 roads or in towns, more where the land is lush. Follow it with a Density cut."
+            }
+            NodeKind::Noise { .. } => {
+                "Lays a noise pattern over the ground and keeps the points in its patches: `wavelength` sets \
+                 their size, `threshold` how much stays bare, `softness` how gently patches end."
+            }
+            NodeKind::DensityCut => {
+                "Turns density into yes or no: keeps each point by chance, as likely as its density. Put it \
+                 after the filters that fade density (Slope, Height, World chance, Noise)."
+            }
+            NodeKind::KeepAwayFrom { .. } => {
+                "Drops points within `radius` metres of the points wired into its second input, \
+                 e.g. no grass growing through rocks."
+            }
+            NodeKind::Rotate { .. } => {
+                "Turns points about their up axis at random between `yaw min` and `yaw max`, leans them with \
+                 the slope by `align` (0 upright, 1 along the ground) and tilts them by up to `tilt` degrees."
+            }
+            NodeKind::Scale { .. } => {
+                "Sizes points at random between `min` and `max`, makes them taller by `height min` to \
+                 `height max`, and smaller where their density is low (`by density`)."
+            }
+            NodeKind::Offset { .. } => {
+                "Moves points up or down by a random amount between `min` and `max` metres; below 0 sinks \
+                 them into the ground (rocks)."
+            }
+            NodeKind::Merge => "Joins the points of every wire into its input into one flow.",
+            NodeKind::Split { .. } => {
+                "Divides points in two: those at or above `threshold` (`by` density, or by chance) leave by \
+                 the first output, the others by the second."
+            }
+            NodeKind::SpawnMesh(_) => {
+                "Plants its `model` at every point that arrives. Landscape `range`: over all loaded ground, \
+                 with colliders and far pictures (trees). Detail: only near the camera (grass)."
+            }
+        }
+    }
+
     /// What the node does to points.
     pub fn role(&self) -> NodeRole {
         match self {

@@ -500,6 +500,19 @@ fn kinds_are_named_by_role_and_found_with_or_without_it() {
 }
 
 #[test]
+fn every_kind_explains_itself_and_names_only_settings_it_has() {
+    for kind in NodeKind::catalog() {
+        let text = kind.description();
+        assert!(text.len() > 30, "{}", kind.label());
+        // Settings in backticks are the node's own.
+        let names: Vec<String> = kind.properties().iter().map(|p| p.name.to_string()).collect();
+        for quoted in text.split('`').skip(1).step_by(2) {
+            assert!(names.iter().any(|n| n == quoted), "{}: `{quoted}`", kind.label());
+        }
+    }
+}
+
+#[test]
 fn a_traced_run_keeps_every_nodes_points() {
     let graph = ScatterGraph::chain([
         surface(1.0),
