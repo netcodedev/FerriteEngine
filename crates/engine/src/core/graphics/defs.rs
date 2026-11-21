@@ -96,7 +96,7 @@ pub fn engine_definitions() -> Vec<SettingDef> {
         },
         SettingDef {
             key: FPS_CAP.into(),
-            label: "Bilder pro Sekunde höchstens".into(),
+            label: "FPS-Grenze".into(),
             group: "Anzeige".into(),
             kind: SettingKind::Number {
                 min: 0.0,
@@ -105,7 +105,7 @@ pub fn engine_definitions() -> Vec<SettingDef> {
                 unit: "fps".into(),
                 per_preset: PerLevel::all(0.0),
             },
-            description: "0: keine Grenze.".into(),
+            description: "Höchstens so viele Bilder pro Sekunde; 0: keine Grenze.".into(),
         },
         choice(ANISOTROPY, "Texturfilterung", &ANISOTROPY_OPTIONS, ["1x", "4x", "8x", "16x"],
             "Anisotrope Filterung: schärfere Böden in flachem Winkel."),

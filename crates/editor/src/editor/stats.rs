@@ -997,6 +997,15 @@ impl UIElement for StatsPanel {
         self.body.render();
     }
 
+    /// Open dropdown lists (the graphics settings') are drawn here, over
+    /// everything else.
+    fn render_overlay(&self) {
+        if self.state.borrow().layout.stats.w <= 0.0 {
+            return;
+        }
+        self.body.render_overlay();
+    }
+
     fn handle_events(
         &mut self,
         scene: &mut Scene,

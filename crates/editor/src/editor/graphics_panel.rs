@@ -8,12 +8,17 @@ use ferrite::core::{
     primitives::{Position, Size},
     utils::DataSource,
 };
-use ferrite_ui::ui::{elements::dropdown::Dropdown, UIElement, UI};
+use ferrite_ui::ui::{
+    elements::{dropdown::Dropdown, label::Label},
+    theme, UIElement, UI,
+};
 
 use super::field_row::FieldRow;
 
 /// Width of the labels' column: the settings' names are long.
 const LABEL: f32 = 140.0;
+/// Width of a slider's value beside it.
+const VALUE: f32 = 56.0;
 
 const PRESET_LABELS: [&str; 5] = ["Niedrig", "Mittel", "Hoch", "Ultra", "Eigene"];
 const PREVIEW_LABELS: [&str; 5] = ["Aus", "Niedrig", "Mittel", "Hoch", "Ultra"];
@@ -30,7 +35,8 @@ fn level_at(index: u32) -> Option<Level> {
 enum Source {
     Index(DataSource<u32>, u32),
     Bool(DataSource<bool>, bool),
-    Number(DataSource<f32>, f32),
+    /// A slider, and the text showing its value.
+    Number(DataSource<f32>, f32, DataSource<String>),
 }
 
 impl Source {
@@ -106,17 +112,19 @@ impl GraphicsRows {
                     widgets.push(Box::new(FieldRow::with_label_width(&def.label, LABEL, vec![UI::checkbox(data.clone())])));
                     self.rows.push(Row { target: Target::Setting(def.clone()), source: Source::Bool(data, on) });
                 }
-                (SettingKind::Number { min, max, .. }, Some(SettingValue::Number(n))) => {
+                (SettingKind::Number { min, max, unit, .. }, Some(SettingValue::Number(n))) => {
+                    // A slider and its value: a typed number would be set
+                    // (and clamped) on every key.
                     let data = DataSource::new(n);
-                    let mut fields: Vec<Box<dyn UIElement>> = Vec::new();
-                    if value_w > 150.0 {
-                        fields.push(UI::slider_sized(data.clone(), *min, *max, Size::new(value_w - 74.0, 20.0)));
-                        fields.push(UI::input_sized(data.clone(), Size::new(66.0, 24.0)));
-                    } else {
-                        fields.push(UI::input_sized(data.clone(), Size::new(value_w, 24.0)));
-                    }
+                    let shown = DataSource::new(number_text(n, unit));
+                    let mut value = Label::bound(shown.clone(), theme::FONT_SIZE_SMALL);
+                    value.set_color(theme::TEXT_MUTED);
+                    let fields: Vec<Box<dyn UIElement>> = vec![
+                        UI::slider_sized(data.clone(), *min, *max, Size::new((value_w - VALUE - 4.0).max(40.0), 20.0)),
+                        Box::new(value),
+                    ];
                     widgets.push(Box::new(FieldRow::with_label_width(&def.label, LABEL, fields)));
-                    self.rows.push(Row { target: Target::Setting(def.clone()), source: Source::Number(data, n) });
+                    self.rows.push(Row { target: Target::Setting(def.clone()), source: Source::Number(data, n, shown) });
                 }
                 _ => {}
             }
@@ -176,8 +184,10 @@ impl GraphicsRows {
                     *last = on;
                     graphics::set(&def.key, SettingValue::Toggle(on))
                 }
-                (Target::Setting(def), Source::Number(data, last)) => {
-                    let n = data.read();
+                (Target::Setting(def), Source::Number(data, last, _)) => {
+                    // Kept to the setting's steps, so dragging changes it
+                    // (and what depends on it) only step by step.
+                    let n = snapped(&def.kind, data.read());
                     if (n - *last).abs() < 1e-4 {
                         continue;
                     }
@@ -217,14 +227,43 @@ impl GraphicsRows {
                     *last = on;
                     data.write(on);
                 }
-                (Source::Number(data, last), SettingValue::Number(n), _) if (n - *last).abs() >= 1e-4 => {
-                    *last = n;
-                    data.write(n);
+                (Source::Number(data, last, shown), SettingValue::Number(n), Target::Setting(def)) => {
+                    if (n - *last).abs() >= 1e-4 {
+                        *last = n;
+                        data.write(n);
+                    }
+                    if let SettingKind::Number { unit, .. } = &def.kind {
+                        let text = number_text(n, unit);
+                        if shown.read() != text {
+                            shown.write(text);
+                        }
+                    }
                 }
                 _ => {}
             }
         }
     }
+}
+
+/// `value` on the steps of a number setting.
+fn snapped(kind: &SettingKind, value: f32) -> f32 {
+    match kind {
+        SettingKind::Number { min, max, step, .. } if *step > 0.0 => {
+            (min + ((value - min) / step).round() * step).clamp(*min, *max)
+        }
+        _ => value,
+    }
+}
+
+/// A number setting's value as shown beside its slider (set in a little:
+/// the slider's knob reaches past its end).
+fn number_text(value: f32, unit: &str) -> String {
+    let text = match unit {
+        "fps" if value == 0.0 => "aus".into(),
+        "%" => format!("{value:.0} %"),
+        unit => format!("{} {unit}", (value * 10.0).round() / 10.0),
+    };
+    format!("   {text}")
 }
 
 fn set_index(data: &DataSource<u32>, last: &mut u32, index: u32) {
