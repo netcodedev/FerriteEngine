@@ -447,11 +447,15 @@ impl Hdr {
     /// corner.
     pub fn begin(&mut self) {
         let viewport = gfx::viewport();
-        let (width, height) = (viewport.width.max(1) as i32, viewport.height.max(1) as i32);
-        // As many samples as the window (8× MSAA), so the view keeps its
-        // anti-aliasing.
+        // The graphics settings may draw the view smaller (scaled up again
+        // in `process`) and with fewer samples.
+        let knobs = crate::core::graphics::engine();
+        let scaled = |size: u32| ((size.max(1) as f32 * knobs.resolution_scale).round() as i32).max(1);
+        let (width, height) = (scaled(viewport.width), scaled(viewport.height));
+        // As many samples as the window has (8× MSAA) and the settings
+        // allow, so the view keeps its anti-aliasing.
         let samples = match gfx::current_target() {
-            Some(TargetRef::Window) | None => gfx::window_samples(),
+            Some(TargetRef::Window) | None => gfx::window_samples().min(knobs.msaa.max(1)),
             Some(TargetRef::Target(_)) => 1,
         };
         if self
@@ -575,6 +579,14 @@ impl Hdr {
         shader.set_uniform_1f("bloomIntensity", settings.bloom_intensity);
         shader.set_uniform_1i("tonemapper", settings.tonemapper.index());
         shader.set_uniform_2i("origin", viewport.x, viewport.y);
+        // Drawn smaller: scaled up, colour filtered, depth the nearest.
+        let scaled = (view.width, view.height) != (viewport.width as i32, viewport.height as i32);
+        shader.set_uniform_1i("scaled", scaled as i32);
+        shader.set_uniform_2f(
+            "viewScale",
+            view.width as f32 / viewport.width.max(1) as f32,
+            view.height as f32 / viewport.height.max(1) as f32,
+        );
         bind_exposure(shader);
         self.draw_quad();
 

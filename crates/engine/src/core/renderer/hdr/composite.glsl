@@ -14,6 +14,10 @@ uniform int useBloom;
 uniform float bloomIntensity;
 uniform int tonemapper;
 uniform ivec2 origin; // window position of the view
+// The view was drawn smaller than the viewport (graphics settings):
+// `viewScale` view texels per viewport pixel.
+uniform int scaled;
+uniform vec2 viewScale;
 
 // Interleaved gradient noise (Jimenez), -0.5..0.5.
 float dither(vec2 p) {
@@ -22,7 +26,13 @@ float dither(vec2 p) {
 
 void main() {
     ivec2 texel = ivec2(gl_FragCoord.xy) - origin;
-    vec3 color = texelFetch(hdrColor, texel, 0).rgb;
+    vec3 color;
+    if (scaled == 1) {
+        texel = ivec2((gl_FragCoord.xy - vec2(origin)) * viewScale);
+        color = texture(hdrColor, uv).rgb;
+    } else {
+        color = texelFetch(hdrColor, texel, 0).rgb;
+    }
     if (any(isnan(color))) {
         color = vec3(0.0);
     }

@@ -453,7 +453,7 @@ impl Terrain {
         let source = source.clone();
         // Without a GPU (a server) only the colliders are made.
         let drawn = !headless::is_headless();
-        Streamer::new(Streamer::<()>::default_workers(), StreamRadius::DEFAULT, move |(x, z), detail| {
+        Streamer::new(Streamer::<()>::default_workers(), StreamRadius::current(), move |(x, z), detail| {
             source
                 .vertical_range((x, z), detail)
                 .filter_map(|y| {
@@ -720,6 +720,8 @@ impl Terrain {
         let Some(streamer) = &mut self.streamer else {
             return;
         };
+        // The view distance is a graphics setting.
+        streamer.set_radius(StreamRadius::current());
         let unload = streamer.update(eye.x as f64, eye.z as f64);
         if !unload.is_empty() {
             let unload: HashSet<ColumnKey> = unload.into_iter().collect();
@@ -1285,7 +1287,7 @@ impl Component for Terrain {
                 shader.set_uniform_mat4("viewProjection", view_projection);
             }
             shader.set_uniform_1i("isHorizon", 1);
-            let load = StreamRadius::DEFAULT.load as f32;
+            let load = StreamRadius::current().load as f32;
             shader.set_uniform_3f("horizonSink", eye.x, eye.z, load);
             // Left out where the chunks are loaded.
             self.loaded.bind_loaded(shader);
@@ -1329,7 +1331,7 @@ impl Component for Terrain {
         // both are).
         let eye = scene.get_active_camera().map(|camera| camera.get_camera().get_eye_position());
         if let (Some(far_water), Some(eye)) = (self.horizon.water(), eye) {
-            let load = StreamRadius::DEFAULT.load as f32;
+            let load = StreamRadius::current().load as f32;
             let far = FarWater {
                 centre: [eye.x, eye.z],
                 load,
