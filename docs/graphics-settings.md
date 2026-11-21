@@ -1,6 +1,6 @@
 # Graphics settings: plan
 
-Status: plan (2026-11-21), nothing built yet.
+Status: built (2026-11-21) on branch feat/graphics-settings; see "As built" at the end.
 
 ## Why
 
@@ -391,3 +391,101 @@ The demo gets an options menu (Esc → Optionen → Grafik), built from
 - Values in the tables above are first guesses (except High). They get
   tuned in step 9 by measurement; the user may want to set some.
 - The demo's own setting for R4: which one is useful?
+
+## As built (2026-11-21)
+
+Where it lives: `core/graphics` (registry, `Param`, `Resolved`, player
+file, MCP request), the knobs' users in the renderer and terrain, the
+editor's `graphics_panel`, the demo's `graphics_menu.rs` and `demo.fp`.
+
+What differs from the plan above, and why:
+
+- **Reading the knobs.** Hot paths call `graphics::engine()`: a copy of
+  `EngineKnobs` per thread, renewed when an atomic generation changes, so
+  it costs an atomic load per call (per chunk, per scatter draw). Systems
+  that rebuild something compare generations with `graphics::Watch`.
+- **`shadow_map_size` in scenes** is still read and written, but only as
+  "this scene has sun shadows"; the size is `shadows.map_size`. Removing
+  the field would have changed every scene file for nothing.
+- **Cascade stagger**: the sky light's flag stays; the second cascade is
+  staggered when the scene *or* the settings ask for it.
+- **Cascades left out** get `ShadowCascade::UNUSED` (a projection that puts
+  everything past the far plane) and are not drawn; the shader loops over
+  `shadowCascadeCount`.
+- **View distance**: `REACH` of the loaded-columns picture was not made
+  derived; instead `terrain.load_distance` is clamped to
+  `defs::MAX_LOAD_DISTANCE` (1376 m), which the 12-column picture covers.
+  Ultra's 1350 m fits. Growing the picture is the step after chunk
+  persistence.
+- **SSAO samples** take every n-th of the 16-sample kernel (the kernel
+  grows outward with the index, so the first 8 would all be near).
+- **Resolution scale** draws the HDR target smaller; the composite samples
+  colour bilinearly by `uv` and depth by the nearest texel. At 100 % the
+  composite takes exactly the old `texelFetch` path.
+- **Anisotropy**: `gfx::sampler` replaces the level of every sampler that
+  asks for anisotropic filtering (> 1×) with `display.anisotropy`; samplers
+  are cached by their description, so a change makes new ones.
+- **Scatter graphs**: the graph type for the range is `SpawnRange` (with a
+  `Param` distance); `ScatterRange` stays the resolved, `Copy` type the
+  runtime uses. `SpawnMesh` got a new field **`density`** (share of the
+  arriving points that get a model, a `Param`, 1 by default and left out of
+  files then); `scatter.detail_density` scales a fixed one on detail
+  outputs. A loaded layer keeps two planted graphs: the **landscape** one at
+  High (its key never changes with the settings, so trees are never
+  replanted) and the **detail** one with the settings now. A settings change
+  re-resolves the detail graph from memory (no file read) and only replants
+  if its key changed.
+- **Binding in inspectors** is generic `Property` rows: `<name> follows`
+  (`fixed` or a level setting) and, when bound, `<name> low` … `<name>
+  ultra`. The same names work over MCP (`editor_scatter_graph_edit` set).
+  Script parameters show the same rows for a `Param` field that is bound;
+  a field that is a plain number in the scene cannot tell an `f32` from a
+  fixed `Param`, so binding a script parameter starts in code or in the
+  scene file.
+- **Editor panel**: a "Grafik" section of the Performance panel, under the
+  frame time: preset, preview level, the project's starting preset, then
+  every setting. The project's own settings and knob tables are edited in
+  the `.fp` file or with MCP (`editor_graphics` `project`); the panel
+  follows them. The editor saves this machine's choice and the project's
+  part on its periodic settings check.
+- **MCP**: one tool, `editor_graphics` (read; preset, set, reset, preview,
+  project, save). The Performance panel's VSync switch, F2 in the debug
+  component and `editor_set_debug_views` vsync all set `display.vsync`.
+- **Scripts**: `ferrite::prelude::graphics`, and
+  `Behaviour::on_graphics_changed`, called once before the first update and
+  after every change.
+- **Demo**: "Graphics" in the main and pause menus opens a screen built
+  from `graphics::definitions()` (click: next value, right click: the one
+  before; Back or Esc saves). The demo's own setting is `demo.cables`
+  ("Kabel-Sichtweite", 200/300/450/700 m): how far power cables get a mesh,
+  before a constant in `power/mod.rs`.
+
+### Measured (2026-11-21, Vulkan, demo at the player's spawn, VSync on)
+
+GPU time per preset in three fixed views (eye level towards the houses,
+eye level along the road, the scene camera's overview), after 14 s of
+streaming each:
+
+| Preset | eye | road | overview | chunks loaded | detail cells |
+|---|---|---|---|---|---|
+| Low | 2.0 ms | 2.2 ms | 2.5 ms | 62 | 2009 |
+| Medium | 3.5 ms | 4.7 ms | 5.2 ms | 85 | ~2850 |
+| High | 5.1 ms | 6.6 ms | 7.3 ms | 125 | ~4350 |
+| Ultra | 7.0 ms | 10.6 ms | 10.0 ms | 479 | ~11600 |
+
+Switching: High → Low and MSAA off cause no slow frame (max 6.5 / 8.8 ms).
+Low → Ultra has frames up to 30 ms for the first seconds while ~4× the
+chunks and the detail cells stream in; 20 s later 7.5 ms on average.
+
+Checked by eye (screenshots at eye level, every preset): the same trees
+stand in the same places at every level (R6). At Low and Medium some tall
+birches in the middle distance nearly vanish: their coarser LOD tiers are
+very thin, and `scatter.lod_factor` 0.6 / 0.8 reaches those tiers sooner.
+An asset's LOD tiers, not missing trees; at High the same happens further
+away.
+
+Not done: the per-pixel comparison of High against master (R1). High
+takes the old paths by construction (`EngineKnobs` at High equal the old
+constants, unit-tested; the composite's old `texelFetch` path at 100 %;
+16 SSAO samples at stride 1; anisotropy 8× as before), but it was not
+diffed against a master build.
