@@ -494,6 +494,10 @@ and variant; frame cost of grass < 2 ms on the user's machine.
        start. Found on the way: the graph editor kept an open copy of the
        Trees graph and saved it over the new file; it now follows the file
        on disk (an unchanged copy reloads, an edited one warns).
+       Then (user's wish): the demo's systems announce their features
+       themselves (`CLEARANCE_FEATURES` in `houses.rs` and
+       `power/world.rs`), `landscape/features.rs` gathers them, the terrain
+       source names none.
 
 7. **Demo**: grass graph (meadows: lush biomes, gentle slopes, patches by
    noise, none on roads/water/towns), then stones and bushes with the same
