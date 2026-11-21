@@ -127,30 +127,34 @@ impl ScatterInspector {
         let mut section = Section::new(kind.label(), Some(icons::SLIDERS), width);
         let value_w = width - LABEL_COLUMN - 16.0;
         for property in kind.properties() {
-            if let Some(row) = self.add_property(property, value_w) {
+            // A spawn mesh's model is picked by a button behind its name.
+            let mut extra: Vec<Box<dyn UIElement>> = Vec::new();
+            if matches!(kind, NodeKind::SpawnMesh(_)) && property.name == "model" {
+                let state = self.state.clone();
+                let mut button = Button::new(
+                    Position::default(),
+                    Size::new(10.0, 24.0),
+                    Box::new(move |_| send(&state, Command::PickScatterModel(id))),
+                );
+                button.set_style(ButtonStyle::Secondary);
+                button.set_icon(icons::PACKAGE);
+                button.set_label("Choose");
+                button.set_tooltip("Choose the model to plant");
+                button.fit(24.0);
+                extra.push(Box::new(button));
+            }
+            if let Some(row) = self.add_property(property, value_w, extra) {
                 section.add_child(row);
             }
-        }
-        if let NodeKind::SpawnMesh(_) = kind {
-            let state = self.state.clone();
-            let mut button = Button::new(
-                Position::default(),
-                Size::new(10.0, 26.0),
-                Box::new(move |_| send(&state, Command::PickScatterModel(id))),
-            );
-            button.set_style(ButtonStyle::Secondary);
-            button.set_icon(icons::PACKAGE);
-            button.set_label("Choose model");
-            button.fit(26.0);
-            section.add_child(Box::new(FieldRow::new("", vec![Box::new(button)])));
         }
         self.body.add_child(Box::new(section));
         self.body.set_z_index(2.0);
     }
 
-    fn add_property(&mut self, property: Property, value_w: f32) -> Option<Box<dyn UIElement>> {
+    /// A row for `property`, with `extra` widgets behind its value.
+    fn add_property(&mut self, property: Property, value_w: f32, extra: Vec<Box<dyn UIElement>>) -> Option<Box<dyn UIElement>> {
         let name = property.name.to_string();
-        let widgets: Vec<Box<dyn UIElement>> = if property.read_only {
+        let mut widgets: Vec<Box<dyn UIElement>> = if property.read_only {
             let mut label = Label::new(&display(&property.value), theme::FONT_SIZE_SMALL + 0.5);
             label.set_color(theme::TEXT_MUTED);
             vec![Box::new(label)]
@@ -190,6 +194,7 @@ impl ScatterInspector {
             self.bindings.push(Binding { name: name.clone(), field });
             widgets
         };
+        widgets.extend(extra);
         Some(Box::new(FieldRow::new(&name, widgets)))
     }
 
