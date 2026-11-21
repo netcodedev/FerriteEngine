@@ -47,6 +47,8 @@ fn grass() -> NodeKind {
         collision: false,
         shadows: false,
         wind: 1.0,
+        tint: 0.0,
+        normals_up: 0.0,
     })
 }
 
@@ -325,4 +327,68 @@ fn a_graph_reads_back_as_written() {
     assert!(text.contains("node: 0,"), "{text}");
     assert!(is_scatter_graph_file(Path::new("assets/scatter/Meadow.scatter.ron")));
     assert_eq!(scatter_graph_name(Path::new("assets/scatter/Meadow.scatter.ron")), "Meadow");
+}
+
+/// A flat ground of one colour that counts how often it was asked for it.
+struct Painted {
+    color: [f32; 3],
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+impl Ground for Painted {
+    fn height(&self, _x: f64, _z: f64) -> f32 {
+        0.0
+    }
+
+    fn chance(&self, _tag: &str, _x: f64, _y: f32, _z: f64) -> f32 {
+        1.0
+    }
+
+    fn tint(&self, _x: f64, _z: f64) -> [f32; 3] {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.color
+    }
+}
+
+fn tinted(amount: f32) -> NodeKind {
+    match grass() {
+        NodeKind::SpawnMesh(spawn) => NodeKind::SpawnMesh(SpawnMesh { tint: amount, ..spawn }),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn models_take_on_as_much_of_the_ground_colour_as_asked() {
+    let rect = Rect::new(0.0, 0.0, 5.0, 5.0);
+    let ground = Painted { color: [0.5, 1.0, 1.5], asked: Default::default() };
+    let none = placed(&ScatterGraph::chain([surface(1.0), tinted(0.0)]), &ground, rect);
+    assert!(none.iter().all(|p| p.tint == [1.0; 3]));
+    // Not even asked.
+    assert_eq!(ground.asked.load(std::sync::atomic::Ordering::Relaxed), 0);
+    let full = placed(&ScatterGraph::chain([surface(1.0), tinted(1.0)]), &ground, rect);
+    assert!(full.iter().all(|p| p.tint == [0.5, 1.0, 1.5]));
+    assert_eq!(ground.asked.load(std::sync::atomic::Ordering::Relaxed), full.len());
+    let half = placed(&ScatterGraph::chain([surface(1.0), tinted(0.5)]), &ground, rect);
+    assert!(half.iter().all(|p| p.tint == [0.75, 1.0, 1.25]));
+}
+
+#[test]
+fn the_tint_rides_in_the_bottom_row_of_the_transform() {
+    let mut placement = Placement {
+        position: [3.0, 4.0, 5.0],
+        yaw: 0.7,
+        up: [0.2, 0.9, 0.1],
+        scale: [0.5, 0.8, 0.5],
+        tint: [1.0; 3],
+    };
+    let plain = placement.matrix();
+    // Untinted: a plain transform.
+    assert_eq!([plain.x.w, plain.y.w, plain.z.w, plain.w.w], [0.0, 0.0, 0.0, 1.0]);
+    placement.tint = [0.6, 1.1, 0.9];
+    let mut m = placement.matrix();
+    // As the vertex shader reads it.
+    let tint = [1.0 + m.x.w, 1.0 + m.y.w, 1.0 + m.z.w];
+    assert!(tint.iter().zip([0.6, 1.1, 0.9]).all(|(a, b)| (a - b).abs() < 1e-6), "{tint:?}");
+    (m.x.w, m.y.w, m.z.w) = (0.0, 0.0, 0.0);
+    assert_eq!(m, plain);
 }

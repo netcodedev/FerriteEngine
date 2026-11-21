@@ -428,6 +428,14 @@ pub trait TerrainSource: Send + Sync + 'static {
         }
     }
 
+    /// The colour scattered models standing at world `(x, z)` take on, as
+    /// much as their output asks for (`SpawnMesh::tint`): e.g. the tint the
+    /// ground's grass has there, so tufts turn dry or lush with it.
+    /// Multiplies their linear colours. Default: white (none).
+    fn scatter_tint(&self, _x: f64, _z: f64) -> [f32; 3] {
+        [1.0; 3]
+    }
+
     /// How likely a model of the scatter layer tagged `tag` grows at world
     /// `(x, z)` seen from far away, beyond the loaded chunks, where the
     /// horizon's ground stands at `height`. Asked for many spots at once

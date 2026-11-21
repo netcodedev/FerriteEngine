@@ -117,6 +117,14 @@ pub struct SpawnMesh {
     /// How much the models sway in the wind, 0..1.
     #[serde(default)]
     pub wind: f32,
+    /// How much the models take on the colour of the ground they stand on
+    /// (`TerrainSource::scatter_tint`), 0..1.
+    #[serde(default)]
+    pub tint: f32,
+    /// How far the shading normal bends towards the sky, 0..1: grass lit
+    /// like the ground rather than as upright cards.
+    #[serde(default)]
+    pub normals_up: f32,
 }
 
 fn yes() -> bool {
@@ -345,6 +353,8 @@ impl ScatterGraph {
                 collision: true,
                 shadows: true,
                 wind: 0.0,
+                tint: 0.0,
+                normals_up: 0.0,
             }),
         ])
     }

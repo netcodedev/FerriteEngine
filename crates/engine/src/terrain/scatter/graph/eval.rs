@@ -26,6 +26,11 @@ pub trait Ground {
     /// How likely something tagged `tag` grows on the ground at world
     /// `(x, y, z)`, 0..1 (see `TerrainSource::scatter_chance`).
     fn chance(&self, tag: &str, x: f64, y: f32, z: f64) -> f32;
+    /// The colour models standing at world `(x, z)` take on (see
+    /// `TerrainSource::scatter_tint`); white: none.
+    fn tint(&self, _x: f64, _z: f64) -> [f32; 3] {
+        [1.0; 3]
+    }
 }
 
 impl<T: TerrainSource + ?Sized> Ground for T {
@@ -35,6 +40,10 @@ impl<T: TerrainSource + ?Sized> Ground for T {
 
     fn chance(&self, tag: &str, x: f64, y: f32, z: f64) -> f32 {
         self.scatter_chance(tag, x, y, z)
+    }
+
+    fn tint(&self, x: f64, z: f64) -> [f32; 3] {
+        self.scatter_tint(x, z)
     }
 }
 
@@ -72,19 +81,21 @@ impl Rect {
 }
 
 /// Where a model goes: on `position`, turned by `yaw` about its up axis,
-/// that axis leaning to `up`, scaled by `scale` (x, up, z).
+/// that axis leaning to `up`, scaled by `scale` (x, up, z), its colours
+/// multiplied by `tint`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placement {
     pub position: [f32; 3],
     pub yaw: f32,
     pub up: [f32; 3],
     pub scale: [f32; 3],
+    pub tint: [f32; 3],
 }
 
 impl Placement {
     /// Standing upright on `position`, turned by `yaw`, at its own size.
     pub fn upright(position: [f32; 3], yaw: f32) -> Self {
-        Self { position, yaw, up: [0.0, 1.0, 0.0], scale: [1.0; 3] }
+        Self { position, yaw, up: [0.0, 1.0, 0.0], scale: [1.0; 3], tint: [1.0; 3] }
     }
 
     pub fn rotation(&self) -> Quaternion<f32> {
@@ -93,10 +104,18 @@ impl Placement {
         lean * Quaternion::from_angle_y(Rad(self.yaw))
     }
 
+    /// The model's transform. Its bottom row, always (0, 0, 0, 1) for a
+    /// placement, carries the tint less one instead (see
+    /// `scatter_instanced_vertex.glsl`, which puts the row back): no tint
+    /// is a plain transform.
     pub fn matrix(&self) -> Matrix4<f32> {
-        Matrix4::from_translation(self.position.into())
+        let mut m = Matrix4::from_translation(self.position.into())
             * Matrix4::from(self.rotation())
-            * Matrix4::from_nonuniform_scale(self.scale[0], self.scale[1], self.scale[2])
+            * Matrix4::from_nonuniform_scale(self.scale[0], self.scale[1], self.scale[2]);
+        m.x.w = self.tint[0] - 1.0;
+        m.y.w = self.tint[1] - 1.0;
+        m.z.w = self.tint[2] - 1.0;
+        m
     }
 }
 
@@ -141,10 +160,22 @@ pub fn evaluate<G: Ground + ?Sized>(graph: &ScatterGraph, ground: &G, rect: Rect
     };
     let mut outputs = Vec::new();
     for node in &graph.nodes {
-        if matches!(node.kind, NodeKind::SpawnMesh(_)) {
+        if let NodeKind::SpawnMesh(spawn) = &node.kind {
             let points = eval.input(node, 0, rect)?;
             eval.counts.insert(node.id, points.len());
-            outputs.push((node.id, points.iter().map(Point::placement).collect()));
+            let amount = spawn.tint.clamp(0.0, 1.0);
+            let placements = points
+                .iter()
+                .map(|p| {
+                    let mut placement = p.placement();
+                    if amount > 0.0 {
+                        let ground = ground.tint(p.position[0] as f64, p.position[2] as f64);
+                        placement.tint = ground.map(|c| 1.0 + (c - 1.0) * amount);
+                    }
+                    placement
+                })
+                .collect();
+            outputs.push((node.id, placements));
         }
     }
     Ok(Evaluation { outputs, counts: eval.counts })
@@ -182,7 +213,7 @@ impl Point {
     }
 
     fn placement(&self) -> Placement {
-        Placement { position: self.position, yaw: self.yaw, up: self.up, scale: self.scale }
+        Placement { position: self.position, yaw: self.yaw, up: self.up, scale: self.scale, tint: [1.0; 3] }
     }
 
     /// A random number 0..1 of this point for node `node`, the `k`th.

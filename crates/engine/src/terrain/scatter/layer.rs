@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::{self, AssetKind, AssetRef};
 
-use super::graph::{NodeId, ScatterGraph, ScatterRange};
+use super::graph::{NodeId, ScatterGraph, ScatterRange, SpawnMesh};
 
 use super::*;
 
@@ -67,7 +67,7 @@ pub(super) struct LoadedOutput {
     pub(super) node: NodeId,
     pub(super) model: Rc<ScatterModel>,
     pub(super) range: ScatterRange,
-    pub(super) shadows: bool,
+    pub(super) spawn: SpawnMesh,
 }
 
 pub(super) struct ScatterLayer {
@@ -214,7 +214,7 @@ impl ScatterLayer {
         let graph = Arc::new(ScatterGraph::from_layer(&data, self.salt()));
         let outputs = graph
             .outputs()
-            .map(|(node, spawn)| LoadedOutput { node, model: model.clone(), range: spawn.range, shadows: spawn.shadows })
+            .map(|(node, spawn)| LoadedOutput { node, model: model.clone(), range: spawn.range, spawn: spawn.clone() })
             .collect();
         Ok(Loaded { graph, outputs })
     }
@@ -241,7 +241,7 @@ impl ScatterLayer {
                 (None, "") => continue,
                 (None, file) => ScatterModel::load(&file.replace('\\', "/"))?,
             };
-            outputs.push(LoadedOutput { node, model, range: spawn.range, shadows: spawn.shadows });
+            outputs.push(LoadedOutput { node, model, range: spawn.range, spawn: spawn.clone() });
         }
         Ok(Loaded { graph: Arc::new(graph), outputs })
     }

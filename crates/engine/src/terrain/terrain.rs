@@ -1048,6 +1048,8 @@ impl Component for Terrain {
             None => {}
         }
         self.scatter.tick(delta_time);
+        // One time for the wind in all of this frame's passes.
+        super::scatter::set_wind_clock(crate::core::renderer::weather::seconds());
         let eye = camera_eye(scene);
         self.stream(scene, entity, eye);
         if let Some(source) = self.source.clone() {

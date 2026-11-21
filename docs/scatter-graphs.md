@@ -291,6 +291,43 @@ and variant; frame cost of grass < 2 ms on the user's machine.
      margin, a cell's placements split over chunks lose and double
      nothing. Then grass in the demo editor: density, edge, frame time.
 5. **Grass drawing**: wind sway, double-sided, ground tint, shadow switch.
+
+   Design (2026-11-21), after looking at the grass in the demo:
+   - **Double-sided** is already there (scatter pipelines draw both
+     sides; `shadePbr` turns a back face's normal around). The shadow
+     switch came with step 4.
+   - **Why the grass is dark:** the texture's blades are dark olive
+     (sRGB ~72, 81, 42), and a card's normal points sideways, so a high
+     sun barely lights it. Two settings per `Spawn mesh`:
+     `normals_up` (0..1) bends the shading normal towards the sky, so
+     the blades are lit like the ground they stand on; `tint` (0..1)
+     takes on the ground's colour.
+   - **Tint.** `Ground::tint(x, z)` (default white) comes from the new
+     `TerrainSource::scatter_tint`; the demo answers with the same biome
+     tint its terrain shader puts on the grass texture, so the tufts turn
+     dry or lush with the ground under them. Worked out per placement
+     (only for outputs with `tint` > 0) and carried in the instance's
+     matrix: its bottom row is always (0, 0, 0, 1), so it holds the tint
+     (minus one) and the vertex shader puts the row back. No new vertex
+     layout. The shader multiplies the albedo (`pbrTint`, a global
+     `shadePbr` reads, white unless set).
+   - **Wind.** One wind for the world for now (direction and strength;
+     later from the weather), and the time, as uniforms; per draw the
+     output's `wind` (0..1). A vertex moves along the wind by the square
+     of its height in the model, swaying with two sines and slow gusts
+     that roll across the ground. Same in every pass.
+   - **As built** (2026-11-21): as designed, plus one fix found in the
+     editor: the wind's time is set once a frame (`set_wind_clock`).
+     Read per draw, it moved the blades a little between the depth
+     prepass and the shading pass, which then missed most blade pixels,
+     and the ambient occlusion drew them as black shapes. The demo's
+     `scatter_tint` is its terrain shader's `grassTint`. With the meadow
+     at `tint` 1, `normals_up` 0.6, `wind` 1 the tufts take on the
+     ground's colour; frame 9.2 ms (GPU 7.3 ms); two frames a second
+     apart differ in ~2 % of the grass pixels, not on bare ground.
+   - **Checks.** Tests for the tint packing (matrix round trip, landscape
+     instances untouched) and that `tint` 0 asks the ground nothing; then
+     a look at eye level in the demo, and the frame time.
 6. **Node editor**: graph asset in the asset browser, opens in its own
    tab (canvas, pins, wires, add menu, undo), properties in the
    inspector, point counts on the nodes, debug views. MCP tools to

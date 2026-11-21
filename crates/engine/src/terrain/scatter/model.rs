@@ -246,6 +246,10 @@ pub struct ScatterSpec {
     pub range: ScatterRange,
     /// Whether the models are drawn into the shadow maps.
     pub shadows: bool,
+    /// How much they sway in the wind, 0..1.
+    pub wind: f32,
+    /// How far their shading normals bend towards the sky, 0..1.
+    pub normals_up: f32,
 }
 
 impl ScatterSpec {
@@ -258,6 +262,8 @@ impl ScatterSpec {
             salt: 0,
             range: ScatterRange::Landscape,
             shadows: true,
+            wind: 0.0,
+            normals_up: 0.0,
         }
     }
 
@@ -267,6 +273,8 @@ impl ScatterSpec {
             && self.salt == other.salt
             && self.range == other.range
             && self.shadows == other.shadows
+            && self.wind == other.wind
+            && self.normals_up == other.normals_up
             && (Arc::ptr_eq(&self.graph, &other.graph) || self.graph == other.graph)
     }
 }

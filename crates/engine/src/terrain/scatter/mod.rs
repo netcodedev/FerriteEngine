@@ -238,7 +238,9 @@ impl Scatter {
                     output: output.node,
                     salt: layer.output_salt(output.node),
                     range: output.range,
-                    shadows: output.shadows,
+                    shadows: output.spawn.shadows,
+                    wind: output.spawn.wind.clamp(0.0, 1.0),
+                    normals_up: output.spawn.normals_up.clamp(0.0, 1.0),
                 };
                 // The same model at the same density twice would land on
                 // the very same spots; plant it once.

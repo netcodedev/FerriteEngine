@@ -115,6 +115,25 @@ pub(super) fn lighting_needed(lit_for: Option<LitFor>) -> bool {
     })
 }
 
+/// The world's wind for swaying models: direction (x, z, unit length) and
+/// strength. One for now; later the weather's.
+const WIND: ([f32; 2], f32) = ([0.894, 0.447], 1.0);
+
+/// The time the wind sways models by (seconds, as bits), set once a frame:
+/// every pass of a frame must place a swaying model at the very same spot,
+/// or the shading pass misses the depth prepass' blades (`LEQUAL`) and the
+/// ambient occlusion draws them as dark shapes.
+static WIND_CLOCK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Set the wind's time for this frame (the terrain does, once a frame).
+pub fn set_wind_clock(seconds: f32) {
+    WIND_CLOCK.store(seconds.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn wind_clock() -> f32 {
+    f32::from_bits(WIND_CLOCK.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 /// Edge of the squares instances are culled and tiered by, in metres.
 const CELL_SIZE: f32 = 16.0;
 
@@ -562,6 +581,12 @@ impl ScatterInstances {
             };
             let eye = lighting.camera_position;
             shader.set_uniform_3f("detailFade", eye.x, eye.z, range);
+            let (direction, strength) = WIND;
+            shader.set_uniform_4f("wind", direction[0], direction[1], strength, wind_clock());
+            shader.set_uniform_1f("windAmount", self.spec.wind);
+            if !depth_only {
+                shader.set_uniform_1f("normalsUp", self.spec.normals_up);
+            }
             if !depth_only {
                 let lit_for = in_pass.then(|| LitFor {
                     program: shader.id(),
