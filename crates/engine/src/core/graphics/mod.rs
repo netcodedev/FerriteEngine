@@ -780,6 +780,61 @@ pub fn to_json() -> serde_json::Value {
     })
 }
 
+/// Carry out an MCP `graphics` request (see `BridgeRequest::Graphics`);
+/// returns every setting, as `to_json`.
+pub fn apply_request(
+    preset: Option<&str>,
+    set: Option<&serde_json::Map<String, serde_json::Value>>,
+    reset: Option<&[String]>,
+    preview: Option<&str>,
+    project: Option<&serde_json::Value>,
+    save_now: bool,
+) -> Result<serde_json::Value, String> {
+    if let Some(preset) = preset {
+        let level = Level::from_name(preset).ok_or_else(|| format!("no preset {preset:?} (low, medium, high, ultra)"))?;
+        set_preset(level);
+    }
+    for (key, value) in set.into_iter().flatten() {
+        let def = definition(key).ok_or_else(|| format!("no graphics setting {key:?}"))?;
+        let value = SettingValue::from_json(&def.kind, value)
+            .ok_or_else(|| format!("{key}: {value} is not a value for it"))?;
+        self::set(key, value)?;
+    }
+    for key in reset.into_iter().flatten() {
+        self::reset(key);
+    }
+    if let Some(preview) = preview {
+        match preview.trim().to_lowercase().as_str() {
+            "off" | "none" | "" => set_preview(None),
+            name => set_preview(Some(Level::from_name(name).ok_or_else(|| format!("no level {name:?}"))?)),
+        }
+    }
+    if let Some(project) = project {
+        let project: ProjectGraphics = serde_json::from_value(project.clone()).map_err(|e| format!("project: {e}"))?;
+        set_project_settings(&project);
+    }
+    if save_now {
+        save()?;
+    }
+    let mut json = to_json();
+    json["project"] = serde_json::to_value(project_settings()).unwrap_or_default();
+    json["unsaved"] = unsaved().into();
+    Ok(json)
+}
+
+/// What an inspector's `<name> follows` shows for a value not bound to a
+/// setting (see `Param`).
+pub const FIXED: &str = "fixed";
+
+/// The settings a `Param` can follow: those with levels.
+pub fn level_settings() -> Vec<String> {
+    definitions()
+        .into_iter()
+        .filter(|def| matches!(def.kind, SettingKind::Level))
+        .map(|def| def.key)
+        .collect()
+}
+
 /// Remembers which generation of the settings a system applied last.
 #[derive(Debug, Default)]
 pub struct Watch {

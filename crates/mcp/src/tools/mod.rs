@@ -131,6 +131,7 @@ pub fn dispatch(state: &State, name: &str, args: Value) -> Result<Value, String>
         "editor_scatter_graph_edit" => editor_pass(state, args, "scatter_graph_edit"),
         "editor_set_view" => editor_pass(state, args, "set_view"),
         "editor_set_debug_views" => editor_pass(state, args, "set_debug_views"),
+        "editor_graphics" => editor_pass(state, args, "graphics"),
         "editor_agent_control" => editor_pass(state, args, "agent_control"),
         "viewport_screenshot" => viewport_screenshot(state, args),
         "batch" => batch(state, args),

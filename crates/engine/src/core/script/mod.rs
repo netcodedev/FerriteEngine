@@ -52,6 +52,11 @@ pub trait Behaviour: 'static {
     fn update(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {}
     /// Every frame while a scene is edited and not played.
     fn update_in_editor(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {}
+    /// The graphics settings changed (and once before the first update):
+    /// read them with `graphics::level("vegetation")`, `graphics::get_bool`
+    /// and friends, for a setting of the project's own, say
+    /// (docs/graphics-settings.md).
+    fn on_graphics_changed(&mut self, scene: &mut Scene, entity: &mut Entity) {}
     fn render(
         &self,
         scene: &Scene,
@@ -108,11 +113,20 @@ pub trait Script: Behaviour + Default + Sized {
 /// The component a script lives in on an entity.
 pub struct ScriptComponent<S: Script> {
     script: S,
+    /// The graphics settings the script was last told of.
+    graphics: crate::core::graphics::Watch,
 }
 
 impl<S: Script> ScriptComponent<S> {
     pub fn new(script: S) -> Self {
-        Self { script }
+        Self { script, graphics: Default::default() }
+    }
+
+    /// Tell the script of graphics settings it has not seen yet.
+    fn follow_graphics(&mut self, scene: &mut Scene, entity: &mut Entity) {
+        if self.graphics.changed().is_some() {
+            self.script.on_graphics_changed(scene, entity);
+        }
     }
 
     pub fn script(&self) -> &S {
@@ -130,6 +144,7 @@ impl<S: Script> ScriptComponent<S> {
 
 impl<S: Script> Component for ScriptComponent<S> {
     fn update(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {
+        self.follow_graphics(scene, entity);
         self.script.update(scene, entity, delta_time);
     }
 
@@ -138,6 +153,7 @@ impl<S: Script> Component for ScriptComponent<S> {
     }
 
     fn update_in_editor(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {
+        self.follow_graphics(scene, entity);
         self.script.update_in_editor(scene, entity, delta_time);
     }
 

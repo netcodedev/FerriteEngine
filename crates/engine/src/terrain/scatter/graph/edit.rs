@@ -7,22 +7,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::core::{
     entity::component::{Property, PropertyValue},
-    graphics::{self, Level, Param, SettingKind},
+    graphics::{level_settings, Level, Param, FIXED},
 };
 
 use super::{known_biomes, known_features, FadeMode, GraphNode, NodeId, NodeKind, PinRef, ScatterGraph, SpawnMesh, SpawnRange, SplitBy, Wire};
-
-/// What `<name> follows` shows for a value not bound to a setting.
-pub const FIXED: &str = "fixed";
-
-/// The graphics settings a value can follow: those with levels.
-pub fn level_settings() -> Vec<String> {
-    graphics::definitions()
-        .into_iter()
-        .filter(|def| matches!(def.kind, SettingKind::Level))
-        .map(|def| def.key)
-        .collect()
-}
 
 /// The properties of a value that may follow a graphics setting: which
 /// one it follows (`<name> follows`), then the value, or one per level

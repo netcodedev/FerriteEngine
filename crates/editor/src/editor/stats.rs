@@ -697,6 +697,9 @@ const SECTIONS: &[(&str, &str, &[(Key, &str)])] = &[
             (Key::FrameMinMax, "Min / max"),
         ],
     ),
+    // The graphics settings, under the frame time they change (see
+    // `graphics_panel`).
+    (GRAPHICS_SECTION, icons::SLIDERS, &[]),
     (
         "Timings",
         icons::TIMER,
@@ -770,6 +773,8 @@ const SECTIONS: &[(&str, &str, &[(Key, &str)])] = &[
     ),
 ];
 
+const GRAPHICS_SECTION: &str = "Grafik";
+
 /// Docked right-hand panel with collapsible statistic sections.
 pub struct StatsPanel {
     handle: UIElementHandle,
@@ -783,6 +788,7 @@ pub struct StatsPanel {
     switches: DebugSwitches,
     built_width: Option<i32>,
     last_refresh: Option<Instant>,
+    graphics: super::graphics_panel::GraphicsRows,
 }
 
 impl StatsPanel {
@@ -807,6 +813,7 @@ impl StatsPanel {
             switches,
             built_width: None,
             last_refresh: None,
+            graphics: Default::default(),
         }
     }
 
@@ -826,6 +833,11 @@ impl StatsPanel {
                     content - 8.0,
                     Box::new(|on, _| set_vsync(on)),
                 )));
+            }
+            if *title == GRAPHICS_SECTION {
+                for row in self.graphics.build(content - 8.0) {
+                    section.add_child(row);
+                }
             }
             if *title == "Debug views" {
                 let rows: [(&str, &DataSource<bool>, fn(bool)); 3] = [
@@ -953,7 +965,7 @@ impl UIElement for StatsPanel {
             (rect.w - 8.0).max(10.0),
             (rect.h - header - 8.0).max(10.0),
         ));
-        if self.built_width != Some(rect.w as i32) {
+        if self.built_width != Some(rect.w as i32) || self.graphics.outdated() {
             self.build(rect.w);
             self.built_width = Some(rect.w as i32);
         }
@@ -974,6 +986,7 @@ impl UIElement for StatsPanel {
 
         self.panel.update(scene);
         self.body.update(scene);
+        self.graphics.sync();
     }
 
     fn render(&self) {
