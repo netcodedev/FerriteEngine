@@ -145,20 +145,26 @@ impl ScatterLayer {
     /// Load what the layer plants. `preview`: a graph to plant in place of
     /// the asset's file (one being edited, unsaved); `world_seed`: the
     /// world's, for nodes that take it.
+    /// Its models are read in the background: until they are all there,
+    /// what was planted before stays and `apply_in` asks again next frame.
     pub(super) fn apply(&mut self, preview: Option<&Arc<ScatterGraph>>, world_seed: u64) {
-        self.error = None;
-        self.loaded = None;
         match self.load(preview, world_seed) {
-            Ok(loaded) => self.loaded = Some(loaded),
+            Ok(Some(loaded)) => {
+                self.error = None;
+                self.loaded = Some(loaded);
+            }
+            Ok(None) => self.apply_in = Some(0.0),
             Err(e) => {
                 log::warn!("terrain scatter: could not load {}: {e}", self.label());
                 self.error = Some(e);
+                self.loaded = None;
             }
         }
     }
 
     /// The graph and the models of its outputs.
-    fn load(&mut self, preview: Option<&Arc<ScatterGraph>>, world_seed: u64) -> Result<Loaded, String> {
+    /// `None` while models are still being read.
+    fn load(&mut self, preview: Option<&Arc<ScatterGraph>>, world_seed: u64) -> Result<Option<Loaded>, String> {
         let (source, revision) = {
             let database = assets::database();
             let entry = database
@@ -177,21 +183,33 @@ impl ScatterLayer {
             return Err(problem.to_string());
         }
         let graph = graph.with_world_seed(world_seed);
-        self.loaded_revision = revision;
         let mut outputs = Vec::new();
+        // Every model asked for at once (they are read side by side); the
+        // layer is planted once all are there.
+        let mut waiting = false;
         for (node, spawn) in graph.outputs() {
             let model = match (&spawn.asset, spawn.model.trim()) {
-                (Some(asset), _) => ScatterModel::load_asset(asset)?.0,
+                (Some(asset), _) => match ScatterModel::load_asset_background(asset)? {
+                    Some((model, _)) => model,
+                    None => {
+                        waiting = true;
+                        continue;
+                    }
+                },
                 (None, "") => continue,
                 (None, file) => ScatterModel::load(&file.replace('\\', "/"))?,
             };
             outputs.push(LoadedOutput { node, model });
         }
-        Ok(Loaded {
+        if waiting {
+            return Ok(None);
+        }
+        self.loaded_revision = revision;
+        Ok(Some(Loaded {
             landscape: Planted::new(&graph, &at_high()),
             detail: Planted::new(&graph, &graphics::current()),
             source: graph,
             outputs,
-        })
+        }))
     }
 }

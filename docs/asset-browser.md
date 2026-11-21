@@ -171,3 +171,38 @@ Offen:
 - Tastenkürzel (Entf, F2) im Browser.
 - Das Bild eines gelöschten Assets bleibt im Cache liegen, bis man ihn
   leert.
+
+## Vorschaubilder ohne Blockieren (2026-11-21, umgesetzt)
+
+Gemessen blockierte ein Material- oder Modellbild den Editor 5–100 ms:
+Modell laden (Assimp, Bilder dekodieren), auf die GPU laden, rendern,
+synchron zurücklesen (`read_pixels` wartet unter Vulkan auf die GPU).
+
+1. **Zwei Stufen beim Laden.** `PreparedModel::load` (Engine,
+   `model/prepared.rs`) macht alles ohne GPU: die Datei mit Assimp lesen,
+   die Bilder finden und auf allen Kernen dekodieren, die Texture-Assets
+   der Material-Slots dekodieren. Es ist `Send` und läuft in einem
+   Worker-Thread. `ModelBuilder::from_prepared` + `Model::init` laden im
+   Haupt-Thread nur noch hoch (die Bilder sind schon da). Die russimp-
+   `Scene` wird als Ganzes übergeben (ihre `Rc`s zeigen nur aufeinander).
+2. **Budget pro Frame.** Der Haupt-Thread nimmt pro Frame Fertiges nur,
+   solange ein Budget von wenigen Millisekunden reicht; ein Modell ist
+   dabei unteilbar. Nach einem langen Schritt bleibt die Pause wie bisher.
+3. **Asynchrones Zurücklesen.** `gfx::read_pixels_later` kopiert das Bild
+   in einen Buffer und gibt einen Schlüssel zurück; `gfx::take_pixels`
+   liefert es, sobald die GPU fertig ist (Vulkan: Frame-Serial erreicht).
+   GL und das Null-Backend lesen sofort (wie bisher).
+
+Bilder werden dafür mit einem einfachen `Model` (wie die Modell-
+Komponente) statt mit `ScatterModel` gezeichnet: keine Kollisionsmeshes,
+keine Instanz-Buffer. Szenenladen und Streaming nutzen die zwei Stufen
+noch nicht; das ist ein eigener Schritt.
+
+Umgesetzt: zwei Worker (`thumbnails` für Texturen und das Speichern der
+PNGs, `thumbnail-models` für `PreparedModel`), Budget 4 ms pro Frame, danach
+so lange Pause, wie ein zu langer Schritt dauerte. Materialien mit
+„auto“-Maps lesen das Modell, dessen Slot sie nutzt, im Worker; ist es
+schon im kleinen Cache (vier Modelle), entfällt das, und ist es bis zum
+Zeichnen verdrängt, liest der Worker es neu. Gemessen im Demo-Projekt mit
+leerem Cache, Ordner `models/building`: 187 Bilder in 45 s, kein Frame
+über 25 ms (vorher je Bild 5–100 ms im Haupt-Thread).

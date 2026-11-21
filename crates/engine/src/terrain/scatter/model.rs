@@ -124,6 +124,47 @@ impl ScatterModel {
         Ok((model, revision))
     }
 
+    /// `load_asset` without holding the frame up: the file is read on a
+    /// worker (`model::background`), and `None` comes back until it is
+    /// there; then it is uploaded, cached and handed out like `load_asset`
+    /// does. Must run on the GL thread.
+    pub fn load_asset_background(asset: &AssetRef) -> Result<Option<(Rc<ScatterModel>, u64)>, String> {
+        let (source, options, revision) = {
+            let database = assets::database();
+            let entry = database
+                .get(asset.id)
+                .ok_or_else(|| format!("asset {} does not exist", asset.id))?;
+            let AssetKind::Model(settings) = &entry.meta.kind else {
+                return Err(format!("'{}' is not a model", entry.meta.name));
+            };
+            let options = LoadOptions::for_settings(settings, asset.part.clone());
+            (entry.source_path(), options, entry.revision)
+        };
+        let part = asset.part.as_deref().unwrap_or("");
+        let prefix = format!("asset:{}:{part}:", asset.id);
+        let key = format!("{prefix}{revision}");
+        if let Some(cached) = MODEL_CACHE.with(|cache| cache.borrow().models.get(&key).cloned()) {
+            return Ok(Some((cached, revision)));
+        }
+        let path = source.to_string_lossy().replace('\\', "/");
+        let materials: Vec<assets::AssetId> = options.slots.iter().filter_map(|slot| slot.material).collect();
+        match crate::core::model::background::poll(&key, &path, &materials) {
+            crate::core::model::background::Poll::Waiting => Ok(None),
+            crate::core::model::background::Poll::Failed(e) => Err(e),
+            crate::core::model::background::Poll::Ready(prepared) => {
+                let model = ModelBuilder::from_prepared(prepared).with_scale(MODEL_SCALE * options.scale).build();
+                let variants = variants_of(model, &path, &options).map_err(|e| e.to_string())?;
+                let model = Rc::new(ScatterModel { variants, impostors: std::cell::OnceCell::new() });
+                MODEL_CACHE.with(|cache| {
+                    let mut cache = cache.borrow_mut();
+                    cache.models.retain(|k, _| !k.starts_with(&prefix) || *k == key);
+                    cache.models.insert(key, model.clone());
+                });
+                Ok(Some((model, revision)))
+            }
+        }
+    }
+
     /// Load a model file with the given settings, which need not be saved
     /// (or belong to a registered asset) yet — for previewing edits. Not
     /// cached. Must run on the GL thread.
@@ -288,9 +329,19 @@ fn load_variants(
     path: &str,
     options: &LoadOptions,
 ) -> Result<Vec<ModelVariant>, Box<dyn std::error::Error>> {
-    let mut model = ModelBuilder::from_file(path)?
+    let model = ModelBuilder::from_file(path)?
         .with_scale(MODEL_SCALE * options.scale)
         .build();
+    variants_of(model, path, options)
+}
+
+/// The variants of `model` (read from `path`, not yet uploaded) as
+/// `options` ask: uploaded, with their buffers and colliders.
+fn variants_of(
+    mut model: Model,
+    path: &str,
+    options: &LoadOptions,
+) -> Result<Vec<ModelVariant>, Box<dyn std::error::Error>> {
     model.init();
     // The asset's materials replace what the loader made of the file's.
     crate::core::material::asset::apply_to_model(&mut model, &options.slots);

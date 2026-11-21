@@ -28,6 +28,9 @@ mod model_mesh;
 mod model_skeleton;
 pub mod outline;
 mod pose;
+pub mod background;
+mod prepared;
+pub use prepared::PreparedModel;
 
 pub struct Model {
     model: Scene,
@@ -43,11 +46,13 @@ pub struct Model {
     file_materials: Vec<crate::core::material::Material>,
     /// Texture files several materials refer to, loaded once: the
     /// materials hold `share`d handles on these (see `Model::init`).
-    shared_textures: Vec<Texture>,
+    shared_textures: Vec<std::rc::Rc<Texture>>,
     /// Every map `init` found (the owning handles): materials hold shared
     /// handles, so replacing a material (with a material asset's) never
     /// frees a texture another one still draws with.
-    map_textures: Vec<Texture>,
+    map_textures: Vec<std::rc::Rc<Texture>>,
+    /// Maps a `PreparedModel` decoded already, for `init` to take.
+    prepared_images: Option<prepared::DecodedMaps>,
     /// File name without extension; names the variant of a model that holds
     /// just one.
     name: String,

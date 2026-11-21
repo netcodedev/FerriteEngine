@@ -90,6 +90,25 @@ impl Model {
             .collect()
     }
 
+    /// Corners of the box around the meshes `render` draws (after
+    /// `show_variant`, that variant's), at the model's scale: to frame a
+    /// picture of it. `None` without vertices.
+    pub fn visible_bounds(&self) -> Option<([f32; 3], [f32; 3])> {
+        let mut bounds: Option<([f32; 3], [f32; 3])> = None;
+        let shown = |name: &str| self.visible.as_ref().is_none_or(|visible| visible.contains(name));
+        for mesh in self.model.meshes.iter().filter(|mesh| shown(&mesh.name)) {
+            for v in &mesh.vertices {
+                let p = [v.x * self.scale, v.y * self.scale, v.z * self.scale];
+                let (min, max) = bounds.get_or_insert((p, p));
+                for axis in 0..3 {
+                    min[axis] = min[axis].min(p[axis]);
+                    max[axis] = max[axis].max(p[axis]);
+                }
+            }
+        }
+        bounds
+    }
+
     /// Draw only one variant of the file, at its most detailed LOD: the
     /// variant of this name, or the first one without a name. A file that
     /// is not split into variants or LODs is drawn whole either way.

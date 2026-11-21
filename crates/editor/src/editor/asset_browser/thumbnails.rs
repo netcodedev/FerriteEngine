@@ -4,8 +4,11 @@
 //! again only when the key (the asset's settings, its file's size and time,
 //! and those of the assets it uses) no longer fits.
 //!
-//! Textures are shrunk on a worker thread. Materials and models are drawn
-//! on the render thread into a picture of their own, at most one per frame.
+//! Textures are shrunk on a worker thread. For materials and models a
+//! second worker reads the files and decodes their maps (`PreparedModel`);
+//! the render thread then only uploads and draws, within a few
+//! milliseconds per frame, and takes the pixels back from the GPU some
+//! frames later (`gfx::read_pixels_later`): it never waits.
 
 use std::{
     cell::RefCell,
@@ -26,11 +29,14 @@ use ferrite::{
             preview::Shape,
             AlphaMode,
         },
-        model::{Model, ModelBuilder},
+        model::{Model, ModelBuilder, PreparedModel},
         primitives::{Position, Size},
-        renderer::{hdr, pbr::Lighting},
+        renderer::{
+            hdr,
+            pbr::Lighting,
+            texture::decode::{self, Decoded},
+        },
     },
-    terrain::scatter::{graph::Placement, LodChoice, ScatterInstances, ScatterModel, ScatterSpec},
 };
 use ferrite_ui::ui::{elements::image::Image, UIElement};
 
@@ -157,70 +163,132 @@ impl Slot {
     }
 }
 
-/// Work for the texture thread.
-struct Job {
-    asset: AssetRef,
-    source: PathBuf,
-    png: PathBuf,
-    key: String,
+/// Work for the worker threads.
+enum Job {
+    /// Shrink a texture file (and keep the picture).
+    Texture { asset: AssetRef, source: PathBuf, png: PathBuf, key: String },
+    /// Read and decode what a material or model picture needs.
+    Prepare { asset: AssetRef, key: String, what: Prepare },
+    /// Keep a picture drawn on the render thread.
+    Save { png: PathBuf, key: String, picture: image::RgbaImage },
 }
 
-/// What the texture thread made.
-struct Done {
-    asset: AssetRef,
-    key: String,
-    picture: Result<image::RgbaImage, String>,
+/// What to read for a picture drawn on the render thread.
+enum Prepare {
+    /// A model file: the variant to show, the material assets of its slots.
+    Model { source: String, variant: Option<String>, slots: Vec<assets::MaterialSettings> },
+    /// A material: its own texture assets, and the model file whose slot
+    /// `slot` gives its "auto" maps, if a model uses it (`cached`: that
+    /// model's materials are at hand already, nothing to read).
+    Material { id: AssetId, auto: Option<(AssetId, String, usize)>, cached: Option<(AssetId, usize)> },
+    /// Nothing to read (a material graph).
+    Nothing,
 }
 
-/// A picture still to be drawn on the render thread.
-struct Draw {
-    asset: AssetRef,
-    key: String,
+/// What a worker read for a picture: ready to upload.
+enum Ready {
+    Model { model: PreparedModel, variant: Option<String>, slots: Vec<assets::MaterialSettings> },
+    Material { textures: HashMap<PathBuf, Decoded>, auto: Option<(AssetId, PreparedModel, usize)>, auto_slot: Option<(AssetId, usize)> },
+    Graph,
 }
+
+/// What a worker sends back.
+enum Done {
+    /// A texture's picture.
+    Picture { asset: AssetRef, key: String, picture: Result<image::RgbaImage, String> },
+    /// Read for drawing.
+    Prepared { asset: AssetRef, key: String, ready: Result<Ready, String> },
+}
+
+/// Main-thread time per frame for pictures: uploading and drawing go on
+/// while there is some left (one model is never split).
+const BUDGET_MS: f32 = 4.0;
 
 pub struct Thumbnails {
     folder: PathBuf,
     slots: HashMap<AssetRef, Slot>,
-    jobs: Sender<Job>,
+    /// Texture pictures and saving.
+    textures: Sender<Job>,
+    /// Reading models and materials.
+    prepare: Sender<Job>,
     done: Receiver<Done>,
-    /// Drawn on the render thread, one per frame (`render`).
-    queue: RefCell<VecDeque<Draw>>,
+    /// Read, waiting for the render thread (`render_pending`).
+    ready: RefCell<VecDeque<(AssetRef, String, Ready)>>,
+    /// Drawn, the pixels on their way back from the GPU.
+    reading: RefCell<Vec<(AssetRef, String, u64)>>,
+    /// Back from the GPU or failed, for `want` to take.
     drawn: RefCell<Vec<(AssetRef, String, Result<image::RgbaImage, String>)>>,
     sphere: RefCell<Option<Model>>,
-    /// No picture is drawn before this: after one that took `t`, the
-    /// editor gets at least `t` to itself, so it stays usable meanwhile.
+    /// No picture is drawn before this: after a step that took longer than
+    /// the budget, the editor gets as long to itself.
     rest_until: std::cell::Cell<Instant>,
-    /// What the loader made of the materials of recently loaded model
-    /// files (by model asset), for materials whose maps are "auto".
-    file_materials: RefCell<VecDeque<(AssetId, Vec<Option<ferrite::core::material::Material>>)>>,
+    /// Recently read model files (by model asset), for materials whose maps
+    /// are "auto": the model is kept, it holds the textures.
+    file_materials: RefCell<VecDeque<(AssetId, Model)>>,
     /// Database state and time of the last key check.
     checked: (u64, Instant),
 }
 
+fn worker(name: &str, inbox: Receiver<Job>, outbox: Sender<Done>) {
+    std::thread::Builder::new()
+        .name(name.into())
+        .spawn(move || {
+            while let Ok(job) = inbox.recv() {
+                let done = match job {
+                    Job::Texture { asset, source, png, key } => {
+                        let picture = shrink(&source);
+                        if let Ok(picture) = &picture {
+                            save(&png, &key, picture);
+                        }
+                        Done::Picture { asset, key, picture }
+                    }
+                    Job::Prepare { asset, key, what } => Done::Prepared { asset, key, ready: prepare(what) },
+                    Job::Save { png, key, picture } => {
+                        save(&png, &key, &picture);
+                        continue;
+                    }
+                };
+                if outbox.send(done).is_err() {
+                    break;
+                }
+            }
+        })
+        .expect("a thumbnail thread starts");
+}
+
+/// Read and decode on a worker what a picture needs (no GPU).
+fn prepare(what: Prepare) -> Result<Ready, String> {
+    match what {
+        Prepare::Model { source, variant, slots } => {
+            let materials: Vec<AssetId> = slots.iter().filter_map(|s| s.material).collect();
+            let model = PreparedModel::load(&source)?.with_material_textures(&materials);
+            Ok(Ready::Model { model, variant, slots })
+        }
+        Prepare::Material { id, auto, cached } => {
+            let textures = decode::decode_files(&material_asset::texture_files_of(&[id]));
+            // Not read: drawn without the model's maps.
+            let auto = auto.and_then(|(model, source, slot)| PreparedModel::load(&source).ok().map(|p| (model, p, slot)));
+            Ok(Ready::Material { textures, auto, auto_slot: cached })
+        }
+        Prepare::Nothing => Ok(Ready::Graph),
+    }
+}
+
 impl Thumbnails {
     pub fn new(project: &Path) -> Self {
-        let (jobs, inbox) = channel::<Job>();
+        let (textures, texture_inbox) = channel::<Job>();
+        let (prepare, prepare_inbox) = channel::<Job>();
         let (outbox, done) = channel::<Done>();
-        std::thread::Builder::new()
-            .name("thumbnails".into())
-            .spawn(move || {
-                while let Ok(job) = inbox.recv() {
-                    let picture = shrink(&job.source);
-                    if let Ok(picture) = &picture {
-                        save(&job.png, &job.key, picture);
-                    }
-                    if outbox.send(Done { asset: job.asset, key: job.key, picture }).is_err() {
-                        break;
-                    }
-                }
-            })
-            .expect("the thumbnail thread starts");
+        worker("thumbnails", texture_inbox, outbox.clone());
+        worker("thumbnail-models", prepare_inbox, outbox);
         Self {
             folder: project.join(FOLDER),
             slots: HashMap::new(),
-            jobs,
+            textures,
+            prepare,
             done,
-            queue: RefCell::new(VecDeque::new()),
+            ready: RefCell::new(VecDeque::new()),
+            reading: RefCell::new(Vec::new()),
             drawn: RefCell::new(Vec::new()),
             sphere: RefCell::new(None),
             rest_until: std::cell::Cell::new(Instant::now()),
@@ -233,7 +301,8 @@ impl Thumbnails {
     pub fn reopen(&mut self, project: &Path) {
         self.folder = project.join(FOLDER);
         self.slots.clear();
-        self.queue.borrow_mut().clear();
+        self.ready.borrow_mut().clear();
+        self.reading.borrow_mut().clear();
     }
 
     fn png_of(&self, asset: &AssetRef) -> PathBuf {
@@ -241,16 +310,23 @@ impl Thumbnails {
     }
 
     /// Ask for the pictures of the cards on screen; call every update.
-    /// Takes what the worker and the last render made, and starts what is
-    /// missing or out of date.
+    /// Takes what the workers and the render thread made, and starts what
+    /// is missing or out of date.
     pub fn want(&mut self, database: &AssetDatabase, visible: &[AssetRef]) {
         while let Ok(done) = self.done.try_recv() {
-            self.finish(done.asset, done.key, done.picture);
+            match done {
+                Done::Picture { asset, key, picture } => self.finish(asset, key, picture),
+                Done::Prepared { asset, key, ready } => match ready {
+                    Ok(ready) => self.ready.borrow_mut().push_back((asset, key, ready)),
+                    Err(e) => self.finish(asset, key, Err(e)),
+                },
+            }
         }
         let drawn = std::mem::take(&mut *self.drawn.borrow_mut());
         for (asset, key, picture) in drawn {
             if let Ok(picture) = &picture {
-                save(&self.png_of(&asset), &key, picture);
+                let job = Job::Save { png: self.png_of(&asset), key: key.clone(), picture: picture.clone() };
+                let _ = self.textures.send(job);
             }
             self.finish(asset, key, picture);
         }
@@ -284,16 +360,31 @@ impl Thumbnails {
                 }
             }
             self.slots.insert(asset.clone(), Slot::Waiting { key: key.clone() });
-            match entry.meta.kind {
+            let source = entry.source_path();
+            let job = match &entry.meta.kind {
                 AssetKind::Texture(_) => {
-                    let _ = self.jobs.send(Job { asset: asset.clone(), source: entry.source_path(), png, key });
+                    let _ = self.textures.send(Job::Texture { asset: asset.clone(), source, png, key });
+                    continue;
                 }
-                _ => {
-                    let mut queue = self.queue.borrow_mut();
-                    queue.retain(|d| &d.asset != asset);
-                    queue.push_back(Draw { asset: asset.clone(), key });
+                AssetKind::Model(model) => Prepare::Model {
+                    source: source.to_string_lossy().replace('\\', "/"),
+                    variant: asset.part.clone().or_else(|| model.variants.first().map(|v| v.name.clone())),
+                    slots: model.materials.clone(),
+                },
+                AssetKind::Material(_) => {
+                    let auto = auto_source(database, asset.id);
+                    let cached = auto
+                        .as_ref()
+                        .filter(|(model, _, _)| self.file_materials.borrow().iter().any(|(m, _)| m == model))
+                        .map(|(model, _, slot)| (*model, *slot));
+                    match cached {
+                        Some(cached) => Prepare::Material { id: asset.id, auto: None, cached: Some(cached) },
+                        None => Prepare::Material { id: asset.id, auto, cached: None },
+                    }
                 }
-            }
+                _ => Prepare::Nothing,
+            };
+            let _ = self.prepare.send(Job::Prepare { asset: asset.clone(), key, what: job });
         }
     }
 
@@ -335,93 +426,110 @@ impl Thumbnails {
         }
     }
 
-    /// Draw one queued material or model picture. Call while the frame is
-    /// being drawn.
+    /// The render thread's part, within a few milliseconds per frame: take
+    /// the pixels the GPU finished, then upload and draw what the workers
+    /// read. Call while the frame is being drawn.
     pub fn render_pending(&self) {
-        if !gfx::is_drawing() || Instant::now() < self.rest_until.get() {
+        if !gfx::is_drawing() {
             return;
         }
-        let Some(draw) = self.queue.borrow_mut().pop_front() else {
-            return;
-        };
+        // Pixels back from the GPU (frames after they were drawn).
+        self.reading.borrow_mut().retain(|(asset, key, id)| match gfx::take_pixels(*id) {
+            Some(pixels) => {
+                let picture = image::RgbaImage::from_raw(SIZE, SIZE, pixels)
+                    .map(|image| image::imageops::flip_vertical(&image))
+                    .ok_or_else(|| "the picture came back in pieces".to_string());
+                self.drawn.borrow_mut().push((asset.clone(), key.clone(), picture));
+                false
+            }
+            None => true,
+        });
         let started = Instant::now();
-        let picture = self.render_one(&draw.asset);
-        self.rest_until.set(Instant::now() + started.elapsed());
-        self.drawn.borrow_mut().push((draw.asset, draw.key, picture));
+        if started < self.rest_until.get() {
+            return;
+        }
+        while started.elapsed().as_secs_f32() * 1000.0 < BUDGET_MS {
+            let Some((asset, key, ready)) = self.ready.borrow_mut().pop_front() else {
+                break;
+            };
+            match self.draw_ready(&asset, ready) {
+                Ok(Some(id)) => self.reading.borrow_mut().push((asset, key, id)),
+                // The model it counted on is gone from the cache: read again.
+                Ok(None) => {
+                    let auto = auto_source(&assets::database(), asset.id);
+                    let what = Prepare::Material { id: asset.id, auto, cached: None };
+                    let _ = self.prepare.send(Job::Prepare { asset, key, what });
+                }
+                Err(e) => self.drawn.borrow_mut().push((asset, key, Err(e))),
+            }
+        }
+        // Over budget (a big model): as long again to the editor.
+        let spent = started.elapsed();
+        if spent.as_secs_f32() * 1000.0 > BUDGET_MS {
+            self.rest_until.set(Instant::now() + spent);
+        }
     }
 
-    fn render_one(&self, asset: &AssetRef) -> Result<image::RgbaImage, String> {
-        let (kind, name) = {
-            let database = assets::database();
-            let entry = database.get(asset.id).ok_or("the asset is gone")?;
-            (entry.meta.kind.clone(), entry.meta.name.clone())
-        };
-        match kind {
-            AssetKind::Material(_) => {
-                // Maps left on "auto" come from the model file of a slot
-                // using the material.
-                let auto = self.auto_material(asset.id);
-                let material =
-                    material_asset::material_for_asset(asset.id, auto.as_ref()).ok_or("the material could not be built")?;
-                self.picture_of_sphere(material)
-            }
-            AssetKind::MaterialGraph(_) => {
-                let file = MaterialFile {
-                    graph: GraphRef::Asset(asset.id),
-                    alpha: AlphaMode::Opaque,
-                    ..Default::default()
-                };
-                self.picture_of_sphere(material_asset::build(&file, &name, None))
-            }
-            AssetKind::Model(model) => {
-                // Through the model cache: the scene (a scatter graph
-                // planting the variant) has it loaded mostly already.
-                let variant = asset.part.clone().or_else(|| model.variants.first().map(|v| v.name.clone()));
-                let reference = match variant {
-                    Some(variant) => AssetRef::part(asset.id, &variant),
-                    None => AssetRef::whole(asset.id),
-                };
-                let (loaded, _) = ScatterModel::load_asset(&reference)?;
-                let (min, max) = loaded.bounds(0).unwrap_or(([0.0; 3], [1.0; 3]));
+    /// Upload what a worker read and draw it: the id of the pixels' way
+    /// back, or `None` when it has to be read again.
+    fn draw_ready(&self, asset: &AssetRef, ready: Ready) -> Result<Option<u64>, String> {
+        match ready {
+            Ready::Model { model, variant, slots } => {
+                let mut model = ModelBuilder::from_prepared(model).build();
+                model.init();
+                material_asset::apply_to_model(&mut model, &slots);
+                model.show_variant(variant.as_deref())?;
+                let (min, max) = model.visible_bounds().ok_or("the model has no vertices")?;
                 let center = Point3::new((min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, (min[2] + max[2]) * 0.5);
                 let radius = (0..3).map(|a| (max[a] - min[a]) * 0.5).map(|h| h * h).sum::<f32>().sqrt().max(0.01);
-                let instances = ScatterInstances::new(&ScatterSpec::of_model(loaded), &[Placement::upright([0.0; 3], 0.0)]);
-                Ok(picture(center, radius, |vp, lighting| {
-                    instances.draw(vp, &Matrix4::identity(), lighting, LodChoice::Distance(0.0));
-                }))
+                Ok(Some(picture(center, radius, |vp, lighting| model.render(lighting, &Matrix4::identity(), vp))))
             }
-            _ => Err("no picture for this kind".into()),
+            Ready::Material { textures, auto, auto_slot } => {
+                material_asset::offer_textures(textures);
+                let auto = match (auto, auto_slot) {
+                    (Some((model, prepared, slot)), _) => self.file_material(model, Some(prepared), slot),
+                    (None, Some((model, slot))) => {
+                        if !self.file_materials.borrow().iter().any(|(m, _)| *m == model) {
+                            return Ok(None);
+                        }
+                        self.file_material(model, None, slot)
+                    }
+                    _ => None,
+                };
+                let material = material_asset::material_for_asset(asset.id, auto.as_ref());
+                material_asset::forget_offered_textures();
+                let material = material.ok_or("the material could not be built")?;
+                self.picture_of_sphere(material).map(Some)
+            }
+            Ready::Graph => {
+                let name = assets::database().get(asset.id).map(|e| e.meta.name.clone()).unwrap_or_default();
+                let file = MaterialFile { graph: GraphRef::Asset(asset.id), alpha: AlphaMode::Opaque, ..Default::default() };
+                self.picture_of_sphere(material_asset::build(&file, &name, None)).map(Some)
+            }
         }
     }
 
-    /// What the loader makes of the file material of the first model slot
-    /// drawn with material `id`, if any slot is.
-    fn auto_material(&self, id: AssetId) -> Option<ferrite::core::material::Material> {
-        let (model, index, path, scale) = {
-            let database = assets::database();
-            let found = database.iter().find_map(|entry| {
-                let AssetKind::Model(settings) = &entry.meta.kind else { return None };
-                let index = settings.materials.iter().position(|slot| slot.material == Some(id))?;
-                Some((entry.meta.id, index, entry.source_path(), settings.scale))
-            });
-            found
-        }?;
+    /// What the loader made of material `slot` of model asset `model`:
+    /// from the recently read ones, or uploaded from `prepared`.
+    fn file_material(
+        &self,
+        model: AssetId,
+        prepared: Option<PreparedModel>,
+        slot: usize,
+    ) -> Option<ferrite::core::material::Material> {
         let mut cache = self.file_materials.borrow_mut();
         if !cache.iter().any(|(m, _)| *m == model) {
-            let path = path.to_string_lossy().replace('\\', "/");
-            let mut loaded = ModelBuilder::from_file(&path).ok()?.with_scale(scale).build();
+            let mut loaded = ModelBuilder::from_prepared(prepared?).build();
             loaded.init();
-            let count = loaded.materials().len();
-            let materials = (0..count).map(|i| loaded.file_material(i).cloned()).collect();
             if cache.len() >= 4 {
                 cache.pop_front();
             }
-            cache.push_back((model, materials));
+            cache.push_back((model, loaded));
         }
-        cache.iter().find(|(m, _)| *m == model).and_then(|(_, materials)| materials.get(index).cloned().flatten())
+        cache.iter().find(|(m, _)| *m == model).and_then(|(_, loaded)| loaded.file_material(slot).cloned())
     }
 
-    fn picture_of_sphere(&self, material: ferrite::core::material::Material) -> Result<image::RgbaImage, String> {
+    fn picture_of_sphere(&self, material: ferrite::core::material::Material) -> Result<u64, String> {
         let mut sphere = self.sphere.borrow_mut();
         if sphere.is_none() {
             *sphere = Some(Shape::Sphere.model()?);
@@ -441,10 +549,21 @@ impl Thumbnails {
     }
 }
 
+/// The model file whose slot gives material `id` its "auto" maps: the
+/// first model with a slot drawn with it (asset, file, slot).
+fn auto_source(database: &AssetDatabase, id: AssetId) -> Option<(AssetId, String, usize)> {
+    database.iter().find_map(|entry| {
+        let AssetKind::Model(settings) = &entry.meta.kind else { return None };
+        let slot = settings.materials.iter().position(|slot| slot.material == Some(id))?;
+        Some((entry.meta.id, entry.source_path().to_string_lossy().replace('\\', "/"), slot))
+    })
+}
+
 /// Draw something `radius` around `center` into a picture of its own, from
-/// the front and a bit above, and read it back (top row first). The pass
-/// that was running goes on afterwards as it was.
-fn picture(center: Point3<f32>, radius: f32, draw: impl FnOnce(&Matrix4<f32>, &Lighting)) -> image::RgbaImage {
+/// the front and a bit above. The pixels come back later: the id is for
+/// `gfx::take_pixels`. The pass that was running goes on afterwards as it
+/// was.
+fn picture(center: Point3<f32>, radius: f32, draw: impl FnOnce(&Matrix4<f32>, &Lighting)) -> u64 {
     let color = gfx::Texture::new(TextureDesc::d2(Format::Rgba8, SIZE, SIZE));
     let depth = gfx::Texture::new(TextureDesc::d2(Format::Depth24, SIZE, SIZE));
     let target = gfx::RenderTarget::new(&[color.attachment(0, None)], Some(depth.attachment(0, None)));
@@ -465,12 +584,12 @@ fn picture(center: Point3<f32>, radius: f32, draw: impl FnOnce(&Matrix4<f32>, &L
     draw(&vp, &lighting);
     gfx::end_pass();
     hdr::set_picture_target(None);
-    let pixels = gfx::read_pixels(target.reference(), gfx::Rect::sized(SIZE, SIZE));
+    // The copy goes into this frame's commands; the target and textures are
+    // freed only once those have run.
+    let id = gfx::read_pixels_later(target.reference(), gfx::Rect::sized(SIZE, SIZE));
     gfx::set_pass_overrides(overrides);
     gfx::set_viewport(viewport);
-    let image = image::RgbaImage::from_raw(SIZE, SIZE, pixels).unwrap_or_else(|| image::RgbaImage::new(SIZE, SIZE));
-    // Rows start at the bottom.
-    image::imageops::flip_vertical(&image)
+    id
 }
 
 /// A texture file shrunk to fit `SIZE` (aspect kept, centred, the rest

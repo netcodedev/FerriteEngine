@@ -120,6 +120,23 @@ pub trait Device {
     fn blit(&self, src: TargetRef, src_rect: Rect, dst: TargetRef, dst_rect: Rect, planes: Planes, linear: bool);
     /// RGBA8 rows of `rect` of `target`'s first colour attachment, first row first.
     fn read_pixels(&self, target: TargetRef, rect: Rect) -> Vec<u8>;
+    /// `read_pixels` without waiting for the GPU: an id for `take_pixels`.
+    /// Backends that cannot wait later read now.
+    fn read_pixels_later(&self, target: TargetRef, rect: Rect) -> u64 {
+        let pixels = self.read_pixels(target, rect);
+        EARLY_READS.with(|reads| {
+            let mut reads = reads.borrow_mut();
+            let id = reads.0 + 1;
+            reads.0 = id;
+            reads.1.insert(id, pixels);
+            id
+        })
+    }
+    /// The pixels of a `read_pixels_later` once the GPU has them; `None`
+    /// until then (and for an id taken already).
+    fn take_pixels(&self, id: u64) -> Option<Vec<u8>> {
+        EARLY_READS.with(|reads| reads.borrow_mut().1.remove(&id))
+    }
 
     /// Samples per pixel of the window's colour (its multisampling).
     fn window_samples(&self) -> u32 {
@@ -931,6 +948,24 @@ pub fn blit(src: TargetRef, src_rect: Rect, dst: TargetRef, dst_rect: Rect, plan
 /// RGBA8 rows of `rect` of `target`, the first row (the bottom) first.
 pub fn read_pixels(target: TargetRef, rect: Rect) -> Vec<u8> {
     device().read_pixels(target, rect)
+}
+
+thread_local! {
+    /// `read_pixels_later` of backends that read at once: the next id and
+    /// what is not taken yet.
+    static EARLY_READS: RefCell<(u64, std::collections::HashMap<u64, Vec<u8>>)> =
+        RefCell::new((0, std::collections::HashMap::new()));
+}
+
+/// `read_pixels` without waiting for the GPU: ask `take_pixels` with the
+/// id in a later frame. Rows as `read_pixels` gives them.
+pub fn read_pixels_later(target: TargetRef, rect: Rect) -> u64 {
+    device().read_pixels_later(target, rect)
+}
+
+/// The pixels of a `read_pixels_later`, once they are there.
+pub fn take_pixels(id: u64) -> Option<Vec<u8>> {
+    device().take_pixels(id)
 }
 
 #[cfg(test)]

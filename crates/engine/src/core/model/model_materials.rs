@@ -259,19 +259,71 @@ pub(super) fn map_texture_type(map: MaterialMap) -> TextureType {
     }
 }
 
+/// A map texture made from a file: the file (as on disk), its colour space,
+/// whether it was inverted (gloss into roughness) and the opacity map put
+/// into its alpha.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) struct MapKey {
+    path: std::path::PathBuf,
+    srgb: bool,
+    inverted: bool,
+    opacity: Option<std::path::PathBuf>,
+}
+
+impl MapKey {
+    pub(super) fn new(path: &std::path::Path, srgb: bool) -> Self {
+        Self { path: canonical(path), srgb, inverted: false, opacity: None }
+    }
+}
+
+fn canonical(path: &std::path::Path) -> std::path::PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+thread_local! {
+    /// Map textures made from files, shared by every model that uses the
+    /// same file the same way: the building parts of a set share a few
+    /// texture files, which each part decoded and uploaded again (19 parts,
+    /// ~40 ms each, 2026-11-21). Held by the models (`Rc`), freed with the
+    /// last one.
+    static FILE_MAPS: std::cell::RefCell<HashMap<MapKey, std::rc::Weak<Texture>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// The map texture for `key`, shared if a model holds it already, else made
+/// by `make` (and shared from then on).
+pub(super) fn shared_map(key: MapKey, make: impl FnOnce() -> Option<Texture>) -> Option<std::rc::Rc<Texture>> {
+    if let Some(texture) = FILE_MAPS.with(|maps| maps.borrow().get(&key).and_then(std::rc::Weak::upgrade)) {
+        return Some(texture);
+    }
+    let texture = std::rc::Rc::new(make()?);
+    FILE_MAPS.with(|maps| {
+        let mut maps = maps.borrow_mut();
+        // Now and then: forget the entries of textures gone.
+        if maps.len() > 256 && maps.len().is_power_of_two() {
+            maps.retain(|_, weak| weak.strong_count() > 0);
+        }
+        maps.insert(key, std::rc::Rc::downgrade(&texture));
+    });
+    Some(texture)
+}
+
+/// Whether some model holds a map texture made from this file already (its
+/// pixels need not be decoded again).
+pub(super) fn file_in_use(path: &std::path::Path) -> bool {
+    let path = canonical(path);
+    FILE_MAPS.with(|maps| maps.borrow().iter().any(|(key, weak)| key.path == path && weak.strong_count() > 0))
+}
+
 thread_local! {
     /// Image files decoded ahead (`predecode`), taken by `read_image`.
     static PREDECODED: std::cell::RefCell<HashMap<std::path::PathBuf, crate::core::renderer::texture::decode::Decoded>> =
         std::cell::RefCell::new(HashMap::new());
 }
 
-/// Decode these image files on all cores now; `read_image` takes them from
-/// here. `forget_predecoded` drops what was not taken.
-pub(super) fn predecode(paths: &[std::path::PathBuf]) {
-    if paths.is_empty() {
-        return;
-    }
-    let decoded = crate::core::renderer::texture::decode::decode_files(paths);
+/// Image files decoded already (by `prepared`), for `read_image` to take.
+/// `forget_predecoded` drops what was not taken.
+pub(super) fn offer_predecoded(decoded: HashMap<std::path::PathBuf, crate::core::renderer::texture::decode::Decoded>) {
     PREDECODED.with(|p| p.borrow_mut().extend(decoded));
 }
 
@@ -335,47 +387,57 @@ pub(super) fn maps_by_name(
     model_stem: &str,
     model_dir: &str,
     wanted: &[MaterialMap],
-) -> Vec<(MaterialMap, Texture)> {
+) -> Vec<(MaterialMap, std::rc::Rc<Texture>)> {
     let prefixes = material_maps::name_prefixes(material_name, model_stem);
     let files = material_maps::images_with_prefix(std::path::Path::new(model_dir), &prefixes);
     let found = material_maps::find_maps(&files, &prefixes);
-    let opacity = found
-        .iter()
-        .find(|(kind, _)| *kind == MapKind::Opacity)
-        .and_then(|(_, path)| read_image(path));
+    let opacity_path = found.iter().find(|(kind, _)| *kind == MapKind::Opacity).map(|(_, path)| path.clone());
+    // Read once, only if a colour map that takes it is made.
+    let mut opacity: Option<Option<image::RgbaImage>> = None;
 
     let mut maps = Vec::new();
     for (kind, path) in &found {
         let Some(map) = kind.slot().filter(|map| wanted.contains(map)) else {
             continue;
         };
-        let Some(mut image) = read_image(path) else {
-            continue;
+        let slot = map_texture_type(map);
+        let with_opacity = map == MaterialMap::BaseColor && opacity_path.is_some();
+        let key = MapKey {
+            inverted: *kind == MapKind::Gloss,
+            opacity: opacity_path.as_deref().filter(|_| with_opacity).map(canonical),
+            ..MapKey::new(path, slot == TextureType::Diffuse)
         };
-        if *kind == MapKind::Gloss {
-            for pixel in image.pixels_mut() {
-                for channel in &mut pixel.0[..3] {
-                    *channel = 255 - *channel;
-                }
-            }
-        }
-        if map == MaterialMap::BaseColor {
-            if let Some(opacity) = &opacity {
-                if opacity.dimensions() == image.dimensions() {
-                    for (pixel, alpha) in image.pixels_mut().zip(opacity.pixels()) {
-                        pixel.0[3] = alpha.0[0];
+        let texture = shared_map(key, || {
+            let mut image = read_image(path)?;
+            if *kind == MapKind::Gloss {
+                for pixel in image.pixels_mut() {
+                    for channel in &mut pixel.0[..3] {
+                        *channel = 255 - *channel;
                     }
-                } else {
-                    log::warn!(
-                        "model: opacity map size {:?} differs from {} {:?}, not used",
-                        opacity.dimensions(),
-                        path.display(),
-                        image.dimensions()
-                    );
                 }
             }
+            if with_opacity {
+                let opacity = opacity.get_or_insert_with(|| opacity_path.as_deref().and_then(read_image));
+                if let Some(opacity) = opacity {
+                    if opacity.dimensions() == image.dimensions() {
+                        for (pixel, alpha) in image.pixels_mut().zip(opacity.pixels()) {
+                            pixel.0[3] = alpha.0[0];
+                        }
+                    } else {
+                        log::warn!(
+                            "model: opacity map size {:?} differs from {} {:?}, not used",
+                            opacity.dimensions(),
+                            path.display(),
+                            image.dimensions()
+                        );
+                    }
+                }
+            }
+            Some(upload_map(image, &slot))
+        });
+        if let Some(texture) = texture {
+            maps.push((map, texture));
         }
-        maps.push((map, upload_map(image, &map_texture_type(map))));
     }
     maps
 }

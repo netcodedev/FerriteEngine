@@ -285,6 +285,21 @@ struct State {
     /// The params set and offsets bound last (none after a new command
     /// buffer).
     last_params: Option<(vk::PipelineLayout, vk::DescriptorSet, [u32; MAX_PARAM_BLOCKS])>,
+    /// Pixels on their way back from the GPU (`read_pixels_later`).
+    readbacks: FxHashMap<u64, Readback>,
+}
+
+/// A copy of pixels into host memory, recorded at `serial`.
+struct PendingRead {
+    buffer: vk::Buffer,
+    allocation: Allocation,
+    serial: u64,
+    size: usize,
+}
+
+enum Readback {
+    Pending(PendingRead),
+    Ready(Vec<u8>),
 }
 
 impl State {
@@ -620,6 +635,7 @@ pub(super) fn create(
         last_push: Vec::new(),
         params_sets: FxHashMap::default(),
         last_params: None,
+        readbacks: FxHashMap::default(),
         params_pool,
     };
     state.begin_commands();
@@ -848,6 +864,14 @@ impl Device for VkDevice {
 
     fn read_pixels(&self, target: TargetRef, rect: Rect) -> Vec<u8> {
         self.with(|s| s.read_pixels(target, rect))
+    }
+
+    fn read_pixels_later(&self, target: TargetRef, rect: Rect) -> u64 {
+        self.with(|s| s.read_pixels_later(target, rect))
+    }
+
+    fn take_pixels(&self, id: u64) -> Option<Vec<u8>> {
+        self.with(|s| s.take_pixels(id))
     }
 
     fn window_samples(&self) -> u32 {

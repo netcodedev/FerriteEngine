@@ -420,7 +420,12 @@ impl Terrain {
             return Some(status);
         }
         let (loaded, in_flight) = self.streaming_status();
-        (in_flight > 0).then(|| format!("Loading terrain ({loaded} of {} columns)", loaded + in_flight))
+        if in_flight > 0 {
+            return Some(format!("Loading terrain ({loaded} of {} columns)", loaded + in_flight));
+        }
+        // Scatter models read in the background (see `model::background`).
+        let models = crate::core::model::background::pending();
+        (models > 0).then(|| format!("Loading models ({models})"))
     }
 
     pub fn scatter(&self) -> &Scatter {

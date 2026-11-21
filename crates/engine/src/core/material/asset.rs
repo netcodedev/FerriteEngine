@@ -265,15 +265,45 @@ fn predecode_textures(materials: impl Iterator<Item = AssetId>) {
             .map(|(_, path, _)| path)
             .collect()
     };
+    // What a `PreparedModel` decoded already is not done again.
+    let paths: Vec<std::path::PathBuf> =
+        PREDECODED.with(|p| paths.into_iter().filter(|path| !p.borrow().contains_key(path)).collect());
     if paths.len() < 2 {
         return;
     }
     let decoded = crate::core::renderer::texture::decode::decode_files(&paths);
-    PREDECODED.with(|p| {
-        let mut p = p.borrow_mut();
-        p.clear();
-        p.extend(decoded);
-    });
+    PREDECODED.with(|p| p.borrow_mut().extend(decoded));
+}
+
+/// Texture asset files decoded elsewhere (a `PreparedModel`), for the next
+/// `apply_to_model` to take.
+pub fn offer_textures(decoded: HashMap<std::path::PathBuf, crate::core::renderer::texture::decode::Decoded>) {
+    PREDECODED.with(|p| p.borrow_mut().extend(decoded));
+}
+
+/// Drop what `offer_textures` gave and nothing took.
+pub fn forget_offered_textures() {
+    PREDECODED.with(|p| p.borrow_mut().clear());
+}
+
+/// The files of the texture assets the material assets `materials` use,
+/// read from their files (no caches: any thread).
+pub fn texture_files_of(materials: &[AssetId]) -> Vec<std::path::PathBuf> {
+    let sources: Vec<std::path::PathBuf> = {
+        let database = assets::database();
+        materials.iter().filter_map(|id| database.get(*id).map(|e| e.source_path())).collect()
+    };
+    let mut textures = Vec::new();
+    for source in sources {
+        let Ok(file) = MaterialFile::load(&source) else { continue };
+        for setting in file.params.values() {
+            if let ParamSetting::Texture(TextureSetting::Asset(id)) = setting {
+                textures.push(*id);
+            }
+        }
+    }
+    let database = assets::database();
+    textures.iter().filter_map(|id| database.get(*id).map(|e| e.source_path())).collect()
 }
 
 /// A texture asset, loaded once (per colour space) and shared.

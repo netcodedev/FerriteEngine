@@ -243,6 +243,45 @@ start: 0.6 / 2.3 / 1.3 s frames → 0.37 / 1.3 / 0.8 s. What is left in them
 has no single hot spot (drawing, trimesh mass properties for colliders,
 the 1.1 GB of uploads).
 
+### Loading in two steps for the scene (2026-11-21)
+
+Measured on the demo's start (`FERRITE_SPIKES=1`, probes per component):
+
+| frame | before (ms) | what | after (ms) |
+|---|---|---|---|
+| 1 | 330 | building the scene: Mannequin.fbx (230), campfire | 333 |
+| 2 | 1280 | first terrain update: world from cache 150, scatter models 355 (Acer tree pack 300), the landscape script's `sync_scene` 733 | 233 (world 188) |
+| 3 | 800 | the `Structure` script on 'house': 19 building parts, ~40 ms each | 112 (house 98, towns and bridges 48) |
+| – | – | scatter models uploaded once read | 106 |
+
+What changed:
+
+1. **Map textures shared across models** (`model_materials::shared_map`):
+   uploaded map textures by file, colour space and processing, held by the
+   models as `Rc` and freed with the last one. The building parts share a
+   few texture files; a second model with the same maps neither decodes
+   nor uploads them. Files some model holds already are not decoded ahead
+   either (`file_in_use`).
+2. **Scatter models read in the background** (`model::background`, two
+   `model-loader` threads running `PreparedModel::load`):
+   `ScatterModel::load_asset_background` gives `None` until the file is
+   read, then uploads it. A scatter layer is planted once all its models
+   are there; until then what it planted before stays. `background::pending`
+   counts the files being read: `Terrain::loading_status` reports it, and
+   the demo's loading screen waits for it, so the game shows nothing
+   before everything is there; at runtime the game goes on smoothly and
+   the models appear when read.
+3. **Model components stay blocking**: scripts (seats, anchors, bones) use
+   a component's model right after making it. They gain from (1).
+4. **The demo's bridges** baked their road texture (and read the stone
+   maps) on the main thread the first time one was made (~0.8 s); that
+   now runs on a thread of its own, and bridges wait for it (counted as
+   pending, so the loading screen waits too).
+
+What is left in the start frames: the player's Mannequin (230 ms, read
+and uploaded when the scene is built), reading the world from its cache
+(~190 ms), uploading the Acer tree pack (~100 ms).
+
 ## Verification
 
 - `cargo test` (engine, scripts) green at every commit.

@@ -26,7 +26,7 @@ use crate::core::{
 
 use super::{
     model_materials::{
-        canonical_slot, files_by_name, forget_predecoded, map_texture_type, maps_by_name, predecode, read_image,
+        canonical_slot, forget_predecoded, map_texture_type, maps_by_name, offer_predecoded, read_image, shared_map, MapKey,
         texture_candidates, upload_map,
     },
     Model, ModelBuilder, ModelMesh, ModelMeshVertex,
@@ -66,6 +66,14 @@ impl Model {
         full_path: &str,
         position: P,
     ) -> Result<Model, Box<dyn std::error::Error>> {
+        let (scene, name, model_dir) = Self::read_file(full_path)?;
+        Ok(Self::from_scene(scene, name, model_dir, position))
+    }
+
+    /// A model file read with assimp: the scene, the variant name of a
+    /// file holding one, and the folder its maps are looked for in. Needs
+    /// no GPU (see `PreparedModel`).
+    pub(super) fn read_file(full_path: &str) -> Result<(Scene, String, String), Box<dyn std::error::Error>> {
         let scene = Scene::from_file(
             full_path,
             vec![
@@ -81,7 +89,16 @@ impl Model {
             .unwrap_or("assets/models")
             .to_string();
         let name = super::outline::default_variant_name(std::path::Path::new(full_path));
-        Ok(Self::from_scene(scene, name, model_dir, position))
+        Ok((scene, name, model_dir))
+    }
+
+    /// A model of what `PreparedModel::load` read: `init` takes the maps it
+    /// decoded instead of reading them.
+    pub(super) fn from_prepared(prepared: super::prepared::PreparedModel) -> Model {
+        let (scene, name, model_dir, images) = prepared.into_parts();
+        let mut model = Self::from_scene(scene, name, model_dir, (0.0, 0.0, 0.0));
+        model.prepared_images = Some(images);
+        model
     }
 
     /// A model of an assimp scene made some other way (see `generated`):
@@ -94,6 +111,7 @@ impl Model {
             file_materials: Vec::new(),
             shared_textures: Vec::new(),
             map_textures: Vec::new(),
+            prepared_images: None,
             name,
             model_dir,
             position: position.into(),
@@ -119,9 +137,15 @@ impl Model {
         // Every image the materials below will read, decoded on all cores
         // first: one after the other on this thread, a scene's maps held
         // the editor for seconds.
-        let mut embedded_images = self.predecode_maps();
+        let mut embedded_images = match self.prepared_images.take() {
+            Some(images) => {
+                offer_predecoded(images.files);
+                images.embedded
+            }
+            None => self.predecode_maps(),
+        };
         for (material_index, material) in materials.iter().enumerate() {
-            let mut per_material: HashMap<TextureType, Texture> = HashMap::new();
+            let mut per_material: HashMap<TextureType, std::rc::Rc<Texture>> = HashMap::new();
 
             // 1) Embedded textures — russimp populates `material.textures` only
             //    for these. Each entry's `data` holds the encoded image bytes.
@@ -134,7 +158,7 @@ impl Model {
                 if let DataContent::Bytes(_) = &tex.data {
                     match embedded_images.remove(&(material_index, slot.clone())) {
                         Some(Ok(image)) => {
-                            per_material.insert(slot.clone(), upload_map(image, &slot));
+                            per_material.insert(slot.clone(), std::rc::Rc::new(upload_map(image, &slot)));
                         }
                         Some(Err(e)) => log::warn!("model: embedded texture unreadable: {e}"),
                         None => {}
@@ -193,7 +217,9 @@ impl Model {
                 .into_iter()
                 .map(|(slot, texture)| {
                     let handle = texture.share();
-                    self.map_textures.push(texture);
+                    if !self.map_textures.iter().any(|t| std::rc::Rc::ptr_eq(t, &texture)) {
+                        self.map_textures.push(texture);
+                    }
                     (slot, handle)
                 })
                 .collect();
@@ -267,57 +293,18 @@ impl Model {
         Some((min, max))
     }
 
-    /// Decode on all cores what `init` will read: the external maps (the
-    /// first candidate on disk), those found by name for the slots still
-    /// empty (kept for `read_image`), and the embedded ones, returned by
+    /// Decode on all cores what `init` will read (see `gather_maps`): the
+    /// files kept for `read_image`, the embedded maps returned by
     /// (material, slot).
     fn predecode_maps(
         &self,
     ) -> HashMap<(usize, TextureType), crate::core::renderer::texture::decode::Decoded> {
-        use crate::core::renderer::texture::decode;
-        let mut files = Vec::new();
-        let mut embedded: Vec<((usize, TextureType), Vec<u8>)> = Vec::new();
-        for (index, material) in self.model.materials.iter().enumerate() {
-            let mut slots: Vec<TextureType> = Vec::new();
-            for (tex_type, texture) in &material.textures {
-                let slot = canonical_slot(tex_type);
-                if slots.contains(&slot) {
-                    continue;
-                }
-                if let DataContent::Bytes(bytes) = &texture.borrow().data {
-                    embedded.push(((index, slot.clone()), bytes.clone()));
-                    slots.push(slot);
-                }
-            }
-            for property in &material.properties {
-                if property.key != "$tex.file" {
-                    continue;
-                }
-                let slot = canonical_slot(&property.semantic);
-                if slots.contains(&slot) {
-                    continue;
-                }
-                let PropertyTypeInfo::String(raw_path) = &property.data else {
-                    continue;
-                };
-                let found = texture_candidates(raw_path, &self.model_dir)
-                    .into_iter()
-                    .find(|candidate| std::path::Path::new(candidate).is_file());
-                if let Some(path) = found {
-                    files.push(std::path::PathBuf::from(path));
-                    slots.push(slot);
-                }
-            }
-            let missing: Vec<MaterialMap> =
-                MaterialMap::ALL.into_iter().filter(|map| !slots.contains(&map_texture_type(*map))).collect();
-            if !missing.is_empty() {
-                let name = Self::material_name(material);
-                files.extend(files_by_name(name.as_deref(), &self.name, &self.model_dir, &missing));
-            }
-        }
-        predecode(&files);
-        let decoded = decode::decode_all(&embedded, |(_, bytes)| decode::decode_bytes(bytes));
-        embedded.into_iter().map(|(key, _)| key).zip(decoded).collect()
+        // Files another model has uploaded already are not decoded again.
+        let images = super::prepared::decode_maps(&self.model, &self.name, &self.model_dir, &|path| {
+            super::model_materials::file_in_use(path)
+        });
+        offer_predecoded(images.files);
+        images.embedded
     }
 
     pub(super) fn material_name(material: &russimp_ng::material::Material) -> Option<String> {
@@ -337,20 +324,23 @@ impl Model {
         model_dir: &str,
         slot: &TextureType,
         loaded: &mut HashMap<(String, bool), usize>,
-        owners: &mut Vec<Texture>,
-    ) -> Option<Texture> {
+        owners: &mut Vec<std::rc::Rc<Texture>>,
+    ) -> Option<std::rc::Rc<Texture>> {
         let srgb = *slot == TextureType::Diffuse;
         texture_candidates(raw_path, model_dir).into_iter().find_map(|candidate| {
             let key = (candidate, srgb);
             if let Some(&index) = loaded.get(&key) {
-                return Some(owners[index].share());
+                return Some(owners[index].clone());
             }
-            let image = read_image(std::path::Path::new(&key.0))?;
-            let texture = upload_map(image, slot);
-            let shared = texture.share();
+            let path = std::path::Path::new(&key.0);
+            if !path.is_file() {
+                return None;
+            }
+            // Shared with the other models using this file (see `shared_map`).
+            let texture = shared_map(MapKey::new(path, srgb), || read_image(path).map(|image| upload_map(image, slot)))?;
             loaded.insert(key, owners.len());
-            owners.push(texture);
-            Some(shared)
+            owners.push(texture.clone());
+            Some(texture)
         })
     }
 
@@ -796,6 +786,20 @@ mod tests {
             let material = model.material(index).unwrap();
             assert!(material.texture("base_color_map").is_some(), "{name}");
         }
+
+        // A second model of the same files shares the textures, and they
+        // live as long as one of the models does.
+        let mut again = Model::from_file(temp.0.join("props.obj").to_str().unwrap(), (0.0, 0.0, 0.0)).unwrap();
+        again.init();
+        assert_eq!(again.shared_textures.len(), 3);
+        for (a, b) in model.shared_textures.iter().zip(&again.shared_textures) {
+            assert!(std::rc::Rc::ptr_eq(a, b));
+        }
+        let weak = std::rc::Rc::downgrade(&model.shared_textures[0]);
+        drop(model);
+        assert!(weak.upgrade().is_some());
+        drop(again);
+        assert!(weak.upgrade().is_none());
     }
 
     #[test]

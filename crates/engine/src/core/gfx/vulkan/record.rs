@@ -645,19 +645,52 @@ impl State {
 
     pub(super) fn read_pixels(&mut self, target: TargetRef, rect: Rect) -> Vec<u8> {
         let size = rect.width as usize * rect.height as usize * 4;
-        let mut pixels = vec![0u8; size];
-        let Some((colors, _)) = self.attachments(target) else {
-            return pixels;
+        let Some(pending) = self.copy_pixels_out(target, rect) else {
+            return vec![0u8; size];
         };
-        let Some(source) = colors.first().copied() else {
-            return pixels;
+        self.flush_and_wait();
+        self.finish_read(pending)
+    }
+
+    /// `read_pixels` without waiting: the copy goes into this frame's
+    /// commands; `take_pixels` hands the pixels out once the GPU ran them.
+    pub(super) fn read_pixels_later(&mut self, target: TargetRef, rect: Rect) -> u64 {
+        let id = self.id();
+        let size = rect.width as usize * rect.height as usize * 4;
+        let read = match self.copy_pixels_out(target, rect) {
+            Some(pending) => Readback::Pending(pending),
+            None => Readback::Ready(vec![0u8; size]),
         };
+        self.readbacks.insert(id, read);
+        id
+    }
+
+    /// The pixels of a `read_pixels_later`, once the GPU is done with it.
+    pub(super) fn take_pixels(&mut self, id: u64) -> Option<Vec<u8>> {
+        self.poll_completed();
+        let ready = match self.readbacks.get(&id)? {
+            Readback::Ready(_) => true,
+            Readback::Pending(p) => p.serial <= self.completed,
+        };
+        if !ready {
+            return None;
+        }
+        match self.readbacks.remove(&id)? {
+            Readback::Ready(pixels) => Some(pixels),
+            Readback::Pending(pending) => Some(self.finish_read(pending)),
+        }
+    }
+
+    /// Record copying `rect` of `target`'s first colour attachment into
+    /// host memory (resolving and converting to RGBA8 on the way).
+    fn copy_pixels_out(&mut self, target: TargetRef, rect: Rect) -> Option<PendingRead> {
+        let size = rect.width as usize * rect.height as usize * 4;
+        let (colors, _) = self.attachments(target)?;
+        let source = colors.first().copied()?;
         if rect.width == 0 || rect.height == 0 {
-            return pixels;
+            return None;
         }
         self.interrupt_rendering();
-        // Into a plain RGBA8 texture of the rectangle's size (resolving and
-        // converting on the way), then into host memory.
         let temp_desc = TextureDesc::d2(Format::Rgba8, rect.width, rect.height);
         let temp = self.create_texture(&temp_desc);
         let temp_attachment = Attachment { texture: temp, desc: temp_desc, mip: 0, layer: None };
@@ -669,7 +702,7 @@ impl State {
             "readback",
         ) else {
             self.destroy(Raw::Texture(temp));
-            return pixels;
+            return None;
         };
         let cmd = self.cmd();
         self.transition_all(cmd, &[temp], vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
@@ -691,14 +724,19 @@ impl State {
             self.gpu.device.cmd_copy_image_to_buffer(cmd, image, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, buffer, &[region]);
         }
         self.global_barrier(cmd);
-        self.flush_and_wait();
-        if let Some(ptr) = allocation.mapped_ptr() {
-            unsafe { std::ptr::copy_nonoverlapping(ptr.as_ptr() as *const u8, pixels.as_mut_ptr(), size) };
-        }
-        // The GPU is done with it (waited for above).
-        unsafe { self.gpu.device.destroy_buffer(buffer, None) };
-        let _ = self.allocator.free(allocation);
+        // Freed once the commands recorded now have run.
         self.destroy(Raw::Texture(temp));
+        Some(PendingRead { buffer, allocation, serial: self.serial, size })
+    }
+
+    /// The pixels of a copy the GPU has finished; frees its buffer.
+    fn finish_read(&mut self, pending: PendingRead) -> Vec<u8> {
+        let mut pixels = vec![0u8; pending.size];
+        if let Some(ptr) = pending.allocation.mapped_ptr() {
+            unsafe { std::ptr::copy_nonoverlapping(ptr.as_ptr() as *const u8, pixels.as_mut_ptr(), pending.size) };
+        }
+        unsafe { self.gpu.device.destroy_buffer(pending.buffer, None) };
+        let _ = self.allocator.free(pending.allocation);
         pixels
     }
 
