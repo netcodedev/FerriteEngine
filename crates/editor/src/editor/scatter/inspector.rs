@@ -48,6 +48,8 @@ struct Binding {
 #[derive(Clone, PartialEq)]
 struct BuiltFor {
     node: Option<NodeId>,
+    /// The names of the node's rows.
+    properties: Vec<String>,
     structure: u64,
     width: i32,
 }
@@ -148,6 +150,21 @@ impl ScatterInspector {
             }
         }
         self.body.add_child(Box::new(section));
+        // Graphics settings never change what is planted over the
+        // landscape (docs/graphics-settings.md): say so where a value is
+        // bound in vain.
+        let ignored = {
+            let s = self.state.borrow();
+            s.scatter.as_ref().is_some_and(|e| e.graph.bindings_ignored().contains(&id))
+        };
+        if ignored {
+            let mut label = Label::new(
+                "Feeds a landscape output: graphics settings are ignored here, it uses High.",
+                theme::FONT_SIZE_SMALL,
+            );
+            label.set_color(theme::WARNING);
+            self.body.add_child(Box::new(label));
+        }
         self.body.set_z_index(2.0);
     }
 
@@ -328,6 +345,11 @@ impl UIElement for ScatterInspector {
             let s = self.state.borrow();
             BuiltFor {
                 node: self.shown().map(|(id, _)| id),
+                // Binding a value to a setting changes the rows shown.
+                properties: self
+                    .shown()
+                    .map(|(_, kind)| kind.properties().into_iter().map(|p| p.name.to_string()).collect())
+                    .unwrap_or_default(),
                 structure: s.scatter.as_ref().map_or(0, |e| e.structure),
                 width: rect.w as i32,
             }
