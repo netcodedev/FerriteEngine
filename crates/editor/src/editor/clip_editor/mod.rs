@@ -8,7 +8,7 @@ use std::path::Path;
 use cgmath::{InnerSpace, Point3, Vector3};
 use ferrite::core::{
     assets::{self, AssetId},
-    model::clip_file::{BonePose, ClipFile, Transform, KEY_EPSILON},
+    model::clip_file::{BonePose, ClipFile, ClipReference, Transform, KEY_EPSILON},
 };
 
 mod timeline;
@@ -55,6 +55,9 @@ pub struct ClipEdit {
     /// Bones in skeleton order (filled by the preview), for the inspector.
     pub bones: Vec<String>,
     pub requests: Vec<ClipRequest>,
+    /// Goes up when references are added, removed or given another model
+    /// (the preview loads their models again).
+    pub references: u64,
 }
 
 impl ClipEdit {
@@ -71,6 +74,7 @@ impl ClipEdit {
             rest: Vec::new(),
             bones: Vec::new(),
             requests: Vec::new(),
+            references: 0,
         }
     }
 
@@ -172,6 +176,45 @@ impl ClipEdit {
         if self.selected != bone {
             self.selected = bone;
             self.selection += 1;
+        }
+    }
+
+    /// Show another model with the clip.
+    pub fn add_reference(&mut self, reference: ClipReference) {
+        self.file.references.push(reference);
+        self.references += 1;
+    }
+
+    pub fn remove_reference(&mut self, index: usize) {
+        if index < self.file.references.len() {
+            self.file.references.remove(index);
+            self.references += 1;
+        }
+    }
+
+    /// Change a reference; whether it changed.
+    pub fn set_reference(&mut self, index: usize, reference: ClipReference) -> bool {
+        let Some(old) = self.file.references.get_mut(index) else { return false };
+        if *old == reference {
+            return false;
+        }
+        if old.model != reference.model {
+            self.references += 1;
+        }
+        *old = reference;
+        true
+    }
+
+    /// An anchor of `asset` was renamed: references naming it follow.
+    /// `clip_model` is the asset the clip is posed on.
+    pub fn rename_anchor(&mut self, asset: AssetId, clip_model: Option<AssetId>, from: &str, to: &str) {
+        for reference in &mut self.file.references {
+            if reference.model == asset && reference.anchor.as_deref() == Some(from) {
+                reference.anchor = Some(to.to_string());
+            }
+            if clip_model == Some(asset) && reference.model_anchor.as_deref() == Some(from) {
+                reference.model_anchor = Some(to.to_string());
+            }
         }
     }
 

@@ -277,6 +277,14 @@ pub fn catalog() -> Vec<Tool> {
             &["id"],
         ),
         tool(
+            "editor_open_asset",
+            "Open an asset in the editor's asset workspace (its settings and preview; a clip \
+             opens in the clip editor), as a double click in the asset browser does. Give its \
+             id, name or path below assets/.",
+            json!({"asset": {"type": "string"}}),
+            &["asset"],
+        ),
+        tool(
             "editor_set_view",
             "Move or turn the editor camera (edit mode); what is left out stays. Yaw 0 looks \
              along +x, 90 along +z; pitch below 0 looks down.",

@@ -28,7 +28,7 @@ pub(super) struct Rigged {
 
 /// Load a model file as the working copy's settings say: its scale, the
 /// textures given to its materials, the variant shown.
-fn load_model(
+pub(super) fn load_model(
     source: &std::path::Path,
     settings: &ModelSettings,
     variant: usize,

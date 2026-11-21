@@ -225,6 +225,7 @@ impl AssetDatabase {
                     .collect(),
                 clips,
                 grip: None,
+                anchors: Vec::new(),
             }),
         };
         self.register(meta, &target_dir)

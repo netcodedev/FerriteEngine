@@ -67,7 +67,11 @@ struct Bindings {
     foliage: Vec<DataSource<bool>>,
     /// Length of a clip in seconds.
     length: Option<DataSource<f32>>,
+    /// How opaque a clip's model is drawn.
+    model_opacity: Option<DataSource<f32>>,
     grip: Option<GripBindings>,
+    references: Vec<anchors_ui::RefBindings>,
+    anchor: Option<anchors_ui::AnchorBindings>,
 }
 
 /// The grip's widgets, with the values they were last seen at: only what
@@ -134,6 +138,9 @@ pub struct AssetInspector {
     /// `(asset, structure counter, width, clip selection)` the panel was
     /// built for.
     built_for: Option<(AssetId, u64, i32, u64)>,
+    /// When an anchor was last renamed by typing: the lists show the new
+    /// name once the typing has stopped a while.
+    renamed_at: Option<std::time::Instant>,
 }
 
 const ACTIONS_HEIGHT: f32 = 34.0;
@@ -182,6 +189,7 @@ impl AssetInspector {
             bindings: None,
             slot_rows: Vec::new(),
             built_for: None,
+            renamed_at: None,
         }
     }
 
@@ -233,7 +241,10 @@ impl AssetInspector {
             lod: DataSource::new(edit.lod.map_or(0, |lod| lod as u32 + 1)),
             foliage: Vec::new(),
             length: None,
+            model_opacity: None,
             grip: None,
+            references: Vec::new(),
+            anchor: None,
         };
 
         if let Some(clip) = &edit.clip {
@@ -249,6 +260,12 @@ impl AssetInspector {
                 .and_then(|id| assets::database().get(id).map(|e| e.meta.name.clone()))
                 .unwrap_or_else(|| "player model".into());
             section.add_child(Box::new(FieldRow::new("Model", vec![muted(model)])));
+            let opacity = DataSource::new(clip.file.model_opacity);
+            section.add_child(Box::new(FieldRow::new(
+                "Opacity",
+                vec![UI::slider_sized(opacity.clone(), 0.0, 1.0, Size::new(value_w, 24.0))],
+            )));
+            bindings.model_opacity = Some(opacity);
             let selected = clip
                 .selected
                 .as_deref()
@@ -261,6 +278,16 @@ impl AssetInspector {
             ));
             self.body.add_child(Box::new(section));
             bindings.length = Some(length);
+
+            if let Some((section, refs)) =
+                anchors_ui::references_section(&self.state, edit, width, value_w)
+            {
+                self.body.add_child(Box::new(section));
+                bindings.references = refs;
+            }
+            let (section, anchor) = anchors_ui::anchors_section(&self.state, edit, width, value_w);
+            self.body.add_child(Box::new(section));
+            bindings.anchor = anchor;
 
             let mut bones = Section::new("Bones", Some(icons::LIST_TREE), width);
             for bone in &clip.bones {
@@ -416,6 +443,11 @@ impl AssetInspector {
                 self.body.add_child(Box::new(section));
             }
 
+            // Where other models go on it.
+            let (section, anchor) = anchors_ui::anchors_section(&self.state, edit, width, value_w);
+            self.body.add_child(Box::new(section));
+            bindings.anchor = anchor;
+
             // What the preview shows.
             let mut preview = Section::new("Preview", Some(icons::EYE), width);
             let variants: Vec<String> = model.variants.iter().map(|v| v.name.clone()).collect();
@@ -568,6 +600,13 @@ impl AssetInspector {
                 }
             }
         }
+        if let (Some(opacity), Some(clip)) = (&bindings.model_opacity, edit.clip.as_mut()) {
+            let opacity = opacity.read().clamp(0.0, 1.0);
+            if (opacity - clip.file.model_opacity).abs() > 1e-4 {
+                clip.file.model_opacity = opacity;
+                dirty = true;
+            }
+        }
         if let (Some(length), Some(clip)) = (&bindings.length, edit.clip.as_mut()) {
             let length = length.read();
             // A half-typed number must not cut the clip short.
@@ -664,6 +703,30 @@ impl AssetInspector {
         }
     }
 
+    /// Carry what was picked for the references and typed for the
+    /// selected anchor over to the working copies.
+    fn sync_anchors(&mut self) {
+        let Some(b) = self.bindings.as_mut() else { return };
+        let mut state = self.state.borrow_mut();
+        let Some(edit) = state.asset_edit.as_mut() else { return };
+        let mut rebuild = anchors_ui::sync_references(edit, &mut b.references);
+        if let Some(anchor) = b.anchor.as_mut() {
+            if anchors_ui::sync_anchor(edit, anchor) {
+                self.renamed_at = Some(std::time::Instant::now());
+            }
+        }
+        if self
+            .renamed_at
+            .is_some_and(|at| at.elapsed().as_secs_f32() > 1.5)
+        {
+            self.renamed_at = None;
+            rebuild = true;
+        }
+        if rebuild {
+            edit.structure += 1;
+        }
+    }
+
     /// Texture slots take texture assets dragged out of the browser.
     fn register_drop_targets(&self) {
         let panel = self.rect();
@@ -746,6 +809,7 @@ impl UIElement for AssetInspector {
         }
         self.sync();
         self.sync_grip();
+        self.sync_anchors();
 
         self.panel.update(scene);
         for button in self.buttons_mut() {

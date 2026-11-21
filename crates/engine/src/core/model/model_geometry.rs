@@ -156,6 +156,48 @@ impl Model {
         Some((names, transform.w.truncate() * self.scale))
     }
 
+    /// The meshes grouped by where their nodes are (translation from the
+    /// file's root, at the model's scale), for drawing a model made of
+    /// parts the way a game script assembles it with `node_part`. A model
+    /// whose meshes all sit at one place gives one group at no offset
+    /// (it is drawn as `render` draws it).
+    pub fn part_offsets(&self) -> Vec<(std::collections::HashSet<String>, cgmath::Vector3<f32>)> {
+        use crate::core::utils::ToMatrix4;
+        fn walk(
+            node: &russimp_ng::node::Node,
+            parent: cgmath::Matrix4<f32>,
+            meshes: &[russimp_ng::mesh::Mesh],
+            scale: f32,
+            out: &mut Vec<(std::collections::HashSet<String>, cgmath::Vector3<f32>)>,
+        ) {
+            let transform = parent * node.transformation.to_matrix_4();
+            let at = transform.w.truncate() * scale;
+            for &index in &node.meshes {
+                let Some(mesh) = meshes.get(index as usize) else { continue };
+                let close = |v: &cgmath::Vector3<f32>| (v - at).x.abs() + (v - at).y.abs() + (v - at).z.abs() < 1e-5;
+                match out.iter_mut().find(|(_, v)| close(v)) {
+                    Some((names, _)) => {
+                        names.insert(mesh.name.clone());
+                    }
+                    None => out.push(([mesh.name.clone()].into_iter().collect(), at)),
+                }
+            }
+            for child in node.children.borrow().iter() {
+                walk(child, transform, meshes, scale, out);
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(root) = self.model.root.as_ref() {
+            walk(root, cgmath::SquareMatrix::identity(), &self.model.meshes, self.scale, &mut out);
+        }
+        if out.len() <= 1 {
+            for (_, at) in &mut out {
+                *at = cgmath::Vector3::new(0.0, 0.0, 0.0);
+            }
+        }
+        out
+    }
+
     fn collect_mesh_names(
         &self,
         node: &russimp_ng::node::Node,

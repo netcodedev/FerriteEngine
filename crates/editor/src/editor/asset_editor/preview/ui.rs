@@ -52,8 +52,10 @@ impl UIElement for AssetPreview {
         }
         // A fresh camera for another asset or variant, not for every edit.
         let frame_key = wanted.map(|(id, _, variant)| (id, variant));
-        if frame_key != self.framed_for {
+        if frame_key != self.framed_for || self.frame_request.read() {
+            self.frame_request.write(false);
             self.framed_for = frame_key;
+            self.orbit.pan = Vector3::new(0.0, 0.0, 0.0);
             self.orbit.yaw = 0.6;
             self.orbit.pitch = 0.25;
             self.orbit.zoom = DEFAULT_ZOOM;
@@ -68,6 +70,7 @@ impl UIElement for AssetPreview {
                 .is_some_and(|edit| edit.clip.is_some());
         if self.clip_mode {
             self.update_clip();
+            self.update_references();
             let view = {
                 let state = self.state.borrow();
                 state
@@ -122,7 +125,7 @@ impl UIElement for AssetPreview {
             self.skeleton_button
                 .set_icon(if shown { icons::EYE } else { icons::EYE_OFF });
             let mut x = view.x + 8.0;
-            for button in [&mut self.skeleton_button, &mut self.reset_button] {
+            for button in [&mut self.skeleton_button, &mut self.reset_button, &mut self.frame_button] {
                 button.set_offset(Offset { x, y: view.y + 8.0 });
                 x += button.get_size().width + 4.0;
                 button.update(scene);
@@ -215,6 +218,7 @@ impl UIElement for AssetPreview {
                     None => LodChoice::Distance(0.0),
                 };
                 instances.draw(&vp, &Matrix4::identity(), &lighting, lod);
+                self.render_own_anchors(None, radius * 0.12, &vp, &view);
                 {
             // Leave no 3D depth behind for the UI drawn over this region.
             ferrite::core::gfx::end_region(ferrite::core::gfx::Rect::sized((window_w as i32) as u32, (window_h as i32) as u32));
@@ -256,7 +260,18 @@ impl UIElement for AssetPreview {
                 
                 let lighting =
                     Lighting::preview(Vector3::new(3.0, 5.0, 4.0), self.eye(center, radius));
-                rigged.model.render(&lighting, &Matrix4::identity(), &vp);
+                // Opaque first, the see-through after them.
+                let (model_opacity, _) = self.opacities();
+                if model_opacity >= 0.999 || !self.clip_mode {
+                    rigged.model.render(&lighting, &Matrix4::identity(), &vp);
+                }
+                if self.clip_mode {
+                    self.render_references(false, &lighting, &vp);
+                    if model_opacity < 0.999 {
+                        rigged.model.render_faded(model_opacity, false, &lighting, &Matrix4::identity(), &vp);
+                    }
+                    self.render_references(true, &lighting, &vp);
+                }
                 if self.show_skeleton.read() {
                     let hot = self.ik_drag.as_ref().map(|d| d.chain).or(self.hovered);
                     render_skeleton(rigged, &vp, &view, hot);
@@ -282,6 +297,16 @@ impl UIElement for AssetPreview {
                             render_thick_lines(&vp, &lines, color, &view, 2);
                         }
                     }
+                    if self.clip_mode {
+                        self.render_anchors(rigged, &vp, &view);
+                    } else {
+                        self.render_own_anchors(
+                            Some((&rigged.skeleton, rigged.root())),
+                            rigged.radius * 0.07,
+                            &vp,
+                            &view,
+                        );
+                    }
                 }
                 {
             // Leave no 3D depth behind for the UI drawn over this region.
@@ -294,6 +319,7 @@ impl UIElement for AssetPreview {
                 self.message.render();
                 self.skeleton_button.render();
                 self.reset_button.render();
+                self.frame_button.render();
             }
             Shown::Held(held) => {
                 let (window_w, window_h) = {
@@ -382,7 +408,7 @@ impl UIElement for AssetPreview {
             }
         }
         if matches!(self.shown, Shown::Rigged(_)) {
-            for button in [&mut self.skeleton_button, &mut self.reset_button] {
+            for button in [&mut self.skeleton_button, &mut self.reset_button, &mut self.frame_button] {
                 if button.handle_events(scene, window, glfw, event)
                     && !matches!(event, WindowEvent::CursorPos(..))
                 {
@@ -391,11 +417,27 @@ impl UIElement for AssetPreview {
             }
         }
         match event {
-            WindowEvent::MouseButton(MouseButton::Button1, Action::Press, _) => {
+            WindowEvent::MouseButton(MouseButton::Button2 | MouseButton::Button3, Action::Press, _) => {
+                let (x, y) = window.get_cursor_pos();
+                if view.contains(x as f32, y as f32) && self.framing().is_some() {
+                    self.orbit.panning = Some((x, y));
+                    return true;
+                }
+            }
+            WindowEvent::MouseButton(MouseButton::Button2 | MouseButton::Button3, Action::Release, _) => {
+                if self.orbit.panning.take().is_some() {
+                    return true;
+                }
+            }
+            WindowEvent::MouseButton(MouseButton::Button1, Action::Press, modifiers) => {
+                // Shift grabs a selected reference by its model; without,
+                // a drag on it orbits (the camera may be inside it).
+                let grab = modifiers.contains(glfw::Modifiers::Shift);
                 let (x, y) = window.get_cursor_pos();
                 if view.contains(x as f32, y as f32) {
                     let (fx, fy) = (x as f32, y as f32);
-                    if self.begin_grip_drag(fx, fy)
+                    if self.begin_anchor_drag(fx, fy, false)
+                        || self.begin_grip_drag(fx, fy)
                         || self.begin_ring_drag(fx, fy)
                         || self.begin_ik_drag(fx, fy)
                     {
@@ -409,12 +451,25 @@ impl UIElement for AssetPreview {
                     };
                     match joint {
                         Some(joint) => self.select_joint(Some(joint)),
-                        None => self.orbit.dragging = Some((x, y)),
+                        // Nothing of the skeleton there: with Shift a
+                        // selected reference is grabbed by its model.
+                        None if grab && self.begin_anchor_drag(fx, fy, true) => {}
+                        None => {
+                            self.orbit.dragging = Some((x, y));
+                            self.reference_press = if self.clip_mode && self.show_skeleton.read() {
+                                self.reference_at(&view, fx, fy).map(|(index, _)| (index, x, y))
+                            } else {
+                                None
+                            };
+                        }
                     }
                     return true;
                 }
             }
             WindowEvent::MouseButton(MouseButton::Button1, Action::Release, _) => {
+                if self.finish_anchor_drag() {
+                    return true;
+                }
                 if self.grip_drag.take().is_some() {
                     // The grip's fields show the new values.
                     if let Some(edit) = self.state.borrow_mut().asset_edit.as_mut() {
@@ -436,11 +491,28 @@ impl UIElement for AssetPreview {
                     self.finish_pose(&drag.start);
                     return true;
                 }
+                if let Some((index, px, py)) = self.reference_press.take() {
+                    let (x, y) = window.get_cursor_pos();
+                    if (x - px).abs() + (y - py).abs() < 4.0 {
+                        self.click_reference(index);
+                    }
+                }
                 if self.orbit.dragging.take().is_some() {
                     return true;
                 }
             }
             WindowEvent::CursorPos(x, y) => {
+                if let Some((lx, ly)) = self.orbit.panning {
+                    self.pan_by((*x - lx) as f32, (*y - ly) as f32);
+                    self.orbit.panning = Some((*x, *y));
+                    return true;
+                }
+                if self.anchor_drag.is_some() {
+                    self.continue_anchor_drag(*x as f32, *y as f32);
+                    return true;
+                }
+                let free = self.orbit.dragging.is_none() && view.contains(*x as f32, *y as f32);
+                self.hover_anchors(*x as f32, *y as f32, free);
                 if self.grip_drag.is_some() {
                     self.continue_grip_drag(*x as f32, *y as f32);
                     return true;
@@ -495,7 +567,7 @@ impl UIElement for AssetPreview {
             WindowEvent::Scroll(_, dy) => {
                 let (x, y) = window.get_cursor_pos();
                 if view.contains(x as f32, y as f32) {
-                    self.orbit.zoom = (self.orbit.zoom * (1.0 - *dy as f32 * 0.1)).clamp(1.2, 12.0);
+                    self.orbit.zoom = (self.orbit.zoom * (1.0 - *dy as f32 * 0.1)).clamp(MIN_ZOOM, MAX_ZOOM);
                     return true;
                 }
             }
@@ -542,5 +614,6 @@ impl UIElement for AssetPreview {
         self.hint.set_z_index(z + 3.0);
         self.skeleton_button.set_z_index(z + 3.0);
         self.reset_button.set_z_index(z + 3.0);
+        self.frame_button.set_z_index(z + 3.0);
     }
 }

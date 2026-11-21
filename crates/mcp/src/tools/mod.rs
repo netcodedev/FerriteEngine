@@ -126,6 +126,7 @@ pub fn dispatch(state: &State, name: &str, args: Value) -> Result<Value, String>
         "editor_stop" => editor_call(state, json!({"op": "stop"})),
         "editor_save" => editor_call(state, json!({"op": "save_scene"})),
         "editor_focus" => editor_pass(state, args, "focus"),
+        "editor_open_asset" => editor_pass(state, args, "open_asset"),
         "editor_set_view" => editor_pass(state, args, "set_view"),
         "editor_set_debug_views" => editor_pass(state, args, "set_debug_views"),
         "editor_agent_control" => editor_pass(state, args, "agent_control"),

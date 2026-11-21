@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::AssetId;
-use crate::core::model::grip::Grip;
+use crate::core::model::{anchor::Anchor, grip::Grip};
 
 pub const ASSET_META_VERSION: u32 = 1;
 
@@ -59,6 +59,10 @@ pub struct ModelSettings {
     /// How the model is held in a hand, if it can be (an axe, a torch).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grip: Option<Grip>,
+    /// Named frames where other models go (a seat, a point on the back);
+    /// see `model::anchor`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<Anchor>,
 }
 
 fn one() -> f32 {
@@ -73,6 +77,7 @@ impl Default for ModelSettings {
             materials: Vec::new(),
             clips: Vec::new(),
             grip: None,
+            anchors: Vec::new(),
         }
     }
 }

@@ -305,6 +305,49 @@ impl Model {
         self.render_filtered(None, self.tint, lighting, parent_transform, camera_projection);
     }
 
+    /// Draw the model as it is but see-through, `opacity` from 0 to 1 (1
+    /// is `render`). With `see_inside` every surface shows through the
+    /// ones in front of it (a vehicle's seats through its doors and
+    /// windows); without, only its front-most surface shows (it is drawn
+    /// into the depth first), so a faded character does not show what is
+    /// inside it. For editor previews: it belongs to the transparent pass.
+    pub fn render_faded(
+        &self,
+        opacity: f32,
+        see_inside: bool,
+        lighting: &Lighting,
+        parent_transform: &Matrix4<f32>,
+        camera_projection: &Matrix4<f32>,
+    ) {
+        self.render_faded_meshes(None, opacity, see_inside, lighting, parent_transform, camera_projection);
+    }
+
+    /// `render_faded` of the `meshes` named only (`None`: what `render`
+    /// draws).
+    pub fn render_faded_meshes(
+        &self,
+        meshes: Option<&std::collections::HashSet<String>>,
+        opacity: f32,
+        see_inside: bool,
+        lighting: &Lighting,
+        parent_transform: &Matrix4<f32>,
+        camera_projection: &Matrix4<f32>,
+    ) {
+        if opacity >= 0.999 {
+            self.render_filtered(meshes, None, lighting, parent_transform, camera_projection);
+            return;
+        }
+        if opacity <= 0.001 || depth_pass::is_active() {
+            return;
+        }
+        COLOR_SHADER.with(|shader| {
+            if !see_inside {
+                self.draw_meshes_as(shader, Look::DepthOnly, meshes, lighting, parent_transform, camera_projection);
+            }
+            self.draw_meshes_as(shader, Look::Faded(opacity), meshes, lighting, parent_transform, camera_projection);
+        });
+    }
+
     /// Draw only the `meshes` named (see `variant_meshes`), tinted as
     /// `set_tint` would (`None`: as they are). For a model whose parts are
     /// drawn each with its own transform, e.g. a vehicle's wheels, from
@@ -360,16 +403,44 @@ impl Model {
         parent_transform: &Matrix4<f32>,
         camera_projection: &Matrix4<f32>,
     ) {
+        let look = match (depth_only, tint) {
+            (true, _) => Look::DepthPass,
+            (false, Some(tint)) => Look::Tint(tint),
+            (false, None) => Look::Normal,
+        };
+        self.draw_meshes_as(shader, look, only, lighting, parent_transform, camera_projection);
+    }
+
+    fn draw_meshes_as(
+        &self,
+        shader: &Shader,
+        look: Look,
+        only: Option<&std::collections::HashSet<String>>,
+        lighting: &Lighting,
+        parent_transform: &Matrix4<f32>,
+        camera_projection: &Matrix4<f32>,
+    ) {
+        let depth_only = matches!(look, Look::DepthPass);
         let mut desc = gfx::PipelineDesc {
             vertex_layouts: crate::core::gfx::Layouts::of(&[DynamicVertexArray::<ModelMeshVertex>::layout()]),
             depth: gfx::DepthState::LESS,
             cull: gfx::Cull::Back,
             ..Default::default()
         };
-        // A tinted model is see-through and writes no depth.
-        if tint.is_some() {
-            desc.blend = Some(gfx::BlendState::ALPHA);
-            desc.depth.write = false;
+        match look {
+            // A tinted model is see-through and writes no depth.
+            Look::Tint(_) => {
+                desc.blend = Some(gfx::BlendState::ALPHA);
+                desc.depth.write = false;
+            }
+            Look::DepthOnly => desc.color_write = false,
+            // Over its own depth (if drawn first: only the front-most
+            // surface) and what is opaque.
+            Look::Faded(_) => {
+                desc.blend = Some(gfx::BlendState::ALPHA);
+                desc.depth = gfx::DepthState { write: false, ..gfx::DepthState::LEQUAL };
+            }
+            Look::Normal | Look::DepthPass => {}
         }
         gfx::set_pipeline(shader.pipeline(&desc));
         if !depth_only {
@@ -381,8 +452,12 @@ impl Model {
         let draws_to_screen = hdr::draws_to_view() || ssao::in_depth_pass();
         shader
             .set_uniform_mat4("viewProjection", &camera_projection);
-        let [r, g, b, a] = tint.unwrap_or([1.0; 4]);
-        shader.set_uniform_1i("useTint", tint.is_some() as i32);
+        let (mode, [r, g, b, a]) = match look {
+            Look::Tint(tint) => (1, tint),
+            Look::Faded(opacity) => (2, [1.0, 1.0, 1.0, opacity]),
+            _ => (0, [1.0; 4]),
+        };
+        shader.set_uniform_1i("useTint", mode);
         shader.set_uniform_4f("tint", r, g, b, a);
         for (index, (name, mesh)) in self.meshes.iter().enumerate() {
             let shown = match only {
@@ -537,6 +612,20 @@ impl Model {
     pub fn set_tint(&mut self, tint: Option<[f32; 4]>) {
         self.tint = tint;
     }
+}
+
+/// How `draw_meshes_as` draws.
+#[derive(Clone, Copy)]
+enum Look {
+    Normal,
+    /// Into a shadow or depth pass (its own shader).
+    DepthPass,
+    /// A see-through silhouette (`set_tint`).
+    Tint([f32; 4]),
+    /// Depth only, no colour: before `Faded`.
+    DepthOnly,
+    /// As it is, this opaque.
+    Faded(f32),
 }
 
 impl ModelBuilder {

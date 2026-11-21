@@ -88,6 +88,7 @@ saves. Use the `editor_*` tools for it, or open another scene first.
 | `editor_reload_scripts` | Build and load the scripts |
 | `editor_play` / `editor_stop` / `editor_save` | Play mode, saving |
 | `editor_focus` / `editor_set_view` | Point the editor camera at an entity, or place it |
+| `editor_open_asset` | Open an asset (id, name or path below `assets/`) in the asset workspace; a clip opens in the clip editor |
 | `viewport_screenshot` | The viewport or window as an image; scaled to 1280 px across unless `max_width` says otherwise (0: full size); PNG or JPEG |
 | `editor_agent_control` | Tell the user an agent is at the controls (`active: true`, with a `note`) or gave them back (`active: false`). The editor shows a sign beside play/stop and frames the viewport. Call it before moving the camera, flying, playing or taking a series of screenshots, and switch it off when done; it ends by itself after a minute without requests |
 

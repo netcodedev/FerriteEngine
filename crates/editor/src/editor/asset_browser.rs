@@ -558,6 +558,7 @@ mod tests {
             materials: Vec::new(),
             clips: Vec::new(),
             grip: None,
+            anchors: Vec::new(),
         })
     }
 

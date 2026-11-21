@@ -141,6 +141,7 @@ fn respond(request: BridgeRequest, cx: Context) -> BridgeResponse {
             Ok(json!({ "building": true, "check": "editor_status → scripts_message" }))
         }
         BridgeRequest::Focus { id } => focus(scene, state, id),
+        BridgeRequest::OpenAsset { asset } => open_asset(state, &asset),
         BridgeRequest::AgentControl { active, note } => {
             let now = std::time::Instant::now();
             if active {
@@ -835,4 +836,22 @@ mod tests {
         assert!(scene_file_path("../x.ron").is_err());
         assert!(scene_file_path("/etc/passwd").is_err());
     }
+}
+
+/// Open an asset in the asset workspace: by id, name or source path below
+/// the asset folder.
+fn open_asset(state: &mut EditorState, asset: &str) -> Result<serde_json::Value, String> {
+    let id = {
+        let database = ferrite::core::assets::database();
+        let by_id = asset
+            .parse::<ferrite::core::assets::AssetId>()
+            .ok()
+            .filter(|id| database.get(*id).is_some());
+        by_id
+            .or_else(|| database.iter().find(|e| e.meta.name == asset).map(|e| e.meta.id))
+            .or_else(|| database.find_by_source(&database.root().join(asset)))
+            .ok_or_else(|| format!("no asset '{asset}' (give its id, name or path below assets/)"))?
+    };
+    state.push(Command::EditAsset { id, variant: None });
+    Ok(json!({ "opened": id.to_string() }))
 }
