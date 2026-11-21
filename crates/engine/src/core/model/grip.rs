@@ -392,6 +392,7 @@ fn reach(
         held.thumb,
         held.knuckles,
         weight,
+        false,
     )
 }
 
@@ -408,10 +409,25 @@ pub struct Grasp {
     pub knuckles: Vector3<f32>,
 }
 
+/// How `hand` of the character `model` (drawn at `transform`) is closed
+/// as it is posed: the bar its fist would hold, as a `Grasp`. Reaching for
+/// this grasp leaves the hand where it is; so a game can take a grip from
+/// an animation (a clip posed with the hands on a wheel) and move it.
+pub fn grasp_of(model: &Model, transform: &Matrix4<f32>, hand: Hand) -> Option<Grasp> {
+    let skeleton = model.skeleton()?;
+    let positions = skeleton.world_positions(&model.root_transform(transform));
+    let fist = fist(&skeleton, hand, &positions)?;
+    Some(Grasp {
+        centre: fist.centre,
+        thumb: fist.thumb,
+        knuckles: fist.knuckles,
+    })
+}
+
 /// `hand` of the character `model` (drawn at `transform`) reaches for the
 /// bar of `grasp` and closes around it, `weight` of the way (0: as the
 /// animation has it, 1: fully): the arm bends by two-bone inverse
-/// kinematics, the hand turns so its fist faces as `grasp` says. Out of the
+/// kinematics (the elbow out the way the animation bends it), the hand turns so its fist faces as `grasp` says. Out of the
 /// arm's reach it lets go. Run it after the animation has posed the model.
 /// Whether it moved the hand.
 pub fn grasp(
@@ -483,6 +499,7 @@ fn grasp_with(
         thumb,
         knuckles,
         weight,
+        true,
     );
     if moved {
         spread_twist(skeleton, forearm, before.hand, held);
@@ -540,6 +557,7 @@ fn close_fist(
     thumb: Vector3<f32>,
     knuckles: Vector3<f32>,
     weight: f32,
+    keep_elbow: bool,
 ) -> bool {
     let Some(chain) = skeleton.chain_ending_at(before.hand) else {
         return false;
@@ -562,6 +580,20 @@ fn close_fist(
     let wrist = positions[chain.end] + (wanted - positions[chain.end]) * weight;
     if !(wrist.x.is_finite() && wrist.y.is_finite() && wrist.z.is_finite()) {
         return false;
+    }
+    // With `keep_elbow` the elbow bends the way the animation has it (not
+    // the rig's default pole, elbows back): a clip posed with the elbows
+    // out keeps them out. Only for an arm the animation bends clearly.
+    let mut chain = chain;
+    if keep_elbow {
+        let joints = skeleton.positions();
+        let (shoulder, elbow, hand_at) = (joints[upper], joints[mid], joints[chain.end]);
+        let line = hand_at - shoulder;
+        let out = (elbow - shoulder) - line * ((elbow - shoulder).dot(line) / line.magnitude2().max(1e-12));
+        let upper_length = (elbow - shoulder).magnitude();
+        if out.magnitude() > 0.15 * upper_length {
+            chain.pole = out.normalize();
+        }
     }
     skeleton.solve(&chain, inverse_root.transform_point(wrist));
 
@@ -816,6 +848,25 @@ mod tests {
                 let full = skeleton.world_positions(root)[before.hand];
                 let from = humanoid(0.5).world_positions(root)[before.hand];
                 assert!((wrist - (from + (full - from) * 0.5)).magnitude() < 0.01);
+            }
+        }
+    }
+
+    #[test]
+    fn grasping_as_the_hand_is_closed_leaves_it_there() {
+        let root = Matrix4::from_translation(Vector3::new(3.0, 0.5, -2.0))
+            * Matrix4::from(Quaternion::from_axis_angle(Vector3::unit_y(), Rad(2.1)));
+        for (hand, side) in [(Hand::Left, "Left"), (Hand::Right, "Right")] {
+            // The elbow bent well out and forward, as a clip at a wheel has it.
+            let mut skeleton = humanoid(0.5);
+            let fore = skeleton.find(&format!("mixamorig:{side}ForeArm")).unwrap();
+            skeleton.turn(fore, Quaternion::from_axis_angle(Vector3::new(0.3, 1.0, 0.2).normalize(), Rad(1.1)));
+            let start = skeleton.world_positions(&root);
+            let now = fist(&skeleton, hand, &start).unwrap();
+            let target = Grasp { centre: now.centre, thumb: now.thumb, knuckles: now.knuckles };
+            grasp_with(&mut skeleton, &root, hand, &target, 1.0);
+            for (a, b) in start.iter().zip(skeleton.world_positions(&root)) {
+                assert!((a - b).magnitude() < 1e-3, "{hand:?}: {a:?} moved to {b:?}");
             }
         }
     }
