@@ -19,7 +19,7 @@ use crate::core::{
 };
 
 use super::*;
-use super::graph::{NodeId, ScatterGraph};
+use super::graph::{NodeId, ScatterGraph, ScatterRange};
 
 thread_local! {
     static MODEL_CACHE: RefCell<ModelCache> = RefCell::new(ModelCache::default());
@@ -242,18 +242,31 @@ pub struct ScatterSpec {
     /// Tells this output's instances from others' (felled trees are kept
     /// by it). A model layer's is the one it always had.
     pub salt: u64,
+    /// Planted over every loaded chunk, or around the camera.
+    pub range: ScatterRange,
+    /// Whether the models are drawn into the shadow maps.
+    pub shadows: bool,
 }
 
 impl ScatterSpec {
     /// A model on its own, placed by hand (previews): no rules of its own.
     pub fn of_model(model: Rc<ScatterModel>) -> Self {
-        Self { model, graph: Arc::new(ScatterGraph::default()), output: NodeId(0), salt: 0 }
+        Self {
+            model,
+            graph: Arc::new(ScatterGraph::default()),
+            output: NodeId(0),
+            salt: 0,
+            range: ScatterRange::Landscape,
+            shadows: true,
+        }
     }
 
     pub(super) fn same_as(&self, other: &ScatterSpec) -> bool {
         Rc::ptr_eq(&self.model, &other.model)
             && self.output == other.output
             && self.salt == other.salt
+            && self.range == other.range
+            && self.shadows == other.shadows
             && (Arc::ptr_eq(&self.graph, &other.graph) || self.graph == other.graph)
     }
 }

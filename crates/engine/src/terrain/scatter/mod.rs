@@ -23,6 +23,7 @@ use crate::core::{
 
 use super::CHUNK_SIZE_FLOAT;
 
+pub mod detail;
 pub mod graph;
 pub mod impostor;
 mod instances;
@@ -206,9 +207,18 @@ impl Scatter {
     }
 
     /// What every chunk should carry right now: one entry per landscape
-    /// output of every loaded layer (detail outputs are planted around
-    /// the camera instead).
+    /// output of every loaded layer.
     pub fn specs(&self) -> Vec<ScatterSpec> {
+        self.specs_where(|range| range == graph::ScatterRange::Landscape)
+    }
+
+    /// What is planted around the camera: one entry per detail output of
+    /// every loaded layer.
+    pub fn detail_specs(&self) -> Vec<ScatterSpec> {
+        self.specs_where(|range| matches!(range, graph::ScatterRange::Detail { .. }))
+    }
+
+    fn specs_where(&self, wanted: impl Fn(graph::ScatterRange) -> bool) -> Vec<ScatterSpec> {
         let mut specs: Vec<ScatterSpec> = Vec::new();
         for layer in &self.layers {
             let Some(loaded) = &layer.loaded else {
@@ -221,15 +231,14 @@ impl Scatter {
                     continue;
                 }
             }
-            for output in &loaded.outputs {
-                if output.range != graph::ScatterRange::Landscape {
-                    continue;
-                }
+            for output in loaded.outputs.iter().filter(|o| wanted(o.range)) {
                 let spec = ScatterSpec {
                     model: output.model.clone(),
                     graph: loaded.graph.clone(),
                     output: output.node,
                     salt: layer.output_salt(output.node),
+                    range: output.range,
+                    shadows: output.shadows,
                 };
                 // The same model at the same density twice would land on
                 // the very same spots; plant it once.

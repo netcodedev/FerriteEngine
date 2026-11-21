@@ -13,6 +13,10 @@ layout (location = 6) in vec4 instanceCol3;
 
 uniform mat4 viewProjection;
 uniform mat4 parentTransform;
+// Detail instances (grass): the camera's x and z, and the range they are
+// planted to; they shrink about their base from 80 % of it to nothing at
+// it. A range of 0: not a detail instance.
+uniform vec3 detailFade;
 // The depth-only program (`depth_pass`) runs this shader too; the shading
 // pass tests LEQUAL against the prepass' depth.
 invariant gl_Position;
@@ -24,7 +28,12 @@ out vec2 TexCoords;
 void main() {
     mat4 instanceMat = mat4(instanceCol0, instanceCol1, instanceCol2, instanceCol3);
     mat4 modelTransform = parentTransform * instanceMat;
-    vec4 worldPos = modelTransform * vec4(position, 1.0);
+    float shrink = 1.0;
+    if (detailFade.z > 0.0) {
+        vec2 base = (modelTransform * vec4(0.0, 0.0, 0.0, 1.0)).xz;
+        shrink = 1.0 - smoothstep(0.8 * detailFade.z, detailFade.z, distance(base, detailFade.xy));
+    }
+    vec4 worldPos = modelTransform * vec4(position * shrink, 1.0);
     gl_Position = viewProjection * worldPos;
     WorldPos = worldPos.xyz;
     // Inverse transpose: the parent entity may be scaled non-uniformly.

@@ -22,7 +22,10 @@ use crate::core::{
 use super::super::ChunkBounds;
 
 use super::*;
-use super::graph::Placement;
+use super::{
+    detail::CellKey,
+    graph::{Placement, ScatterRange},
+};
 
 /// An instance taken out of a `ScatterInstances`.
 pub struct TakenInstance {
@@ -51,6 +54,9 @@ pub struct ScatterInstances {
     /// Colliders these instances added, so they can be taken out again
     /// without removing the chunk they stand on.
     colliders: Vec<ColliderHandle>,
+    /// The detail cell these are (see `detail`); `None` for landscape
+    /// instances.
+    cell: Option<CellKey>,
     gpu: RefCell<Option<ScatterGpu>>,
 }
 
@@ -190,6 +196,7 @@ impl ScatterInstances {
                 },
                 placements: Vec::new(),
                 colliders: Vec::new(),
+                cell: None,
                 gpu: RefCell::new(None),
             };
         }
@@ -246,8 +253,30 @@ impl ScatterInstances {
             bounds,
             placements: placements.to_vec(),
             colliders: Vec::new(),
+            cell: None,
             gpu: RefCell::new(None),
         }
+    }
+
+    /// A detail output's instances on one cell (no colliders).
+    pub fn new_detail(spec: &ScatterSpec, cell: CellKey, placements: &[Placement]) -> Self {
+        let mut instances = Self::new(spec, placements);
+        instances.cell = Some(cell);
+        instances
+    }
+
+    /// The detail cell these instances are, if they are a detail output's.
+    pub fn detail_cell(&self) -> Option<CellKey> {
+        self.cell
+    }
+
+    pub fn spec(&self) -> &ScatterSpec {
+        &self.spec
+    }
+
+    /// How many instances there are.
+    pub fn len(&self) -> usize {
+        self.instances_by_variant.iter().map(Vec::len).sum()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -273,6 +302,7 @@ impl ScatterInstances {
             },
             placements: Vec::new(),
             colliders: Vec::new(),
+            cell: None,
             gpu: RefCell::new(None),
         }
     }
@@ -458,6 +488,9 @@ impl Component for ScatterInstances {
         // take a coarser tier: their texels are bigger than the detail.
         let in_view = crate::core::renderer::hdr::draws_to_view()
             || crate::core::renderer::ssao::in_depth_pass();
+        if !in_view && !self.spec.shadows {
+            return;
+        }
         let lod = LodChoice::PerCell {
             eye: lighting.camera_position,
             shadow: !in_view,
@@ -522,6 +555,13 @@ impl ScatterInstances {
             gfx::set_pipeline(shader.pipeline(&desc));
             shader.set_uniform_mat4("viewProjection", view_projection);
             shader.set_uniform_mat4("parentTransform", parent_transform);
+            // Detail instances shrink away towards the edge of their range.
+            let range = match self.spec.range {
+                ScatterRange::Detail { distance } => distance,
+                ScatterRange::Landscape => 0.0,
+            };
+            let eye = lighting.camera_position;
+            shader.set_uniform_3f("detailFade", eye.x, eye.z, range);
             if !depth_only {
                 let lit_for = in_pass.then(|| LitFor {
                     program: shader.id(),

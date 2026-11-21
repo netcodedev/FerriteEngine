@@ -253,6 +253,43 @@ and variant; frame cost of grass < 2 ms on the user's machine.
      demo in the editor (same trees as before).
 4. **Detail range**: camera ring of 16 m cells, planting on the workers,
    shrink-out at the edge, no colliders/impostors.
+
+   Design (2026-11-21):
+   - **Cells of 32 m, not 16.** Every cell is its own set of draws (one
+     per variant and pass); at 60 m range 32 m cells are ~16 instead of
+     ~50, a third of the draw calls. Planting a 32 m cell is ~2000
+     points for grass at 0.7 m spacing, fine on a worker.
+   - **Which cells.** Per detail output, every cell whose square comes
+     within its `distance` of the camera (xz). A cell is dropped only
+     when it is a cell's width further out, so walking along an edge
+     does not plant and drop the same cell again and again.
+   - **Where they live.** A cell's placements are split by height among
+     the loaded chunks of its column, as a `ScatterInstances` component
+     on each (marked with the cell, no colliders), so every pass that
+     draws the landscape models draws them too and they go with their
+     chunk. The landscape sync leaves components with a cell alone.
+   - **Planting.** The same workers: a cell job evaluates the graph on
+     the cell's square; the result is kept while the cell is wanted, so
+     the column's chunks loading later take theirs from it. At most a
+     few cells are added per frame.
+   - **Shrink-out.** The instance vertex shader shrinks a detail instance
+     about its base from 80 % of the range to nothing at the range (a
+     uniform with the eye and the range; 0 for landscape instances), in
+     every pass, so shadows and depth match.
+   - **Shadows.** An output with `shadows: false` is left out of the
+     shadow maps (still in the depth prepass); now for landscape
+     outputs too.
+   - **As built** (2026-11-21): as designed; the terrain's inspector
+     shows "detail: N models in M cells". In the demo (scene
+     `grass_check`, a first `Meadow` graph: 0.6 m grid, noise patches,
+     slope ≤ 30°, world chance "grass", scale 0.35–0.7) a ring of 60 m
+     holds ~23 500 tufts in 22 cells; frame 9.4 ms on average (GPU 7.1
+     ms), from ~7.4 ms without. One cell of that graph takes ~20 ms to
+     work out on the demo's world (release build). Seen from above the
+     grass hardly shows: it is much darker than the ground (step 5).
+   - **Checks.** Tests: the wanted cells for an eye and range, the drop
+     margin, a cell's placements split over chunks lose and double
+     nothing. Then grass in the demo editor: density, edge, frame time.
 5. **Grass drawing**: wind sway, double-sided, ground tint, shadow switch.
 6. **Node editor**: graph asset in the asset browser, opens in its own
    tab (canvas, pins, wires, add menu, undo), properties in the

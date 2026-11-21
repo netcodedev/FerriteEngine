@@ -16,6 +16,7 @@ use std::{
 
 use super::{
     scatter::{
+        detail::{cell_rect, CellKey},
         graph::{evaluate, NodeId, Placement, Rect, ScatterGraph},
         ScatterSpec,
     },
@@ -27,12 +28,19 @@ use super::{
 const WORKERS: usize = 2;
 
 type Points = Vec<Placement>;
-type Key = (ChunkCoord, u64);
+type Key = (Spot, u64);
+
+/// What is planted: a chunk (landscape outputs) or a detail cell.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Spot {
+    Chunk(ChunkCoord),
+    Cell(CellKey),
+}
 
 struct Job {
     source: Arc<dyn TerrainSource>,
     generation: u64,
-    coord: ChunkCoord,
+    spot: Spot,
     graph: Arc<ScatterGraph>,
     output: NodeId,
     salt: u64,
@@ -70,8 +78,8 @@ impl Planting {
                 let Ok(job) = job else {
                     return;
                 };
-                let points = placements_at(&*job.source, job.coord, &job.graph, job.output);
-                if done_tx.send(Done { generation: job.generation, key: (job.coord, job.salt), points }).is_err() {
+                let points = job.spot.placements(&*job.source, &job.graph, job.output);
+                if done_tx.send(Done { generation: job.generation, key: (job.spot, job.salt), points }).is_err() {
                     return;
                 }
             });
@@ -98,15 +106,33 @@ impl Planting {
     /// The placements of `spec` on `coord`, once worked out; asked for
     /// (once) otherwise.
     pub(super) fn take(&mut self, source: &Arc<dyn TerrainSource>, coord: ChunkCoord, spec: &ScatterSpec) -> Option<Points> {
-        let key = (coord, spec.salt);
+        let key = (Spot::Chunk(coord), spec.salt);
         if let Some(points) = self.ready.remove(&key) {
             return Some(points);
         }
+        self.ask(source, key, spec)
+    }
+
+    /// The placements of a detail output `spec` on `cell`, once worked out;
+    /// asked for (once) otherwise. Kept for the cell's other chunks until
+    /// `retain_cells` lets them go.
+    pub(super) fn cell(&mut self, source: &Arc<dyn TerrainSource>, cell: CellKey, spec: &ScatterSpec) -> Option<&Points> {
+        let key = (Spot::Cell(cell), spec.salt);
+        if !self.ready.contains_key(&key) {
+            let points = self.ask(source, key, spec)?;
+            self.ready.insert(key, points);
+        }
+        self.ready.get(&key)
+    }
+
+    /// Ask the workers for `key`; worked out here (and returned) if there
+    /// are none.
+    fn ask(&mut self, source: &Arc<dyn TerrainSource>, key: Key, spec: &ScatterSpec) -> Option<Points> {
         if self.pending.insert(key) {
             let job = Job {
                 source: Arc::clone(source),
                 generation: self.generation,
-                coord,
+                spot: key.0,
                 graph: spec.graph.clone(),
                 output: spec.output,
                 salt: spec.salt,
@@ -114,7 +140,7 @@ impl Planting {
             if self.jobs.send(job).is_err() {
                 // No worker (it cannot start): work it out here.
                 self.pending.remove(&key);
-                return Some(placements_at(&**source, coord, &spec.graph, spec.output));
+                return Some(key.0.placements(&**source, &spec.graph, spec.output));
             }
         }
         None
@@ -122,7 +148,33 @@ impl Planting {
 
     /// Drop points kept for chunks that are not there any more.
     pub(super) fn retain(&mut self, keep: impl Fn(ChunkCoord) -> bool) {
-        self.ready.retain(|(coord, _), _| keep(*coord));
+        self.ready.retain(|(spot, _), _| match spot {
+            Spot::Chunk(coord) => keep(*coord),
+            Spot::Cell(_) => true,
+        });
+    }
+
+    /// Drop detail cells (by cell and output salt) no longer wanted.
+    pub(super) fn retain_cells(&mut self, keep: impl Fn(CellKey, u64) -> bool) {
+        self.ready.retain(|(spot, salt), _| match spot {
+            Spot::Chunk(_) => true,
+            Spot::Cell(cell) => keep(*cell, *salt),
+        });
+    }
+}
+
+impl Spot {
+    fn placements(&self, source: &dyn TerrainSource, graph: &ScatterGraph, output: NodeId) -> Vec<Placement> {
+        match *self {
+            Spot::Chunk(coord) => placements_at(source, coord, graph, output),
+            Spot::Cell(cell) => match evaluate(graph, source, cell_rect(cell)) {
+                Ok(evaluation) => evaluation.placements(output).to_vec(),
+                Err(e) => {
+                    log::warn!("terrain scatter: {e}");
+                    Vec::new()
+                }
+            },
+        }
     }
 }
 
