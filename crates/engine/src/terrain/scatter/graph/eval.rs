@@ -156,7 +156,8 @@ pub fn evaluate<G: Ground + ?Sized>(graph: &ScatterGraph, ground: &G, rect: Rect
 }
 
 /// `evaluate`, keeping every node's points too (`Evaluation::trace`), for
-/// the node editor to show.
+/// the node editor to show; works out every node, also those that lead to
+/// no output (`evaluate` leaves them out).
 pub fn evaluate_traced<G: Ground + ?Sized>(graph: &ScatterGraph, ground: &G, rect: Rect) -> Result<Evaluation, String> {
     run(graph, ground, rect, true)
 }
@@ -194,6 +195,16 @@ fn run<G: Ground + ?Sized>(graph: &ScatterGraph, ground: &G, rect: Rect, traced:
                 })
                 .collect();
             outputs.push((node.id, placements));
+        }
+    }
+    // For the node editor, every node: also those that lead to no output
+    // yet (a chain being built). Planting leaves them out: nothing grows
+    // from them.
+    if traced {
+        for node in &graph.nodes {
+            if !matches!(node.kind, NodeKind::SpawnMesh(_)) {
+                eval.outputs(node, rect)?;
+            }
         }
     }
     Ok(Evaluation { outputs, counts: eval.counts, trace: eval.trace.unwrap_or_default() })

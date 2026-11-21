@@ -571,3 +571,20 @@ fn a_graph_from_before_the_multiplier_still_loads() {
     let new = ScatterGraph::chain([NodeKind::DensityCut { multiplier: 2.5 }]);
     assert_eq!(ScatterGraph::from_ron(&new.to_ron()).unwrap(), new);
 }
+
+#[test]
+fn a_traced_run_counts_nodes_that_lead_to_no_output_yet() {
+    // A chain being built: nothing planted from it yet.
+    let mut graph = ScatterGraph::chain([surface(1.0), NodeKind::WorldChance { tag: String::new() }]);
+    let out = graph.add(grass());
+    let ground = Plane { chance: 0.5, ..Plane::flat() };
+    let rect = Rect::new(0.0, 0.0, 10.0, 10.0);
+    let traced = evaluate_traced(&graph, &ground, rect).unwrap();
+    assert_eq!(traced.counts[&NodeId(0)], 100);
+    assert_eq!(traced.counts[&NodeId(1)], 100);
+    assert_eq!(traced.trace[&NodeId(1)][0].len(), 100);
+    assert_eq!(traced.counts[&out], 0);
+    // Planting works out only what grows.
+    let planted = evaluate(&graph, &ground, rect).unwrap();
+    assert!(!planted.counts.contains_key(&NodeId(0)));
+}
