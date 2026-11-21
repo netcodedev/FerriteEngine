@@ -26,7 +26,15 @@ use ferrite::core::{
 use ferrite::ron;
 use serde_json::json;
 
-use crate::editor::{viewport::Viewport, Command, EditorState, Mode};
+use crate::editor::{
+    scatter::{Counts, ScatterEdit},
+    viewport::Viewport,
+    Command, EditorState, Mode,
+};
+use ferrite::{
+    core::mcp_bridge::protocol::ScatterGraphOp,
+    terrain::scatter::graph::{NodeId, NodeKind, PinRef, ScatterGraph, Wire},
+};
 
 /// What a request needs from the editor.
 pub struct Context<'a> {
@@ -142,6 +150,8 @@ fn respond(request: BridgeRequest, cx: Context) -> BridgeResponse {
         }
         BridgeRequest::Focus { id } => focus(scene, state, id),
         BridgeRequest::OpenAsset { asset } => open_asset(state, &asset),
+        BridgeRequest::ScatterGraphRead { asset } => scatter_graph_read(state, &asset),
+        BridgeRequest::ScatterGraphEdit { asset, ops } => scatter_graph_edit(state, &asset, ops),
         BridgeRequest::AgentControl { active, note } => {
             let now = std::time::Instant::now();
             if active {
@@ -841,17 +851,191 @@ mod tests {
 /// Open an asset in the asset workspace: by id, name or source path below
 /// the asset folder.
 fn open_asset(state: &mut EditorState, asset: &str) -> Result<serde_json::Value, String> {
-    let id = {
-        let database = ferrite::core::assets::database();
-        let by_id = asset
-            .parse::<ferrite::core::assets::AssetId>()
-            .ok()
-            .filter(|id| database.get(*id).is_some());
-        by_id
-            .or_else(|| database.iter().find(|e| e.meta.name == asset).map(|e| e.meta.id))
-            .or_else(|| database.find_by_source(&database.root().join(asset)))
-            .ok_or_else(|| format!("no asset '{asset}' (give its id, name or path below assets/)"))?
-    };
+    let id = resolve_asset(asset)?;
     state.push(Command::EditAsset { id, variant: None });
     Ok(json!({ "opened": id.to_string() }))
+}
+
+/// An asset by id, name or source path below the asset folder.
+fn resolve_asset(asset: &str) -> Result<ferrite::core::assets::AssetId, String> {
+    let database = ferrite::core::assets::database();
+    let by_id = asset
+        .parse::<ferrite::core::assets::AssetId>()
+        .ok()
+        .filter(|id| database.get(*id).is_some());
+    by_id
+        .or_else(|| database.iter().find(|e| e.meta.name == asset).map(|e| e.meta.id))
+        .or_else(|| database.find_by_source(&database.root().join(asset)))
+        .ok_or_else(|| format!("no asset '{asset}' (give its id, name or path below assets/)"))
+}
+
+fn scatter_graph_json(graph: &ScatterGraph) -> serde_json::Value {
+    let nodes: Vec<serde_json::Value> = graph
+        .nodes
+        .iter()
+        .map(|n| {
+            let settings: serde_json::Map<String, serde_json::Value> = n
+                .kind
+                .properties()
+                .into_iter()
+                .map(|p| {
+                    let value = match p.value {
+                        PropertyValue::Float(v) => json!(v),
+                        PropertyValue::Int(v) => json!(v),
+                        PropertyValue::Bool(v) => json!(v),
+                        PropertyValue::Text(v) => json!(v),
+                    };
+                    (p.name.to_string(), value)
+                })
+                .collect();
+            json!({
+                "id": n.id.0,
+                "kind": n.kind.label(),
+                "position": n.position,
+                "inputs": n.kind.inputs().iter().map(|p| p.name).collect::<Vec<_>>(),
+                "outputs": n.kind.outputs(),
+                "settings": settings,
+            })
+        })
+        .collect();
+    let wires: Vec<serde_json::Value> = graph
+        .wires
+        .iter()
+        .map(|w| json!({"from": w.from.node.0, "from_pin": w.from.pin, "to": w.to.node.0, "to_pin": w.to.pin}))
+        .collect();
+    json!({
+        "nodes": nodes,
+        "wires": wires,
+        "problems": graph.problems().iter().map(|p| p.to_string()).collect::<Vec<_>>(),
+    })
+}
+
+fn scatter_graph_read(state: &mut EditorState, asset: &str) -> Result<serde_json::Value, String> {
+    let id = resolve_asset(asset)?;
+    if let Some(edit) = state.scatter.as_ref().filter(|e| e.asset == id) {
+        let mut out = scatter_graph_json(&edit.graph);
+        out["open_in_editor"] = json!(true);
+        out["unsaved"] = json!(edit.dirty());
+        out["counts"] = match &edit.counts {
+            Counts::Done(counts) => json!(counts.iter().map(|(k, v)| (k.0.to_string(), json!(*v))).collect::<serde_json::Map<_, _>>()),
+            Counts::Working => json!("counting"),
+            Counts::None => json!("no terrain"),
+            Counts::Failed(e) => json!(format!("failed: {e}")),
+        };
+        out["counted_on"] = json!("the 32 m detail cell under the editor camera");
+        return Ok(out);
+    }
+    let path = {
+        let database = ferrite::core::assets::database();
+        let entry = database.get(id).ok_or("no such asset")?;
+        if !matches!(entry.meta.kind, ferrite::core::assets::AssetKind::ScatterGraph(_)) {
+            return Err(format!("'{}' is not a scatter graph", entry.meta.name));
+        }
+        entry.source_path()
+    };
+    let mut out = scatter_graph_json(&ScatterGraph::load(&path)?);
+    out["open_in_editor"] = json!(false);
+    Ok(out)
+}
+
+fn scatter_graph_edit(state: &mut EditorState, asset: &str, ops: Vec<ScatterGraphOp>) -> Result<serde_json::Value, String> {
+    let id = resolve_asset(asset)?;
+    if state.scatter.as_ref().map_or(true, |e| e.asset != id) {
+        if let Some(open) = state.scatter.as_ref().filter(|e| e.dirty()) {
+            return Err(format!("'{}' is open with unsaved changes; save or revert it first", open.name));
+        }
+        state.scatter = Some(ScatterEdit::open(id)?);
+    }
+    let edit = state.scatter.as_mut().expect("opened");
+    // All of them, or none: worked on a copy.
+    let mut graph = edit.graph.clone();
+    let mut added = Vec::new();
+    let mut save = false;
+    for (index, op) in ops.into_iter().enumerate() {
+        let fail = |e: String| format!("operation {index}: {e}");
+        let node = |graph: &ScatterGraph, id: u32| {
+            graph.node(NodeId(id)).map(|_| NodeId(id)).ok_or_else(|| fail(format!("no node {id}")))
+        };
+        match op {
+            ScatterGraphOp::Add { kind, position } => {
+                let wanted = kind.to_lowercase().replace([' ', '_'], "");
+                let kind = NodeKind::catalog()
+                    .into_iter()
+                    .find(|k| k.label().to_lowercase().replace(' ', "") == wanted)
+                    .ok_or_else(|| {
+                        let kinds: Vec<&str> = NodeKind::catalog().iter().map(|k| k.label()).collect();
+                        fail(format!("no node kind '{kind}' (one of: {})", kinds.join(", ")))
+                    })?;
+                let position = position.unwrap_or_else(|| {
+                    let right = graph.nodes.iter().map(|n| n.position[0]).fold(0.0f32, f32::max);
+                    [right + 260.0, 0.0]
+                });
+                added.push(graph.add_node(kind, position).0);
+            }
+            ScatterGraphOp::Remove { node: n } => {
+                let n = node(&graph, n)?;
+                graph.remove_nodes(&[n]);
+            }
+            ScatterGraphOp::Move { node: n, position } => {
+                let n = node(&graph, n)?;
+                if let Some(target) = graph.node_mut(n) {
+                    target.position = position;
+                }
+            }
+            ScatterGraphOp::Connect { from, from_pin, to, to_pin } => {
+                let (from, to) = (node(&graph, from)?, node(&graph, to)?);
+                graph
+                    .wire(PinRef { node: from, pin: from_pin }, PinRef { node: to, pin: to_pin })
+                    .map_err(fail)?;
+            }
+            ScatterGraphOp::Disconnect { from, from_pin, to, to_pin } => {
+                graph.unwire(Wire {
+                    from: PinRef { node: NodeId(from), pin: from_pin },
+                    to: PinRef { node: NodeId(to), pin: to_pin },
+                });
+            }
+            ScatterGraphOp::Set { node: n, name, value } => {
+                let n = node(&graph, n)?;
+                let target = graph.node_mut(n).expect("checked");
+                let like = target
+                    .kind
+                    .properties()
+                    .into_iter()
+                    .find(|p| p.name == name && !p.read_only)
+                    .ok_or_else(|| fail(format!("{} has no setting '{name}'", target.kind.label())))?;
+                let value = match (&like.value, &value) {
+                    (PropertyValue::Float(_), v) if v.is_number() => PropertyValue::Float(v.as_f64().unwrap_or(0.0) as f32),
+                    (PropertyValue::Int(_), v) if v.is_number() => PropertyValue::Int(v.as_f64().unwrap_or(0.0) as i64),
+                    (PropertyValue::Bool(_), serde_json::Value::Bool(b)) => PropertyValue::Bool(*b),
+                    (PropertyValue::Text(_), serde_json::Value::String(s)) => PropertyValue::Text(s.clone()),
+                    (like, got) => return Err(fail(format!("'{name}' takes a value like {like:?}, got {got}"))),
+                };
+                if !target.kind.set_property(&name, &value) {
+                    return Err(fail(format!("'{name}' does not take {value:?}")));
+                }
+            }
+            ScatterGraphOp::SetModel { node: n, asset } => {
+                let n = node(&graph, n)?;
+                let model = resolve_asset(&asset).map_err(fail)?;
+                match graph.node_mut(n).map(|t| &mut t.kind) {
+                    Some(NodeKind::SpawnMesh(spawn)) => {
+                        spawn.asset = Some(ferrite::core::assets::AssetRef::whole(model));
+                        spawn.model.clear();
+                    }
+                    _ => return Err(fail("only a Spawn mesh node has a model".into())),
+                }
+            }
+            ScatterGraphOp::Save => save = true,
+        }
+    }
+    if graph != edit.graph {
+        edit.edit(|g| *g = graph);
+    }
+    if save {
+        edit.save()?;
+    }
+    let mut out = scatter_graph_json(&edit.graph);
+    out["added"] = json!(added);
+    out["unsaved"] = json!(edit.dirty());
+    Ok(out)
 }

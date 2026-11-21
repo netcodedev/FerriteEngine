@@ -1,6 +1,7 @@
 //! The rules of docs/scatter-graphs.md ("Rules and how each is checked").
 
 use super::*;
+use crate::core::entity::component::PropertyValue;
 use crate::terrain::{
     chunk::scatter_points_at,
     hills::{Hills, HillsSettings},
@@ -391,4 +392,96 @@ fn the_tint_rides_in_the_bottom_row_of_the_transform() {
     assert!(tint.iter().zip([0.6, 1.1, 0.9]).all(|(a, b)| (a - b).abs() < 1e-6), "{tint:?}");
     (m.x.w, m.y.w, m.z.w) = (0.0, 0.0, 0.0);
     assert_eq!(m, plain);
+}
+
+#[test]
+fn wiring_keeps_the_graph_sound() {
+    let mut graph = ScatterGraph::default();
+    let a = graph.add_node(surface(1.0), [0.0, 0.0]);
+    let b = graph.add_node(surface(2.0), [0.0, 100.0]);
+    let cut = graph.add_node(NodeKind::DensityCut, [200.0, 0.0]);
+    let merge = graph.add_node(NodeKind::Merge, [400.0, 0.0]);
+    let out = graph.add_node(grass(), [600.0, 0.0]);
+    let pin = |node, pin| PinRef { node, pin };
+    graph.wire(pin(a, 0), pin(cut, 0)).unwrap();
+    // A single input takes the new wire in place of the old.
+    graph.wire(pin(b, 0), pin(cut, 0)).unwrap();
+    assert_eq!(graph.wires_into(cut, 0).map(|w| w.from.node).collect::<Vec<_>>(), vec![b]);
+    // A multi input takes both, but the same wire once.
+    graph.wire(pin(cut, 0), pin(merge, 0)).unwrap();
+    graph.wire(pin(a, 0), pin(merge, 0)).unwrap();
+    graph.wire(pin(a, 0), pin(merge, 0)).unwrap();
+    assert_eq!(graph.wires_into(merge, 0).count(), 2);
+    graph.wire(pin(merge, 0), pin(out, 0)).unwrap();
+    // No circles, no pins that are not there, no outputs of an output.
+    assert!(graph.wire(pin(merge, 0), pin(cut, 0)).is_err());
+    assert!(graph.wire(pin(cut, 0), pin(cut, 0)).is_err());
+    assert!(graph.wire(pin(a, 1), pin(cut, 0)).is_err());
+    assert!(graph.wire(pin(out, 0), pin(cut, 0)).is_err());
+    assert!(graph.problems().is_empty(), "{:?}", graph.problems());
+    // Removing a node takes its wires along.
+    graph.remove_nodes(&[merge]);
+    assert!(graph.wires.iter().all(|w| w.from.node != merge && w.to.node != merge));
+    assert!(graph.problems().is_empty());
+}
+
+#[test]
+fn copied_nodes_paste_with_new_ids_and_their_wires() {
+    let mut graph = ScatterGraph::chain([surface(1.0), NodeKind::DensityCut, grass()]);
+    let part = graph.copy_nodes(&[NodeId(0), NodeId(1)]);
+    assert_eq!(part.wires.len(), 1);
+    let pasted = graph.paste(&part, [0.0, 300.0]);
+    assert_eq!(pasted, vec![NodeId(3), NodeId(4)]);
+    assert!(graph.wires.contains(&Wire { from: PinRef { node: NodeId(3), pin: 0 }, to: PinRef { node: NodeId(4), pin: 0 } }));
+    assert_eq!(graph.node(NodeId(3)).unwrap().position, [0.0, 300.0]);
+    assert!(graph.problems().is_empty());
+}
+
+#[test]
+fn every_property_shown_can_be_set() {
+    for mut kind in NodeKind::catalog() {
+        for property in kind.properties() {
+            if property.read_only {
+                continue;
+            }
+            let value = match &property.value {
+                PropertyValue::Float(v) => PropertyValue::Float(v + 0.25),
+                PropertyValue::Int(v) => PropertyValue::Int(v + 1),
+                PropertyValue::Bool(v) => PropertyValue::Bool(!v),
+                PropertyValue::Text(_) => match &property.options {
+                    Some(options) => PropertyValue::Text(options.last().unwrap().clone()),
+                    None => PropertyValue::Text("meadow".into()),
+                },
+            };
+            assert!(kind.set_property(&property.name, &value), "{} / {}", kind.label(), property.name);
+            let now = kind.properties().into_iter().find(|p| p.name == property.name);
+            if let Some(now) = now {
+                assert_eq!(format!("{:?}", now.value), format!("{value:?}"), "{} / {}", kind.label(), property.name);
+            }
+        }
+        assert!(!kind.set_property("no such thing", &PropertyValue::Float(1.0)));
+    }
+}
+
+#[test]
+fn edits_undo_and_redo() {
+    let mut graph = ScatterGraph::chain([surface(1.0), grass()]);
+    let mut history = GraphHistory::default();
+    let original = graph.clone();
+    history.record(&graph);
+    graph.add_node(NodeKind::DensityCut, [10.0, 10.0]);
+    let added = graph.clone();
+    history.record(&graph);
+    graph.move_nodes(&[NodeId(0)], [5.0, 0.0]);
+    assert!(history.undo(&mut graph));
+    assert_eq!(graph, added);
+    assert!(history.undo(&mut graph));
+    assert_eq!(graph, original);
+    assert!(!history.undo(&mut graph));
+    assert!(history.redo(&mut graph));
+    assert_eq!(graph, added);
+    // A new edit drops what could be redone.
+    history.record(&graph);
+    graph.remove_nodes(&[NodeId(2)]);
+    assert!(!history.can_redo());
 }

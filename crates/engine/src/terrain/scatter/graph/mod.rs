@@ -22,10 +22,12 @@ use crate::core::assets::AssetRef;
 
 use super::ScatterLayerData;
 
+mod edit;
 mod eval;
 #[cfg(test)]
 mod tests;
 
+pub use edit::GraphHistory;
 pub use eval::*;
 
 /// What a scatter graph file's name ends with.

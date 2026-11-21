@@ -285,6 +285,26 @@ pub fn catalog() -> Vec<Tool> {
             &["asset"],
         ),
         tool(
+            "editor_scatter_graph_read",
+            "Read a scatter graph asset (id, name or path): its nodes (id, kind, position, pins, \
+             settings), wires, problems; if it is open in the editor also whether it is unsaved \
+             and each node's point count on the 32 m cell under the editor camera.",
+            json!({"asset": {"type": "string"}}),
+            &["asset"],
+        ),
+        tool(
+            "editor_scatter_graph_edit",
+            "Change a scatter graph asset in the editor (opened there if it is not, without \
+             switching workspace), all operations as one undo step, or none if one fails. Each \
+             op is an object with \"do\": add {kind, position?} (kind as its label, e.g. \
+             \"Surface points\", \"Spawn mesh\"), remove {node}, move {node, position}, \
+             connect {from, from_pin?, to, to_pin?}, disconnect {from, from_pin?, to, to_pin?}, \
+             set {node, name, value} (a setting as editor_scatter_graph_read lists it, plain JSON \
+             value), set_model {node, asset}, save. Returns the graph and the ids of added nodes.",
+            json!({"asset": {"type": "string"}, "ops": {"type": "array", "items": {"type": "object"}}}),
+            &["asset", "ops"],
+        ),
+        tool(
             "editor_set_view",
             "Move or turn the editor camera (edit mode); what is left out stays. Yaw 0 looks \
              along +x, 90 along +z; pitch below 0 looks down.",

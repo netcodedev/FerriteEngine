@@ -50,6 +50,45 @@ pub struct EntitySummary {
     pub children: Vec<EntitySummary>,
 }
 
+/// One change to a scatter graph (see `BridgeRequest::ScatterGraphEdit`).
+/// Nodes by id; pins count from 0.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "do", rename_all = "snake_case")]
+pub enum ScatterGraphOp {
+    /// Add a node of a kind by its label ("Surface points", "Spawn mesh",
+    /// ...) with its default settings.
+    Add {
+        kind: String,
+        #[serde(default)]
+        position: Option<[f32; 2]>,
+    },
+    Remove { node: u32 },
+    Move { node: u32, position: [f32; 2] },
+    Connect {
+        from: u32,
+        #[serde(default)]
+        from_pin: u8,
+        to: u32,
+        #[serde(default)]
+        to_pin: u8,
+    },
+    Disconnect {
+        from: u32,
+        #[serde(default)]
+        from_pin: u8,
+        to: u32,
+        #[serde(default)]
+        to_pin: u8,
+    },
+    /// Set a node's setting (by its name as `scatter_graph_read` lists
+    /// it) to a plain JSON value.
+    Set { node: u32, name: String, value: serde_json::Value },
+    /// Point a `Spawn mesh` node at a model asset (id, name or path).
+    SetModel { node: u32, asset: String },
+    /// Write the graph to its file (terrains using it plant again).
+    Save,
+}
+
 /// What the client sends.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -115,6 +154,12 @@ pub enum BridgeRequest {
     /// Open an asset (by id, name or source path below the asset folder)
     /// in the asset workspace, as a double click in the browser does.
     OpenAsset { asset: String },
+    /// A scatter graph asset's nodes, wires, settings, problems and point
+    /// counts (the editor's copy if it is open there, else the file).
+    ScatterGraphRead { asset: String },
+    /// Change a scatter graph asset, as one undo step in the editor's
+    /// copy (opened there, without switching workspace, if it is not yet).
+    ScatterGraphEdit { asset: String, ops: Vec<ScatterGraphOp> },
     /// Move or turn the editor camera; what is left out stays.
     SetView {
         #[serde(default)]

@@ -15,8 +15,10 @@ use std::collections::HashSet;
 
 use cgmath::Point3;
 
+use std::sync::Arc;
+
 use crate::core::{
-    assets::AssetRef,
+    assets::{self, AssetRef},
     entity::component::{Property, PropertyValue},
     gfx,
 };
@@ -77,6 +79,9 @@ pub struct Scatter {
     /// Instances that were taken out (felled trees), by layer salt and
     /// position, so chunks loaded again leave them out. Not saved.
     removed: HashSet<(u64, [i32; 3])>,
+    /// Graphs planted in place of their asset's file: the ones open in the
+    /// editor, unsaved edits and all (see `preview_graph`).
+    previews: std::collections::HashMap<assets::AssetId, Arc<graph::ScatterGraph>>,
 }
 
 impl Scatter {
@@ -86,6 +91,34 @@ impl Scatter {
         Self {
             layers: layers.into_iter().map(ScatterLayer::new).collect(),
             removed: HashSet::new(),
+            previews: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Plant `graph` in place of the scatter graph asset `asset`'s file
+    /// (the editor's copy as it is being edited), or the file again with
+    /// `None`. The layers using it replant after the usual short delay.
+    pub fn preview_graph(&mut self, asset: assets::AssetId, graph: Option<graph::ScatterGraph>) {
+        let unchanged = match (&graph, self.previews.get(&asset)) {
+            (Some(new), Some(old)) => **old == *new,
+            (None, None) => true,
+            _ => false,
+        };
+        if unchanged {
+            return;
+        }
+        match graph {
+            Some(graph) => {
+                self.previews.insert(asset, Arc::new(graph));
+            }
+            None => {
+                self.previews.remove(&asset);
+            }
+        }
+        for layer in &mut self.layers {
+            if layer.asset.as_ref().is_some_and(|a| a.id == asset) {
+                layer.apply_in = Some(APPLY_DELAY);
+            }
         }
     }
 
@@ -178,7 +211,8 @@ impl Scatter {
                 layer.apply_in = Some(remaining);
             } else {
                 layer.apply_in = None;
-                layer.apply();
+                let preview = layer.asset.as_ref().and_then(|a| self.previews.get(&a.id));
+                layer.apply(preview);
             }
         }
     }

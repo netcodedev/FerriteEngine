@@ -34,6 +34,7 @@ use crate::editor::{
     },
     asset_browser::AssetBrowser,
     console::ConsolePanel,
+    scatter::{self, canvas::ScatterCanvas, inspector::ScatterInspector, preview::ScatterPreview},
     asset_editor::{AssetInspector, AssetPreview},
     bridge_handler::{self, Dispatch},
     dialogs::{self, ModalHost},
@@ -142,12 +143,13 @@ impl EditorLayer {
         // Also ahead of the panels: it has to see the release that ends a
         // drag before the panel under the cursor does.
         add(&mut ui, Box::new(DragLayer::new(state.clone())));
-        let (scene_panels, anim_panels, asset_panels, browser_panel) = {
+        let (scene_panels, anim_panels, asset_panels, scatter_panels, browser_panel) = {
             let s = state.borrow();
             (
                 s.scene_panels.clone(),
                 s.anim_panels.clone(),
                 s.asset_panels.clone(),
+                s.scatter_panels.clone(),
                 s.browser_panel.clone(),
             )
         };
@@ -166,7 +168,15 @@ impl EditorLayer {
         ] {
             add(&mut ui, Box::new(ToggleWindow::new(asset_panels.clone(), panel)));
         }
-        // Shared by the scene and the asset workspace.
+        // Scatter graph workspace.
+        for panel in [
+            Box::new(ScatterCanvas::new(state.clone())) as Box<dyn UIElement>,
+            Box::new(ScatterInspector::new(state.clone())),
+            Box::new(ScatterPreview::new(state.clone())),
+        ] {
+            add(&mut ui, Box::new(ToggleWindow::new(scatter_panels.clone(), panel)));
+        }
+        // Shared by the scene, asset and scatter graph workspaces.
         add(
             &mut ui,
             Box::new(ToggleWindow::new(
@@ -580,7 +590,7 @@ impl Layer for EditorLayer {
             )
         };
         let right = match workspace {
-            Workspace::Animation => RightColumn::Preview,
+            Workspace::Animation | Workspace::ScatterGraph => RightColumn::Preview,
             Workspace::Scene => RightColumn::Panels {
                 stats: show_stats,
                 widgets: show_widgets,
@@ -641,6 +651,23 @@ impl Layer for EditorLayer {
             self.scene.set_viewport(Some(layout.viewport_gl()));
             self.scene.render(window);
             self.render_colliders();
+        }
+        // The scatter graph's preview: the world, small, in the right column.
+        let preview = (workspace == Workspace::ScatterGraph && self.state.borrow().scatter_preview_3d)
+            .then(|| scatter::preview::view_rect(&layout))
+            .filter(|r| r.w >= 16.0 && r.h >= 16.0);
+        if let Some(r) = preview {
+            // The editor's own camera draws in the editor.
+            match self.scene.get_editor_camera_mut() {
+                Some(camera) => camera.get_projection_mut().set_aspect(r.w / r.h),
+                None => {
+                    if let Some(camera) = self.scene.get_component_mut::<CameraComponent>() {
+                        camera.get_projection_mut().set_aspect(r.w / r.h);
+                    }
+                }
+            }
+            self.scene.set_viewport(Some(layout.gl_rect(r)));
+            self.scene.render(window);
         }
         if mode == Mode::Edit && scene_visible {
             let (selected, gizmo) = {

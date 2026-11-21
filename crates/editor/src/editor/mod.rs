@@ -29,6 +29,7 @@ pub mod inspector;
 pub mod layout;
 pub mod outline;
 pub mod project_settings;
+pub mod scatter;
 pub mod scripts;
 pub mod showcase;
 pub mod splitter;
@@ -51,6 +52,8 @@ pub enum Workspace {
     Animation,
     /// Settings and preview of one asset.
     Asset,
+    /// A scatter graph's nodes (see `scatter`).
+    ScatterGraph,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,6 +194,24 @@ pub enum Command {
     EditAnimationGraph(EntityHandle),
     /// Leave the graph editor (unsaved edits stay in memory).
     CloseGraphEditor,
+    /// Leave the scatter graph editor (unsaved edits stay in memory).
+    CloseScatterEditor,
+    SaveScatter,
+    RevertScatter,
+    /// Open the scatter canvas' "add node" menu.
+    ScatterAddMenu,
+    ScatterFit,
+    ScatterUndo,
+    ScatterRedo,
+    ScatterDelete,
+    ScatterCopy,
+    ScatterPaste,
+    /// Ask which model a scatter graph's `Spawn mesh` node plants.
+    PickScatterModel(ferrite::terrain::scatter::graph::NodeId),
+    SetScatterModel {
+        node: ferrite::terrain::scatter::graph::NodeId,
+        asset: AssetRef,
+    },
 }
 
 /// An agent at the controls (see `BridgeRequest::AgentControl`).
@@ -215,11 +236,21 @@ pub struct EditorState {
     pub scene_panels: DataSource<bool>,
     pub anim_panels: DataSource<bool>,
     pub asset_panels: DataSource<bool>,
+    pub scatter_panels: DataSource<bool>,
     /// The asset browser is part of the scene and the asset workspace.
     pub browser_panel: DataSource<bool>,
     /// The asset open in the asset workspace.
     pub asset_edit: Option<asset_editor::AssetEdit>,
     pub anim: anim::AnimEditor,
+    /// The scatter graph open in the scatter graph workspace.
+    pub scatter: Option<scatter::ScatterEdit>,
+    /// Asks the scatter canvas to open its add menu, or to fit the view.
+    pub scatter_open_menu: bool,
+    pub scatter_fit: bool,
+    /// The scatter preview shows the world in 3D (else the map of points).
+    pub scatter_preview_3d: bool,
+    /// Where the editor camera is (x, z), for the scatter preview's map.
+    pub scatter_camera: Option<[f32; 2]>,
     /// Graph-space point at the centre of the node canvas (new states go
     /// there).
     pub anim_canvas_center: Option<(f32, f32)>,
@@ -280,9 +311,15 @@ impl EditorState {
             scene_panels: DataSource::new(true),
             anim_panels: DataSource::new(false),
             asset_panels: DataSource::new(false),
+            scatter_panels: DataSource::new(false),
             browser_panel: DataSource::new(true),
             asset_edit: None,
             anim: anim::AnimEditor::new(),
+            scatter: None,
+            scatter_open_menu: false,
+            scatter_fit: false,
+            scatter_preview_3d: true,
+            scatter_camera: None,
             anim_canvas_center: None,
             gizmo: GizmoMode::Translate,
             project_name: String::new(),

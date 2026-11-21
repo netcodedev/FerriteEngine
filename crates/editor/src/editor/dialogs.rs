@@ -180,6 +180,11 @@ pub fn pick_entity_model(state: &Shared, entity: EntityHandle) {
 
 /// Let the user choose a model asset (or one of its variants) and queue
 /// the command `then` makes of the choice.
+/// Ask which model a scatter graph's `Spawn mesh` node plants.
+pub fn pick_scatter_model(state: &Shared, node: ferrite::terrain::scatter::graph::NodeId) {
+    pick_model_asset(state, move |asset| Command::SetScatterModel { node, asset });
+}
+
 fn pick_model_asset(state: &Shared, then: impl Fn(AssetRef) -> Command + 'static) {
     pick_asset_of(state, model_choices(), then);
 }

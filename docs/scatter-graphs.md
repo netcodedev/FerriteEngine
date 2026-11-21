@@ -334,6 +334,68 @@ and variant; frame cost of grass < 2 ms on the user's machine.
    create/edit graphs (add node, connect, set property), so I can build
    and test graphs too. The biggest step; split into canvas + display
    first, then editing.
+
+   Design (2026-11-21), from a look at the editor (no docking; three
+   workspaces of panels; the animation graph's `NodeCanvas` already pans,
+   zooms, drags nodes and links them; no undo anywhere yet):
+   - **A fourth workspace, `ScatterGraph`.** Opening a scatter graph
+     asset (double-click in the browser, Edit, `editor_open_asset`)
+     loads it into `EditorState::scatter` and switches to it: the canvas
+     in the viewport's place, the node inspector where the asset
+     inspector sits (hierarchy and inspector together), the asset
+     browser below.
+   - **Editing model in the engine** (`graph/edit.rs`, tested without a
+     window): add, remove, move, wire (an input that takes one wire gets
+     the new one; no circles), unwire, copy, paste, every node setting as
+     `Property`s, and `GraphHistory` (whole-graph snapshots; one step per
+     edit, one per drag).
+   - **Canvas** (after `NodeCanvas`): grid, pan (empty space, right or
+     middle drag), zoom about the cursor, nodes as boxes with a title, a
+     line of their main settings and the point count; input pins on the
+     left, output pins on the right (named when there are several);
+     wires as curves from output to input. Drag a node to move it (with
+     the others selected); drag from an output pin to an input pin to
+     wire; drag a wire's end off an input to take it out; click a wire
+     to select it. Ctrl+click adds to the selection, a drag on empty
+     space with Shift draws a selection box. Delete, Ctrl+C / Ctrl+V,
+     Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z), Ctrl+S. Right-click or Space on
+     empty canvas opens the add menu at the cursor: the node kinds, cut
+     down by what is typed, arrows and Enter to pick. Header: back,
+     title (with a dot when unsaved), add, fit, undo, redo, revert, save.
+   - **Inspector**: the selected node's settings, built from
+     `NodeKind::properties` like the entity inspector does for
+     components; a `Spawn mesh` gets a "Choose model" button (the model
+     picker). With nothing selected: the graph's problems, if any.
+   - **Point counts.** On a thread of its own, the graph is worked out
+     for the detail cell (32 m) under the editor camera whenever the graph
+     or that cell changes; each node shows how many points it put out
+     there ("—" while it works, the error if the graph is broken).
+   - **Save** writes the file and bumps the asset's revision, so the
+     terrain replants with the new rules.
+   - **MCP.** `scatter_graph_read` (nodes, wires, settings, problems,
+     counts) and `scatter_graph_edit` (a list of operations: add, remove,
+     move, connect, disconnect, set, save), applied to the open copy
+     if the asset is open in the editor, else to the file.
+   - **Checks.** The editing model's tests; then the editor: open the
+     meadow, screenshots of the canvas, edits by MCP and by hand, undo,
+     save, and the grass in the scene following the saved change.
+   - **Preview** (asked for by the user on 2026-11-21 while this was
+     built: "beides, ansicht umschaltbar"): the right column shows a
+     square preview, switchable between **3D** (the world drawn from the
+     editor camera into that square) and **Map** (a dot per model of each
+     output on the 32 m cell under the camera, the camera as a cross, a
+     legend with the counts). The world plants the graph *as edited*:
+     the editor hands the terrain its copy (`Scatter::preview_graph`)
+     whenever the rules change; leaving the workspace hands the saved
+     graph back.
+   - **As built** (2026-11-21): as designed, with these MCP tools:
+     `editor_scatter_graph_read` and `editor_scatter_graph_edit`. Checked
+     in the demo editor: the meadow opens as eight nodes with their
+     counts (2845 points → 1080 tufts on the cell); an MCP edit of the
+     Scale node shows at once on the node ("×1.5–2.5"), in the 3D preview
+     and as an undo step; reverting it leaves the graph unsaved-free.
+     Not checked by me (needs clicks in the window): dragging, wiring by
+     mouse, the add menu, box select, the Map view.
 7. **Demo**: grass graph (meadows: lush biomes, gentle slopes, patches by
    noise, none on roads/water/towns), then stones and bushes with the same
    system when the user has models for them.

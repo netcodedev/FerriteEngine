@@ -179,13 +179,15 @@ impl ScatterLayer {
             .is_some_and(|entry| entry.revision != self.loaded_revision)
     }
 
-    pub(super) fn apply(&mut self) {
+    /// Load what the layer plants. `preview`: a graph to plant in place of
+    /// the graph asset's file (one being edited, unsaved).
+    pub(super) fn apply(&mut self, preview: Option<&Arc<ScatterGraph>>) {
         self.error = None;
         self.loaded = None;
         if self.is_unused() {
             return;
         }
-        let result = if self.is_graph() { self.load_graph() } else { self.load_model() };
+        let result = if self.is_graph() { self.load_graph(preview) } else { self.load_model() };
         match result {
             Ok(loaded) => self.loaded = Some(loaded),
             Err(e) => {
@@ -220,7 +222,7 @@ impl ScatterLayer {
     }
 
     /// A graph layer: the graph file and the models of its outputs.
-    fn load_graph(&mut self) -> Result<Loaded, String> {
+    fn load_graph(&mut self, preview: Option<&Arc<ScatterGraph>>) -> Result<Loaded, String> {
         let asset = self.asset.clone().expect("a graph layer has an asset");
         let (source, revision) = {
             let database = assets::database();
@@ -229,7 +231,10 @@ impl ScatterLayer {
                 .ok_or_else(|| format!("asset {} does not exist", asset.id))?;
             (entry.source_path(), entry.revision)
         };
-        let graph = ScatterGraph::load(&source)?;
+        let graph = match preview {
+            Some(graph) => (**graph).clone(),
+            None => ScatterGraph::load(&source)?,
+        };
         if let Some(problem) = graph.problems().first() {
             return Err(problem.to_string());
         }
