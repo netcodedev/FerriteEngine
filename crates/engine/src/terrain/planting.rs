@@ -28,7 +28,8 @@ use super::{
 const WORKERS: usize = 2;
 
 type Points = Vec<Placement>;
-type Key = (Spot, u64);
+/// What, for which output (salt) of which graph (its fingerprint).
+type Key = (Spot, u64, u64);
 
 /// What is planted: a chunk (landscape outputs) or a detail cell.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -44,6 +45,7 @@ struct Job {
     graph: Arc<ScatterGraph>,
     output: NodeId,
     salt: u64,
+    graph_key: u64,
 }
 
 struct Done {
@@ -79,7 +81,7 @@ impl Planting {
                     return;
                 };
                 let points = job.spot.placements(&*job.source, &job.graph, job.output);
-                if done_tx.send(Done { generation: job.generation, key: (job.spot, job.salt), points }).is_err() {
+                if done_tx.send(Done { generation: job.generation, key: (job.spot, job.salt, job.graph_key), points }).is_err() {
                     return;
                 }
             });
@@ -106,7 +108,7 @@ impl Planting {
     /// The placements of `spec` on `coord`, once worked out; asked for
     /// (once) otherwise.
     pub(super) fn take(&mut self, source: &Arc<dyn TerrainSource>, coord: ChunkCoord, spec: &ScatterSpec) -> Option<Points> {
-        let key = (Spot::Chunk(coord), spec.salt);
+        let key = (Spot::Chunk(coord), spec.salt, spec.graph_key);
         if let Some(points) = self.ready.remove(&key) {
             return Some(points);
         }
@@ -117,7 +119,7 @@ impl Planting {
     /// asked for (once) otherwise. Kept for the cell's other chunks until
     /// `retain_cells` lets them go.
     pub(super) fn cell(&mut self, source: &Arc<dyn TerrainSource>, cell: CellKey, spec: &ScatterSpec) -> Option<&Points> {
-        let key = (Spot::Cell(cell), spec.salt);
+        let key = (Spot::Cell(cell), spec.salt, spec.graph_key);
         if !self.ready.contains_key(&key) {
             let points = self.ask(source, key, spec)?;
             self.ready.insert(key, points);
@@ -136,6 +138,7 @@ impl Planting {
                 graph: spec.graph.clone(),
                 output: spec.output,
                 salt: spec.salt,
+                graph_key: spec.graph_key,
             };
             if self.jobs.send(job).is_err() {
                 // No worker (it cannot start): work it out here.
@@ -148,17 +151,18 @@ impl Planting {
 
     /// Drop points kept for chunks that are not there any more.
     pub(super) fn retain(&mut self, keep: impl Fn(ChunkCoord) -> bool) {
-        self.ready.retain(|(spot, _), _| match spot {
+        self.ready.retain(|(spot, _, _), _| match spot {
             Spot::Chunk(coord) => keep(*coord),
             Spot::Cell(_) => true,
         });
     }
 
-    /// Drop detail cells (by cell and output salt) no longer wanted.
-    pub(super) fn retain_cells(&mut self, keep: impl Fn(CellKey, u64) -> bool) {
-        self.ready.retain(|(spot, salt), _| match spot {
+    /// Drop detail cells (by cell, output salt and graph) no longer
+    /// wanted.
+    pub(super) fn retain_cells(&mut self, keep: impl Fn(CellKey, u64, u64) -> bool) {
+        self.ready.retain(|(spot, salt, graph_key), _| match spot {
             Spot::Chunk(_) => true,
-            Spot::Cell(cell) => keep(*cell, *salt),
+            Spot::Cell(cell) => keep(*cell, *salt, *graph_key),
         });
     }
 }

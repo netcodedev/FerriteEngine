@@ -396,6 +396,33 @@ and variant; frame cost of grass < 2 ms on the user's machine.
      and as an undo step; reverting it leaves the graph unsaved-free.
      Not checked by me (needs clicks in the window): dragging, wiring by
      mouse, the add menu, box select, the Map view.
+   - **Round two** (user's feedback, 2026-11-21), design:
+     1. *Live preview did not change:* the planting workers keep a cell's
+        placements under (cell, salt); a changed graph keeps its salt, so
+        the replanted cells took the old placements. Keys get the graph's
+        fingerprint (a hash of its RON), chunks and cells alike.
+     2. *Clearer names:* labels by role: "Source: …", "Filter: …",
+        "Transform: …", "Flow: Merge/Split", "Output: Spawn mesh". MCP takes
+        the label with or without its role.
+     3. *Fly the camera in the 3D preview* as in the scene's viewport
+        (right mouse + WASD): the editor hands the viewport the events over
+        the preview (no picking, no gizmos) and keeps it updated there.
+     4. *Points to see:* the counting run keeps every node's points on the
+        cell (`evaluate_traced`). Shown as short upright ticks in 3D and
+        crosses on the map: nothing selected: the outputs, one colour each;
+        a filter selected: kept (green) and dropped (red) of what came in,
+        "Keep away from" also what it keeps away from (blue); Merge: by
+        input; Split: by output; sources and transforms: their points.
+
+     As built (2026-11-21): as designed. Checked in the demo editor: an
+     MCP edit of the Scale node shows bigger tufts in the 3D preview at
+     once; with nothing selected the output's points stand as green
+     ticks; with "Filter: Noise" selected the preview shows kept 2718
+     (green) and dropped 127 (red) on the cell. MCP's
+     `editor_scatter_graph_edit` can also `select` nodes. Flying the
+     preview camera is wired as in the scene's viewport but needs the
+     mouse, so it was not tried by me.
+
 7. **Demo**: grass graph (meadows: lush biomes, gentle slopes, patches by
    noise, none on roads/water/towns), then stones and bushes with the same
    system when the user has models for them.

@@ -961,10 +961,10 @@ impl Terrain {
             }
         }
         self.detail_count = count;
-        self.planting.retain_cells(|cell, salt| {
-            specs
-                .iter()
-                .any(|spec| spec.salt == salt && detail::keeps_cell(cell, eye.x, eye.z, range(spec)))
+        self.planting.retain_cells(|cell, salt, graph_key| {
+            specs.iter().any(|spec| {
+                spec.salt == salt && spec.graph_key == graph_key && detail::keeps_cell(cell, eye.x, eye.z, range(spec))
+            })
         });
     }
 

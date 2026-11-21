@@ -239,6 +239,9 @@ pub struct ScatterSpec {
     pub graph: Arc<ScatterGraph>,
     /// The `SpawnMesh` node of `graph` this is.
     pub output: NodeId,
+    /// The graph's fingerprint (a hash of its file text): what was worked
+    /// out for one graph is not taken for another.
+    pub graph_key: u64,
     /// Tells this output's instances from others' (felled trees are kept
     /// by it). A model layer's is the one it always had.
     pub salt: u64,
@@ -259,6 +262,7 @@ impl ScatterSpec {
             model,
             graph: Arc::new(ScatterGraph::default()),
             output: NodeId(0),
+            graph_key: 0,
             salt: 0,
             range: ScatterRange::Landscape,
             shadows: true,
@@ -270,6 +274,7 @@ impl ScatterSpec {
     pub(super) fn same_as(&self, other: &ScatterSpec) -> bool {
         Rc::ptr_eq(&self.model, &other.model)
             && self.output == other.output
+            && self.graph_key == other.graph_key
             && self.salt == other.salt
             && self.range == other.range
             && self.shadows == other.shadows

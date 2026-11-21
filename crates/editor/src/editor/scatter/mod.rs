@@ -20,7 +20,7 @@ use ferrite::{
     terrain::{
         scatter::{
             detail::{cell_rect, CellKey, DETAIL_CELL},
-            graph::{evaluate, GraphHistory, NodeId, ScatterGraph, Wire},
+            graph::{evaluate_traced, GraphHistory, NodeId, NodeKind, NodeRole, ScatterGraph, Wire},
         },
         Terrain, TerrainSource,
     },
@@ -65,17 +65,40 @@ pub struct ScatterEdit {
     pub structure: u64,
     pub clipboard: Option<ScatterGraph>,
     pub counts: Counts,
-    /// The outputs' placements (x, z) on the cell counted, for the map.
-    pub map: Option<(CellKey, Vec<(NodeId, Vec<[f32; 2]>)>)>,
+    /// Every node's points on the cell counted, per output pin (see
+    /// `shown_points`).
+    pub trace: Option<(CellKey, Trace)>,
     counted_for: Option<CountedFor>,
     counting: Option<(CountedFor, Receiver<Result<Worked, String>>)>,
     /// The rules last handed to the terrain to plant (see `push_preview`).
     pushed_rules: Option<u64>,
 }
 
-/// What the counting thread worked out: per node its points, per output
-/// where its models stand.
-type Worked = (HashMap<NodeId, usize>, Vec<(NodeId, Vec<[f32; 2]>)>);
+/// Per node, per output pin: where its points stand.
+pub type Trace = HashMap<NodeId, Vec<Vec<[f32; 3]>>>;
+
+/// What the counting thread worked out: per node its count and its points.
+type Worked = (HashMap<NodeId, usize>, Trace);
+
+/// Points to show in the preview, of one colour.
+pub struct PointGroup {
+    pub label: String,
+    pub color: (f32, f32, f32),
+    pub points: Vec<[f32; 3]>,
+}
+
+/// Colours of groups that are just one of several (outputs, inputs).
+pub const PALETTE: [(f32, f32, f32); 6] = [
+    (0.45, 0.85, 0.35),
+    (0.95, 0.70, 0.25),
+    (0.40, 0.70, 1.00),
+    (0.95, 0.45, 0.55),
+    (0.75, 0.55, 0.95),
+    (0.90, 0.90, 0.90),
+];
+const KEPT: (f32, f32, f32) = (0.35, 0.90, 0.35);
+const DROPPED: (f32, f32, f32) = (0.95, 0.30, 0.25);
+const AWAY_FROM: (f32, f32, f32) = (0.35, 0.60, 1.00);
 
 impl ScatterEdit {
     /// Open the scatter graph asset `id`.
@@ -103,7 +126,7 @@ impl ScatterEdit {
             structure: 0,
             clipboard: None,
             counts: Counts::None,
-            map: None,
+            trace: None,
             counted_for: None,
             counting: None,
             pushed_rules: None,
@@ -257,8 +280,8 @@ impl ScatterEdit {
                 Ok(result) => {
                     let (counted_for, _) = self.counting.take().expect("counting");
                     self.counts = match result {
-                        Ok((counts, outputs)) => {
-                            self.map = Some((counted_for.cell, outputs));
+                        Ok((counts, trace)) => {
+                            self.trace = Some((counted_for.cell, trace));
                             Counts::Done(counts)
                         }
                         Err(e) => Counts::Failed(e),
@@ -287,14 +310,7 @@ impl ScatterEdit {
         let graph = self.graph.clone();
         let (sender, receiver) = mpsc::channel();
         let spawned = std::thread::Builder::new().name("scatter-counts".into()).spawn(move || {
-            let result = evaluate(&graph, &*source as &dyn TerrainSource, cell_rect(cell)).map(|e| {
-                let outputs = e
-                    .outputs
-                    .iter()
-                    .map(|(id, placements)| (*id, placements.iter().map(|p| [p.position[0], p.position[2]]).collect()))
-                    .collect();
-                (e.counts, outputs)
-            });
+            let result = evaluate_traced(&graph, &*source as &dyn TerrainSource, cell_rect(cell)).map(|e| (e.counts, e.trace));
             let _ = sender.send(result);
         });
         if spawned.is_ok() {
@@ -324,5 +340,71 @@ impl ScatterEdit {
             terrain.scatter_mut().preview_graph(self.asset, None);
         }
         self.pushed_rules = None;
+    }
+
+    /// The points the preview shows, in coloured groups: with nothing (or
+    /// several nodes) selected, each output's; with one node selected, that
+    /// stage's: a filter's kept and dropped (and, keeping away, what from),
+    /// a merge's by input, a split's by output, anything else's points.
+    pub fn shown_points(&self) -> Vec<PointGroup> {
+        let Some((_, trace)) = &self.trace else {
+            return Vec::new();
+        };
+        let pin = |node: NodeId, pin: u8| -> Vec<[f32; 3]> {
+            trace.get(&node).and_then(|pins| pins.get(pin as usize)).cloned().unwrap_or_default()
+        };
+        let into = |node: NodeId, input: u8| -> Vec<[f32; 3]> {
+            self.graph.wires_into(node, input).flat_map(|w| pin(w.from.node, w.from.pin)).collect()
+        };
+        let group = |label: String, color, points| PointGroup { label, color, points };
+        let selected = match self.selection.as_slice() {
+            [id] => self.graph.node(*id),
+            _ => None,
+        };
+        let Some(node) = selected else {
+            return self
+                .graph
+                .outputs()
+                .enumerate()
+                .map(|(i, (id, spawn))| {
+                    let model = spawn
+                        .asset
+                        .as_ref()
+                        .and_then(|a| assets::database().display_name(a))
+                        .unwrap_or_else(|| "no model".into());
+                    group(format!("#{} {model}", id.0), PALETTE[i % PALETTE.len()], pin(id, 0))
+                })
+                .collect();
+        };
+        let id = node.id;
+        match (&node.kind, node.kind.role()) {
+            (kind, NodeRole::Filter) => {
+                let kept = pin(id, 0);
+                let kept_at: std::collections::HashSet<[u32; 2]> =
+                    kept.iter().map(|p| [p[0].to_bits(), p[2].to_bits()]).collect();
+                let dropped: Vec<[f32; 3]> = into(id, 0)
+                    .into_iter()
+                    .filter(|p| !kept_at.contains(&[p[0].to_bits(), p[2].to_bits()]))
+                    .collect();
+                let mut groups = vec![group("kept".into(), KEPT, kept), group("dropped".into(), DROPPED, dropped)];
+                if matches!(kind, NodeKind::KeepAwayFrom { .. }) {
+                    groups.push(group("kept away from".into(), AWAY_FROM, into(id, 1)));
+                }
+                groups
+            }
+            (NodeKind::Merge, _) => self
+                .graph
+                .wires_into(id, 0)
+                .enumerate()
+                .map(|(i, w)| {
+                    let from = self.graph.node(w.from.node).map_or("?", |n| n.kind.label());
+                    group(format!("from #{} {from}", w.from.node.0), PALETTE[i % PALETTE.len()], pin(w.from.node, w.from.pin))
+                })
+                .collect(),
+            (NodeKind::Split { .. }, _) => {
+                vec![group("above".into(), KEPT, pin(id, 0)), group("below".into(), PALETTE[1], pin(id, 1))]
+            }
+            (kind, _) => vec![group(kind.label().into(), PALETTE[0], pin(id, 0))],
+        }
     }
 }

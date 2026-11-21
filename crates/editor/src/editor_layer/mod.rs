@@ -25,7 +25,7 @@ use ferrite::core::{
 };
 use ferrite::terrain::Terrain;
 use ferrite_ui::ui::{UIElement, UI};
-use glfw::{Action, CursorMode, Glfw, WindowEvent};
+use glfw::{Action, CursorMode, Glfw, MouseButton, WindowEvent};
 
 use crate::editor::{
     anim::{
@@ -42,7 +42,7 @@ use crate::editor::{
     export::Exporter,
     hierarchy::HierarchyPanel,
     inspector::InspectorPanel,
-    layout::{Layout, RightColumn},
+    layout::{Layout, Rect, RightColumn},
     outline::Outline,
     project_settings::EditorSettings,
     scripts::{ScriptEvent, Scripts},
@@ -551,6 +551,15 @@ impl EditorLayer {
         }
     }
 
+    /// The scatter graph's 3D preview, when it is shown: where the world
+    /// is drawn and the camera flown.
+    fn scatter_view(&self) -> Option<Rect> {
+        let state = self.state.borrow();
+        (state.workspace == Workspace::ScatterGraph && state.scatter_preview_3d)
+            .then(|| scatter::preview::view_rect(&state.layout))
+            .filter(|r| r.w >= 16.0 && r.h >= 16.0)
+    }
+
     fn apply_viewport_aspect(&mut self, layout: &Layout) {
         let aspect = layout.viewport.w / layout.viewport.h.max(1.0);
         if let Some(camera) = self.scene.get_component_mut::<CameraComponent>() {
@@ -625,7 +634,9 @@ impl Layer for EditorLayer {
         match mode {
             Mode::Edit => {
                 self.scene.set_physics_enabled(false);
-                self.viewport.update(&mut self.scene, layout.viewport, delta_time);
+                // The scatter graph's 3D preview flies the same camera.
+                let rect = self.scatter_view().unwrap_or(layout.viewport);
+                self.viewport.update(&mut self.scene, rect, delta_time);
                 self.scene.update_in_editor(delta_time);
             }
             Mode::Play => {
@@ -653,10 +664,7 @@ impl Layer for EditorLayer {
             self.render_colliders();
         }
         // The scatter graph's preview: the world, small, in the right column.
-        let preview = (workspace == Workspace::ScatterGraph && self.state.borrow().scatter_preview_3d)
-            .then(|| scatter::preview::view_rect(&layout))
-            .filter(|r| r.w >= 16.0 && r.h >= 16.0);
-        if let Some(r) = preview {
+        if let Some(r) = self.scatter_view() {
             // The editor's own camera draws in the editor.
             match self.scene.get_editor_camera_mut() {
                 Some(camera) => camera.get_projection_mut().set_aspect(r.w / r.h),
@@ -668,6 +676,10 @@ impl Layer for EditorLayer {
             }
             self.scene.set_viewport(Some(layout.gl_rect(r)));
             self.scene.render(window);
+            // The points of the stage looked at, over the world.
+            let [x, y, w, h] = layout.gl_rect(r);
+            ferrite::core::gfx::set_viewport(ferrite::core::gfx::Rect::new(x, y, w as u32, h as u32));
+            scatter::preview::draw_points_3d(&self.state, &self.scene);
         }
         if mode == Mode::Edit && scene_visible {
             let (selected, gizmo) = {
@@ -779,6 +791,14 @@ impl Layer for EditorLayer {
             }
         }
 
+        if let Some(rect) = self.scatter_view().filter(|_| mode == Mode::Edit) {
+            // Flying only: no picking, no gizmos over the preview.
+            if !matches!(event, WindowEvent::MouseButton(MouseButton::Button1, ..)) {
+                self.viewport
+                    .handle_event(&mut self.scene, window, event, rect, None, crate::editor::GizmoMode::Translate);
+            }
+            return;
+        }
         if self.state.borrow().workspace != Workspace::Scene {
             return;
         }

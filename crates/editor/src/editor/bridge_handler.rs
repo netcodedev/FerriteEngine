@@ -951,6 +951,7 @@ fn scatter_graph_edit(state: &mut EditorState, asset: &str, ops: Vec<ScatterGrap
     let mut graph = edit.graph.clone();
     let mut added = Vec::new();
     let mut save = false;
+    let mut select: Option<Vec<NodeId>> = None;
     for (index, op) in ops.into_iter().enumerate() {
         let fail = |e: String| format!("operation {index}: {e}");
         let node = |graph: &ScatterGraph, id: u32| {
@@ -958,10 +959,9 @@ fn scatter_graph_edit(state: &mut EditorState, asset: &str, ops: Vec<ScatterGrap
         };
         match op {
             ScatterGraphOp::Add { kind, position } => {
-                let wanted = kind.to_lowercase().replace([' ', '_'], "");
                 let kind = NodeKind::catalog()
                     .into_iter()
-                    .find(|k| k.label().to_lowercase().replace(' ', "") == wanted)
+                    .find(|k| k.is_named(&kind))
                     .ok_or_else(|| {
                         let kinds: Vec<&str> = NodeKind::catalog().iter().map(|k| k.label()).collect();
                         fail(format!("no node kind '{kind}' (one of: {})", kinds.join(", ")))
@@ -1026,10 +1026,19 @@ fn scatter_graph_edit(state: &mut EditorState, asset: &str, ops: Vec<ScatterGrap
                 }
             }
             ScatterGraphOp::Save => save = true,
+            ScatterGraphOp::Select { nodes } => {
+                for n in &nodes {
+                    node(&graph, *n)?;
+                }
+                select = Some(nodes.into_iter().map(NodeId).collect());
+            }
         }
     }
     if graph != edit.graph {
         edit.edit(|g| *g = graph);
+    }
+    if let Some(nodes) = select {
+        edit.select(nodes);
     }
     if save {
         edit.save()?;

@@ -485,3 +485,40 @@ fn edits_undo_and_redo() {
     graph.remove_nodes(&[NodeId(2)]);
     assert!(!history.can_redo());
 }
+
+#[test]
+fn kinds_are_named_by_role_and_found_with_or_without_it() {
+    for kind in NodeKind::catalog() {
+        let label = kind.label();
+        let (role, name) = label.split_once(": ").expect("a role");
+        assert!(["Source", "Filter", "Transform", "Flow", "Output"].contains(&role), "{label}");
+        assert!(kind.is_named(label) && kind.is_named(name) && kind.is_named(&name.to_uppercase().replace(' ', "_")));
+        // Only itself.
+        assert_eq!(NodeKind::catalog().iter().filter(|k| k.is_named(name)).count(), 1, "{label}");
+    }
+    assert_eq!(NodeKind::Slope { min: 0.0, max: 1.0, soft: 0.0 }.role(), NodeRole::Filter);
+}
+
+#[test]
+fn a_traced_run_keeps_every_nodes_points() {
+    let graph = ScatterGraph::chain([
+        surface(1.0),
+        NodeKind::WorldChance { tag: String::new() },
+        NodeKind::DensityCut,
+        grass(),
+    ]);
+    let ground = Plane { chance: 0.5, ..Plane::flat() };
+    let rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let traced = evaluate_traced(&graph, &ground, rect).unwrap();
+    let plain = evaluate(&graph, &ground, rect).unwrap();
+    assert!(plain.trace.is_empty());
+    assert_eq!(traced.outputs, plain.outputs);
+    for (id, count) in &traced.counts {
+        let points: usize = traced.trace[id].iter().map(Vec::len).sum();
+        assert_eq!(points, *count, "node {}", id.0);
+    }
+    // What the cut kept is among what came in.
+    let before: Vec<_> = traced.trace[&NodeId(1)][0].clone();
+    assert!(traced.trace[&NodeId(2)][0].iter().all(|p| before.contains(p)));
+    assert!(traced.trace[&NodeId(2)][0].len() < before.len());
+}

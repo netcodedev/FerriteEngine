@@ -59,6 +59,8 @@ pub(super) const APPLY_DELAY: f64 = 0.6;
 /// outputs.
 pub(super) struct Loaded {
     pub(super) graph: Arc<ScatterGraph>,
+    /// A hash of the graph's file text (see `ScatterSpec::graph_key`).
+    pub(super) graph_key: u64,
     /// Per `SpawnMesh` node, in node order: the node, its model and range.
     pub(super) outputs: Vec<LoadedOutput>,
 }
@@ -218,7 +220,7 @@ impl ScatterLayer {
             .outputs()
             .map(|(node, spawn)| LoadedOutput { node, model: model.clone(), range: spawn.range, spawn: spawn.clone() })
             .collect();
-        Ok(Loaded { graph, outputs })
+        Ok(Loaded { graph_key: fnv1a(&graph.to_ron()), graph, outputs })
     }
 
     /// A graph layer: the graph file and the models of its outputs.
@@ -248,6 +250,6 @@ impl ScatterLayer {
             };
             outputs.push(LoadedOutput { node, model, range: spawn.range, spawn: spawn.clone() });
         }
-        Ok(Loaded { graph: Arc::new(graph), outputs })
+        Ok(Loaded { graph_key: fnv1a(&graph.to_ron()), graph: Arc::new(graph), outputs })
     }
 }

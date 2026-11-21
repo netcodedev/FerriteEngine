@@ -126,6 +126,9 @@ pub struct Evaluation {
     pub outputs: Vec<(NodeId, Vec<Placement>)>,
     /// Per node: how many points it put out (for the node editor).
     pub counts: HashMap<NodeId, usize>,
+    /// Per node, per output pin: where its points stand (`evaluate_traced`
+    /// only; a `SpawnMesh`'s are what came in).
+    pub trace: HashMap<NodeId, Vec<Vec<[f32; 3]>>>,
 }
 
 impl Evaluation {
@@ -148,6 +151,16 @@ const MIN_SPACING: f32 = 0.05;
 /// is broken (see `ScatterGraph::problems`) or a source would lay too many
 /// points.
 pub fn evaluate<G: Ground + ?Sized>(graph: &ScatterGraph, ground: &G, rect: Rect) -> Result<Evaluation, String> {
+    run(graph, ground, rect, false)
+}
+
+/// `evaluate`, keeping every node's points too (`Evaluation::trace`), for
+/// the node editor to show.
+pub fn evaluate_traced<G: Ground + ?Sized>(graph: &ScatterGraph, ground: &G, rect: Rect) -> Result<Evaluation, String> {
+    run(graph, ground, rect, true)
+}
+
+fn run<G: Ground + ?Sized>(graph: &ScatterGraph, ground: &G, rect: Rect, traced: bool) -> Result<Evaluation, String> {
     if let Some(problem) = graph.problems().first() {
         return Err(problem.to_string());
     }
@@ -157,12 +170,16 @@ pub fn evaluate<G: Ground + ?Sized>(graph: &ScatterGraph, ground: &G, rect: Rect
         root: rect,
         done: HashMap::new(),
         counts: HashMap::new(),
+        trace: traced.then(HashMap::new),
     };
     let mut outputs = Vec::new();
     for node in &graph.nodes {
         if let NodeKind::SpawnMesh(spawn) = &node.kind {
             let points = eval.input(node, 0, rect)?;
             eval.counts.insert(node.id, points.len());
+            if let Some(trace) = &mut eval.trace {
+                trace.insert(node.id, vec![points.iter().map(|p| p.position).collect()]);
+            }
             let amount = spawn.tint.clamp(0.0, 1.0);
             let placements = points
                 .iter()
@@ -178,7 +195,7 @@ pub fn evaluate<G: Ground + ?Sized>(graph: &ScatterGraph, ground: &G, rect: Rect
             outputs.push((node.id, placements));
         }
     }
-    Ok(Evaluation { outputs, counts: eval.counts })
+    Ok(Evaluation { outputs, counts: eval.counts, trace: eval.trace.unwrap_or_default() })
 }
 
 /// A point on its way through the graph.
@@ -246,6 +263,7 @@ struct Evaluator<'a, G: Ground + ?Sized> {
     root: Rect,
     done: HashMap<(NodeId, [u32; 4]), Outputs>,
     counts: HashMap<NodeId, usize>,
+    trace: Option<HashMap<NodeId, Vec<Vec<[f32; 3]>>>>,
 }
 
 impl<G: Ground + ?Sized> Evaluator<'_, G> {
@@ -274,6 +292,9 @@ impl<G: Ground + ?Sized> Evaluator<'_, G> {
         let outputs = Rc::new(self.run(node, rect)?);
         if rect == self.root {
             self.counts.insert(node.id, outputs.iter().map(Vec::len).sum());
+            if let Some(trace) = &mut self.trace {
+                trace.insert(node.id, outputs.iter().map(|pin| pin.iter().map(|p| p.position).collect()).collect());
+            }
         }
         self.done.insert(key, outputs.clone());
         Ok(outputs)

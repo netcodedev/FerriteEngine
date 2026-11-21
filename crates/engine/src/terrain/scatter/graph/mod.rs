@@ -185,6 +185,21 @@ pub enum NodeKind {
     SpawnMesh(SpawnMesh),
 }
 
+/// What a node does to points, by kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeRole {
+    /// Makes points.
+    Source,
+    /// Drops points or lowers their density.
+    Filter,
+    /// Turns, scales or moves points.
+    Transform,
+    /// Joins or divides the flow of points.
+    Flow,
+    /// Plants models at the points.
+    Output,
+}
+
 /// An input pin of a node kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InputPin {
@@ -197,24 +212,50 @@ const POINTS_IN: &[InputPin] = &[InputPin { name: "points", multi: false }];
 const POINTS_OUT: &[&str] = &["points"];
 
 impl NodeKind {
-    /// Its name in lists and the node editor.
+    /// Its name in lists and the node editor: its role, then what it does
+    /// ("Filter: Slope").
     pub fn label(&self) -> &'static str {
         match self {
-            NodeKind::SurfacePoints { .. } => "Surface points",
-            NodeKind::RandomPoints { .. } => "Random points",
-            NodeKind::Slope { .. } => "Slope",
-            NodeKind::Height { .. } => "Height",
-            NodeKind::WorldChance { .. } => "World chance",
-            NodeKind::Noise { .. } => "Noise",
-            NodeKind::DensityCut => "Density cut",
-            NodeKind::KeepAwayFrom { .. } => "Keep away from",
-            NodeKind::Rotate { .. } => "Rotate",
-            NodeKind::Scale { .. } => "Scale",
-            NodeKind::Offset { .. } => "Offset",
-            NodeKind::Merge => "Merge",
-            NodeKind::Split { .. } => "Split",
-            NodeKind::SpawnMesh(_) => "Spawn mesh",
+            NodeKind::SurfacePoints { .. } => "Source: Surface points",
+            NodeKind::RandomPoints { .. } => "Source: Random points",
+            NodeKind::Slope { .. } => "Filter: Slope",
+            NodeKind::Height { .. } => "Filter: Height",
+            NodeKind::WorldChance { .. } => "Filter: World chance",
+            NodeKind::Noise { .. } => "Filter: Noise",
+            NodeKind::DensityCut => "Filter: Density cut",
+            NodeKind::KeepAwayFrom { .. } => "Filter: Keep away from",
+            NodeKind::Rotate { .. } => "Transform: Rotate",
+            NodeKind::Scale { .. } => "Transform: Scale",
+            NodeKind::Offset { .. } => "Transform: Offset",
+            NodeKind::Merge => "Flow: Merge",
+            NodeKind::Split { .. } => "Flow: Split",
+            NodeKind::SpawnMesh(_) => "Output: Spawn mesh",
         }
+    }
+
+    /// What the node does to points.
+    pub fn role(&self) -> NodeRole {
+        match self {
+            NodeKind::SurfacePoints { .. } | NodeKind::RandomPoints { .. } => NodeRole::Source,
+            NodeKind::Slope { .. }
+            | NodeKind::Height { .. }
+            | NodeKind::WorldChance { .. }
+            | NodeKind::Noise { .. }
+            | NodeKind::DensityCut
+            | NodeKind::KeepAwayFrom { .. } => NodeRole::Filter,
+            NodeKind::Rotate { .. } | NodeKind::Scale { .. } | NodeKind::Offset { .. } => NodeRole::Transform,
+            NodeKind::Merge | NodeKind::Split { .. } => NodeRole::Flow,
+            NodeKind::SpawnMesh(_) => NodeRole::Output,
+        }
+    }
+
+    /// Whether `name` names this kind: its label, with or without the role
+    /// ("Filter: Slope" or "Slope"), any case, spaces and underscores aside.
+    pub fn is_named(&self, name: &str) -> bool {
+        let plain = |s: &str| s.to_lowercase().replace([' ', '_'], "");
+        let label = self.label();
+        let short = label.split_once(": ").map_or(label, |(_, s)| s);
+        plain(name) == plain(label) || plain(name) == plain(short)
     }
 
     pub fn inputs(&self) -> &'static [InputPin] {

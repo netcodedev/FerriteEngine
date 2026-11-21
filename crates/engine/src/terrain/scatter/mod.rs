@@ -270,6 +270,7 @@ impl Scatter {
                     model: output.model.clone(),
                     graph: loaded.graph.clone(),
                     output: output.node,
+                    graph_key: loaded.graph_key,
                     salt: layer.output_salt(output.node),
                     range: output.range,
                     shadows: output.spawn.shadows,

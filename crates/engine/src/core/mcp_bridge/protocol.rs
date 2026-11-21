@@ -55,7 +55,7 @@ pub struct EntitySummary {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "do", rename_all = "snake_case")]
 pub enum ScatterGraphOp {
-    /// Add a node of a kind by its label ("Surface points", "Spawn mesh",
+    /// Add a node of a kind by its label ("Filter: Slope", or just "Slope",
     /// ...) with its default settings.
     Add {
         kind: String,
@@ -87,6 +87,9 @@ pub enum ScatterGraphOp {
     SetModel { node: u32, asset: String },
     /// Write the graph to its file (terrains using it plant again).
     Save,
+    /// Select nodes in the editor (the preview shows the stage of one
+    /// selected node); not an edit.
+    Select { nodes: Vec<u32> },
 }
 
 /// What the client sends.

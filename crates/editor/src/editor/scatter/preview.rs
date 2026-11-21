@@ -31,24 +31,17 @@ use super::super::{
 const HEADER_HEIGHT: f32 = 36.0;
 const MARGIN: f32 = 6.0;
 const LEGEND_ROWS: usize = 6;
+/// Kept free below the view for the legend's first rows and the note.
+const LEGEND_SPACE: f32 = 3.0 * 18.0 + 30.0;
 const Z: f32 = 2.0;
-
-/// The outputs' dot colours, in output order.
-const PALETTE: [(f32, f32, f32); 6] = [
-    (0.45, 0.85, 0.35),
-    (0.95, 0.70, 0.25),
-    (0.40, 0.70, 1.00),
-    (0.95, 0.45, 0.55),
-    (0.75, 0.55, 0.95),
-    (0.90, 0.90, 0.90),
-];
 
 /// Where the 3D view (and the map) goes: a square at the top of the right
 /// column, below the header; the legend and notes below it.
 pub fn view_rect(layout: &Layout) -> Rect {
     let r = layout.stats;
     let w = (r.w - 2.0 * MARGIN).max(0.0);
-    let h = (r.h - HEADER_HEIGHT - MARGIN).max(0.0);
+    // Room below for the legend (three groups at most, as a rule) and a note.
+    let h = (r.h - HEADER_HEIGHT - MARGIN - LEGEND_SPACE).max(0.0);
     Rect { x: r.x + MARGIN, y: r.y + HEADER_HEIGHT, w, h: h.min(w) }
 }
 
@@ -156,37 +149,20 @@ impl UIElement for ScatterPreview {
         self.map_bg.set_position(Position::new(view.x, view.y, Z - 0.5));
         self.map_bg.set_size(Size::new(view.w, view.h));
 
-        // The map's legend: each output, its colour and how many it plants.
-        let outputs: Vec<(String, usize)> = {
+        // The legend: each group shown, its colour and how many points.
+        let groups: Vec<(String, usize, (f32, f32, f32))> = {
             let s = self.state.borrow();
-            match s.scatter.as_ref() {
-                Some(edit) => edit
-                    .graph
-                    .outputs()
-                    .map(|(id, spawn)| {
-                        let model = spawn
-                            .asset
-                            .as_ref()
-                            .and_then(|a| ferrite::core::assets::database().display_name(a))
-                            .unwrap_or_else(|| "no model".into());
-                        let count = edit
-                            .map
-                            .as_ref()
-                            .and_then(|(_, outs)| outs.iter().find(|(o, _)| *o == id))
-                            .map_or(0, |(_, points)| points.len());
-                        (format!("#{} {model}", id.0), count)
-                    })
-                    .collect(),
-                None => Vec::new(),
-            }
+            s.scatter
+                .as_ref()
+                .map(|edit| edit.shown_points().into_iter().map(|g| (g.label, g.points.len(), g.color)).collect())
+                .unwrap_or_default()
         };
         let (square, _) = self.map_square();
         let mut y = square.y + square.h + 8.0;
         for (row, text) in self.legend.iter_mut().enumerate() {
-            match outputs.get(row) {
-                Some((label, count)) => {
+            match groups.get(row) {
+                Some((label, count, c)) => {
                     text.set_content(&format!("\u{25cf} {label}: {count}"));
-                    let c = PALETTE[row % PALETTE.len()];
                     text.set_color((c.0, c.1, c.2, 1.0));
                 }
                 None => text.set_content(""),
@@ -196,9 +172,9 @@ impl UIElement for ScatterPreview {
             y += 18.0;
         }
         let note = if showing_3d {
-            "Editor camera, graph as edited"
+            "Right mouse + WASD: fly. Points: the cell under the camera"
         } else {
-            "32 m cell under the camera (x)"
+            "The 32 m cell under the camera (x)"
         };
         self.note.set_content(note);
         self.note.prepare_render_at(Position::new(view.x, y + 4.0, Z + 1.0));
@@ -207,12 +183,13 @@ impl UIElement for ScatterPreview {
     }
 
     fn render(&self) {
-        let (showing_3d, window, map) = {
+        let (showing_3d, window, cell, groups) = {
             let s = self.state.borrow();
             (
                 s.scatter_preview_3d,
                 (s.layout.window_w, s.layout.window_h),
-                s.scatter.as_ref().and_then(|e| e.map.clone()),
+                s.scatter.as_ref().and_then(|e| e.trace.as_ref().map(|(cell, _)| *cell)),
+                s.scatter.as_ref().map(|e| e.shown_points()).unwrap_or_default(),
             )
         };
         self.header.render();
@@ -229,7 +206,7 @@ impl UIElement for ScatterPreview {
         }
         self.map_bg.render();
         let (square, scale) = self.map_square();
-        let Some((cell, outputs)) = map else {
+        let Some(cell) = cell else {
             return;
         };
         let origin = cell_rect(cell);
@@ -237,17 +214,18 @@ impl UIElement for ScatterPreview {
         // The cell's edge.
         let (a, b) = ((square.x, square.y), (square.x + square.w, square.y + square.h));
         draw_lines(window, &vec![seg(a, (b.0, a.1)), seg((b.0, a.1), b), seg(b, (a.0, b.1)), seg((a.0, b.1), a)], (0.35, 0.37, 0.42));
-        // A small cross per model, by output.
+        // A small cross per point, by group.
         let dot = (scale * 0.15).clamp(1.0, 3.0);
-        for (index, (_, points)) in outputs.iter().enumerate() {
-            let lines: Vec<Line> = points
+        for group in &groups {
+            let lines: Vec<Line> = group
+                .points
                 .iter()
                 .flat_map(|p| {
-                    let (x, y) = to_screen(p[0], p[1]);
+                    let (x, y) = to_screen(p[0], p[2]);
                     [seg((x - dot, y), (x + dot, y)), seg((x, y - dot), (x, y + dot))]
                 })
                 .collect();
-            draw_lines(window, &lines, PALETTE[index % PALETTE.len()]);
+            draw_lines(window, &lines, group.color);
         }
         // The camera.
         if let Some(eye) = self.state.borrow().scatter_camera {
@@ -271,7 +249,12 @@ impl UIElement for ScatterPreview {
         }
         if let WindowEvent::MouseButton(..) | WindowEvent::Scroll(..) = event {
             let (x, y) = window.get_cursor_pos();
-            return self.state.borrow().layout.stats.contains(x as f32, y as f32);
+            let state = self.state.borrow();
+            // Over the 3D view, the camera's (the editor flies it).
+            if state.scatter_preview_3d && view_rect(&state.layout).contains(x as f32, y as f32) {
+                return false;
+            }
+            return state.layout.stats.contains(x as f32, y as f32);
         }
         false
     }
@@ -304,3 +287,29 @@ impl UIElement for ScatterPreview {
         self.view_map.set_z_index(Z + 2.0);
     }
 }
+
+/// Each shown point as a short upright tick in the 3D preview, over the
+/// world just drawn there (the GL viewport is still the preview's).
+pub fn draw_points_3d(state: &super::super::Shared, scene: &Scene) {
+    let Some(view_projection) = scene.get_active_camera().map(|c| c.get_view_projection()) else {
+        return;
+    };
+    let groups = match state.borrow().scatter.as_ref() {
+        Some(edit) => edit.shown_points(),
+        None => return,
+    };
+    for group in groups {
+        if group.points.is_empty() {
+            continue;
+        }
+        let lines: Vec<Line> = group
+            .points
+            .iter()
+            .map(|p| Line::new(Point3::new(p[0], p[1], p[2]), Vector3::unit_y(), TICK))
+            .collect();
+        LineRenderer::render_lines(&view_projection, &lines, Vector3::new(group.color.0, group.color.1, group.color.2), true);
+    }
+}
+
+/// Height of a point's tick in the 3D preview, metres.
+const TICK: f32 = 0.6;

@@ -17,7 +17,7 @@ use ferrite::{
         },
         scene::Scene,
     },
-    terrain::scatter::graph::{NodeId, NodeKind, PinRef, ScatterRange, SplitBy, Wire},
+    terrain::scatter::graph::{NodeId, NodeKind, NodeRole, PinRef, ScatterRange, SplitBy, Wire},
 };
 use ferrite_ui::ui::{
     clip,
@@ -470,19 +470,14 @@ impl ScatterCanvas {
     }
 }
 
-/// The colour of a node's title bar by what it does.
+/// The colour of a node's title bar by its role.
 fn kind_color(kind: &NodeKind) -> theme::Color {
-    match kind {
-        NodeKind::SurfacePoints { .. } | NodeKind::RandomPoints { .. } => (0.20, 0.50, 0.32, 1.0),
-        NodeKind::Slope { .. }
-        | NodeKind::Height { .. }
-        | NodeKind::WorldChance { .. }
-        | NodeKind::Noise { .. }
-        | NodeKind::DensityCut
-        | NodeKind::KeepAwayFrom { .. } => (0.20, 0.36, 0.60, 1.0),
-        NodeKind::Rotate { .. } | NodeKind::Scale { .. } | NodeKind::Offset { .. } => (0.42, 0.30, 0.60, 1.0),
-        NodeKind::Merge | NodeKind::Split { .. } => (0.36, 0.38, 0.42, 1.0),
-        NodeKind::SpawnMesh(_) => (0.66, 0.42, 0.16, 1.0),
+    match kind.role() {
+        NodeRole::Source => (0.20, 0.50, 0.32, 1.0),
+        NodeRole::Filter => (0.20, 0.36, 0.60, 1.0),
+        NodeRole::Transform => (0.42, 0.30, 0.60, 1.0),
+        NodeRole::Flow => (0.36, 0.38, 0.42, 1.0),
+        NodeRole::Output => (0.66, 0.42, 0.16, 1.0),
     }
 }
 

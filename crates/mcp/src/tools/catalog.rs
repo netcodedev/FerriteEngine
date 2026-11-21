@@ -297,10 +297,11 @@ pub fn catalog() -> Vec<Tool> {
             "Change a scatter graph asset in the editor (opened there if it is not, without \
              switching workspace), all operations as one undo step, or none if one fails. Each \
              op is an object with \"do\": add {kind, position?} (kind as its label, e.g. \
-             \"Surface points\", \"Spawn mesh\"), remove {node}, move {node, position}, \
+             \"Filter: Slope\" or just \"Slope\"), remove {node}, move {node, position}, \
              connect {from, from_pin?, to, to_pin?}, disconnect {from, from_pin?, to, to_pin?}, \
              set {node, name, value} (a setting as editor_scatter_graph_read lists it, plain JSON \
-             value), set_model {node, asset}, save. Returns the graph and the ids of added nodes.",
+             value), set_model {node, asset}, save, select {nodes} (the preview shows the stage of \
+             one selected node; not an edit). Returns the graph and the ids of added nodes.",
             json!({"asset": {"type": "string"}, "ops": {"type": "array", "items": {"type": "object"}}}),
             &["asset", "ops"],
         ),
