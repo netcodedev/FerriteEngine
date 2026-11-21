@@ -588,6 +588,8 @@ fn summary(kind: &NodeKind) -> String {
         NodeKind::RandomPoints { per_hectare, .. } => format!("{} per hectare", n(*per_hectare)),
         NodeKind::Slope { min, max, .. } => format!("{}–{}°", n(*min), n(*max)),
         NodeKind::Height { min, max, .. } => format!("{}–{} m", n(*min), n(*max)),
+        NodeKind::Biome { biome } if biome.is_empty() => "no biome chosen".into(),
+        NodeKind::Biome { biome } => biome.clone(),
         NodeKind::WorldChance { tag } if tag.is_empty() => "untagged".into(),
         NodeKind::WorldChance { tag } => format!("tag \"{tag}\""),
         NodeKind::Noise { wavelength, threshold, .. } => format!("{} m patches, {} kept", n(*wavelength), n(1.0 - threshold)),

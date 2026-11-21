@@ -910,8 +910,23 @@ fn scatter_graph_json(graph: &ScatterGraph) -> serde_json::Value {
     })
 }
 
+/// A scatter graph asset by id, name or path: by name, scatter graphs come
+/// first (a model may have the same name).
+fn resolve_scatter_graph(asset: &str) -> Result<ferrite::core::assets::AssetId, String> {
+    {
+        let database = ferrite::core::assets::database();
+        let graph = database
+            .iter()
+            .find(|e| e.meta.name == asset && matches!(e.meta.kind, ferrite::core::assets::AssetKind::ScatterGraph(_)));
+        if let Some(entry) = graph {
+            return Ok(entry.meta.id);
+        }
+    }
+    resolve_asset(asset)
+}
+
 fn scatter_graph_read(state: &mut EditorState, asset: &str) -> Result<serde_json::Value, String> {
-    let id = resolve_asset(asset)?;
+    let id = resolve_scatter_graph(asset)?;
     if let Some(edit) = state.scatter.as_ref().filter(|e| e.asset == id) {
         let mut out = scatter_graph_json(&edit.graph);
         out["open_in_editor"] = json!(true);
@@ -939,7 +954,7 @@ fn scatter_graph_read(state: &mut EditorState, asset: &str) -> Result<serde_json
 }
 
 fn scatter_graph_edit(state: &mut EditorState, asset: &str, ops: Vec<ScatterGraphOp>) -> Result<serde_json::Value, String> {
-    let id = resolve_asset(asset)?;
+    let id = resolve_scatter_graph(asset)?;
     if state.scatter.as_ref().map_or(true, |e| e.asset != id) {
         if let Some(open) = state.scatter.as_ref().filter(|e| e.dirty()) {
             return Err(format!("'{}' is open with unsaved changes; save or revert it first", open.name));

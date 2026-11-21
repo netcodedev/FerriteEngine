@@ -208,17 +208,14 @@ mod tests {
     use crate::terrain::{
         chunk::scatter_points_at,
         hills::{Hills, HillsSettings},
-        scatter::ScatterLayerData,
         source::TerrainGenerator,
     };
 
     #[test]
     fn a_layer_as_a_graph_plants_each_chunk_as_before() {
         let source = Hills::create(5, HillsSettings::default());
-        let mut layer = ScatterLayerData::file("Trees/Trees.gltf", 40.0);
-        layer.tag = "tree".into();
         let salt = 0xfe11;
-        let graph = ScatterGraph::from_layer(&layer, salt);
+        let graph = ScatterGraph::random_layer(None, 40.0, "tree", salt);
         let output = graph.outputs().next().unwrap().0;
         let attempts = (40.0f32 * 128.0 * 128.0 / 10_000.0).round() as u32;
         let mut planted = 0;

@@ -14,7 +14,7 @@ use ferrite::core::{
     },
 };
 use ferrite::player::PLAYER_GRAPH_PATH;
-use ferrite::terrain::scatter::{graph::NodeKind, DEFAULT_DENSITY};
+use ferrite::terrain::scatter::graph::NodeKind;
 use glfw::{CursorMode, Key, Modifiers};
 
 use crate::editor::{
@@ -320,10 +320,17 @@ impl EditorLayer {
                 layer,
                 asset,
             } => {
+                // Terrains scatter scatter graphs only.
+                if !Self::is_scatter_graph(asset.id) {
+                    self.state
+                        .borrow_mut()
+                        .set_status("A terrain scatters scatter graphs only: make one in the asset browser");
+                    return;
+                }
                 if let Some(terrain) = self.terrain_mut(&entity) {
                     match layer {
                         Some(layer) => terrain.scatter_mut().set_asset(layer, asset),
-                        None => terrain.scatter_mut().add_asset_layer(asset, DEFAULT_DENSITY),
+                        None => terrain.scatter_mut().add_layer(asset),
                     }
                     self.state.borrow_mut().dirty = true;
                 }

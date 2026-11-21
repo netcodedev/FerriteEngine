@@ -395,7 +395,14 @@ impl ScatterEdit {
             // Filters that fade density: each point coloured by how much of
             // it they let through (the world's chance there, the slope's
             // soft edge, the noise), dropped ones red.
-            (NodeKind::Slope { .. } | NodeKind::Height { .. } | NodeKind::WorldChance { .. } | NodeKind::Noise { .. }, _) => {
+            (
+                NodeKind::Slope { .. }
+                | NodeKind::Height { .. }
+                | NodeKind::WorldChance { .. }
+                | NodeKind::Noise { .. }
+                | NodeKind::Biome { .. },
+                _,
+            ) => {
                 let factor_of: HashMap<[u32; 2], f32> = traced(id, 0)
                     .into_iter()
                     .map(|[x, _, z, density]| ([x.to_bits(), z.to_bits()], density))

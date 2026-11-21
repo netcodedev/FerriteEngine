@@ -36,7 +36,7 @@ use crate::{
     player::{build_animation_graph, default_animation_graph, load_graph_file, Player},
     terrain::{
         generators,
-        scatter::{Scatter, ScatterLayerData},
+        scatter::ScatterLayerData,
         Terrain,
     },
 };
@@ -780,7 +780,7 @@ pub fn default_scene_file() -> SceneFile {
             seed: 2,
             generator: default_generator(),
             settings: ron::Value::Unit,
-            scatter: Scatter::default_layers(),
+            scatter: Vec::new(),
         }],
     );
     terrain

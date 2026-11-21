@@ -31,6 +31,12 @@ pub trait Ground {
     fn tint(&self, _x: f64, _z: f64) -> [f32; 3] {
         [1.0; 3]
     }
+
+    /// How much of the world's biome `biome` there is at `(x, z)`, 0..1
+    /// (see `TerrainSource::scatter_biome_weight`); none by default.
+    fn biome_weight(&self, _biome: &str, _x: f64, _z: f64) -> f32 {
+        0.0
+    }
 }
 
 impl<T: TerrainSource + ?Sized> Ground for T {
@@ -44,6 +50,10 @@ impl<T: TerrainSource + ?Sized> Ground for T {
 
     fn tint(&self, x: f64, z: f64) -> [f32; 3] {
         self.scatter_tint(x, z)
+    }
+
+    fn biome_weight(&self, biome: &str, x: f64, z: f64) -> f32 {
+        self.scatter_biome_weight(biome, x, z)
     }
 }
 
@@ -323,8 +333,15 @@ impl<G: Ground + ?Sized> Evaluator<'_, G> {
         let id = node.id;
         let one = |points: Vec<Point>| Ok(vec![points]);
         match &node.kind {
-            NodeKind::SurfacePoints { spacing, jitter, seed } => one(surface_points(ground, rect, *spacing, *jitter, *seed)?),
-            NodeKind::RandomPoints { per_hectare, seed } => one(random_points(ground, rect, *per_hectare, *seed)?),
+            NodeKind::SurfacePoints { spacing, jitter, seed, .. } => one(surface_points(ground, rect, *spacing, *jitter, *seed)?),
+            NodeKind::RandomPoints { per_hectare, seed, .. } => one(random_points(ground, rect, *per_hectare, *seed)?),
+            NodeKind::Biome { biome } => {
+                let mut points = self.input(node, 0, rect)?;
+                for p in &mut points {
+                    p.density *= ground.biome_weight(biome, p.position[0] as f64, p.position[2] as f64).clamp(0.0, 1.0);
+                }
+                one(alive(points))
+            }
             NodeKind::Slope { min, max, soft } => {
                 let mut points = self.input(node, 0, rect)?;
                 for p in &mut points {
@@ -348,7 +365,7 @@ impl<G: Ground + ?Sized> Evaluator<'_, G> {
                 }
                 one(alive(points))
             }
-            NodeKind::Noise { wavelength, threshold, softness, seed } => {
+            NodeKind::Noise { wavelength, threshold, softness, seed, .. } => {
                 let mut points = self.input(node, 0, rect)?;
                 let noise = Fractal::new(*seed, "scatter noise", 3, wavelength.max(0.5) as f64);
                 let half = softness.max(0.0) / 2.0;

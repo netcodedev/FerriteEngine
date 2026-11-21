@@ -54,7 +54,7 @@ fn grass() -> NodeKind {
 }
 
 fn surface(spacing: f32) -> NodeKind {
-    NodeKind::SurfacePoints { spacing, jitter: 1.0, seed: 11 }
+    NodeKind::SurfacePoints { spacing, jitter: 1.0, seed: 11, world_seed: false }
 }
 
 /// The placements of the graph's first output.
@@ -84,7 +84,7 @@ fn quarters(rect: Rect) -> [Rect; 4] {
 fn the_same_graph_places_the_same_every_time_and_on_any_thread() {
     let graph = ScatterGraph::chain([
         surface(0.7),
-        NodeKind::Noise { wavelength: 12.0, threshold: 0.4, softness: 0.2, seed: 3 },
+        NodeKind::Noise { wavelength: 12.0, threshold: 0.4, softness: 0.2, seed: 3, world_seed: false },
         NodeKind::DensityCut { multiplier: 1.0 },
         NodeKind::Rotate { yaw_min: 0.0, yaw_max: 360.0, align: 0.5, tilt: 10.0 },
         NodeKind::Scale { min: 0.3, max: 0.6, height_min: 0.8, height_max: 1.4, by_density: 0.5 },
@@ -107,10 +107,8 @@ fn the_same_graph_places_the_same_every_time_and_on_any_thread() {
 #[test]
 fn a_layer_as_a_graph_keeps_its_spots() {
     let hills = Hills::create(7, HillsSettings::default());
-    let mut layer = ScatterLayerData::file("Trees/Trees.gltf", 60.0);
-    layer.tag = "tree".into();
     let salt = 0x5eed_1234;
-    let graph = ScatterGraph::from_layer(&layer, salt);
+    let graph = ScatterGraph::random_layer(None, 60.0, "tree", salt);
     let attempts = (60.0f32 * 128.0 * 128.0 / 10_000.0).round() as u32;
     let mut compared = 0;
     for (cx, cz) in [(0, 0), (3, -2), (-1, 5), (-4, -4)] {
@@ -196,7 +194,7 @@ fn the_height_filter_keeps_what_it_says() {
 fn grass_around_rocks() -> (ScatterGraph, NodeId) {
     let mut graph = ScatterGraph::default();
     let points = graph.add(surface(0.8));
-    let rocks = graph.add(NodeKind::RandomPoints { per_hectare: 3000.0, seed: 5 });
+    let rocks = graph.add(NodeKind::RandomPoints { per_hectare: 3000.0, seed: 5, world_seed: false });
     let away = graph.add(NodeKind::KeepAwayFrom { radius: 2.0 });
     let out = graph.add(grass());
     graph.connect(points, 0, away, 0);
@@ -212,7 +210,7 @@ fn keep_away_respects_the_radius_across_the_edge() {
     let blades = placed(&graph, &Plane::flat(), rect);
     assert!(!blades.is_empty());
     // The rocks, also those just past the edge.
-    let rocks_only = ScatterGraph::chain([NodeKind::RandomPoints { per_hectare: 3000.0, seed: 5 }, grass()]);
+    let rocks_only = ScatterGraph::chain([NodeKind::RandomPoints { per_hectare: 3000.0, seed: 5, world_seed: false }, grass()]);
     let rocks = placed(&rocks_only, &Plane::flat(), Rect::new(-3.0, -3.0, 19.0, 19.0));
     assert!(rocks.iter().any(|r| !rect.contains(r.position[0], r.position[2])));
     for g in &blades {
@@ -228,8 +226,8 @@ fn cutting_the_ground_into_cells_changes_nothing() {
     let rect = Rect::new(-16.0, -16.0, 16.0, 16.0);
     let (around_rocks, _) = grass_around_rocks();
     let graphs = [
-        ScatterGraph::chain([surface(0.6), NodeKind::Noise { wavelength: 8.0, threshold: 0.5, softness: 0.3, seed: 1 }, NodeKind::DensityCut { multiplier: 1.0 }, grass()]),
-        ScatterGraph::chain([NodeKind::RandomPoints { per_hectare: 900.0, seed: 2 }, grass()]),
+        ScatterGraph::chain([surface(0.6), NodeKind::Noise { wavelength: 8.0, threshold: 0.5, softness: 0.3, seed: 1, world_seed: false }, NodeKind::DensityCut { multiplier: 1.0 }, grass()]),
+        ScatterGraph::chain([NodeKind::RandomPoints { per_hectare: 900.0, seed: 2, world_seed: false }, grass()]),
         around_rocks,
     ];
     let ground = Plane::tilted(0.3);
@@ -587,4 +585,80 @@ fn a_traced_run_counts_nodes_that_lead_to_no_output_yet() {
     // Planting works out only what grows.
     let planted = evaluate(&graph, &ground, rect).unwrap();
     assert!(!planted.counts.contains_key(&NodeId(0)));
+}
+
+#[test]
+fn nodes_taking_the_world_seed_change_with_the_world_and_keep_apart() {
+    let seeded = |n: u64| NodeKind::SurfacePoints { spacing: 1.0, jitter: 1.0, seed: n, world_seed: true };
+    let mut graph = ScatterGraph::default();
+    let a = graph.add(seeded(1));
+    let b = graph.add(seeded(2));
+    let fixed = graph.add(NodeKind::SurfacePoints { spacing: 1.0, jitter: 1.0, seed: 3, world_seed: false });
+    let seed_of = |g: &ScatterGraph, id: NodeId| match g.node(id).unwrap().kind {
+        NodeKind::SurfacePoints { seed, world_seed, .. } => (seed, world_seed),
+        _ => unreachable!(),
+    };
+    let one = graph.with_world_seed(10);
+    let two = graph.with_world_seed(11);
+    // Resolved: no longer marked.
+    assert!(!seed_of(&one, a).1);
+    assert_ne!(seed_of(&one, a).0, seed_of(&two, a).0);
+    assert_ne!(seed_of(&one, a).0, seed_of(&one, b).0);
+    assert_eq!(seed_of(&one, fixed), (3, false));
+    assert_eq!(one, graph.with_world_seed(10));
+    // And so the points.
+    let rect = Rect::new(0.0, 0.0, 8.0, 8.0);
+    let chain = |seed: bool| ScatterGraph::chain([NodeKind::SurfacePoints { spacing: 1.0, jitter: 1.0, seed: 1, world_seed: seed }, grass()]);
+    assert_ne!(
+        spots(&placed(&chain(true).with_world_seed(10), &Plane::flat(), rect)),
+        spots(&placed(&chain(true).with_world_seed(11), &Plane::flat(), rect))
+    );
+    assert_eq!(
+        spots(&placed(&chain(false).with_world_seed(10), &Plane::flat(), rect)),
+        spots(&placed(&chain(false).with_world_seed(11), &Plane::flat(), rect))
+    );
+}
+
+/// Half the ground is "Forest" (x < 10), fading over 2 m; the rest "Plains".
+struct Biomes;
+
+impl Ground for Biomes {
+    fn height(&self, _x: f64, _z: f64) -> f32 {
+        0.0
+    }
+
+    fn chance(&self, _tag: &str, _x: f64, _y: f32, _z: f64) -> f32 {
+        1.0
+    }
+
+    fn biome_weight(&self, biome: &str, x: f64, _z: f64) -> f32 {
+        let forest = ((11.0 - x) / 2.0).clamp(0.0, 1.0) as f32;
+        match biome {
+            "Forest" => forest,
+            "Plains" => 1.0 - forest,
+            _ => 0.0,
+        }
+    }
+}
+
+#[test]
+fn the_biome_filter_keeps_its_biome_and_fades_at_the_border() {
+    let rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let forest = |cut: bool| {
+        let mut kinds = vec![surface(0.5), NodeKind::Biome { biome: "Forest".into() }];
+        if cut {
+            kinds.push(NodeKind::DensityCut { multiplier: 1.0 });
+        }
+        kinds.push(grass());
+        placed(&ScatterGraph::chain(kinds), &Biomes, rect)
+    };
+    let all = forest(false);
+    assert!(all.iter().all(|p| p.position[0] < 11.0));
+    assert!(all.iter().any(|p| p.position[0] < 9.0));
+    // In the fading band, the cut thins them.
+    let band = |ps: &[Placement]| ps.iter().filter(|p| (9.0..11.0).contains(&p.position[0])).count();
+    assert!(band(&forest(true)) < band(&all));
+    // An unknown biome: nothing.
+    let none = ScatterGraph::chain([surface(1.0), NodeKind::Biome { biome: "Desert".into() }, grass()]);
+    assert!(placed(&none, &Biomes, rect).is_empty());
 }

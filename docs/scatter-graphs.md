@@ -438,6 +438,40 @@ and variant; frame cost of grass < 2 ms on the user's machine.
      meadow cell all in chance 0.50–0.75; the multiplier at 2 took one
      cell from 467 to 897 tufts.
 
+   - **Graphs only, world seed, biomes** (user's decisions, 2026-11-21):
+     "das system sollte das einzige sein" — scatter graphs are the only
+     way to scatter models (houses, power poles stay as they are). Old
+     scenes with model layers need no support; the demo is converted.
+     - *Layers:* `ScatterLayerData` is just `(asset: <graph>)`; model,
+       density, tag, raw files and the default trees are gone; new
+       terrains start bare; the picker offers graphs; inspector rows are
+       `graph N`. `ScatterGraph::random_layer` keeps building the old
+       layers' chain for tests.
+     - *Demo trees:* `assets/scatter/Trees.scatter.ron`, two chains
+       (Random points with the old layers' salts as seeds, 21 per hectare,
+       World chance untagged, Density cut, Spawn mesh landscape with
+       collision): the same trees as before, checked bit for bit.
+     - *World seed:* Surface points, Random points and Noise get
+       `world seed` (on/off); on, the seed used is the world's mixed with
+       the node's own number, so nodes still differ by their numbers and a
+       new world gets new patterns. Resolved when a layer loads
+       (`ScatterGraph::with_world_seed`), so planting, far models and the
+       editor's counts agree; a new world seed reloads the layers.
+     - *Filter: Biome:* the world names its biomes
+       (`TerrainSource::scatter_biomes`) and weighs them at a spot
+       (`scatter_biome_weight`, far: `far_scatter_biome_weight`); the node
+       picks one by name and multiplies density by its weight (soft at
+       borders). One graph per biome is a graph starting with it.
+     - *As built* (2026-11-21): as designed. Checked: the demo's
+       Trees graph plants the very trees of the two layers it replaced
+       (demo test `the_trees_graph_plants_the_trees_of_the_layers_it_
+       replaced`, three columns, both kinds); the main scene opens with
+       "1 graph loaded" and the same 3622 scatter cells at the start view;
+       the demo's biome weights add up to 1 and agree with the dominant
+       biome (`scatter_graphs_see_the_biomes_by_name`). MCP's scatter graph
+       tools look a name up among scatter graphs first (the model Trees and
+       the graph Trees share a name).
+
 7. **Demo**: grass graph (meadows: lush biomes, gentle slopes, patches by
    noise, none on roads/water/towns), then stones and bushes with the same
    system when the user has models for them.

@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::core::entity::component::{Property, PropertyValue};
 
-use super::{GraphNode, NodeId, NodeKind, PinRef, ScatterGraph, ScatterRange, SpawnMesh, SplitBy, Wire};
+use super::{known_biomes, GraphNode, NodeId, NodeKind, PinRef, ScatterGraph, ScatterRange, SpawnMesh, SplitBy, Wire};
 
 impl ScatterGraph {
     /// Add a node at `position` (node editor units); returns its id.
@@ -126,12 +126,13 @@ impl NodeKind {
     /// node editor's "add" menu lists them.
     pub fn catalog() -> Vec<NodeKind> {
         vec![
-            NodeKind::SurfacePoints { spacing: 1.0, jitter: 1.0, seed: 1 },
-            NodeKind::RandomPoints { per_hectare: 20.0, seed: 1 },
+            NodeKind::SurfacePoints { spacing: 1.0, jitter: 1.0, seed: 1, world_seed: false },
+            NodeKind::RandomPoints { per_hectare: 20.0, seed: 1, world_seed: false },
             NodeKind::Slope { min: 0.0, max: 30.0, soft: 5.0 },
             NodeKind::Height { min: 0.0, max: 500.0, soft: 5.0 },
             NodeKind::WorldChance { tag: String::new() },
-            NodeKind::Noise { wavelength: 25.0, threshold: 0.5, softness: 0.2, seed: 1 },
+            NodeKind::Biome { biome: known_biomes().first().cloned().unwrap_or_default() },
+            NodeKind::Noise { wavelength: 25.0, threshold: 0.5, softness: 0.2, seed: 1, world_seed: false },
             NodeKind::DensityCut { multiplier: 1.0 },
             NodeKind::KeepAwayFrom { radius: 2.0 },
             NodeKind::Rotate { yaw_min: 0.0, yaw_max: 360.0, align: 0.0, tilt: 0.0 },
@@ -157,13 +158,28 @@ impl NodeKind {
     pub fn properties(&self) -> Vec<Property> {
         let seed = |seed: &u64| Property::int("seed", *seed as i64);
         match self {
-            NodeKind::SurfacePoints { spacing, jitter, seed: s } => vec![
+            NodeKind::SurfacePoints { spacing, jitter, seed: s, world_seed } => vec![
                 Property::ranged("spacing", *spacing, 0.05, 50.0),
                 Property::ranged("jitter", *jitter, 0.0, 1.0),
                 seed(s),
+                Property::bool("world seed", *world_seed),
             ],
-            NodeKind::RandomPoints { per_hectare, seed: s } => {
-                vec![Property::ranged("per hectare", *per_hectare, 0.0, 5000.0), seed(s)]
+            NodeKind::RandomPoints { per_hectare, seed: s, world_seed } => vec![
+                Property::ranged("per hectare", *per_hectare, 0.0, 5000.0),
+                seed(s),
+                Property::bool("world seed", *world_seed),
+            ],
+            NodeKind::Biome { biome } => {
+                let biomes = known_biomes();
+                if biomes.is_empty() {
+                    vec![Property::text("biome", biome.clone())]
+                } else {
+                    let mut options = biomes;
+                    if !options.contains(biome) && !biome.is_empty() {
+                        options.push(biome.clone());
+                    }
+                    vec![Property::choice("biome", biome.clone(), options)]
+                }
             }
             NodeKind::Slope { min, max, soft } => vec![
                 Property::ranged("min", *min, 0.0, 90.0),
@@ -176,11 +192,12 @@ impl NodeKind {
                 Property::ranged("soft", *soft, 0.0, 100.0),
             ],
             NodeKind::WorldChance { tag } => vec![Property::text("tag", tag.clone())],
-            NodeKind::Noise { wavelength, threshold, softness, seed: s } => vec![
+            NodeKind::Noise { wavelength, threshold, softness, seed: s, world_seed } => vec![
                 Property::ranged("wavelength", *wavelength, 0.5, 1000.0),
                 Property::ranged("threshold", *threshold, 0.0, 1.0),
                 Property::ranged("softness", *softness, 0.0, 1.0),
                 seed(s),
+                Property::bool("world seed", *world_seed),
             ],
             NodeKind::DensityCut { multiplier } => vec![Property::ranged("multiplier", *multiplier, 0.0, 4.0)],
             NodeKind::Merge => Vec::new(),
@@ -281,6 +298,25 @@ impl NodeKind {
             (NodeKind::Noise { softness, .. }, "softness") => set(softness),
             (NodeKind::Noise { seed, .. }, "seed") => set_seed(seed),
             (NodeKind::KeepAwayFrom { radius }, "radius") => set(radius),
+            (
+                NodeKind::SurfacePoints { world_seed, .. }
+                | NodeKind::RandomPoints { world_seed, .. }
+                | NodeKind::Noise { world_seed, .. },
+                "world seed",
+            ) => match value {
+                PropertyValue::Bool(v) => {
+                    *world_seed = *v;
+                    true
+                }
+                _ => false,
+            },
+            (NodeKind::Biome { biome }, "biome") => match value.as_text() {
+                Some(text) => {
+                    *biome = text.trim().to_string();
+                    true
+                }
+                None => false,
+            },
             (NodeKind::DensityCut { multiplier }, "multiplier") => set(multiplier),
             (NodeKind::Rotate { yaw_min, .. }, "yaw min") => set(yaw_min),
             (NodeKind::Rotate { yaw_max, .. }, "yaw max") => set(yaw_max),

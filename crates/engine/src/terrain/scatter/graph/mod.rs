@@ -20,7 +20,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::assets::AssetRef;
 
-use super::ScatterLayerData;
 
 mod edit;
 mod eval;
@@ -144,11 +143,23 @@ pub enum NodeKind {
     /// Evenly spread points: one per `spacing` square of a grid laid over
     /// the whole world, moved within it by up to `jitter` (0..1) of the
     /// spacing.
-    SurfacePoints { spacing: f32, jitter: f32, seed: u64 },
+    SurfacePoints {
+        spacing: f32,
+        jitter: f32,
+        seed: u64,
+        /// Mix the world's seed into `seed` (see `ScatterGraph::with_world_seed`).
+        #[serde(default)]
+        world_seed: bool,
+    },
     /// Random points, `per_hectare` tried per 100 m x 100 m, on the very
     /// spots the terrain's scatter layers use (see `chunk::scatter_spots`),
     /// each with its own turn about the up axis.
-    RandomPoints { per_hectare: f32, seed: u64 },
+    RandomPoints {
+        per_hectare: f32,
+        seed: u64,
+        #[serde(default)]
+        world_seed: bool,
+    },
     /// Keeps points where the ground's slope is between `min` and `max`,
     /// fading out over `soft` beyond them.
     Slope { min: f32, max: f32, soft: f32 },
@@ -162,7 +173,18 @@ pub enum NodeKind {
     /// Multiplies the density by a noise mask: patches `wavelength` metres
     /// across, the share above `threshold` (0..1) kept, with an edge
     /// `softness` wide.
-    Noise { wavelength: f32, threshold: f32, softness: f32, seed: u64 },
+    Noise {
+        wavelength: f32,
+        threshold: f32,
+        softness: f32,
+        seed: u64,
+        #[serde(default)]
+        world_seed: bool,
+    },
+    /// Multiplies the density by how much of the world's biome `biome` there
+    /// is at the point (`TerrainSource::scatter_biome_weight`): 1 inside it,
+    /// fading at its borders, 0 elsewhere.
+    Biome { biome: String },
     /// Keeps a point if its random number is under its density times
     /// `multiplier`: turns soft values into "there or not"; a multiplier
     /// above 1 keeps more than the density says, below 1 fewer.
@@ -230,6 +252,7 @@ impl NodeKind {
             NodeKind::Height { .. } => "Filter: Height",
             NodeKind::WorldChance { .. } => "Filter: World chance",
             NodeKind::Noise { .. } => "Filter: Noise",
+            NodeKind::Biome { .. } => "Filter: Biome",
             NodeKind::DensityCut { .. } => "Filter: Density cut",
             NodeKind::KeepAwayFrom { .. } => "Filter: Keep away from",
             NodeKind::Rotate { .. } => "Transform: Rotate",
@@ -247,11 +270,12 @@ impl NodeKind {
         match self {
             NodeKind::SurfacePoints { .. } => {
                 "Lays points evenly over the ground: one per grid square of `spacing` metres, moved at random \
-                 by up to `jitter` of it. The start for dense things such as grass."
+                 by up to `jitter` of it. The start for dense things such as grass. With `world seed` the \
+                 pattern changes with the world."
             }
             NodeKind::RandomPoints { .. } => {
                 "Lays random points, so many `per hectare`, on the very spots the terrain's scatter layers \
-                 use. The start for sparse things such as trees."
+                 use. The start for sparse things such as trees. With `world seed` they change with the world."
             }
             NodeKind::Slope { .. } => {
                 "Keeps points where the ground is between `min` and `max` degrees steep. Beyond, over `soft` \
@@ -267,7 +291,12 @@ impl NodeKind {
             }
             NodeKind::Noise { .. } => {
                 "Lays a noise pattern over the ground and keeps the points in its patches: `wavelength` sets \
-                 their size, `threshold` how much stays bare, `softness` how gently patches end."
+                 their size, `threshold` how much stays bare, `softness` how gently patches end. With `world seed` they change with the world."
+            }
+            NodeKind::Biome { .. } => {
+                "Keeps points in one of the world's biomes: multiplies their density by how much of that \
+                 `biome` there is (1 inside, fading at its borders). Start a graph with it to make it a \
+                 graph for that biome."
             }
             NodeKind::DensityCut { .. } => {
                 "Turns density into yes or no: keeps each point by chance, as likely as its density times \
@@ -310,6 +339,7 @@ impl NodeKind {
             | NodeKind::Height { .. }
             | NodeKind::WorldChance { .. }
             | NodeKind::Noise { .. }
+            | NodeKind::Biome { .. }
             | NodeKind::DensityCut { .. }
             | NodeKind::KeepAwayFrom { .. } => NodeRole::Filter,
             NodeKind::Rotate { .. } | NodeKind::Scale { .. } | NodeKind::Offset { .. } => NodeRole::Transform,
@@ -450,17 +480,17 @@ impl ScatterGraph {
         graph
     }
 
-    /// The graph a scatter layer of old stands for: its model on the very
-    /// spots the layer planted it (`salt`: the layer's, see
-    /// `ScatterLayer::salt`).
-    pub fn from_layer(layer: &ScatterLayerData, salt: u64) -> Self {
+    /// The chain the scatter layers of old (a model and a density) were:
+    /// `model` on random spots, `per_hectare` of them, as many as the world
+    /// lets grow for `tag` (`seed`: the old layer's salt).
+    pub fn random_layer(model: Option<AssetRef>, per_hectare: f32, tag: &str, seed: u64) -> Self {
         Self::chain([
-            NodeKind::RandomPoints { per_hectare: layer.density.max(0.0), seed: salt },
-            NodeKind::WorldChance { tag: layer.tag.clone() },
+            NodeKind::RandomPoints { per_hectare: per_hectare.max(0.0), seed, world_seed: false },
+            NodeKind::WorldChance { tag: tag.to_string() },
             NodeKind::DensityCut { multiplier: 1.0 },
             NodeKind::SpawnMesh(SpawnMesh {
-                asset: layer.asset.clone(),
-                model: layer.model.clone(),
+                asset: model,
+                model: String::new(),
                 range: ScatterRange::Landscape,
                 collision: true,
                 shadows: true,
@@ -469,6 +499,32 @@ impl ScatterGraph {
                 normals_up: 0.0,
             }),
         ])
+    }
+
+    /// The graph as the world `world` plants it: the seeds of nodes that
+    /// take the world's seed mixed with it (and no longer marked so).
+    pub fn with_world_seed(&self, world: u64) -> ScatterGraph {
+        let mut graph = self.clone();
+        let mix = |seed: u64| {
+            let mut z = world ^ seed.wrapping_mul(0x9E3779B97F4A7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+            z ^ (z >> 31)
+        };
+        for node in &mut graph.nodes {
+            match &mut node.kind {
+                NodeKind::SurfacePoints { seed, world_seed, .. }
+                | NodeKind::RandomPoints { seed, world_seed, .. }
+                | NodeKind::Noise { seed, world_seed, .. }
+                    if *world_seed =>
+                {
+                    *seed = mix(*seed);
+                    *world_seed = false;
+                }
+                _ => {}
+            }
+        }
+        graph
     }
 
     /// The outputs, in node order.
@@ -577,4 +633,19 @@ fn upgrade(text: &str) -> std::borrow::Cow<'_, str> {
     }
     out.push_str(rest);
     std::borrow::Cow::Owned(out)
+}
+
+static KNOWN_BIOMES: std::sync::RwLock<Vec<String>> = std::sync::RwLock::new(Vec::new());
+
+/// Tell the node editor the biomes of the world loaded (for `Filter:
+/// Biome`'s choices); the terrain does when its world changes.
+pub fn set_known_biomes(biomes: Vec<String>) {
+    if let Ok(mut known) = KNOWN_BIOMES.write() {
+        *known = biomes;
+    }
+}
+
+/// The biomes of the world loaded (see `set_known_biomes`).
+pub fn known_biomes() -> Vec<String> {
+    KNOWN_BIOMES.read().map(|k| k.clone()).unwrap_or_default()
 }

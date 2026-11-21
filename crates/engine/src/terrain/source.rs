@@ -436,6 +436,24 @@ pub trait TerrainSource: Send + Sync + 'static {
         [1.0; 3]
     }
 
+    /// The names of the world's biomes, for scatter graphs' `Filter: Biome`.
+    /// Default: none.
+    fn scatter_biomes(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// How much of the biome named `biome` there is at world `(x, z)`, 0..1
+    /// (biomes blend at their borders). Default: none.
+    fn scatter_biome_weight(&self, _biome: &str, _x: f64, _z: f64) -> f32 {
+        0.0
+    }
+
+    /// `scatter_biome_weight` seen from far away (many spots at once, on a
+    /// thread of its own): may answer from what is cheap to know there.
+    fn far_scatter_biome_weight(&self, biome: &str, x: f64, z: f64) -> f32 {
+        self.scatter_biome_weight(biome, x, z)
+    }
+
     /// How likely a model of the scatter layer tagged `tag` grows at world
     /// `(x, z)` seen from far away, beyond the loaded chunks, where the
     /// horizon's ground stands at `height`. Asked for many spots at once

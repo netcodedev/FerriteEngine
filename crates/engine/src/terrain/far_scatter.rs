@@ -96,6 +96,13 @@ impl Ground for FarGround<'_> {
         }
         self.source.far_scatter_chance(tag, x, z, y)
     }
+
+    fn biome_weight(&self, biome: &str, x: f64, z: f64) -> f32 {
+        if self.thinned(x as f32, z as f32).is_none() {
+            return 0.0;
+        }
+        self.source.far_scatter_biome_weight(biome, x, z)
+    }
 }
 
 /// Per layer, per variant: where its models stand and how large they are
@@ -485,7 +492,7 @@ mod tests {
         chunk::scatter_spots,
         hills::{Hills, HillsSettings},
         horizon,
-        scatter::{graph::ScatterGraph, ScatterLayerData},
+        scatter::graph::ScatterGraph,
         source::TerrainGenerator,
     };
 
@@ -494,7 +501,7 @@ mod tests {
 
     /// A model layer of old as a graph: 30 spots per column, untagged.
     fn test_layer(salt: u64, variants: usize) -> Layer {
-        let graph = ScatterGraph::from_layer(&ScatterLayerData::file("tree.glb", THIRTY_PER_COLUMN), salt);
+        let graph = ScatterGraph::random_layer(None, THIRTY_PER_COLUMN, "", salt);
         let output = graph.outputs().next().unwrap().0;
         Layer { graph: Arc::new(graph), output, salt, variants }
     }

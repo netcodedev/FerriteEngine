@@ -59,11 +59,9 @@ fn model_choices() -> Vec<(String, AssetRef)> {
 
 /// Ask which model asset a scatter layer of `entity`'s terrain should use.
 /// Without a layer index the choice becomes a new layer.
-/// A scatter layer takes a model or a scatter graph.
+/// A scatter layer plants a scatter graph.
 pub fn pick_scatter_asset(state: &Shared, entity: EntityHandle, layer: Option<usize>) {
-    let mut choices = model_choices();
-    choices.extend(scatter_graph_choices());
-    pick_asset_of(state, choices, move |asset| Command::SetScatterAsset {
+    pick_asset_of(state, scatter_graph_choices(), move |asset| Command::SetScatterAsset {
         entity,
         layer,
         asset,

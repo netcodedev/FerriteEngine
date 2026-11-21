@@ -49,7 +49,7 @@ use super::{
     horizon::Horizon,
     scatter::{
         detail::{self, CellKey},
-        graph::ScatterRange,
+        graph::{self, ScatterRange},
         Scatter, ScatterInstances, ScatterLayerData, ScatterSpec, TakenInstance,
     },
     source::{ChunkCoord, TerrainSource},
@@ -1047,6 +1047,14 @@ impl Component for Terrain {
             }
             None => {}
         }
+        // Graph nodes that take the world's seed take this terrain's.
+        self.scatter.set_world_seed(self.seed);
+        if let Some(source) = &self.source {
+            let biomes = source.scatter_biomes();
+            if biomes != graph::known_biomes() {
+                graph::set_known_biomes(biomes);
+            }
+        }
         self.scatter.tick(delta_time);
         // One time for the wind in all of this frame's passes.
         super::scatter::set_wind_clock(crate::core::renderer::weather::seconds());
@@ -1141,9 +1149,6 @@ impl Component for Terrain {
     }
 
     fn set_property(&mut self, name: &str, value: PropertyValue) {
-        if self.scatter.set_property(name, &value) {
-            return;
-        }
         match (name, value) {
             ("seed", PropertyValue::Int(v)) => {
                 // Rebuilding the terrain is deferred to `update`, which has
