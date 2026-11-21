@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         mpsc::{self, Receiver},
         Arc,
@@ -47,7 +47,11 @@ use super::{
     far_scatter::FarScatter,
     generators::{self, GeneratorEntry},
     horizon::Horizon,
-    scatter::{Scatter, ScatterInstances, ScatterLayerData, TakenInstance},
+    scatter::{
+        detail::{self, CellKey},
+        graph::{self, ScatterRange},
+        Scatter, ScatterInstances, ScatterLayerData, ScatterSpec, TakenInstance,
+    },
     source::{ChunkCoord, TerrainSource},
     streaming::{ColumnKey, StreamRadius, Streamer},
     water, ChunkBounds, ChunkMesh, FarWater, CHUNK_SIZE, CHUNK_SIZE_FLOAT,
@@ -134,6 +138,10 @@ const UPLOAD_BUDGET: Duration = Duration::from_millis(2);
 /// work out when a scatter layer is added to (or changed on) an already
 /// loaded terrain, instead of stalling one frame on every chunk at once.
 const SCATTER_PLANTINGS_PER_FRAME: usize = 4;
+
+/// How many detail cells are planted on a chunk per frame (empty ones not
+/// counted).
+const DETAIL_CELLS_PER_FRAME: usize = 8;
 
 /// Seconds the seed has to stay untouched before the terrain is rebuilt, so
 /// typing a number does not regenerate on every digit.
@@ -245,6 +253,9 @@ pub struct Terrain {
     horizon: Horizon,
     /// The scattered models beyond the chunks (see `far_scatter`).
     far_scatter: FarScatter,
+    /// Detail cells (with something in them) on the loaded chunks, and how
+    /// many detail models they hold, for the inspector.
+    detail_count: (usize, usize),
     /// Which columns' chunks are loaded (see `columns`): the horizon and
     /// the far water leave those to them.
     loaded: ColumnMap,
@@ -347,6 +358,7 @@ impl Terrain {
             map: WorldMap::new(),
             horizon: Horizon::new(),
             far_scatter: FarScatter::new(),
+            detail_count: (0, 0),
             loaded: ColumnMap::new(),
             preparing: false,
             planting: super::planting::Planting::new(),
@@ -788,9 +800,11 @@ impl Terrain {
             let mut present = vec![false; specs.len()];
             let mut index = 0;
             while index < chunk_entity.components().len() {
+                // Detail cells are `sync_detail`'s.
                 let layer = chunk_entity.components()[index]
                     .as_any()
                     .downcast_ref::<ScatterInstances>()
+                    .filter(|instances| instances.detail_cell().is_none())
                     .map(|instances| specs.iter().position(|spec| instances.matches(spec)));
                 match layer {
                     // Not scatter at all.
@@ -821,16 +835,14 @@ impl Terrain {
                 // Worked out by the planting workers; a chunk without
                 // ground grows nothing.
                 let mut points = if chunk.has_ground() {
-                    match self.planting.take(&source, chunk.coord(), &spec.tag, spec.salt, spec.attempts) {
+                    match self.planting.take(&source, chunk.coord(), spec) {
                         Some(points) => points,
                         None => continue,
                     }
                 } else {
                     Vec::new()
                 };
-                points.retain(|&(x, y, z, _)| {
-                    !self.scatter.is_removed(spec.salt, Point3::new(x, y, z))
-                });
+                points.retain(|p| !self.scatter.is_removed(spec.salt, Point3::from(p.position)));
                 let chunk_body = chunk_entity
                     .get_own_component::<RigidBody>()
                     .map(|body| body.rigid_body_handle);
@@ -850,6 +862,110 @@ impl Terrain {
             .collect();
         self.planting.retain(|coord| loaded.contains(&coord));
         planted_columns
+    }
+
+    /// Bring the detail cells around the camera in line with the detail
+    /// outputs (see `scatter::detail`): plant the cells that came within
+    /// range on the chunks of their column, split by height, and take out
+    /// those left behind or no output asks for any more.
+    fn sync_detail(&mut self, scene: &mut Scene, entity: &mut Entity, eye: Point3<f32>) {
+        let Some(source) = self.source.clone() else {
+            return;
+        };
+        let specs = self.scatter.detail_specs();
+        let range = |spec: &ScatterSpec| match spec.range {
+            ScatterRange::Detail { distance } => distance,
+            ScatterRange::Landscape => 0.0,
+        };
+        // Per output, the cells it wants, by column.
+        let wanted: Vec<HashMap<(i32, i32), Vec<CellKey>>> = specs
+            .iter()
+            .map(|spec| {
+                let mut by_column: HashMap<(i32, i32), Vec<CellKey>> = HashMap::new();
+                for cell in detail::wanted_cells(eye.x, eye.z, range(spec)) {
+                    by_column.entry(detail::cell_column(cell)).or_default().push(cell);
+                }
+                by_column
+            })
+            .collect();
+        let mut planted = 0;
+        let mut count = (0, 0);
+        for chunk_entity in entity.get_children_mut() {
+            let Some((coord, has_ground)) = chunk_entity
+                .get_own_component::<TerrainChunk>()
+                .map(|chunk| (chunk.coord(), chunk.has_ground()))
+            else {
+                continue;
+            };
+            let column = (coord.x, coord.z);
+            // What the chunk carries: kept if still wanted, else taken out.
+            let mut present: HashSet<(usize, CellKey)> = HashSet::new();
+            let mut index = 0;
+            while index < chunk_entity.components().len() {
+                let kept = chunk_entity.components()[index]
+                    .as_any()
+                    .downcast_ref::<ScatterInstances>()
+                    .and_then(|instances| Some((instances, instances.detail_cell()?)))
+                    .map(|(instances, cell)| {
+                        let spec = specs.iter().position(|spec| instances.matches(spec));
+                        spec.filter(|&s| detail::keeps_cell(cell, eye.x, eye.z, range(&specs[s])))
+                            .map(|s| (s, cell))
+                    });
+                match kept {
+                    None => {}
+                    Some(Some(key)) => {
+                        present.insert(key);
+                        if let Some(instances) = chunk_entity.components()[index].as_any().downcast_ref::<ScatterInstances>() {
+                            let models = instances.len();
+                            if models > 0 {
+                                count = (count.0 + 1, count.1 + models);
+                            }
+                        }
+                    }
+                    Some(None) => {
+                        if let Some(mut stale) = chunk_entity.remove_component_at(index) {
+                            stale.on_remove(&mut scene.physics_engine);
+                        }
+                        continue;
+                    }
+                }
+                index += 1;
+            }
+            for (s, spec) in specs.iter().enumerate() {
+                let Some(cells) = wanted[s].get(&column) else {
+                    continue;
+                };
+                for &cell in cells {
+                    if present.contains(&(s, cell)) {
+                        continue;
+                    }
+                    // A chunk without ground grows nothing; it is marked
+                    // done for the cell all the same.
+                    if !has_ground {
+                        chunk_entity.add_component(ScatterInstances::new_detail(spec, cell, &[]));
+                        continue;
+                    }
+                    if planted >= DETAIL_CELLS_PER_FRAME {
+                        continue;
+                    }
+                    let Some(placements) = self.planting.cell(&source, cell, spec) else {
+                        continue;
+                    };
+                    let floor = coord.floor();
+                    let band = detail::in_band(placements, floor, floor + CHUNK_SIZE_FLOAT);
+                    if !band.is_empty() {
+                        planted += 1;
+                    }
+                    chunk_entity.add_component(ScatterInstances::new_detail(spec, cell, &band));
+                }
+            }
+        }
+        self.detail_count = count;
+        self.planting.retain_cells(|cell, salt, graph_key| {
+            specs.iter().any(|spec| {
+                spec.salt == salt && spec.graph_key == graph_key && detail::keeps_cell(cell, eye.x, eye.z, range(spec))
+            })
+        });
     }
 
     pub fn get_triangle_count(&self, entity: &Entity) -> usize {
@@ -931,7 +1047,17 @@ impl Component for Terrain {
             }
             None => {}
         }
+        // Graph nodes that take the world's seed take this terrain's.
+        self.scatter.set_world_seed(self.seed);
+        if let Some(source) = &self.source {
+            let biomes = source.scatter_biomes();
+            if biomes != graph::known_biomes() {
+                graph::set_known_biomes(biomes);
+            }
+        }
         self.scatter.tick(delta_time);
+        // One time for the wind in all of this frame's passes.
+        super::scatter::set_wind_clock(crate::core::renderer::weather::seconds());
         let eye = camera_eye(scene);
         self.stream(scene, entity, eye);
         if let Some(source) = self.source.clone() {
@@ -950,6 +1076,7 @@ impl Component for Terrain {
         }
         shader::delete_released_vertex_arrays();
         let planted = self.sync_scatter(scene, entity);
+        self.sync_detail(scene, entity, eye);
         let loaded: HashSet<ColumnKey> = entity
             .get_children()
             .iter()
@@ -1014,13 +1141,14 @@ impl Component for Terrain {
         properties.push(Property::bool("show colliders", self.show_colliders));
         properties.push(Property::action("regenerate world"));
         properties.extend(self.scatter.properties());
+        if !self.scatter.detail_specs().is_empty() {
+            let (cells, models) = self.detail_count;
+            properties.push(Property::text("detail", format!("{models} models in {cells} cells")).read_only());
+        }
         properties
     }
 
     fn set_property(&mut self, name: &str, value: PropertyValue) {
-        if self.scatter.set_property(name, &value) {
-            return;
-        }
         match (name, value) {
             ("seed", PropertyValue::Int(v)) => {
                 // Rebuilding the terrain is deferred to `update`, which has

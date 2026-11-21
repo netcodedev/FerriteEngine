@@ -59,8 +59,9 @@ fn model_choices() -> Vec<(String, AssetRef)> {
 
 /// Ask which model asset a scatter layer of `entity`'s terrain should use.
 /// Without a layer index the choice becomes a new layer.
+/// A scatter layer plants a scatter graph.
 pub fn pick_scatter_asset(state: &Shared, entity: EntityHandle, layer: Option<usize>) {
-    pick_model_asset(state, move |asset| Command::SetScatterAsset {
+    pick_asset_of(state, scatter_graph_choices(), move |asset| Command::SetScatterAsset {
         entity,
         layer,
         asset,
@@ -177,8 +178,28 @@ pub fn pick_entity_model(state: &Shared, entity: EntityHandle) {
 
 /// Let the user choose a model asset (or one of its variants) and queue
 /// the command `then` makes of the choice.
+/// Ask which model a scatter graph's `Spawn mesh` node plants.
+pub fn pick_scatter_model(state: &Shared, node: ferrite::terrain::scatter::graph::NodeId) {
+    pick_model_asset(state, move |asset| Command::SetScatterModel { node, asset });
+}
+
 fn pick_model_asset(state: &Shared, then: impl Fn(AssetRef) -> Command + 'static) {
-    let choices = model_choices();
+    pick_asset_of(state, model_choices(), then);
+}
+
+/// The project's scatter graphs, by name.
+fn scatter_graph_choices() -> Vec<(String, AssetRef)> {
+    let database = assets::database();
+    let mut graphs: Vec<(String, AssetRef)> = database
+        .iter()
+        .filter(|entry| matches!(entry.meta.kind, AssetKind::ScatterGraph(_)))
+        .map(|entry| (format!("{} (scatter graph)", entry.meta.name), AssetRef::whole(entry.meta.id)))
+        .collect();
+    graphs.sort_by_key(|(name, _)| name.to_lowercase());
+    graphs
+}
+
+fn pick_asset_of(state: &Shared, choices: Vec<(String, AssetRef)>, then: impl Fn(AssetRef) -> Command + 'static) {
     let open_flag = DataSource::new(true);
     let cancel_open = open_flag.clone();
     if choices.is_empty() {

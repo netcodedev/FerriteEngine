@@ -13,6 +13,12 @@ uniform int hasRoughnessMap;
 uniform int hasMetallicMap;
 uniform int hasOcclusionMap;
 
+// Set by a fragment shader before `shadePbr`, for what it shades: the
+// albedo multiplied by `pbrTint` (linear), and the shading normal bent
+// towards the sky by `pbrNormalUp` (0..1; grass lit like the ground).
+vec3 pbrTint = vec3(1.0);
+float pbrNormalUp = 0.0;
+
 // Tangent frame from screen-space derivatives ("normal mapping without
 // precomputed tangents"), so meshes need no tangent attribute.
 vec3 perturbNormal(vec3 N, vec3 worldPos, vec2 uv) {
@@ -56,11 +62,14 @@ vec4 shadePbr(vec3 worldPos, vec3 vertexNormal, vec2 uv) {
     if (!gl_FrontFacing) {
         Ng = -Ng; // two-sided geometry such as leaves
     }
+    if (pbrNormalUp > 0.0) {
+        Ng = normalize(mix(Ng, vec3(0.0, 1.0, 0.0), pbrNormalUp));
+    }
     vec3 N = perturbNormal(Ng, worldPos, uv);
     float roughness = hasRoughnessMap == 1 ? texture(roughnessMap, uv).r : DEFAULT_ROUGHNESS;
     float metallic = hasMetallicMap == 1 ? texture(metallicMap, uv).r : 0.0;
     float ao = hasOcclusionMap == 1 ? texture(occlusionMap, uv).r : 1.0;
-    vec3 albedo = base.rgb;
+    vec3 albedo = base.rgb * pbrTint;
     applyWeather(worldPos, Ng, albedo, N, roughness, metallic);
     vec3 color = shadeSurface(worldPos, N, Ng, albedo, roughness, metallic, ao, 1.0);
     return vec4(toDisplay(color), 1.0);

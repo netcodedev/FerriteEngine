@@ -1,173 +1,140 @@
-//! Scatter layers: a model plus a density, as stored and as loaded.
+//! Scatter layers, as stored and as loaded: each a scatter graph asset
+//! (the only way models are scattered over the terrain).
 
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::{self, AssetRef};
+use crate::core::assets::{self, AssetKind, AssetRef};
+
+use super::graph::{NodeId, ScatterGraph, ScatterRange, SpawnMesh};
 
 use super::*;
 
-/// One scatter layer as stored in a scene file.
+/// One scatter layer as stored in a scene file: the scatter graph it plants.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ScatterLayerData {
-    /// The model asset to scatter: all its variants, or the one named.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub asset: Option<AssetRef>,
-    /// A raw model file, as a path relative to `assets/models/`. Used by
-    /// scenes from before assets existed and when `asset` is not set.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub model: String,
-    /// Placements tried per 100 m x 100 m of terrain.
-    pub density: f32,
-    /// What the world makes of the layer: its source may let the models of
-    /// a "tree" layer grow thick in forests and thin in the plains (see
-    /// `TerrainSource::scatter_chance`). Empty: untagged.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub tag: String,
+    pub asset: AssetRef,
 }
 
 impl ScatterLayerData {
-    pub fn asset(asset: AssetRef, density: f32) -> Self {
-        Self {
-            asset: Some(asset),
-            model: String::new(),
-            density,
-            tag: String::new(),
-        }
-    }
-
-    pub fn file(model: impl Into<String>, density: f32) -> Self {
-        Self {
-            asset: None,
-            model: model.into(),
-            density,
-            tag: String::new(),
-        }
+    pub fn graph(asset: AssetRef) -> Self {
+        Self { asset }
     }
 }
 
 /// Seconds an edited layer has to stay untouched before it is applied, so
-/// typing a path or dragging the density does not replant on every change.
+/// edits in quick succession do not replant on every change.
 pub(super) const APPLY_DELAY: f64 = 0.6;
 
+/// What a layer plants right now: its graph and the models of the graph's
+/// outputs.
+pub(super) struct Loaded {
+    /// The graph as the world plants it (see `ScatterGraph::with_world_seed`).
+    pub(super) graph: Arc<ScatterGraph>,
+    /// A hash of the graph's file text (see `ScatterSpec::graph_key`).
+    pub(super) graph_key: u64,
+    /// Per `SpawnMesh` node, in node order: the node, its model and range.
+    pub(super) outputs: Vec<LoadedOutput>,
+}
+
+pub(super) struct LoadedOutput {
+    pub(super) node: NodeId,
+    pub(super) model: Rc<ScatterModel>,
+    pub(super) range: ScatterRange,
+    pub(super) spawn: SpawnMesh,
+}
+
 pub(super) struct ScatterLayer {
-    /// The asset to scatter. Takes precedence over `model`.
-    pub(super) asset: Option<AssetRef>,
-    /// Raw model file as typed; empty when unused.
-    pub(super) model: String,
-    pub(super) density: f32,
-    pub(super) tag: String,
-    /// The tag of what is planted right now.
-    pub(super) applied_tag: String,
+    /// The scatter graph asset.
+    pub(super) asset: AssetRef,
     /// What is planted right now.
-    pub(super) loaded: Option<Rc<ScatterModel>>,
+    pub(super) loaded: Option<Loaded>,
     /// Revision of the asset `loaded` was built from.
     loaded_revision: u64,
-    pub(super) applied_density: f32,
     pub(super) error: Option<String>,
-    /// Countdown until the edited values are applied; `None` when they are.
+    /// Countdown until the layer is (re)loaded; `None` when it is.
     pub(super) apply_in: Option<f64>,
 }
 
 impl ScatterLayer {
-    pub(super) fn new(mut data: ScatterLayerData) -> Self {
-        // A raw file that is registered as an asset is referred to as that
-        // asset from here on; scenes from before assets existed are brought
-        // up to date this way.
-        if data.asset.is_none() && !data.model.trim().is_empty() {
-            let database = assets::database();
-            let source = database
-                .root()
-                .join("models")
-                .join(data.model.trim().replace('\\', "/"));
-            if let Some(id) = database.find_by_source(&source) {
-                data.asset = Some(AssetRef::whole(id));
-                data.model.clear();
-            }
-        }
-        Self {
-            asset: data.asset,
-            model: data.model,
-            density: data.density,
-            applied_tag: data.tag.clone(),
-            tag: data.tag,
-            loaded: None,
-            loaded_revision: 0,
-            applied_density: data.density,
-            error: None,
-            apply_in: Some(0.0),
-        }
+    pub(super) fn new(data: ScatterLayerData) -> Self {
+        Self { asset: data.asset, loaded: None, loaded_revision: 0, error: None, apply_in: Some(0.0) }
     }
 
-    /// Stable per-model salt, so a model keeps its spots when layers are
-    /// reordered.
+    /// Stable per-graph salt, so a graph keeps its instances' identity when
+    /// layers are reordered.
     pub(super) fn salt(&self) -> u64 {
-        match &self.asset {
-            Some(asset) => fnv1a(&format!(
-                "{}/{}",
-                asset.id,
-                asset.part.as_deref().unwrap_or("")
-            )),
-            None => fnv1a(&self.path()),
-        }
+        fnv1a(&format!("{}/{}", self.asset.id, self.asset.part.as_deref().unwrap_or("")))
     }
 
-    /// The model path as used for loading and saving: trimmed, with forward
-    /// slashes so a scene saved on Windows also loads on Linux.
-    pub(super) fn path(&self) -> String {
-        self.model.trim().replace('\\', "/")
-    }
-
-    /// Neither an asset nor a file: the layer scatters nothing.
-    pub(super) fn is_unused(&self) -> bool {
-        self.asset.is_none() && self.path().is_empty()
+    /// The salt of the instances of `output`.
+    pub(super) fn output_salt(&self, output: NodeId) -> u64 {
+        fnv1a(&format!("{}#{}", self.salt(), output.0))
     }
 
     /// What the layer scatters, for messages.
     pub(super) fn label(&self) -> String {
-        match &self.asset {
-            Some(asset) => assets::database()
-                .display_name(asset)
-                .unwrap_or_else(|| format!("missing asset {}", asset.id)),
-            None => self.path(),
-        }
+        assets::database()
+            .display_name(&self.asset)
+            .unwrap_or_else(|| format!("missing asset {}", self.asset.id))
     }
 
     /// Whether the asset was saved again since it was loaded.
     pub(super) fn is_outdated(&self) -> bool {
-        let (Some(asset), Some(_)) = (&self.asset, &self.loaded) else {
+        if self.loaded.is_none() {
             return false;
-        };
+        }
         assets::database()
-            .get(asset.id)
+            .get(self.asset.id)
             .is_some_and(|entry| entry.revision != self.loaded_revision)
     }
 
-    pub(super) fn apply(&mut self) {
-        self.applied_density = self.density;
-        self.applied_tag = self.tag.clone();
+    /// Load what the layer plants. `preview`: a graph to plant in place of
+    /// the asset's file (one being edited, unsaved); `world_seed`: the
+    /// world's, for nodes that take it.
+    pub(super) fn apply(&mut self, preview: Option<&Arc<ScatterGraph>>, world_seed: u64) {
         self.error = None;
         self.loaded = None;
-        let result = match &self.asset {
-            Some(asset) => ScatterModel::load_asset(asset).map(|(model, revision)| {
-                self.loaded_revision = revision;
-                model
-            }),
-            None => {
-                let path = self.path();
-                if path.is_empty() {
-                    return;
-                }
-                ScatterModel::load(&path)
-            }
-        };
-        match result {
-            Ok(model) => self.loaded = Some(model),
+        match self.load(preview, world_seed) {
+            Ok(loaded) => self.loaded = Some(loaded),
             Err(e) => {
                 log::warn!("terrain scatter: could not load {}: {e}", self.label());
                 self.error = Some(e);
             }
         }
+    }
+
+    /// The graph and the models of its outputs.
+    fn load(&mut self, preview: Option<&Arc<ScatterGraph>>, world_seed: u64) -> Result<Loaded, String> {
+        let (source, revision) = {
+            let database = assets::database();
+            let entry = database
+                .get(self.asset.id)
+                .ok_or_else(|| format!("asset {} does not exist", self.asset.id))?;
+            if !matches!(entry.meta.kind, AssetKind::ScatterGraph(_)) {
+                return Err(format!("'{}' is not a scatter graph", entry.meta.name));
+            }
+            (entry.source_path(), entry.revision)
+        };
+        let graph = match preview {
+            Some(graph) => (**graph).clone(),
+            None => ScatterGraph::load(&source)?,
+        };
+        if let Some(problem) = graph.problems().first() {
+            return Err(problem.to_string());
+        }
+        let graph = graph.with_world_seed(world_seed);
+        self.loaded_revision = revision;
+        let mut outputs = Vec::new();
+        for (node, spawn) in graph.outputs() {
+            let model = match (&spawn.asset, spawn.model.trim()) {
+                (Some(asset), _) => ScatterModel::load_asset(asset)?.0,
+                (None, "") => continue,
+                (None, file) => ScatterModel::load(&file.replace('\\', "/"))?,
+            };
+            outputs.push(LoadedOutput { node, model, range: spawn.range, spawn: spawn.clone() });
+        }
+        Ok(Loaded { graph_key: fnv1a(&graph.to_ron()), graph: Arc::new(graph), outputs })
     }
 }

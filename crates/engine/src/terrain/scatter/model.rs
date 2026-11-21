@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use rapier3d::prelude::{SharedShape, TriMeshFlags, Vector};
 
@@ -18,6 +19,7 @@ use crate::core::{
 };
 
 use super::*;
+use super::graph::{NodeId, ScatterGraph, ScatterRange};
 
 thread_local! {
     static MODEL_CACHE: RefCell<ModelCache> = RefCell::new(ModelCache::default());
@@ -228,24 +230,57 @@ impl ScatterModel {
     }
 }
 
-/// What one layer wants on every chunk.
+/// What one landscape output of a layer wants on every chunk: the model
+/// planted where the output of the graph puts it.
 #[derive(Clone)]
 pub struct ScatterSpec {
     pub model: Rc<ScatterModel>,
-    /// Placements tried per chunk; some are rejected by height.
-    pub attempts: u32,
-    /// Makes each model scatter to its own spots.
+    /// The layer's rules (for a model layer, `ScatterGraph::from_layer`).
+    pub graph: Arc<ScatterGraph>,
+    /// The `SpawnMesh` node of `graph` this is.
+    pub output: NodeId,
+    /// The graph's fingerprint (a hash of its file text): what was worked
+    /// out for one graph is not taken for another.
+    pub graph_key: u64,
+    /// Tells this output's instances from others' (felled trees are kept
+    /// by it). A model layer's is the one it always had.
     pub salt: u64,
-    /// What the world makes of the layer (see `ScatterLayerData::tag`).
-    pub tag: String,
+    /// Planted over every loaded chunk, or around the camera.
+    pub range: ScatterRange,
+    /// Whether the models are drawn into the shadow maps.
+    pub shadows: bool,
+    /// How much they sway in the wind, 0..1.
+    pub wind: f32,
+    /// How far their shading normals bend towards the sky, 0..1.
+    pub normals_up: f32,
 }
 
 impl ScatterSpec {
+    /// A model on its own, placed by hand (previews): no rules of its own.
+    pub fn of_model(model: Rc<ScatterModel>) -> Self {
+        Self {
+            model,
+            graph: Arc::new(ScatterGraph::default()),
+            output: NodeId(0),
+            graph_key: 0,
+            salt: 0,
+            range: ScatterRange::Landscape,
+            shadows: true,
+            wind: 0.0,
+            normals_up: 0.0,
+        }
+    }
+
     pub(super) fn same_as(&self, other: &ScatterSpec) -> bool {
         Rc::ptr_eq(&self.model, &other.model)
-            && self.attempts == other.attempts
+            && self.output == other.output
+            && self.graph_key == other.graph_key
             && self.salt == other.salt
-            && self.tag == other.tag
+            && self.range == other.range
+            && self.shadows == other.shadows
+            && self.wind == other.wind
+            && self.normals_up == other.normals_up
+            && (Arc::ptr_eq(&self.graph, &other.graph) || self.graph == other.graph)
     }
 }
 

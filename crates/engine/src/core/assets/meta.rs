@@ -27,6 +27,8 @@ pub enum AssetKind {
     Texture(TextureSettings),
     /// A file that holds animation clips but no meshes.
     Animation(AnimationSettings),
+    /// A scatter graph (`*.scatter.ron`, see `terrain::scatter::graph`).
+    ScatterGraph(ScatterGraphSettings),
 }
 
 impl AssetKind {
@@ -36,6 +38,7 @@ impl AssetKind {
             AssetKind::Model(_) => "Model",
             AssetKind::Texture(_) => "Texture",
             AssetKind::Animation(_) => "Animation",
+            AssetKind::ScatterGraph(_) => "Scatter graph",
         }
     }
 }
@@ -179,6 +182,11 @@ impl MaterialSettings {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct TextureSettings {}
 
+/// A scatter graph asset. The graph itself is the file; nothing about it
+/// is kept here yet.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct ScatterGraphSettings {}
+
 /// The clips found in an animation file at import.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct AnimationSettings {
@@ -224,7 +232,7 @@ impl AssetMeta {
         match &self.kind {
             AssetKind::Animation(settings) => &settings.clips,
             AssetKind::Model(settings) => &settings.clips,
-            AssetKind::Texture(_) => &[],
+            AssetKind::Texture(_) | AssetKind::ScatterGraph(_) => &[],
         }
     }
 }

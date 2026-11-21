@@ -1,7 +1,7 @@
-//! Models scattered over the terrain (trees, rocks, ...). The terrain owns a
-//! list of scatter layers, each a model file plus a density; nothing here is
-//! required for a terrain to exist — without layers, or while a model is
-//! missing, the terrain just stays bare.
+//! Models scattered over the terrain (trees, rocks, grass, ...). The terrain
+//! owns a list of scatter layers, each a scatter graph asset (see `graph`);
+//! nothing here is required for a terrain to exist — without layers, or
+//! while a graph or model is missing, the terrain just stays bare.
 //!
 //! A model file can hold several variants (e.g. a tree pack), each with
 //! discrete LODs. Loaded models are kept in a thread-local cache, so
@@ -15,14 +15,18 @@ use std::collections::HashSet;
 
 use cgmath::Point3;
 
+use std::sync::Arc;
+
 use crate::core::{
-    assets::AssetRef,
-    entity::component::{Property, PropertyValue},
+    assets::{self, AssetRef},
+    entity::component::Property,
     gfx,
 };
 
 use super::CHUNK_SIZE_FLOAT;
 
+pub mod detail;
+pub mod graph;
 pub mod impostor;
 mod instances;
 mod layer;
@@ -43,20 +47,6 @@ const LOD_DIST_NEAR: f32 = 60.0;
 const LOD_DIST_MID: f32 = 130.0;
 const LOD_DIST_FAR: f32 = 250.0;
 
-/// Layers of the default scene: `(model, density)`. Models are paths
-/// relative to `assets/models/`.
-pub const DEFAULT_SCATTER: &[(&str, f32)] = &[
-    ("Trees/Trees.gltf", 21.0),
-    ("Trees/Acer tree pack.fbx", 21.0),
-];
-
-/// Density a layer starts with when only its model is given.
-pub const DEFAULT_DENSITY: f32 = 20.0;
-/// Upper end of the density slider.
-pub const MAX_DENSITY: f32 = 200.0;
-/// Area the density refers to: placements tried per 100 m x 100 m.
-const DENSITY_AREA: f32 = 100.0 * 100.0;
-
 /// A model's vertices: position, normal and texture coordinates at
 /// locations 0, 1 and 2.
 fn vertex_layout() -> gfx::VertexLayout {
@@ -75,6 +65,11 @@ pub struct Scatter {
     /// Instances that were taken out (felled trees), by layer salt and
     /// position, so chunks loaded again leave them out. Not saved.
     removed: HashSet<(u64, [i32; 3])>,
+    /// Graphs planted in place of their asset's file: the ones open in the
+    /// editor, unsaved edits and all (see `preview_graph`).
+    previews: std::collections::HashMap<assets::AssetId, Arc<graph::ScatterGraph>>,
+    /// The world's seed (see `set_world_seed`).
+    world_seed: u64,
 }
 
 impl Scatter {
@@ -84,6 +79,35 @@ impl Scatter {
         Self {
             layers: layers.into_iter().map(ScatterLayer::new).collect(),
             removed: HashSet::new(),
+            previews: std::collections::HashMap::new(),
+            world_seed: 0,
+        }
+    }
+
+    /// Plant `graph` in place of the scatter graph asset `asset`'s file
+    /// (the editor's copy as it is being edited), or the file again with
+    /// `None`. The layers using it replant after the usual short delay.
+    pub fn preview_graph(&mut self, asset: assets::AssetId, graph: Option<graph::ScatterGraph>) {
+        let unchanged = match (&graph, self.previews.get(&asset)) {
+            (Some(new), Some(old)) => **old == *new,
+            (None, None) => true,
+            _ => false,
+        };
+        if unchanged {
+            return;
+        }
+        match graph {
+            Some(graph) => {
+                self.previews.insert(asset, Arc::new(graph));
+            }
+            None => {
+                self.previews.remove(&asset);
+            }
+        }
+        for layer in &mut self.layers {
+            if layer.asset.id == asset {
+                layer.apply_in = Some(APPLY_DELAY);
+            }
         }
     }
 
@@ -95,32 +119,23 @@ impl Scatter {
         self.layers.is_empty()
     }
 
-    /// Append a layer scattering a raw model file; it is loaded on the next
-    /// `tick`.
-    pub fn add_layer(&mut self, model: String, density: f32) {
-        self.layers
-            .push(ScatterLayer::new(ScatterLayerData::file(model, density.max(0.0))));
+    /// Append a layer planting the scatter graph `asset`; it is loaded on
+    /// the next `tick`.
+    pub fn add_layer(&mut self, asset: AssetRef) {
+        self.layers.push(ScatterLayer::new(ScatterLayerData::graph(asset)));
     }
 
-    /// Append a layer scattering a model asset; it is loaded on the next
-    /// `tick`.
-    pub fn add_asset_layer(&mut self, asset: AssetRef, density: f32) {
-        self.layers
-            .push(ScatterLayer::new(ScatterLayerData::asset(asset, density.max(0.0))));
-    }
-
-    /// Point a layer at a model asset (loaded on the next `tick`).
+    /// Point a layer at another scatter graph (loaded on the next `tick`).
     pub fn set_asset(&mut self, index: usize, asset: AssetRef) {
         if let Some(layer) = self.layers.get_mut(index) {
-            layer.asset = Some(asset);
-            layer.model.clear();
+            layer.asset = asset;
             layer.apply_in = Some(0.0);
         }
     }
 
-    /// The asset a layer scatters, if it uses one.
+    /// The scatter graph a layer plants.
     pub fn asset(&self, index: usize) -> Option<&AssetRef> {
-        self.layers.get(index)?.asset.as_ref()
+        self.layers.get(index).map(|l| &l.asset)
     }
 
     /// Remove a layer. The terrain clears its instances on the next update.
@@ -130,35 +145,20 @@ impl Scatter {
         }
     }
 
-    /// Point a layer at a raw model file (loaded on the next `tick`).
-    pub fn set_model(&mut self, index: usize, model: String) {
-        if let Some(layer) = self.layers.get_mut(index) {
-            layer.asset = None;
-            layer.model = model;
-            layer.apply_in = Some(0.0);
+    /// The world's seed, for graph nodes that take it; a new one reloads
+    /// the layers.
+    pub fn set_world_seed(&mut self, seed: u64) {
+        if seed != self.world_seed {
+            self.world_seed = seed;
+            for layer in &mut self.layers {
+                layer.apply_in = Some(0.0);
+            }
         }
     }
 
-    pub fn default_layers() -> Vec<ScatterLayerData> {
-        DEFAULT_SCATTER
-            .iter()
-            .map(|&(model, density)| ScatterLayerData::file(model, density))
-            .collect()
-    }
-
-    /// The layers that scatter something, for saving.
+    /// The layers, for saving.
     pub fn to_data(&self) -> Vec<ScatterLayerData> {
-        self.layers
-            .iter()
-            .filter(|l| !l.is_unused())
-            .map(|l| ScatterLayerData {
-                tag: l.tag.clone(),
-                ..match &l.asset {
-                    Some(asset) => ScatterLayerData::asset(asset.clone(), l.density),
-                    None => ScatterLayerData::file(l.path(), l.density),
-                }
-            })
-            .collect()
+        self.layers.iter().map(|l| ScatterLayerData::graph(l.asset.clone())).collect()
     }
 
     /// Apply edits whose delay has run out (loading models as needed) and
@@ -176,7 +176,8 @@ impl Scatter {
                 layer.apply_in = Some(remaining);
             } else {
                 layer.apply_in = None;
-                layer.apply();
+                let preview = self.previews.get(&layer.asset.id);
+                layer.apply(preview, self.world_seed);
             }
         }
     }
@@ -204,114 +205,78 @@ impl Scatter {
         self.removed.len()
     }
 
-    /// What every chunk should carry right now, one entry per active layer.
+    /// What every chunk should carry right now: one entry per landscape
+    /// output of every loaded layer.
     pub fn specs(&self) -> Vec<ScatterSpec> {
+        self.specs_where(|range| range == graph::ScatterRange::Landscape)
+    }
+
+    /// What is planted around the camera: one entry per detail output of
+    /// every loaded layer.
+    pub fn detail_specs(&self) -> Vec<ScatterSpec> {
+        self.specs_where(|range| matches!(range, graph::ScatterRange::Detail { .. }))
+    }
+
+    fn specs_where(&self, wanted: impl Fn(graph::ScatterRange) -> bool) -> Vec<ScatterSpec> {
         let mut specs: Vec<ScatterSpec> = Vec::new();
         for layer in &self.layers {
-            let Some(model) = &layer.loaded else {
+            let Some(loaded) = &layer.loaded else {
                 continue;
             };
-            let chunk_area = CHUNK_SIZE_FLOAT * CHUNK_SIZE_FLOAT;
-            let attempts = (layer.applied_density.max(0.0) * chunk_area / DENSITY_AREA).round() as u32;
-            if attempts == 0 {
-                continue;
-            }
-            let spec = ScatterSpec {
-                model: model.clone(),
-                attempts,
-                salt: layer.salt(),
-                tag: layer.applied_tag.clone(),
-            };
-            // The same model at the same density twice would land on the
-            // very same spots; plant it once.
-            if !specs.iter().any(|s| s.same_as(&spec)) {
-                specs.push(spec);
+            for output in loaded.outputs.iter().filter(|o| wanted(o.range)) {
+                let spec = ScatterSpec {
+                    model: output.model.clone(),
+                    graph: loaded.graph.clone(),
+                    output: output.node,
+                    graph_key: loaded.graph_key,
+                    salt: layer.output_salt(output.node),
+                    range: output.range,
+                    shadows: output.spawn.shadows,
+                    wind: output.spawn.wind.clamp(0.0, 1.0),
+                    normals_up: output.spawn.normals_up.clamp(0.0, 1.0),
+                };
+                // The same graph twice would plant the very same; once.
+                if !specs.iter().any(|s| s.same_as(&spec)) {
+                    specs.push(spec);
+                }
             }
         }
         specs
     }
 
     pub fn properties(&self) -> Vec<Property> {
-        let mut properties = Vec::new();
-        for (index, layer) in self.layers.iter().enumerate() {
-            let number = index + 1;
-            let name = format!("{MODEL_PROPERTY}{number}");
-            properties.push(match &layer.asset {
-                // An asset is chosen, not typed.
-                Some(_) => Property::text(name, layer.label()).read_only(),
-                None => Property::text(name, layer.model.clone()),
-            });
-            properties.push(Property::ranged(
-                format!("{DENSITY_PROPERTY}{number}"),
-                layer.density,
-                0.0,
-                MAX_DENSITY,
-            ));
-            properties.push(Property::text(format!("{TAG_PROPERTY}{number}"), layer.tag.clone()));
-        }
+        let mut properties: Vec<Property> = self
+            .layers
+            .iter()
+            .enumerate()
+            .map(|(index, layer)| Property::text(format!("{GRAPH_PROPERTY}{}", index + 1), layer.label()).read_only())
+            .collect();
         properties.push(Property::text("scatter", self.status()).read_only());
         properties
     }
 
-    /// Index of the layer a `model N` property belongs to.
-    pub fn model_property_layer(name: &str) -> Option<usize> {
-        property_layer(name, MODEL_PROPERTY)
-    }
-
-    /// Returns whether `name` was one of the scatter properties.
-    pub fn set_property(&mut self, name: &str, value: &PropertyValue) -> bool {
-        if let Some(index) = property_layer(name, MODEL_PROPERTY) {
-            if let (Some(layer), Some(text)) = (self.layers.get_mut(index), value.as_text()) {
-                if layer.asset.is_none() && text != layer.model {
-                    layer.model = text.to_string();
-                    layer.apply_in = Some(APPLY_DELAY);
-                }
-            }
-            return true;
-        }
-        if let Some(index) = property_layer(name, TAG_PROPERTY) {
-            if let (Some(layer), Some(text)) = (self.layers.get_mut(index), value.as_text()) {
-                let tag = text.trim().to_string();
-                if tag != layer.tag {
-                    layer.tag = tag;
-                    layer.apply_in = Some(APPLY_DELAY);
-                }
-            }
-            return true;
-        }
-        if let Some(index) = property_layer(name, DENSITY_PROPERTY) {
-            if let (Some(layer), Some(density)) = (self.layers.get_mut(index), value.as_f32()) {
-                let density = density.max(0.0);
-                if density != layer.density {
-                    layer.density = density;
-                    layer.apply_in = Some(APPLY_DELAY);
-                }
-            }
-            return true;
-        }
-        false
+    /// Index of the layer a `graph N` property belongs to.
+    pub fn graph_property_layer(name: &str) -> Option<usize> {
+        name.strip_prefix(GRAPH_PROPERTY)?.parse::<usize>().ok()?.checked_sub(1)
     }
 
     fn status(&self) -> String {
         let mut loaded = 0;
         let mut problems = Vec::new();
         for (index, layer) in self.layers.iter().enumerate() {
-            if layer.is_unused() {
-                continue;
-            }
             if layer.apply_in.is_some() {
-                problems.push(format!("model {}: loading", index + 1));
+                problems.push(format!("graph {}: loading", index + 1));
             } else if let Some(error) = &layer.error {
-                problems.push(format!("model {}: {error}", index + 1));
+                problems.push(format!("graph {}: {error}", index + 1));
             } else if layer.loaded.is_some() {
                 loaded += 1;
             }
         }
         if problems.is_empty() {
             match loaded {
-                0 => "no models".into(),
-                1 => "1 model loaded".into(),
-                n => format!("{n} models loaded"),
+                0 => "no graphs".into(),
+                1 => "1 graph loaded".into(),
+                n => format!("{n} graphs loaded"),
             }
         } else {
             format!("{loaded} loaded; {}", problems.join("; "))
@@ -319,10 +284,8 @@ impl Scatter {
     }
 }
 
-/// Property name prefixes of a layer; the 1-based layer number follows.
-const MODEL_PROPERTY: &str = "model ";
-const DENSITY_PROPERTY: &str = "density ";
-const TAG_PROPERTY: &str = "tag ";
+/// Property name prefix of a layer; the 1-based layer number follows.
+const GRAPH_PROPERTY: &str = "graph ";
 
 /// A placement's position to the millimetre: placements are recomputed
 /// identically when a chunk loads again.
@@ -338,13 +301,6 @@ fn removal_key(position: Point3<f32>) -> [i32; 3] {
 pub fn spot_key(x: f32, z: f32) -> [i32; 2] {
     let [x, _, z] = removal_key(Point3::new(x, 0.0, z));
     [x, z]
-}
-
-fn property_layer(name: &str, prefix: &str) -> Option<usize> {
-    name.strip_prefix(prefix)?
-        .parse::<usize>()
-        .ok()?
-        .checked_sub(1)
 }
 
 /// FNV-1a.

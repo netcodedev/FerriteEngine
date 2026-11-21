@@ -302,10 +302,10 @@ impl InspectorPanel {
                 section.add_child(Box::new(Label::muted("No editable properties", theme::FONT_SIZE_SMALL)));
             }
             for property in properties {
-                // A terrain's scatter models get an asset chooser and a
-                // remove button.
+                // A terrain's scatter graphs get a chooser and a remove
+                // button.
                 let layer = (display == "Terrain")
-                    .then(|| Scatter::model_property_layer(&property.name))
+                    .then(|| Scatter::graph_property_layer(&property.name))
                     .flatten();
                 // So does the model of a model component.
                 let entity_model = display == "Model" && property.name == "model";
@@ -342,7 +342,7 @@ impl InspectorPanel {
                 );
                 add.set_style(ButtonStyle::Secondary);
                 add.set_icon(icons::PLUS);
-                add.set_label("Add model");
+                add.set_label("Add scatter graph");
                 add.set_tooltip("Scatter another model over the terrain");
                 add.fit(26.0);
                 let row = Box::new(FieldRow::new("", vec![Box::new(add)]));
@@ -482,7 +482,7 @@ impl InspectorPanel {
         );
         browse.set_style(ButtonStyle::Secondary);
         browse.set_icon(icons::PACKAGE);
-        browse.set_tooltip("Choose a model asset");
+        browse.set_tooltip("Choose a scatter graph");
 
         let remove_state = self.state.clone();
         let mut remove = Button::new(
@@ -492,7 +492,7 @@ impl InspectorPanel {
         );
         remove.set_style(ButtonStyle::Danger);
         remove.set_icon(icons::X);
-        remove.set_tooltip("Remove this model");
+        remove.set_tooltip("Remove this scatter graph");
         vec![Box::new(browse), Box::new(remove)]
     }
 

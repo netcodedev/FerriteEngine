@@ -3,7 +3,7 @@
 
 use cgmath::{EuclideanSpace, Point3};
 use ferrite::core::{
-    assets,
+    assets::{self, AssetId, AssetKind},
     entity::{
         component::{animation_component::AnimationComponent, model_component::ModelComponent},
         EntityHandle,
@@ -14,7 +14,7 @@ use ferrite::core::{
     },
 };
 use ferrite::player::PLAYER_GRAPH_PATH;
-use ferrite::terrain::scatter::DEFAULT_DENSITY;
+use ferrite::terrain::scatter::graph::NodeKind;
 use glfw::{CursorMode, Key, Modifiers};
 
 use crate::editor::{
@@ -23,6 +23,7 @@ use crate::editor::{
     clip_editor::{self, ClipRequest},
     dialogs,
     export::{self, Exporter},
+    scatter::ScatterEdit,
     Command, GizmoMode, Mode, Workspace,
 };
 use crate::new_script::new_script_file;
@@ -148,6 +149,12 @@ impl EditorLayer {
             }
             Command::SaveFirst(then) => {
                 let unsaved = self.unsaved_for(&then);
+                if unsaved.asset && self.state.borrow().scatter.as_ref().is_some_and(|e| e.dirty()) {
+                    self.run(Command::SaveScatter);
+                    if self.state.borrow().scatter.as_ref().is_some_and(|e| e.dirty()) {
+                        return;
+                    }
+                }
                 if unsaved.graph {
                     self.run(Command::SaveGraph);
                     if self.state.borrow().anim.dirty {
@@ -313,10 +320,17 @@ impl EditorLayer {
                 layer,
                 asset,
             } => {
+                // Terrains scatter scatter graphs only.
+                if !Self::is_scatter_graph(asset.id) {
+                    self.state
+                        .borrow_mut()
+                        .set_status("A terrain scatters scatter graphs only: make one in the asset browser");
+                    return;
+                }
                 if let Some(terrain) = self.terrain_mut(&entity) {
                     match layer {
                         Some(layer) => terrain.scatter_mut().set_asset(layer, asset),
-                        None => terrain.scatter_mut().add_asset_layer(asset, DEFAULT_DENSITY),
+                        None => terrain.scatter_mut().add_layer(asset),
                     }
                     self.state.borrow_mut().dirty = true;
                 }
@@ -428,7 +442,101 @@ impl EditorLayer {
                 state.scene_panels.write(workspace == Workspace::Scene);
                 state.anim_panels.write(workspace == Workspace::Animation);
                 state.asset_panels.write(workspace == Workspace::Asset);
+                state.scatter_panels.write(workspace == Workspace::ScatterGraph);
                 state.browser_panel.write(workspace != Workspace::Animation);
+            }
+            Command::CloseScatterEditor => {
+                // The world plants the saved graph again (unsaved edits stay
+                // in the editor's copy).
+                if let Some(edit) = self.state.borrow_mut().scatter.as_mut() {
+                    edit.clear_preview(&mut self.scene);
+                }
+                self.run(Command::SetWorkspace(Workspace::Scene));
+            }
+            Command::SaveScatter => {
+                let result = self.state.borrow_mut().scatter.as_mut().map(|edit| edit.save().map(|_| edit.name.clone()));
+                let message = match result {
+                    Some(Ok(name)) => format!("Saved scatter graph '{name}'"),
+                    Some(Err(e)) => format!("Could not save the scatter graph: {e}"),
+                    None => return,
+                };
+                self.state.borrow_mut().set_status(message);
+            }
+            Command::RevertScatter => {
+                if let Some(edit) = self.state.borrow_mut().scatter.as_mut() {
+                    edit.revert();
+                }
+            }
+            Command::ScatterAddMenu => self.state.borrow_mut().scatter_open_menu = true,
+            Command::ScatterFit => self.state.borrow_mut().scatter_fit = true,
+            Command::ScatterUndo => {
+                if let Some(edit) = self.state.borrow_mut().scatter.as_mut() {
+                    edit.undo();
+                }
+            }
+            Command::ScatterRedo => {
+                if let Some(edit) = self.state.borrow_mut().scatter.as_mut() {
+                    edit.redo();
+                }
+            }
+            Command::ScatterDelete => {
+                if let Some(edit) = self.state.borrow_mut().scatter.as_mut() {
+                    edit.delete_selection();
+                }
+            }
+            Command::ScatterCopy => {
+                if let Some(edit) = self.state.borrow_mut().scatter.as_mut() {
+                    edit.copy();
+                }
+            }
+            Command::ScatterPaste => {
+                if let Some(edit) = self.state.borrow_mut().scatter.as_mut() {
+                    edit.paste();
+                }
+            }
+            Command::PickScatterModel(node) => dialogs::pick_scatter_model(&self.state, node),
+            Command::SetScatterModel { node, asset } => {
+                if let Some(edit) = self.state.borrow_mut().scatter.as_mut() {
+                    edit.edit(|graph| {
+                        if let Some(NodeKind::SpawnMesh(spawn)) = graph.node_mut(node).map(|n| &mut n.kind) {
+                            spawn.asset = Some(asset);
+                            spawn.model.clear();
+                        }
+                    });
+                }
+            }
+            Command::EditAsset { id, .. } if Self::is_scatter_graph(id) => {
+                let open = self.state.borrow().scatter.as_ref().is_some_and(|edit| edit.asset == id);
+                if !open {
+                    let unsaved = self
+                        .state
+                        .borrow()
+                        .scatter
+                        .as_ref()
+                        .filter(|edit| edit.dirty())
+                        .map(|edit| edit.name.clone());
+                    if let Some(name) = unsaved {
+                        self.state
+                            .borrow_mut()
+                            .set_status(format!("Save or revert '{name}' first"));
+                        self.run(Command::SetWorkspace(Workspace::ScatterGraph));
+                        return;
+                    }
+                    match ScatterEdit::open(id) {
+                        Ok(edit) => {
+                            let mut state = self.state.borrow_mut();
+                            if let Some(old) = state.scatter.as_mut() {
+                                old.clear_preview(&mut self.scene);
+                            }
+                            state.scatter = Some(edit);
+                        }
+                        Err(e) => {
+                            self.state.borrow_mut().set_status(e);
+                            return;
+                        }
+                    }
+                }
+                self.run(Command::SetWorkspace(Workspace::ScatterGraph));
             }
             Command::EditAsset { id, variant } => {
                 let unsaved = self
@@ -616,10 +724,19 @@ impl EditorLayer {
 
     /// What `then` would lose (quitting) or leave out (an export) of the
     /// edits not saved yet.
+    /// Whether asset `id` is a scatter graph (opened in its own workspace).
+    fn is_scatter_graph(id: AssetId) -> bool {
+        assets::database()
+            .get(id)
+            .is_some_and(|entry| matches!(entry.meta.kind, AssetKind::ScatterGraph(_)))
+    }
+
     fn unsaved_for(&self, then: &Command) -> dialogs::Unsaved {
         let state = self.state.borrow();
         let graph = state.anim.dirty;
-        let asset = state.asset_edit.as_ref().is_some_and(|edit| edit.dirty);
+        // An unsaved scatter graph counts as an unsaved asset.
+        let asset = state.asset_edit.as_ref().is_some_and(|edit| edit.dirty)
+            || state.scatter.as_ref().is_some_and(|edit| edit.dirty());
         match then {
             Command::Quit | Command::ExportGame(_) => dialogs::Unsaved {
                 scene: state.dirty,
@@ -662,6 +779,32 @@ impl EditorLayer {
                 (Key::K, false) if clip_open => Some(Command::Clip(ClipRequest::Key)),
                 (Key::Delete, false) if clip_open => Some(Command::Clip(ClipRequest::DeleteKey)),
                 (Key::Home, false) if clip_open => Some(Command::Clip(ClipRequest::ToStart)),
+                _ => None,
+            };
+            return match command {
+                Some(command) => {
+                    self.state.borrow_mut().push(command);
+                    true
+                }
+                None => false,
+            };
+        }
+        if workspace == Workspace::ScatterGraph {
+            let command = match (key, ctrl, shift) {
+                (Key::S, true, _) => Some(Command::SaveScatter),
+                (Key::Z, true, false) => Some(Command::ScatterUndo),
+                (Key::Z, true, true) | (Key::Y, true, _) => Some(Command::ScatterRedo),
+                (Key::C, true, _) => Some(Command::ScatterCopy),
+                (Key::V, true, _) => Some(Command::ScatterPaste),
+                (Key::Delete | Key::Backspace, false, _) => Some(Command::ScatterDelete),
+                (Key::Space, false, _) | (Key::A, false, true) => Some(Command::ScatterAddMenu),
+                (Key::F, false, _) | (Key::Home, false, _) => Some(Command::ScatterFit),
+                (Key::Escape, false, _) => {
+                    if let Some(edit) = self.state.borrow_mut().scatter.as_mut() {
+                        edit.select(Vec::new());
+                    }
+                    return true;
+                }
                 _ => None,
             };
             return match command {

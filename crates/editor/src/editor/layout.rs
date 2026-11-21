@@ -260,7 +260,11 @@ impl Layout {
 
     /// The viewport as a GL viewport (bottom-left origin).
     pub fn viewport_gl(&self) -> [i32; 4] {
-        let v = self.viewport;
+        self.gl_rect(self.viewport)
+    }
+
+    /// `v` as GL's viewport takes it (from the bottom left).
+    pub fn gl_rect(&self, v: Rect) -> [i32; 4] {
         [
             v.x as i32,
             (self.window_h - (v.y + v.h)).max(0.0) as i32,
