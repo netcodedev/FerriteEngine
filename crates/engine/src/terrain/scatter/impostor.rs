@@ -4,13 +4,11 @@
 //! from `FRAMES` directions, its colour and its normals (model space), cut
 //! out where it is not.
 
-use std::{cell::OnceCell, rc::Rc};
-
 use cgmath::{Matrix4, Point3, Vector3};
 
 use crate::core::{
     gfx::{self, Format, Load, SamplerDesc, TextureDesc, TextureKind},
-    renderer::{pbr, shader::Shader},
+    material::{Material, Pipeline},
 };
 
 use super::{vertex_layout, ModelVariant};
@@ -36,22 +34,6 @@ pub struct Impostor {
     pub half_width: f32,
     pub bottom: f32,
     pub top: f32,
-}
-
-thread_local! {
-    static BAKE_SHADER: OnceCell<Rc<Shader>> = const { OnceCell::new() };
-}
-
-fn bake_shader() -> Rc<Shader> {
-    BAKE_SHADER.with(|cell| {
-        cell.get_or_init(|| {
-            Rc::new(Shader::new(
-                include_str!("impostor_bake_vertex.glsl"),
-                include_str!("impostor_bake_fragment.glsl"),
-            ))
-        })
-        .clone()
-    })
 }
 
 /// Picture `variant`. Must run on the render thread. Draws in a pass of
@@ -87,7 +69,6 @@ pub(super) fn bake(variant: &ModelVariant) -> Impostor {
     let depth = gfx::Texture::new(TextureDesc::d2(Format::Depth24, WIDTH, HEIGHT));
 
     let outer = OuterPass::note();
-    let shader = bake_shader();
     // The tier's submeshes, as the instances draw them (without the
     // instance attributes).
     let desc = gfx::PipelineDesc {
@@ -112,13 +93,23 @@ pub(super) fn bake(variant: &ModelVariant) -> Impostor {
             Some(depth.attachment(0, None)),
         );
         gfx::begin_pass(target.reference(), (WIDTH, HEIGHT), Load::Color([0.0; 4]), Load::Depth(1.0));
-        gfx::set_pipeline(shader.pipeline(&desc));
         let angle = frame as f32 * std::f32::consts::TAU / FRAMES as f32;
         let eye = Point3::new(angle.cos() * distance, middle, angle.sin() * distance);
         let view = Matrix4::look_at_rh(eye, Point3::new(0.0, middle, 0.0), Vector3::unit_y());
-        shader.set_uniform_mat4("viewProjection", &(projection * view));
         for sub in &lod.submeshes {
-            pbr::bind_material(&shader, variant.model.material_textures(sub.material_index));
+            let fallback;
+            let material = match variant.model.material(sub.material_index) {
+                Some(material) => material,
+                None => {
+                    fallback = Material::standard();
+                    &fallback
+                }
+            };
+            let shader = material.program(Pipeline::ImpostorBake);
+            gfx::set_pipeline(shader.pipeline(&desc));
+            shader.set_uniform_mat4("viewProjection", &(projection * view));
+            shader.set_uniform_3f("cameraPosition", eye.x, eye.y, eye.z);
+            material.bind(&shader);
             sub.bind();
             gfx::draw_indexed(0, sub.index_count, 0);
         }

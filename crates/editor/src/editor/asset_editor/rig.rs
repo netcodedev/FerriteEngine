@@ -1,11 +1,11 @@
 //! Skinned models in the preview: a posed model, one held in the player's
 //! hand, and the drags on them.
 
-use std::{path::PathBuf, time::Instant};
+use std::time::Instant;
 
 use cgmath::{EuclideanSpace, Matrix4, Point3, SquareMatrix, Vector3};
 use ferrite::core::{
-    assets::{self, MaterialMap, ModelSettings},
+    assets::{self, ModelSettings},
     model::{
         clip_file::Transform as BoneTransform,
         grip::{self, Grip, Hand},
@@ -33,33 +33,13 @@ pub(super) fn load_model(
     settings: &ModelSettings,
     variant: usize,
 ) -> Result<Model, String> {
-    let overrides: Vec<Vec<(MaterialMap, PathBuf)>> = {
-        let database = assets::database();
-        settings
-            .materials
-            .iter()
-            .map(|material| {
-                MaterialMap::ALL
-                    .into_iter()
-                    .filter_map(|map| {
-                        let entry = database.get(material.map(map)?)?;
-                        Some((map, entry.source_path()))
-                    })
-                    .collect()
-            })
-            .collect()
-    };
     let path = source.to_string_lossy().replace('\\', "/");
     let mut model = ModelBuilder::from_file(&path)
         .map_err(|e| e.to_string())?
         .with_scale(settings.scale)
         .build();
     model.init();
-    for (material, maps) in overrides.into_iter().enumerate() {
-        for (map, file) in maps {
-            model.set_material_map_file(material, map, &file);
-        }
-    }
+    ferrite::core::material::asset::apply_to_model(&mut model, &settings.materials);
     let variant = settings.variants.get(variant).map(|v| v.name.as_str());
     model.show_variant(variant)?;
     Ok(model)
@@ -202,24 +182,6 @@ impl Rigged {
         settings: &ModelSettings,
         variant: usize,
     ) -> Result<Option<Rigged>, String> {
-        // Texture files of the working copy's materials, found before the
-        // (slow) load.
-        let overrides: Vec<Vec<(MaterialMap, PathBuf)>> = {
-            let database = assets::database();
-            settings
-                .materials
-                .iter()
-                .map(|material| {
-                    MaterialMap::ALL
-                        .into_iter()
-                        .filter_map(|map| {
-                            let entry = database.get(material.map(map)?)?;
-                            Some((map, entry.source_path()))
-                        })
-                        .collect()
-                })
-                .collect()
-        };
         let path = source.to_string_lossy().replace('\\', "/");
         let mut model = ModelBuilder::from_file(&path)
             .map_err(|e| e.to_string())?
@@ -229,11 +191,7 @@ impl Rigged {
         let Some(skeleton) = model.skeleton() else {
             return Ok(None);
         };
-        for (material, maps) in overrides.into_iter().enumerate() {
-            for (map, file) in maps {
-                model.set_material_map_file(material, map, &file);
-            }
-        }
+        ferrite::core::material::asset::apply_to_model(&mut model, &settings.materials);
         let variant = settings.variants.get(variant).map(|v| v.name.as_str());
         model.show_variant(variant)?;
 

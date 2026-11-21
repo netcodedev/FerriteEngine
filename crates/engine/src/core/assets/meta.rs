@@ -29,6 +29,10 @@ pub enum AssetKind {
     Animation(AnimationSettings),
     /// A scatter graph (`*.scatter.ron`, see `terrain::scatter::graph`).
     ScatterGraph(ScatterGraphSettings),
+    /// A material (`*.material.ron`, see `material::asset`).
+    Material(MaterialAssetSettings),
+    /// A material graph (`*.matgraph.ron`, see `material::graph`).
+    MaterialGraph(MaterialGraphSettings),
 }
 
 impl AssetKind {
@@ -39,6 +43,8 @@ impl AssetKind {
             AssetKind::Texture(_) => "Texture",
             AssetKind::Animation(_) => "Animation",
             AssetKind::ScatterGraph(_) => "Scatter graph",
+            AssetKind::Material(_) => "Material",
+            AssetKind::MaterialGraph(_) => "Material graph",
         }
     }
 }
@@ -99,31 +105,38 @@ pub struct VariantInfo {
     pub lods: Vec<String>,
 }
 
+/// One material slot of a model asset (in the file's material order).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct MaterialSettings {
     /// Name in the file; settings are matched to materials by it on
     /// reimport.
     pub name: String,
-    /// Texture asset used as colour map. `None`: whatever the model loader
-    /// finds for this material on its own.
-    #[serde(default)]
+    /// The material asset the slot is drawn with. `None`: what the model
+    /// loader makes of the file's material (only until the project's
+    /// models are given material assets, see
+    /// `material::asset::ensure_all_model_materials`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<AssetId>,
+    // From before materials (2026-11-21): texture assets per map and the
+    // foliage flag, read so they move into the new material assets, never
+    // written again.
+    #[serde(default, skip_serializing)]
     pub base_color: Option<AssetId>,
-    /// Texture asset used as normal map. `None`: as for `base_color`.
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub normal: Option<AssetId>,
-    /// Texture asset used as roughness map. `None`: as for `base_color`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing)]
     pub roughness: Option<AssetId>,
-    /// Texture asset used as metallic map. `None`: as for `base_color`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing)]
     pub metallic: Option<AssetId>,
-    /// Texture asset used as ambient occlusion map. `None`: as for
-    /// `base_color`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing)]
     pub occlusion: Option<AssetId>,
-    /// Leaves and the like: drawn, but left out of collision shapes.
-    #[serde(default)]
-    pub foliage: bool,
+    #[serde(default, rename = "foliage", skip_serializing, deserialize_with = "some_bool")]
+    pub legacy_foliage: Option<bool>,
+}
+
+/// A plain `true`/`false` in the file, as `Some` (absent: `None`).
+fn some_bool<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<bool>, D::Error> {
+    bool::deserialize(deserializer).map(Some)
 }
 
 /// A texture slot of a material.
@@ -157,6 +170,7 @@ impl MaterialMap {
 }
 
 impl MaterialSettings {
+    /// A legacy map override (see the fields).
     pub fn map(&self, map: MaterialMap) -> Option<AssetId> {
         match map {
             MaterialMap::BaseColor => self.base_color,
@@ -167,15 +181,14 @@ impl MaterialSettings {
         }
     }
 
-    pub fn set_map(&mut self, map: MaterialMap, texture: Option<AssetId>) {
-        let slot = match map {
-            MaterialMap::BaseColor => &mut self.base_color,
-            MaterialMap::Normal => &mut self.normal,
-            MaterialMap::Roughness => &mut self.roughness,
-            MaterialMap::Metallic => &mut self.metallic,
-            MaterialMap::Occlusion => &mut self.occlusion,
-        };
-        *slot = texture;
+    /// Forget the legacy fields (they moved into a material asset).
+    pub fn clear_legacy(&mut self) {
+        self.base_color = None;
+        self.normal = None;
+        self.roughness = None;
+        self.metallic = None;
+        self.occlusion = None;
+        self.legacy_foliage = None;
     }
 }
 
@@ -186,6 +199,14 @@ pub struct TextureSettings {}
 /// is kept here yet.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct ScatterGraphSettings {}
+
+/// A material asset. The material itself is the file.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct MaterialAssetSettings {}
+
+/// A material graph asset. The graph itself is the file.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct MaterialGraphSettings {}
 
 /// The clips found in an animation file at import.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -232,7 +253,34 @@ impl AssetMeta {
         match &self.kind {
             AssetKind::Animation(settings) => &settings.clips,
             AssetKind::Model(settings) => &settings.clips,
-            AssetKind::Texture(_) | AssetKind::ScatterGraph(_) => &[],
+            AssetKind::Texture(_)
+            | AssetKind::ScatterGraph(_)
+            | AssetKind::Material(_)
+            | AssetKind::MaterialGraph(_) => &[],
         }
+    }
+}
+
+#[cfg(test)]
+mod legacy_tests {
+    use super::*;
+
+    /// Sidecars from before material assets (2026-11-21) still load, their
+    /// overrides and foliage flags kept for the move to material assets.
+    #[test]
+    fn a_material_slot_from_before_material_assets_loads() {
+        let old = format!(r#"(name: "Leaves", base_color: Some({}), normal: None, foliage: true)"#, ron::to_string(&AssetId::from(12)).unwrap());
+        let slot: MaterialSettings = ron::from_str(&old).unwrap();
+        assert_eq!(slot.legacy_foliage, Some(true));
+        assert_eq!(slot.base_color, Some(AssetId::from(12)));
+        assert_eq!(slot.material, None);
+        let plain: MaterialSettings = ron::from_str(r#"(name: "Bark", foliage: false)"#).unwrap();
+        assert_eq!(plain.legacy_foliage, Some(false));
+        // Written again: only the name and the material.
+        let mut slot = slot;
+        slot.material = Some(AssetId::from(7));
+        slot.clear_legacy();
+        let text = ron::to_string(&slot).unwrap();
+        assert!(!text.contains("foliage") && !text.contains("base_color"), "{text}");
     }
 }

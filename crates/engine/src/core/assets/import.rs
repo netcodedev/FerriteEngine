@@ -7,13 +7,19 @@ use std::{
 };
 
 use crate::{
-    core::model::{clip_file, material_maps, outline},
+    core::{
+        material::{
+            asset::{self as material_asset, MaterialFile},
+            graph::{MaterialGraph, MATERIAL_GRAPH_SUFFIX},
+        },
+        model::{clip_file, material_maps, outline},
+    },
     terrain::scatter::graph::{self, ScatterGraph},
 };
 
 use super::{
     AnimationSettings, AssetDatabase, AssetError, AssetId, AssetKind, AssetMeta, ClipInfo,
-    MaterialSettings, ModelSettings, ScatterGraphSettings, TextureSettings, VariantInfo, ASSET_META_VERSION,
+    MaterialAssetSettings, MaterialGraphSettings, MaterialSettings, ModelSettings, ScatterGraphSettings, TextureSettings, VariantInfo, ASSET_META_VERSION,
     META_SUFFIX,
 };
 
@@ -25,6 +31,7 @@ const MODEL_FOLDER: &str = "models";
 const TEXTURE_FOLDER: &str = "textures";
 const ANIMATION_FOLDER: &str = "animations";
 const SCATTER_FOLDER: &str = "scatter";
+const MATERIAL_FOLDER: &str = "materials";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FileKind {
@@ -34,6 +41,10 @@ enum FileKind {
     Clip,
     /// A scatter graph (`*.scatter.ron`).
     ScatterGraph,
+    /// A material (`*.material.ron`).
+    Material,
+    /// A material graph (`*.matgraph.ron`).
+    MaterialGraph,
 }
 
 fn file_kind(path: &Path) -> Option<FileKind> {
@@ -42,6 +53,12 @@ fn file_kind(path: &Path) -> Option<FileKind> {
     }
     if graph::is_scatter_graph_file(path) {
         return Some(FileKind::ScatterGraph);
+    }
+    if material_asset::is_material_file(path) {
+        return Some(FileKind::Material);
+    }
+    if material_asset::is_graph_file(path) {
+        return Some(FileKind::MaterialGraph);
     }
     let extension = path.extension()?.to_str()?.to_lowercase();
     if MODEL_EXTENSIONS.contains(&extension.as_str()) {
@@ -97,7 +114,31 @@ impl AssetDatabase {
             FileKind::Model => self.import_model(file),
             FileKind::Clip => self.import_clip(file),
             FileKind::ScatterGraph => self.import_scatter_graph(file),
+            FileKind::Material | FileKind::MaterialGraph => self.import_material_file(file, kind),
         }
+    }
+
+    /// Register a material or material graph file (checked to be one).
+    fn import_material_file(&mut self, file: &Path, kind: FileKind) -> Result<AssetId, AssetError> {
+        let (suffix, asset_kind) = if kind == FileKind::Material {
+            MaterialFile::load(file).map_err(|e| AssetError::Import(file.to_path_buf(), e))?;
+            (material_asset::MATERIAL_SUFFIX, AssetKind::Material(MaterialAssetSettings {}))
+        } else {
+            MaterialGraph::load(file).map_err(|e| AssetError::Import(file.to_path_buf(), e))?;
+            (MATERIAL_GRAPH_SUFFIX, AssetKind::MaterialGraph(MaterialGraphSettings {}))
+        };
+        let source = match self.path_in_root(file) {
+            Some(inside) => inside,
+            None => copy_into(file, &self.root().join(MATERIAL_FOLDER), true)?,
+        };
+        let meta = AssetMeta {
+            version: ASSET_META_VERSION,
+            id: AssetId::new(),
+            name: material_asset::name_without(&source, suffix),
+            source: file_name_of(&source),
+            kind: asset_kind,
+        };
+        self.register(meta, source.parent().unwrap_or(Path::new(".")))
     }
 
     /// Register a scatter graph file (checked to be one).
@@ -245,7 +286,6 @@ impl AssetDatabase {
                     .materials
                     .into_iter()
                     .map(|m| MaterialSettings {
-                        foliage: outline::looks_like_foliage(&m.name),
                         name: m.name,
                         ..Default::default()
                     })
@@ -255,7 +295,10 @@ impl AssetDatabase {
                 anchors: Vec::new(),
             }),
         };
-        self.register(meta, &target_dir)
+        let id = self.register(meta, &target_dir)?;
+        // Each material of the file becomes a material asset next to it.
+        material_asset::ensure_model_materials(self, id).map_err(|e| AssetError::Import(source.clone(), e))?;
+        Ok(id)
     }
 
     /// Register every importable file below the root that is not an asset
@@ -466,6 +509,11 @@ mod tests {
     use super::*;
     use crate::core::assets::{database::tests::TempDir, test_models};
 
+    /// Assets other than the material assets imports make of models.
+    fn non_material(database: &AssetDatabase) -> usize {
+        database.iter().filter(|e| !matches!(e.meta.kind, AssetKind::Material(_))).count()
+    }
+
     #[test]
     fn finds_file_references_in_gltf_text() {
         let text = r#"{
@@ -554,7 +602,7 @@ mod tests {
         for map in ["BaseColor", "Normal", "Roughness", "AO"] {
             assert!(folder.join(format!("Rock_Low_1K_{map}.png")).is_file(), "{map}");
         }
-        assert_eq!(database.len(), 5);
+        assert_eq!(non_material(&database), 5);
     }
 
     #[test]
@@ -588,10 +636,17 @@ mod tests {
         assert_eq!(model.variants[0].lods, vec!["Oak_LOD0", "Oak_LOD1"]);
         // Assimp may append a default material of its own.
         let bark = model.materials.iter().find(|m| m.name == "bark").unwrap();
-        assert!(!bark.foliage);
-        assert_eq!(bark.base_color, None);
-        // The model and its texture.
-        assert_eq!(database.len(), 2);
+        // Each material of the file became a material asset next to it
+        // (rule R2 in docs/materials.md): Standard PBR, maps automatic.
+        let material = database.get(bark.material.expect("a material asset")).unwrap();
+        assert_eq!(material.dir, folder);
+        let file = crate::core::material::asset::MaterialFile::load(&material.source_path()).unwrap();
+        assert!(!file.foliage);
+        assert!(file.params.is_empty());
+        assert_eq!(file.graph, crate::core::material::asset::GraphRef::default());
+        // The model, its texture and a material per slot.
+        assert_eq!(database.len(), 2 + model.materials.len());
+        assert_eq!(non_material(&database), 2);
 
         // The copied model still loads: its texture reference resolves.
         assert!(outline::inspect(&entry.source_path()).is_ok());
@@ -599,7 +654,7 @@ mod tests {
         // Importing the original again makes a second copy; importing the
         // copy in the project gives the asset we already have.
         assert_eq!(database.import(&entry.source_path()).unwrap(), id);
-        assert_eq!(database.len(), 2);
+        assert_eq!(non_material(&database), 2);
     }
 
     #[test]
@@ -613,8 +668,13 @@ mod tests {
         let id = database.import(&file).unwrap();
         assert_eq!(database.get(id).unwrap().source_path(), file);
         assert!(folder.join(format!("rock.gltf{META_SUFFIX}")).is_file());
-        // No copy was made.
-        assert_eq!(fs::read_dir(&folder).unwrap().count(), 2);
+        // No copy was made (only its materials were added beside it).
+        let others = fs::read_dir(&folder)
+            .unwrap()
+            .flatten()
+            .filter(|e| !e.file_name().to_string_lossy().contains(".material.ron"))
+            .count();
+        assert_eq!(others, 2);
 
         // A fresh scan finds the same asset.
         let mut fresh = AssetDatabase::new(&project.0);
@@ -729,8 +789,10 @@ mod tests {
         let mut database = AssetDatabase::new(&project.0);
         let (added, problems) = database.register_new_files();
         assert!(problems.is_empty(), "{problems:?}");
-        // oak, its bark texture, the idle animation and the moss texture.
-        assert_eq!(added, 4);
+        // oak, its bark texture, the idle animation and the moss texture,
+        // and the oak's materials.
+        assert_eq!(non_material(&database), 4);
+        assert_eq!(added, database.len());
         assert!(database
             .find_by_source(&project.0.join("animations").join("Idle.gltf"))
             .is_some());
@@ -739,7 +801,8 @@ mod tests {
         assert_eq!(database.register_new_files(), (0, Vec::new()));
         let mut fresh = AssetDatabase::new(&project.0);
         assert!(fresh.scan().is_empty());
-        assert_eq!(fresh.len(), 4);
+        assert_eq!(non_material(&fresh), 4);
+        assert_eq!(fresh.len(), database.len());
     }
 
     #[test]

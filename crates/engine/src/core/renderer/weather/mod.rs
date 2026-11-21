@@ -65,8 +65,14 @@ lazy_static! {
     static ref FOOTPRINTS: Mutex<Vec<Footprint>> = Mutex::new(Vec::new());
 }
 
-/// Seconds since the weather started; drives ripples and falling drops.
+/// Seconds since the weather started; drives ripples, falling drops and
+/// the wind. `FERRITE_FIXED_CLOCK=<seconds>` holds it still (comparing
+/// pictures of two builds).
 pub fn seconds() -> f32 {
+    static FIXED: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    if let Some(fixed) = FIXED.get_or_init(|| std::env::var("FERRITE_FIXED_CLOCK").ok()?.parse().ok()) {
+        return *fixed;
+    }
     START.elapsed().as_secs_f32()
 }
 

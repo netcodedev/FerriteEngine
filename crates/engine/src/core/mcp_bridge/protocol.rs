@@ -163,6 +163,40 @@ pub enum BridgeRequest {
     /// Change a scatter graph asset, as one undo step in the editor's
     /// copy (opened there, without switching workspace, if it is not yet).
     ScatterGraphEdit { asset: String, ops: Vec<ScatterGraphOp> },
+    /// A material asset's settings and parameters, or a material graph
+    /// asset's parameters, nodes and wires (the editor's copy if it is
+    /// open there, else the file).
+    MaterialRead { asset: String },
+    /// Change a material (`set`: property name → value) or a material
+    /// graph (`ops`, see `material::edit::apply_op`) as one undo step in
+    /// the editor's copy (opened there, without switching workspace, if it
+    /// is not yet); `save` writes it.
+    MaterialEdit {
+        asset: String,
+        #[serde(default)]
+        set: Option<serde_json::Map<String, serde_json::Value>>,
+        #[serde(default)]
+        ops: Option<Vec<serde_json::Value>>,
+        #[serde(default)]
+        save: bool,
+    },
+    /// Make a new material (Standard PBR) or material graph (a copy of
+    /// Standard PBR) in `assets/materials/`.
+    MaterialCreate {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        graph: bool,
+    },
+    /// Show a material or material graph in the material workspace, on
+    /// `shape` (sphere, cube, plane, cylinder), with or without wind.
+    MaterialPreview {
+        asset: String,
+        #[serde(default)]
+        shape: Option<String>,
+        #[serde(default)]
+        wind: Option<bool>,
+    },
     /// Move or turn the editor camera; what is left out stays.
     SetView {
         #[serde(default)]

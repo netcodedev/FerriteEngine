@@ -158,7 +158,15 @@ fn prepare(project: &Project, step: &Mutex<String>) -> Result<Prepared, String> 
     // Files that were put into the asset folder by hand become assets, so
     // everything in there can be referred to the same way.
     set("Registering new assets");
-    let (registered, asset_problems) = assets::database().register_new_files();
+    let (registered, mut asset_problems) = assets::database().register_new_files();
+    // Models from before material assets get theirs (docs/materials.md):
+    // a material asset per material slot, next to the model.
+    set("Giving models their materials");
+    let (made, problems) = ferrite::core::material::asset::ensure_all_model_materials(&mut assets::database());
+    if made > 0 {
+        log::info!("assets: made {made} material assets for models that had none");
+    }
+    asset_problems.extend(problems);
     set("Building the scripts");
     let scripts = project.scripts().build();
     Ok(Prepared {

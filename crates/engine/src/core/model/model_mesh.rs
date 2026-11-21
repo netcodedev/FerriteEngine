@@ -10,6 +10,7 @@ impl ModelMesh {
         indices: Vec<u32>,
         normals: Vec<f32>,
         texture_coords: Vec<f32>,
+        colors: Vec<u32>,
         root_bone: Option<Bone>,
         material_index: usize,
     ) -> ModelMesh {
@@ -21,6 +22,7 @@ impl ModelMesh {
             Some(&[x, y, z]) => (x, y, z),
             _ => (0.0, 1.0, 0.0),
         };
+        let color = |i: usize| colors.get(i).copied().unwrap_or(super::model_geometry::WHITE);
         let uv = |i: usize| match texture_coords.get(i * 2..i * 2 + 2) {
             Some(&[u, v]) => (u, v),
             _ => (0.0, 0.0),
@@ -39,6 +41,7 @@ impl ModelMesh {
                     texture_coords: uv(i),
                     bone_ids: (0, 0, 0, 0),
                     bone_weights: (1.0, 0.0, 0.0, 0.0),
+                    color: color(i),
                 });
             }
         }
@@ -52,6 +55,7 @@ impl ModelMesh {
                     texture_coords: uv(i),
                     bone_ids,
                     bone_weights,
+                    color: color(i),
                 });
             }
         }
@@ -130,7 +134,7 @@ fn vertex_weights(weights: Option<&Vec<(usize, f32)>>) -> ((u32, u32, u32, u32),
 impl VertexAttributes for ModelMeshVertex {
     fn vertex_formats() -> Vec<crate::core::gfx::VertexFormat> {
         use crate::core::gfx::VertexFormat::*;
-        vec![F32x3, F32x3, F32x2, U32x4, F32x4]
+        vec![F32x3, F32x3, F32x2, U32x4, F32x4, U32]
     }
 }
 
@@ -200,11 +204,11 @@ mod tests {
             last_translation: cgmath::Vector3::new(0.0, 0.0, 0.0),
         };
         let vertices = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
-        let mesh = ModelMesh::new(vertices.clone(), vec![0, 1, 2], Vec::new(), Vec::new(), Some(root), 0);
+        let mesh = ModelMesh::new(vertices.clone(), vec![0, 1, 2], Vec::new(), Vec::new(), Vec::new(), Some(root), 0);
         assert_eq!(mesh.vertices.len(), 3);
         assert_eq!(mesh.vertices[2].bone_weights, (1.0, 0.0, 0.0, 0.0));
         assert_eq!(mesh.vertices[2].normal, (0.0, 1.0, 0.0));
-        let mesh = ModelMesh::new(vertices, vec![0, 1, 2], Vec::new(), Vec::new(), None, 0);
+        let mesh = ModelMesh::new(vertices, vec![0, 1, 2], Vec::new(), Vec::new(), Vec::new(), None, 0);
         assert_eq!(mesh.vertices[1].texture_coords, (0.0, 0.0));
     }
 }

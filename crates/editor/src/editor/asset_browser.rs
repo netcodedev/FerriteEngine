@@ -45,6 +45,8 @@ pub struct AssetBrowser {
     import: Button,
     refresh: Button,
     edit: Button,
+    new_material: Button,
+    new_graph: Button,
     details: Label,
     selection: DataSource<u64>,
     rows: HashMap<u64, Row>,
@@ -117,6 +119,18 @@ impl AssetBrowser {
         edit.set_tooltip("Open the selected asset (double click)");
         edit.fit(26.0);
 
+        let make = |graph: bool, icon: &str, label: &str, tooltip: &str| {
+            let state = state.clone();
+            let mut b = Button::new(Position::default(), Size::new(10.0, 26.0), Box::new(move |_| send(&state, Command::NewMaterial { graph })));
+            b.set_style(ButtonStyle::Ghost);
+            b.set_icon(icon);
+            b.set_label(label);
+            b.set_tooltip(tooltip);
+            b.fit(26.0);
+            b
+        };
+        let new_material = make(false, icons::SPARKLES, "Material", "A new material (Standard PBR) in assets/materials");
+        let new_graph = make(true, icons::COMPONENT, "Graph", "A new material graph (a copy of Standard PBR) in assets/materials");
         Self {
             handle: UIElementHandle::new(),
             state,
@@ -125,6 +139,8 @@ impl AssetBrowser {
             import,
             refresh,
             edit,
+            new_material,
+            new_graph,
             details: Label::muted("", theme::FONT_SIZE_SMALL + 0.5),
             selection,
             rows: HashMap::new(),
@@ -184,8 +200,9 @@ impl AssetBrowser {
             AssetKind::Model(_) => DragKind::Model,
             AssetKind::Texture(_) => DragKind::Texture,
             AssetKind::Animation(_) => DragKind::Animation,
-            // Nothing takes a scatter graph by dragging yet.
-            AssetKind::ScatterGraph(_) => return None,
+            AssetKind::Material(_) => DragKind::Material,
+            // Nothing takes a graph by dragging yet.
+            AssetKind::ScatterGraph(_) | AssetKind::MaterialGraph(_) => return None,
         };
         Some(AssetDrag {
             label: database.display_name(&asset)?,
@@ -197,11 +214,13 @@ impl AssetBrowser {
         })
     }
 
-    fn widgets_mut(&mut self) -> [&mut dyn UIElement; 4] {
+    fn widgets_mut(&mut self) -> [&mut dyn UIElement; 6] {
         [
             &mut self.import,
             &mut self.refresh,
             &mut self.edit,
+            &mut self.new_material,
+            &mut self.new_graph,
             &mut self.tree,
         ]
     }
@@ -236,6 +255,8 @@ fn describe(entry: &AssetEntry) -> String {
             count(animation.clips.len(), "clip"),
         ),
         AssetKind::ScatterGraph(_) => format!("{}  ·  Scatter graph  ·  {source}", entry.meta.name),
+        AssetKind::Material(_) => format!("{}  ·  Material  ·  {source}", entry.meta.name),
+        AssetKind::MaterialGraph(_) => format!("{}  ·  Material graph  ·  {source}", entry.meta.name),
     }
 }
 
@@ -319,6 +340,8 @@ fn build_items(database: &AssetDatabase) -> (Vec<TreeItem>, HashMap<u64, Row>) {
                 AssetKind::Texture(_) => icons::LAYOUT_GRID,
                 AssetKind::Animation(_) => icons::ACTIVITY,
                 AssetKind::ScatterGraph(_) => icons::LIST_TREE,
+                AssetKind::Material(_) => icons::SPARKLES,
+                AssetKind::MaterialGraph(_) => icons::COMPONENT,
             }),
         });
         rows.insert(id, Row::Asset(entry.meta.id));
@@ -366,7 +389,11 @@ impl UIElement for AssetBrowser {
         });
         let has_selection = self.state.borrow().asset_selection.is_some();
         self.edit.set_enabled(has_selection);
-        let details_x = after_refresh + self.edit.get_size().width + 10.0;
+        let after_edit = after_refresh + self.edit.get_size().width + 6.0;
+        self.new_material.set_offset(Offset { x: after_edit, y: ay });
+        let after_material = after_edit + self.new_material.get_size().width + 2.0;
+        self.new_graph.set_offset(Offset { x: after_material, y: ay });
+        let details_x = after_material + self.new_graph.get_size().width + 10.0;
         self.details.set_offset(Offset {
             x: details_x,
             y: ay + 5.0,
@@ -432,6 +459,8 @@ impl UIElement for AssetBrowser {
         self.import.render();
         self.refresh.render();
         self.edit.render();
+        self.new_material.render();
+        self.new_graph.render();
     }
 
     fn render_overlay(&self) {
@@ -441,6 +470,8 @@ impl UIElement for AssetBrowser {
         self.import.render_overlay();
         self.refresh.render_overlay();
         self.edit.render_overlay();
+        self.new_material.render_overlay();
+        self.new_graph.render_overlay();
     }
 
     fn handle_events(

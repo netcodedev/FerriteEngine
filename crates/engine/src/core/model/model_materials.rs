@@ -2,7 +2,13 @@
 
 use russimp_ng::material::TextureType;
 
-use crate::core::{assets::MaterialMap, renderer::texture::Texture};
+use std::collections::HashMap;
+
+use crate::core::{
+    assets::MaterialMap,
+    material::{srgb8_to_linear, standard::params, AlphaMode, Material},
+    renderer::texture::Texture,
+};
 
 use super::{
     material_maps::{self, MapKind},
@@ -18,24 +24,46 @@ impl Model {
             .and_then(|m| Self::material_name(m))
     }
 
-    /// Texture set for a given material index, as collected by `init`.
-    pub fn material_textures(
-        &self,
-        idx: usize,
-    ) -> Option<&std::collections::HashMap<russimp_ng::material::TextureType, crate::core::renderer::texture::Texture>> {
-        self.textures.get(idx)
+    /// The material at a material index.
+    pub fn material(&self, idx: usize) -> Option<&Material> {
+        self.materials.get(idx)
     }
 
-    /// Replace the texture a material uses in one slot, e.g. with one the
-    /// user assigned to the asset.
+    pub fn material_mut(&mut self, idx: usize) -> Option<&mut Material> {
+        self.materials.get_mut(idx)
+    }
+
+    /// Draw the parts of material `idx` with `material` instead.
+    pub fn set_material(&mut self, idx: usize, material: Material) {
+        if let Some(slot) = self.materials.get_mut(idx) {
+            *slot = material;
+        }
+    }
+
+    pub fn materials(&self) -> &[Material] {
+        &self.materials
+    }
+
+    /// What the loader made of material `idx` of the file.
+    pub fn file_material(&self, idx: usize) -> Option<&Material> {
+        self.file_materials.get(idx)
+    }
+
+    /// Back to what the loader made of the file's materials.
+    pub fn reset_materials(&mut self) {
+        self.materials = self.file_materials.clone();
+    }
+
+    /// Replace the texture a material uses in one slot of Standard PBR,
+    /// e.g. with one the user assigned to the asset.
     pub fn set_material_texture(
         &mut self,
         material_index: usize,
         slot: TextureType,
         texture: Texture,
     ) {
-        if let Some(textures) = self.textures.get_mut(material_index) {
-            textures.insert(slot, texture);
+        if let Some(material) = self.materials.get_mut(material_index) {
+            set_standard_map(material, &slot, texture);
         }
     }
 
@@ -43,10 +71,9 @@ impl Model {
     /// For models made in code (see `generated`), whose materials have no
     /// maps of their own.
     pub fn set_material_color(&mut self, material_index: usize, color: [f32; 3]) {
-        let [r, g, b] = color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
-        let texture = Texture::new();
-        texture.load_material_map(1, 1, vec![r, g, b, 255], true);
-        self.set_material_texture(material_index, TextureType::Diffuse, texture);
+        if let Some(material) = self.materials.get_mut(material_index) {
+            set_standard_color(material, color);
+        }
     }
 
     /// Use the image file at `path` as one map of a material, e.g. one the
@@ -70,6 +97,102 @@ impl Model {
     pub fn material_count(&self) -> usize {
         self.model.materials.len()
     }
+
+    /// Standard PBR materials of the maps `init` found, one per material
+    /// of the file. glTF materials without any map get their constant
+    /// factors: without, such a material is drawn plain white, rough and
+    /// not metallic. Materials with maps (a textured tree) keep the maps
+    /// alone, so they look as before.
+    pub(super) fn materials_from_maps(&self, all_maps: Vec<HashMap<TextureType, Texture>>) -> Vec<Material> {
+        all_maps
+            .into_iter()
+            .enumerate()
+            .map(|(index, maps)| {
+                let factors = (maps.is_empty())
+                    .then(|| self.model.materials.get(index).and_then(gltf_factors))
+                    .flatten();
+                let mut material = material_from_maps(maps);
+                material.name = self.material_name_at(index).unwrap_or_default();
+                material.foliage = super::outline::looks_like_foliage(&material.name);
+                if let Some(factors) = factors {
+                    let [r, g, b, _] = factors.base_color;
+                    set_standard_color(&mut material, [r, g, b].map(linear_to_srgb));
+                    // As 8-bit maps read them.
+                    let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() / 255.0;
+                    material.set_float(params::ROUGHNESS, q(factors.roughness));
+                    material.set_float(params::METALLIC, q(factors.metallic));
+                }
+                material
+            })
+            .collect()
+    }
+}
+
+/// Standard PBR with the maps of a file's material. A colour map may cut
+/// out what its alpha says (foliage cards), as every model's did before
+/// materials.
+pub fn material_from_maps(mut maps: HashMap<TextureType, Texture>) -> Material {
+    let mut material = Material::standard();
+    // A material may tag its colour map oddly; any map that is not one of
+    // the data maps is taken for it.
+    let base = [TextureType::Diffuse, TextureType::BaseColor]
+        .iter()
+        .find_map(|t| maps.remove(t))
+        .or_else(|| {
+            let key = maps.keys().find(|t| !is_data_map(t)).cloned()?;
+            maps.remove(&key)
+        });
+    if let Some(base) = base {
+        set_standard_map(&mut material, &TextureType::Diffuse, base);
+    }
+    for (slot, texture) in maps {
+        set_standard_map(&mut material, &slot, texture);
+    }
+    material
+}
+
+/// The Standard PBR parameter a map of this assimp type fills.
+pub fn standard_map_param(slot: &TextureType) -> Option<&'static str> {
+    match slot {
+        TextureType::Diffuse | TextureType::BaseColor => Some(params::BASE_COLOR_MAP),
+        TextureType::Normals | TextureType::NormalCamera => Some(params::NORMAL_MAP),
+        TextureType::Roughness => Some(params::ROUGHNESS_MAP),
+        TextureType::Metalness => Some(params::METALLIC_MAP),
+        TextureType::AmbientOcclusion => Some(params::OCCLUSION_MAP),
+        _ => None,
+    }
+}
+
+fn set_standard_map(material: &mut Material, slot: &TextureType, texture: Texture) {
+    let Some(param) = standard_map_param(slot) else { return };
+    if param == params::BASE_COLOR_MAP && material.alpha == AlphaMode::Opaque {
+        material.alpha = AlphaMode::Cutout(0.5);
+    }
+    material.set_texture(param, Some(texture));
+}
+
+/// A plain sRGB colour instead of the colour map.
+fn set_standard_color(material: &mut Material, color: [f32; 3]) {
+    let [r, g, b] = color.map(srgb8_to_linear);
+    material.set_texture(params::BASE_COLOR_MAP, None);
+    material.set_number(params::BASE_COLOR, [r, g, b, 1.0]);
+    material.alpha = AlphaMode::Opaque;
+}
+
+fn is_data_map(texture_type: &TextureType) -> bool {
+    matches!(
+        texture_type,
+        TextureType::Normals
+            | TextureType::NormalCamera
+            | TextureType::Height
+            | TextureType::Displacement
+            | TextureType::Roughness
+            | TextureType::Metalness
+            | TextureType::AmbientOcclusion
+            | TextureType::Shininess
+            | TextureType::Specular
+            | TextureType::Opacity
+    )
 }
 
 /// A glTF material's constant factors (its PBR "metallic-roughness"
@@ -112,34 +235,6 @@ pub fn linear_to_srgb(c: f32) -> f32 {
         12.92 * c
     } else {
         1.055 * c.powf(1.0 / 2.4) - 0.055
-    }
-}
-
-impl Model {
-    /// Give the glTF materials without any map their constant factors, as
-    /// 1×1 maps: without, such a material is drawn plain white, rough and
-    /// not metallic. Materials with maps (a textured tree) are left as
-    /// they are, so they look as before.
-    pub(super) fn apply_gltf_factors(&mut self) {
-        for index in 0..self.model.materials.len() {
-            let Some(factors) = gltf_factors(&self.model.materials[index]) else {
-                continue;
-            };
-            if self.textures.get(index).is_none_or(|maps| !maps.is_empty()) {
-                continue;
-            }
-            let [r, g, b, _] = factors.base_color;
-            self.set_material_color(index, [r, g, b].map(linear_to_srgb));
-            for (slot, value) in [
-                (TextureType::Roughness, factors.roughness),
-                (TextureType::Metalness, factors.metallic),
-            ] {
-                let v = (value.clamp(0.0, 1.0) * 255.0).round() as u8;
-                let texture = Texture::new();
-                texture.load_material_map(1, 1, vec![v, v, v, 255], false);
-                self.set_material_texture(index, slot, texture);
-            }
-        }
     }
 }
 

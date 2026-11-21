@@ -10,7 +10,9 @@ use ferrite::core::{
 use ferrite_ui::ui::{element_handle::UIElementHandle, elements::popup::Popup, UIElement, UI};
 use glfw::{Glfw, WindowEvent};
 
-use super::{asset_editor::TextureSlot, send, Command, Shared};
+use ferrite::core::material::asset::TextureSetting;
+
+use super::{send, Command, Shared};
 
 pub const SCENE_DIR: &str = "scenes";
 
@@ -240,23 +242,15 @@ fn pick_asset_of(state: &Shared, choices: Vec<(String, AssetRef)>, then: impl Fn
     show(state, "Choose a model", open_flag, children);
 }
 
-/// Ask which texture asset a material of the edited asset should use in
-/// `slot`. The first choice goes back to the automatic texture.
-pub fn pick_asset_texture(state: &Shared, material: usize, slot: TextureSlot) {
-    let mut choices: Vec<(String, Option<AssetId>)> = vec![("automatic".to_string(), None)];
-    {
-        let database = assets::database();
-        let mut textures: Vec<_> = database
-            .iter()
-            .filter(|entry| matches!(entry.meta.kind, AssetKind::Texture(_)))
-            .collect();
-        textures.sort_by_key(|entry| entry.meta.name.to_lowercase());
-        choices.extend(
-            textures
-                .into_iter()
-                .map(|entry| (entry.meta.name.clone(), Some(entry.meta.id))),
-        );
-    }
+/// A list to choose one of `choices` from; `then` gets the chosen value.
+fn pick_from<T: Clone + 'static>(
+    state: &Shared,
+    title: &str,
+    heading: &str,
+    empty_note: Option<&str>,
+    choices: Vec<(String, T)>,
+    then: impl Fn(T) -> Command + 'static,
+) {
     let open_flag = DataSource::new(true);
     let cancel_open = open_flag.clone();
     let selected = DataSource::new(0u32);
@@ -266,35 +260,65 @@ pub fn pick_asset_texture(state: &Shared, material: usize, slot: TextureSlot) {
     let use_open = open_flag.clone();
     let use_selected = selected.clone();
     let mut children: Vec<Box<dyn UIElement>> = vec![
-        UI::label(&format!("Texture for {}:", slot.label()), 14.0),
+        UI::label(heading, 14.0),
         UI::list(labels, selected, Size::new(380.0, height)),
     ];
-    if choices.len() == 1 {
-        children.push(UI::label(
-            "No texture assets yet. Import images in the Assets panel.",
-            14.0,
-        ));
+    if let Some(note) = empty_note {
+        children.push(UI::label(note, 14.0));
     }
     children.push(button_row(vec![
         UI::button(
             "Use",
             Box::new(move |_| {
-                if let Some((_, texture)) = choices.get(use_selected.read() as usize) {
-                    send(
-                        &use_state,
-                        Command::SetAssetTexture {
-                            material,
-                            slot,
-                            texture: *texture,
-                        },
-                    );
+                if let Some((_, value)) = choices.get(use_selected.read() as usize) {
+                    send(&use_state, then(value.clone()));
                     use_open.write(false);
                 }
             }),
         ),
         UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
     ]));
-    show(state, "Choose a texture", open_flag, children);
+    show(state, title, open_flag, children);
+}
+
+/// Assets of a kind, by name.
+fn assets_of(kind: impl Fn(&AssetKind) -> bool) -> Vec<(String, AssetId)> {
+    let database = assets::database();
+    let mut found: Vec<(String, AssetId)> = database
+        .iter()
+        .filter(|entry| kind(&entry.meta.kind))
+        .map(|entry| (entry.meta.name.clone(), entry.meta.id))
+        .collect();
+    found.sort_by_key(|(name, _)| name.to_lowercase());
+    found
+}
+
+/// Ask which material asset a material slot of the edited model asset is
+/// drawn with. The first choice goes back to the file's own material.
+pub fn pick_model_material(state: &Shared, material: usize) {
+    let mut choices: Vec<(String, Option<AssetId>)> = vec![("from the file".to_string(), None)];
+    choices.extend(assets_of(|k| matches!(k, AssetKind::Material(_))).into_iter().map(|(n, id)| (n, Some(id))));
+    let empty = (choices.len() == 1).then_some("No material assets yet.");
+    pick_from(state, "Choose a material", "Material assets:", empty, choices, move |asset| {
+        Command::SetModelMaterial { material, asset }
+    });
+}
+
+/// Ask which texture a texture parameter of the material being edited
+/// uses: automatic (what the model loader finds), none, or a texture asset.
+pub fn pick_material_texture(state: &Shared, param: String) {
+    let mut choices: Vec<(String, TextureSetting)> = vec![
+        ("automatic (from the model)".to_string(), TextureSetting::Auto),
+        ("none".to_string(), TextureSetting::None),
+    ];
+    choices.extend(
+        assets_of(|k| matches!(k, AssetKind::Texture(_))).into_iter().map(|(n, id)| (n, TextureSetting::Asset(id))),
+    );
+    let empty = (choices.len() == 2).then_some("No texture assets yet. Import images in the Assets panel.");
+    let heading = format!("Texture for {param}:");
+    pick_from(state, "Choose a texture", &heading, empty, choices, move |texture| {
+        Command::SetMaterialTexture { param: param.clone(), texture }
+    });
 }
 
 /// A popup plus the flag that keeps it open (its close button and the

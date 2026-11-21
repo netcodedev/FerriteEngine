@@ -34,10 +34,12 @@ impl Model {
                     .filter(|f| f.0.len() == 3)
                     .flat_map(|f| [f.0[0], f.0[1], f.0[2]])
                     .collect();
+                let colors = vertex_colors(mesh);
                 SubmeshData {
                     positions,
                     normals,
                     uvs,
+                    colors,
                     indices,
                     material_index: mesh.material_index as usize,
                 }
@@ -243,10 +245,12 @@ impl Model {
                 .filter(|f| f.0.len() == 3)
                 .flat_map(|f| [f.0[0], f.0[1], f.0[2]])
                 .collect();
+            let colors = vertex_colors(mesh);
             out.push(SubmeshData {
                 positions,
                 normals,
                 uvs,
+                colors,
                 indices,
                 material_index: mesh.material_index as usize,
             });
@@ -318,4 +322,24 @@ mod tests {
         assert_eq!(at, cgmath::Vector3::new(0.0, 0.0, 0.0));
         assert!(model.node_part("Door").is_none());
     }
+}
+
+/// A mesh's first set of vertex colours, packed RGBA8 (as the shaders'
+/// `unpackUnorm4x8` reads them); white where it has none.
+pub(crate) fn vertex_colors(mesh: &russimp_ng::mesh::Mesh) -> Vec<u32> {
+    match mesh.colors.first().and_then(|c| c.as_ref()) {
+        Some(colors) if colors.len() == mesh.vertices.len() => {
+            colors.iter().map(|c| pack_color([c.r, c.g, c.b, c.a])).collect()
+        }
+        _ => vec![WHITE; mesh.vertices.len()],
+    }
+}
+
+/// White, packed as `vertex_colors` packs.
+pub const WHITE: u32 = 0xffff_ffff;
+
+/// RGBA (0..1) packed into 8 bits each, red lowest.
+pub fn pack_color(c: [f32; 4]) -> u32 {
+    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+    b(c[0]) | (b(c[1]) << 8) | (b(c[2]) << 16) | (b(c[3]) << 24)
 }

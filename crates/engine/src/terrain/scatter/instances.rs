@@ -10,11 +10,8 @@ use crate::core::{
     entity::{component::Component, Entity},
     gfx,
     physics::physics_engine::{collider_tag, PhysicsEngine},
-    renderer::{
-        depth_pass,
-        pbr::{self, Lighting},
-        shader::Shader,
-    },
+    material::{wind, Material, Pipeline},
+    renderer::{depth_pass, pbr::Lighting, shader::Shader},
     scene::Scene,
     view_frustum::{Culled, ViewFrustum},
 };
@@ -60,24 +57,6 @@ pub struct ScatterInstances {
     gpu: RefCell<Option<ScatterGpu>>,
 }
 
-thread_local! {
-    static DEPTH_SHADER: std::cell::OnceCell<std::rc::Rc<Shader>> = const { std::cell::OnceCell::new() };
-}
-
-/// The scattered models' depth-only program (see `depth_pass`): placed as
-/// `scatter_instanced_vertex.glsl` places them, cut out by the colour map.
-fn depth_shader() -> std::rc::Rc<Shader> {
-    DEPTH_SHADER.with(|cell| {
-        cell.get_or_init(|| {
-            std::rc::Rc::new(Shader::new(
-                include_str!("scatter_instanced_vertex.glsl"),
-                depth_pass::ALPHA_TEST_FRAGMENT,
-            ))
-        })
-        .clone()
-    })
-}
-
 /// What the lighting uniforms of a scatter program were last set for:
 /// the program, the pass (see `ScatterInstances::new_pass`), its view and
 /// how it draws. Every chunk's instances of every layer share a program,
@@ -94,7 +73,7 @@ pub(super) struct LitFor {
 
 thread_local! {
     static PASS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    static LIT_FOR: std::cell::Cell<Option<LitFor>> = const { std::cell::Cell::new(None) };
+    static LIT_FOR: RefCell<Vec<LitFor>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The pass counted by `ScatterInstances::new_pass`.
@@ -107,31 +86,29 @@ pub(super) fn current_pass() -> u64 {
 /// for the same already. Noted as set from here on.
 pub(super) fn lighting_needed(lit_for: Option<LitFor>) -> bool {
     LIT_FOR.with(|lit| {
-        let needed = lit_for.is_none() || lit.get() != lit_for;
-        if needed {
-            lit.set(lit_for);
+        let mut lit = lit.borrow_mut();
+        let Some(lit_for) = lit_for else {
+            // Set without a pass: the next pass sets it again.
+            lit.clear();
+            return true;
+        };
+        match lit.iter_mut().find(|l| l.program == lit_for.program) {
+            Some(l) if *l == lit_for => false,
+            Some(l) => {
+                *l = lit_for;
+                true
+            }
+            None => {
+                lit.push(lit_for);
+                true
+            }
         }
-        needed
     })
 }
 
-/// The world's wind for swaying models: direction (x, z, unit length) and
-/// strength. One for now; later the weather's.
-const WIND: ([f32; 2], f32) = ([0.894, 0.447], 1.0);
-
-/// The time the wind sways models by (seconds, as bits), set once a frame:
-/// every pass of a frame must place a swaying model at the very same spot,
-/// or the shading pass misses the depth prepass' blades (`LEQUAL`) and the
-/// ambient occlusion draws them as dark shapes.
-static WIND_CLOCK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
 /// Set the wind's time for this frame (the terrain does, once a frame).
 pub fn set_wind_clock(seconds: f32) {
-    WIND_CLOCK.store(seconds.to_bits(), std::sync::atomic::Ordering::Relaxed);
-}
-
-fn wind_clock() -> f32 {
-    f32::from_bits(WIND_CLOCK.load(std::sync::atomic::Ordering::Relaxed))
+    wind::set_clock(seconds);
 }
 
 /// Edge of the squares instances are culled and tiered by, in metres.
@@ -561,39 +538,45 @@ impl ScatterInstances {
         let gpu_borrow = self.gpu.borrow();
         let gpu = gpu_borrow.as_ref().expect("gpu just initialized");
 
-        {
-            let r = &*self.spec.model;
-            // Depth alone in depth passes: the cut-out, no light.
-            let depth_only = depth_pass::is_active();
-            let shader = if depth_only { depth_shader() } else { r.shader.clone() };
-            let shader = &*shader;
-            // LEQUAL: the scene's depth may already be drawn.
-            let desc = gfx::PipelineDesc {
-                vertex_layouts: crate::core::gfx::Layouts::of(&[vertex_layout(), instance_layout()]),
-                depth: gfx::DepthState::LEQUAL,
-                ..Default::default()
-            };
+        let r = &*self.spec.model;
+        // Depth alone in depth passes: the cut-out and the wind, no light.
+        let depth_only = depth_pass::is_active();
+        let pipeline = if depth_only { Pipeline::InstancedDepth } else { Pipeline::Instanced };
+        let shadow_pass = !crate::core::renderer::hdr::draws_to_view()
+            && !crate::core::renderer::ssao::in_depth_pass();
+        // LEQUAL: the scene's depth may already be drawn.
+        let desc = gfx::PipelineDesc {
+            vertex_layouts: crate::core::gfx::Layouts::of(&[vertex_layout(), instance_layout()]),
+            depth: gfx::DepthState::LEQUAL,
+            ..Default::default()
+        };
+        // Detail instances shrink away towards the edge of their range.
+        let range = match self.spec.range {
+            ScatterRange::Detail { distance } => distance,
+            ScatterRange::Landscape => 0.0,
+        };
+        let eye = lighting.camera_position;
+        // Set up the program a submesh's material needs, unless it is the
+        // one set up last (the materials of a model mostly share one).
+        let mut current: Option<u32> = None;
+        let mut use_program = |shader: &Shader| {
+            if current == Some(shader.id()) {
+                return;
+            }
+            current = Some(shader.id());
             gfx::set_pipeline(shader.pipeline(&desc));
             shader.set_uniform_mat4("viewProjection", view_projection);
             shader.set_uniform_mat4("parentTransform", parent_transform);
-            // Detail instances shrink away towards the edge of their range.
-            let range = match self.spec.range {
-                ScatterRange::Detail { distance } => distance,
-                ScatterRange::Landscape => 0.0,
-            };
-            let eye = lighting.camera_position;
             shader.set_uniform_4f("detailFade", eye.x, eye.z, range, self.spec.fade);
             shader.set_uniform_1i(
                 "fadeThin",
                 matches!(self.spec.fade_mode, super::graph::FadeMode::Thin) as i32,
             );
-            let (direction, strength) = WIND;
-            shader.set_uniform_4f("wind", direction[0], direction[1], strength, wind_clock());
-            shader.set_uniform_1f("windAmount", self.spec.wind);
-            if !depth_only {
+            wind::apply(shader, self.spec.wind);
+            if depth_only {
+                shader.set_uniform_3f("cameraPosition", eye.x, eye.y, eye.z);
+            } else {
                 shader.set_uniform_1f("normalsUp", self.spec.normals_up);
-            }
-            if !depth_only {
                 let lit_for = in_pass.then(|| LitFor {
                     program: shader.id(),
                     pass: current_pass(),
@@ -606,78 +589,86 @@ impl ScatterInstances {
                     lighting.apply(shader);
                 }
             }
+        };
 
-            {
-                let planes = matches!(lod, LodChoice::PerCell { .. })
-                    .then(|| ViewFrustum::planes(view_projection));
-                // (tier, first instance, instances) of what is drawn.
-                let mut runs: Vec<(usize, u32, u32)> = Vec::new();
-                for (variant_idx, variant_gpu_opt) in gpu.variants.iter().enumerate() {
-                    let Some(variant_gpu) = variant_gpu_opt else { continue };
-                    let kind = &r.variants[variant_idx];
-                    let tiers = kind.lods.len();
-                    runs.clear();
-                    let cells = self.cells_by_variant.get(variant_idx);
-                    match (lod, &planes, cells) {
-                        (LodChoice::PerCell { eye, shadow }, Some(planes), Some(cells))
-                            if !cells.is_empty() =>
-                        {
-                            for cell in cells {
-                                let visible = ViewFrustum::is_sphere_visible(planes, cell.center, cell.radius);
-                                ViewFrustum::count(Culled::ScatterCell, visible);
-                                if !visible {
-                                    continue;
-                                }
-                                let distance = (cell.center - eye).magnitude();
-                                let tier = if shadow {
-                                    shadow_lod_index(distance, tiers)
-                                } else {
-                                    pick_lod_index(distance, tiers)
-                                };
-                                // Neighbouring cells of a tier: one draw.
-                                match runs.last_mut() {
-                                    Some((last, start, count))
-                                        if *last == tier && *start + *count == cell.start =>
-                                    {
-                                        *count += cell.count;
-                                    }
-                                    _ => runs.push((tier, cell.start, cell.count)),
-                                }
-                            }
-                        }
-                        _ => {
-                            let tier = match lod {
-                                LodChoice::Distance(distance) => pick_lod_index(distance, tiers),
-                                LodChoice::Fixed(tier) => tier.min(tiers.saturating_sub(1)),
-                                LodChoice::Shadow(distance) => shadow_lod_index(distance, tiers),
-                                LodChoice::PerCell { eye, shadow } => {
-                                    let distance = (self.center - eye).magnitude();
-                                    if shadow {
-                                        shadow_lod_index(distance, tiers)
-                                    } else {
-                                        pick_lod_index(distance, tiers)
-                                    }
-                                }
-                            };
-                            runs.push((tier, 0, variant_gpu.instance_count));
-                        }
-                    }
-                    for lod_idx in 0..tiers {
-                        if !runs.iter().any(|run| run.0 == lod_idx) {
+        let planes = matches!(lod, LodChoice::PerCell { .. })
+            .then(|| ViewFrustum::planes(view_projection));
+        // (tier, first instance, instances) of what is drawn.
+        let mut runs: Vec<(usize, u32, u32)> = Vec::new();
+        for (variant_idx, variant_gpu_opt) in gpu.variants.iter().enumerate() {
+            let Some(variant_gpu) = variant_gpu_opt else { continue };
+            let kind = &r.variants[variant_idx];
+            let tiers = kind.lods.len();
+            runs.clear();
+            let cells = self.cells_by_variant.get(variant_idx);
+            match (lod, &planes, cells) {
+                (LodChoice::PerCell { eye, shadow }, Some(planes), Some(cells))
+                    if !cells.is_empty() =>
+                {
+                    for cell in cells {
+                        let visible = ViewFrustum::is_sphere_visible(planes, cell.center, cell.radius);
+                        ViewFrustum::count(Culled::ScatterCell, visible);
+                        if !visible {
                             continue;
                         }
-                        let lod = &kind.lods[lod_idx];
-                        for sub in &lod.submeshes {
-                            pbr::bind_material(
-                                shader,
-                                kind.model.material_textures(sub.material_index),
-                            );
-                            sub.bind();
-                            gfx::set_vertex_buffer(1, &variant_gpu.instances, 0, instance_layout().stride);
-                            for &(_, start, count) in runs.iter().filter(|run| run.0 == lod_idx) {
-                                gfx::draw_indexed_instanced(0, sub.index_count, 0, start, count);
+                        let distance = (cell.center - eye).magnitude();
+                        let tier = if shadow {
+                            shadow_lod_index(distance, tiers)
+                        } else {
+                            pick_lod_index(distance, tiers)
+                        };
+                        // Neighbouring cells of a tier: one draw.
+                        match runs.last_mut() {
+                            Some((last, start, count))
+                                if *last == tier && *start + *count == cell.start =>
+                            {
+                                *count += cell.count;
+                            }
+                            _ => runs.push((tier, cell.start, cell.count)),
+                        }
+                    }
+                }
+                _ => {
+                    let tier = match lod {
+                        LodChoice::Distance(distance) => pick_lod_index(distance, tiers),
+                        LodChoice::Fixed(tier) => tier.min(tiers.saturating_sub(1)),
+                        LodChoice::Shadow(distance) => shadow_lod_index(distance, tiers),
+                        LodChoice::PerCell { eye, shadow } => {
+                            let distance = (self.center - eye).magnitude();
+                            if shadow {
+                                shadow_lod_index(distance, tiers)
+                            } else {
+                                pick_lod_index(distance, tiers)
                             }
                         }
+                    };
+                    runs.push((tier, 0, variant_gpu.instance_count));
+                }
+            }
+            for lod_idx in 0..tiers {
+                if !runs.iter().any(|run| run.0 == lod_idx) {
+                    continue;
+                }
+                let lod = &kind.lods[lod_idx];
+                for sub in &lod.submeshes {
+                    let fallback;
+                    let material = match kind.model.material(sub.material_index) {
+                        Some(material) => material,
+                        None => {
+                            fallback = Material::standard();
+                            &fallback
+                        }
+                    };
+                    if depth_only && shadow_pass && !material.shadows {
+                        continue;
+                    }
+                    let shader = material.program(pipeline);
+                    use_program(&shader);
+                    material.bind(&shader);
+                    sub.bind();
+                    gfx::set_vertex_buffer(1, &variant_gpu.instances, 0, instance_layout().stride);
+                    for &(_, start, count) in runs.iter().filter(|run| run.0 == lod_idx) {
+                        gfx::draw_indexed_instanced(0, sub.index_count, 0, start, count);
                     }
                 }
             }

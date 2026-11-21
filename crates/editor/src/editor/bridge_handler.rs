@@ -151,6 +151,17 @@ fn respond(request: BridgeRequest, cx: Context) -> BridgeResponse {
         BridgeRequest::Focus { id } => focus(scene, state, id),
         BridgeRequest::OpenAsset { asset } => open_asset(state, &asset),
         BridgeRequest::ScatterGraphRead { asset } => scatter_graph_read(state, &asset),
+        BridgeRequest::MaterialRead { asset } => super::material::bridge::read(state, &asset),
+        BridgeRequest::MaterialEdit { asset, set, ops, save } => super::material::bridge::edit(state, &asset, set, ops, save),
+        BridgeRequest::MaterialCreate { name, graph } => {
+            // One lock at a time: the database's guard ends with the statement.
+            let made = ferrite::core::material::asset::create(&mut ferrite::core::assets::database(), name.as_deref(), graph);
+            made.map(|id| {
+                let name = ferrite::core::assets::database().get(id).map(|e| e.meta.name.clone()).unwrap_or_default();
+                json!({"created": id.to_string(), "name": name})
+            })
+        }
+        BridgeRequest::MaterialPreview { asset, shape, wind } => super::material::bridge::preview(state, &asset, shape, wind),
         BridgeRequest::ScatterGraphEdit { asset, ops } => scatter_graph_edit(state, &asset, ops),
         BridgeRequest::AgentControl { active, note } => {
             let now = std::time::Instant::now();

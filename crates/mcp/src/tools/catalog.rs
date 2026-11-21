@@ -306,6 +306,52 @@ pub fn catalog() -> Vec<Tool> {
             &["asset", "ops"],
         ),
         tool(
+            "editor_material_read",
+            "A material asset (settings and parameters with their sections and types) or a material \
+             graph asset (parameters, nodes with their pins and settings, wires, problems, the node \
+             kinds that can be added), by id, name or path. The editor's copy if it is open there.",
+            json!({"asset": {"type": "string"}}),
+            &["asset"],
+        ),
+        tool(
+            "editor_material_edit",
+            "Change a material or a material graph as one undo step in the editor (opened there if it \
+             is not; save: true writes it). A material: set {name: value} with the names \
+             editor_material_read lists: graph, alpha (opaque/cutout), cutoff, two_sided, foliage, \
+             shadows, and the graph's parameters (numbers; vectors as \"x y z\"; colours as sRGB \
+             \"#rrggbb\"; textures as auto, none or a texture asset's name; a number following a \
+             graphics level as \"level vegetation 0 0.1 0.2 0.3\"). A graph: ops, each one of add \
+             {kind, position?} (kinds as listed; \"Param: <name>\" for a parameter), remove {node}, \
+             move {node, position}, connect {from, from_pin?, to, to_pin?} (pins by number or label), \
+             disconnect {to, to_pin?}, set {node, name, value}, add_param {name, type, default?, \
+             group?} (types float, vec2, vec3, color, bool, color_texture, data_texture), \
+             remove_param {name}, set_param {name, new_name?, label?, type?, default?, group?}. Returns what \
+             editor_material_read returns, and the ids of added nodes.",
+            json!({
+                "asset": {"type": "string"},
+                "set": {"type": "object"},
+                "ops": {"type": "array", "items": {"type": "object"}},
+                "save": {"type": "boolean"},
+            }),
+            &["asset"],
+        ),
+        tool(
+            "editor_material_create",
+            "Make a new material asset (Standard PBR, defaults) or, with graph: true, a material graph \
+             asset (a copy of Standard PBR to change) in assets/materials/, named name (default: the \
+             first free \"New material N\"). Returns its id and name.",
+            json!({"name": {"type": "string"}, "graph": {"type": "boolean"}}),
+            &[],
+        ),
+        tool(
+            "editor_material_preview",
+            "Open a material or material graph in the material workspace and show it on a shape \
+             (sphere, cube, plane, cylinder), with or without wind. Take viewport_screenshot with \
+             source: window afterwards to see it.",
+            json!({"asset": {"type": "string"}, "shape": {"type": "string"}, "wind": {"type": "boolean"}}),
+            &["asset"],
+        ),
+        tool(
             "editor_set_view",
             "Move or turn the editor camera (edit mode); what is left out stays. Yaw 0 looks \
              along +x, 90 along +z; pitch below 0 looks down.",

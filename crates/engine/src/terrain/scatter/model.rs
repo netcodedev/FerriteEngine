@@ -2,20 +2,16 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use rapier3d::prelude::{SharedShape, TriMeshFlags, Vector};
 
 use crate::core::{
-    assets::{self, AssetDatabase, AssetKind, AssetRef, MaterialMap, ModelSettings},
+    assets::{self, AssetKind, AssetRef, ModelSettings},
     gfx,
     model::{outline, Model, ModelBuilder},
-    renderer::{
-        pbr::{self},
-        shader::Shader,
-    },
 };
 
 use super::*;
@@ -30,14 +26,12 @@ thread_local! {
 /// the next time it is asked for.
 #[derive(Default)]
 struct ModelCache {
-    shader: Option<Rc<Shader>>,
     models: HashMap<String, Rc<ScatterModel>>,
 }
 
 /// One loaded model file: its variants, ready to be instanced. Shared by the
 /// layer that asked for it and every chunk's instances of it.
 pub struct ScatterModel {
-    pub(super) shader: Rc<Shader>,
     pub(super) variants: Vec<ModelVariant>,
     /// The variants pictured for far away, once asked for.
     impostors: std::cell::OnceCell<Vec<super::impostor::Impostor>>,
@@ -63,11 +57,8 @@ struct LoadOptions {
     scale: f32,
     /// Only the variant of this name; all of them without.
     variant: Option<String>,
-    /// Per material: maps replaced by these image files.
-    maps: Vec<Vec<(MaterialMap, PathBuf)>>,
-    /// Per material: leave it out of the collision shape. Materials beyond
-    /// the end are judged by their name.
-    foliage: Vec<bool>,
+    /// The asset's material slots (material assets), in the file's order.
+    slots: Vec<assets::MaterialSettings>,
 }
 
 impl Default for LoadOptions {
@@ -75,42 +66,18 @@ impl Default for LoadOptions {
         Self {
             scale: 1.0,
             variant: None,
-            maps: Vec::new(),
-            foliage: Vec::new(),
+            slots: Vec::new(),
         }
     }
 }
 
 impl LoadOptions {
-    /// The options a model asset's settings ask for. Texture assets that do
-    /// not exist are skipped with a warning.
-    fn for_settings(
-        settings: &ModelSettings,
-        variant: Option<String>,
-        database: &AssetDatabase,
-    ) -> Self {
-        let texture = |id: &Option<assets::AssetId>| {
-            let id = (*id)?;
-            let found = database.get(id).map(|texture| texture.source_path());
-            if found.is_none() {
-                log::warn!("terrain scatter: texture asset {id} does not exist");
-            }
-            found
-        };
+    /// The options a model asset's settings ask for.
+    fn for_settings(settings: &ModelSettings, variant: Option<String>) -> Self {
         LoadOptions {
             scale: settings.scale,
             variant,
-            maps: settings
-                .materials
-                .iter()
-                .map(|m| {
-                    MaterialMap::ALL
-                        .into_iter()
-                        .filter_map(|map| texture(&m.map(map)).map(|file| (map, file)))
-                        .collect()
-                })
-                .collect(),
-            foliage: settings.materials.iter().map(|m| m.foliage).collect(),
+            slots: settings.materials.clone(),
         }
     }
 }
@@ -140,7 +107,7 @@ impl ScatterModel {
             let AssetKind::Model(settings) = &entry.meta.kind else {
                 return Err(format!("'{}' is not a model", entry.meta.name));
             };
-            let options = LoadOptions::for_settings(settings, asset.part.clone(), &database);
+            let options = LoadOptions::for_settings(settings, asset.part.clone());
             (entry.source_path(), options, entry.revision)
         };
         let part = asset.part.as_deref().unwrap_or("");
@@ -165,10 +132,7 @@ impl ScatterModel {
         settings: &ModelSettings,
         variant: Option<&str>,
     ) -> Result<Rc<ScatterModel>, String> {
-        let options = {
-            let database = assets::database();
-            LoadOptions::for_settings(settings, variant.map(str::to_string), &database)
-        };
+        let options = LoadOptions::for_settings(settings, variant.map(str::to_string));
         Self::build(&source.to_string_lossy().replace('\\', "/"), &options)
     }
 
@@ -187,20 +151,7 @@ impl ScatterModel {
 
     fn build(full_path: &str, options: &LoadOptions) -> Result<Rc<ScatterModel>, String> {
         let variants = load_variants(full_path, options).map_err(|e| e.to_string())?;
-        let shader = MODEL_CACHE.with(|cache| {
-            cache
-                .borrow_mut()
-                .shader
-                .get_or_insert_with(|| {
-                    Rc::new(Shader::new(
-                        include_str!("scatter_instanced_vertex.glsl"),
-                        &pbr::fragment_source(include_str!("scatter_instanced_fragment.glsl")),
-                    ))
-                })
-                .clone()
-        });
         Ok(Rc::new(ScatterModel {
-            shader,
             variants,
             impostors: std::cell::OnceCell::new(),
         }))
@@ -329,7 +280,7 @@ pub fn release_gl_resources() {
     let _ = MODEL_CACHE.try_with(|cache| {
         let mut cache = cache.borrow_mut();
         cache.models.clear();
-        cache.shader = None;
+        crate::core::material::programs::release();
     });
 }
 
@@ -341,14 +292,8 @@ fn load_variants(
         .with_scale(MODEL_SCALE * options.scale)
         .build();
     model.init();
-    // Textures assigned to the asset replace what the file brought along.
-    for (material, maps) in options.maps.iter().enumerate() {
-        for (map, file) in maps {
-            if !model.set_material_map_file(material, *map, file) {
-                log::warn!("terrain scatter: could not load texture {}", file.display());
-            }
-        }
-    }
+    // The asset's materials replace what the loader made of the file's.
+    crate::core::material::asset::apply_to_model(&mut model, &options.slots);
     let mut groups = model.extract_tree_groups();
     if let Some(wanted) = &options.variant {
         groups.retain(|group| group.name == *wanted);
@@ -371,13 +316,14 @@ fn load_variants(
         for (_, submeshes) in &group.lods {
             let mut submesh_gpu = Vec::with_capacity(submeshes.len());
             for sd in submeshes {
-                let mut vertex_data: Vec<f32> = Vec::with_capacity(sd.positions.len() * 8);
+                let mut vertex_data: Vec<f32> = Vec::with_capacity(sd.positions.len() * 9);
                 for i in 0..sd.positions.len() {
                     let p = sd.positions[i];
                     let n = sd.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
                     let uv = sd.uvs.get(i).copied().unwrap_or([0.0, 0.0]);
+                    let color = sd.colors.get(i).copied().unwrap_or(u32::MAX);
                     vertex_data.extend_from_slice(&[
-                        p[0], p[1], p[2], n[0], n[1], n[2], uv[0], uv[1],
+                        p[0], p[1], p[2], n[0], n[1], n[2], uv[0], uv[1], f32::from_bits(color),
                     ]);
                 }
                 // Nothing is made where nothing draws (headless).
@@ -413,7 +359,7 @@ fn load_variants(
             })
             .unwrap_or(0);
         let collider_shape =
-            build_collider(&shared_model, &group.lods[collider_idx].1, &options.foliage)
+            build_collider(&shared_model, &group.lods[collider_idx].1)
             .ok_or_else(|| format!("'{}' failed to build collider trimesh", group.name))?;
 
         let mut bounds = ([f32::MAX; 3], [f32::MIN; 3]);
@@ -443,7 +389,6 @@ fn load_variants(
 fn build_collider(
     model: &Model,
     submeshes: &[crate::core::model::SubmeshData],
-    foliage: &[bool],
 ) -> Option<SharedShape> {
     if submeshes.is_empty() {
         return None;
@@ -452,7 +397,7 @@ fn build_collider(
     let mut indices: Vec<[u32; 3]> = Vec::new();
     let mut offset: u32 = 0;
     for sd in submeshes {
-        if is_foliage_material(model, sd.material_index, foliage) {
+        if is_foliage_material(model, sd.material_index) {
             continue;
         }
         for p in &sd.positions {
@@ -484,11 +429,11 @@ fn build_collider(
     SharedShape::trimesh_with_flags(verts, indices, TriMeshFlags::FIX_INTERNAL_EDGES).ok()
 }
 
-/// `foliage` holds the asset's per-material flags; a material it does not
-/// cover (a raw model file has no flags at all) is judged by its name.
-fn is_foliage_material(model: &Model, material_index: usize, foliage: &[bool]) -> bool {
-    match foliage.get(material_index) {
-        Some(flag) => *flag,
+/// Whether a material is foliage: its material says so (one from the
+/// file is judged by its name, see `Model::init`).
+fn is_foliage_material(model: &Model, material_index: usize) -> bool {
+    match model.material(material_index) {
+        Some(material) => material.foliage,
         None => model
             .material_name_at(material_index)
             .is_some_and(|name| outline::looks_like_foliage(&name)),

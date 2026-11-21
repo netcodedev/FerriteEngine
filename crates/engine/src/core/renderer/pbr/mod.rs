@@ -31,7 +31,7 @@ pub const LIGHTING_GLSL: &str = concat!(
     include_str!("../weather/weather_maps.glsl"),
     include_str!("../weather/weather.glsl")
 );
-const MATERIAL_GLSL: &str = include_str!("material.glsl");
+pub const MATERIAL_GLSL: &str = include_str!("material.glsl");
 
 /// Texture unit the scene binds the sun's shadow map to.
 const SHADOW_MAP_UNIT: i32 = 15;
