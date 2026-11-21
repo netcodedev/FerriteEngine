@@ -44,19 +44,20 @@ fn grass() -> NodeKind {
     NodeKind::SpawnMesh(SpawnMesh {
         asset: None,
         model: "grass/grass.glb".into(),
-        range: ScatterRange::Detail { distance: 60.0 },
+        range: SpawnRange::Detail { distance: 60.0.into() },
         collision: false,
-        shadows: false,
-        wind: 1.0,
+        shadows: false.into(),
+        wind: 1.0.into(),
         tint: 0.0,
         normals_up: 0.0,
-        fade: 0.2,
+        fade: 0.2.into(),
         fade_mode: FadeMode::Shrink,
+        density: 1.0.into(),
     })
 }
 
 fn surface(spacing: f32) -> NodeKind {
-    NodeKind::SurfacePoints { spacing, jitter: 1.0, seed: 11, world_seed: false }
+    NodeKind::SurfacePoints { spacing: spacing.into(), jitter: 1.0, seed: 11, world_seed: false }
 }
 
 /// The placements of the graph's first output.
@@ -196,7 +197,7 @@ fn the_height_filter_keeps_what_it_says() {
 fn grass_around_rocks() -> (ScatterGraph, NodeId) {
     let mut graph = ScatterGraph::default();
     let points = graph.add(surface(0.8));
-    let rocks = graph.add(NodeKind::RandomPoints { per_hectare: 3000.0, seed: 5, world_seed: false });
+    let rocks = graph.add(NodeKind::RandomPoints { per_hectare: 3000.0.into(), seed: 5, world_seed: false });
     let away = graph.add(NodeKind::KeepAwayFrom { radius: 2.0 });
     let out = graph.add(grass());
     graph.connect(points, 0, away, 0);
@@ -212,7 +213,7 @@ fn keep_away_respects_the_radius_across_the_edge() {
     let blades = placed(&graph, &Plane::flat(), rect);
     assert!(!blades.is_empty());
     // The rocks, also those just past the edge.
-    let rocks_only = ScatterGraph::chain([NodeKind::RandomPoints { per_hectare: 3000.0, seed: 5, world_seed: false }, grass()]);
+    let rocks_only = ScatterGraph::chain([NodeKind::RandomPoints { per_hectare: 3000.0.into(), seed: 5, world_seed: false }, grass()]);
     let rocks = placed(&rocks_only, &Plane::flat(), Rect::new(-3.0, -3.0, 19.0, 19.0));
     assert!(rocks.iter().any(|r| !rect.contains(r.position[0], r.position[2])));
     for g in &blades {
@@ -229,7 +230,7 @@ fn cutting_the_ground_into_cells_changes_nothing() {
     let (around_rocks, _) = grass_around_rocks();
     let graphs = [
         ScatterGraph::chain([surface(0.6), NodeKind::Noise { wavelength: 8.0, threshold: 0.5, softness: 0.3, seed: 1, world_seed: false }, NodeKind::DensityCut { multiplier: 1.0 }, grass()]),
-        ScatterGraph::chain([NodeKind::RandomPoints { per_hectare: 900.0, seed: 2, world_seed: false }, grass()]),
+        ScatterGraph::chain([NodeKind::RandomPoints { per_hectare: 900.0.into(), seed: 2, world_seed: false }, grass()]),
         around_rocks,
     ];
     let ground = Plane::tilted(0.3);
@@ -508,7 +509,7 @@ fn every_kind_explains_itself_and_names_only_settings_it_has() {
         // range: detail ones show only with a detail range).
         let mut names: Vec<String> = kind.properties().iter().map(|p| p.name.to_string()).collect();
         if let NodeKind::SpawnMesh(spawn) = &kind {
-            let detail = NodeKind::SpawnMesh(SpawnMesh { range: ScatterRange::Detail { distance: 60.0 }, ..spawn.clone() });
+            let detail = NodeKind::SpawnMesh(SpawnMesh { range: SpawnRange::Detail { distance: 60.0.into() }, ..spawn.clone() });
             names.extend(detail.properties().iter().map(|p| p.name.to_string()));
         }
         for quoted in text.split('`').skip(1).step_by(2) {
@@ -596,11 +597,11 @@ fn a_traced_run_counts_nodes_that_lead_to_no_output_yet() {
 
 #[test]
 fn nodes_taking_the_world_seed_change_with_the_world_and_keep_apart() {
-    let seeded = |n: u64| NodeKind::SurfacePoints { spacing: 1.0, jitter: 1.0, seed: n, world_seed: true };
+    let seeded = |n: u64| NodeKind::SurfacePoints { spacing: 1.0.into(), jitter: 1.0, seed: n, world_seed: true };
     let mut graph = ScatterGraph::default();
     let a = graph.add(seeded(1));
     let b = graph.add(seeded(2));
-    let fixed = graph.add(NodeKind::SurfacePoints { spacing: 1.0, jitter: 1.0, seed: 3, world_seed: false });
+    let fixed = graph.add(NodeKind::SurfacePoints { spacing: 1.0.into(), jitter: 1.0, seed: 3, world_seed: false });
     let seed_of = |g: &ScatterGraph, id: NodeId| match g.node(id).unwrap().kind {
         NodeKind::SurfacePoints { seed, world_seed, .. } => (seed, world_seed),
         _ => unreachable!(),
@@ -615,7 +616,7 @@ fn nodes_taking_the_world_seed_change_with_the_world_and_keep_apart() {
     assert_eq!(one, graph.with_world_seed(10));
     // And so the points.
     let rect = Rect::new(0.0, 0.0, 8.0, 8.0);
-    let chain = |seed: bool| ScatterGraph::chain([NodeKind::SurfacePoints { spacing: 1.0, jitter: 1.0, seed: 1, world_seed: seed }, grass()]);
+    let chain = |seed: bool| ScatterGraph::chain([NodeKind::SurfacePoints { spacing: 1.0.into(), jitter: 1.0, seed: 1, world_seed: seed }, grass()]);
     assert_ne!(
         spots(&placed(&chain(true).with_world_seed(10), &Plane::flat(), rect)),
         spots(&placed(&chain(true).with_world_seed(11), &Plane::flat(), rect))
@@ -720,10 +721,167 @@ fn outputs_from_before_fade_settings_fade_as_they_did() {
     let old = "(nodes: [(id: 0, kind: SpawnMesh((asset: None, range: Detail(distance: 60.0), collision: false, shadows: false, wind: 1.0)))], wires: [])";
     let graph = ScatterGraph::from_ron(old).unwrap();
     let (_, spawn) = graph.outputs().next().unwrap();
-    assert_eq!((spawn.fade, spawn.fade_mode), (0.2, FadeMode::Shrink));
+    assert_eq!((spawn.fade.clone(), spawn.fade_mode), (0.2.into(), FadeMode::Shrink));
     // Detail outputs show both; landscape ones neither.
     let names = |kind: &NodeKind| kind.properties().into_iter().map(|p| p.name.to_string()).collect::<Vec<_>>();
     assert!(names(&grass()).contains(&"fade mode".to_string()));
-    let landscape = NodeKind::SpawnMesh(SpawnMesh { range: ScatterRange::Landscape, ..match grass() { NodeKind::SpawnMesh(s) => s, _ => unreachable!() } });
+    let landscape = NodeKind::SpawnMesh(SpawnMesh { range: SpawnRange::Landscape, ..match grass() { NodeKind::SpawnMesh(s) => s, _ => unreachable!() } });
     assert!(!names(&landscape).contains(&"fade".to_string()));
+}
+
+// ---------------------------------------------------------------------
+// Graphics settings (docs/graphics-settings.md, "Scatter graphs").
+
+use crate::core::graphics::{Graphics, Level, PerLevel, SettingValue};
+
+/// Settings with every level setting at `level`.
+fn settings_at(level: Level) -> std::sync::Arc<crate::core::graphics::Resolved> {
+    let mut graphics = Graphics::default();
+    graphics.set_preset(level);
+    graphics.resolved()
+}
+
+fn spawn_of(graph: &ScatterGraph) -> SpawnMesh {
+    graph.outputs().next().unwrap().1.clone()
+}
+
+fn by_level(setting: &str, low: f32, medium: f32, high: f32, ultra: f32) -> Param<f32> {
+    Param::ByLevel { setting: setting.into(), values: PerLevel::new(low, medium, high, ultra) }
+}
+
+#[test]
+fn a_bound_detail_distance_is_what_its_author_gave_for_the_level() {
+    let mut spawn = match grass() {
+        NodeKind::SpawnMesh(spawn) => spawn,
+        _ => unreachable!(),
+    };
+    spawn.range = SpawnRange::Detail { distance: by_level("vegetation", 30.0, 45.0, 60.0, 90.0) };
+    let graph = ScatterGraph::chain([surface(1.0), NodeKind::SpawnMesh(spawn)]);
+    let distance = |level| spawn_of(&graph.with_settings(&settings_at(level))).range.resolved();
+    assert_eq!(distance(Level::Low), ScatterRange::Detail { distance: 30.0 });
+    assert_eq!(distance(Level::Ultra), ScatterRange::Detail { distance: 90.0 });
+    // Only the vegetation level matters.
+    let mut graphics = Graphics::default();
+    graphics.set("shadows", SettingValue::Level(Level::Low)).unwrap();
+    assert_eq!(spawn_of(&graph.with_settings(&graphics.resolved())).range.resolved(), ScatterRange::Detail { distance: 60.0 });
+    assert_eq!(graph.settings_used(), vec!["vegetation".to_string()]);
+}
+
+#[test]
+fn a_fixed_detail_distance_follows_the_vegetation_knob() {
+    let graph = ScatterGraph::chain([surface(1.0), grass()]);
+    let at = |level| spawn_of(&graph.with_settings(&settings_at(level)));
+    assert_eq!(at(Level::High).range.resolved(), ScatterRange::Detail { distance: 60.0 });
+    assert_eq!(at(Level::Low).range.resolved(), ScatterRange::Detail { distance: 30.0 });
+    assert_eq!(at(Level::Low).density, Param::Fixed(0.5));
+    // At High the graph plants as it did before settings existed.
+    let rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let high = graph.with_settings(&settings_at(Level::High));
+    assert_eq!(spots(&placed(&high, &Plane::flat(), rect)), spots(&placed(&graph, &Plane::flat(), rect)));
+}
+
+/// R6: graphics settings never change landscape outputs.
+#[test]
+fn landscape_outputs_ignore_graphics_settings() {
+    let landscape = NodeKind::SpawnMesh(SpawnMesh {
+        range: SpawnRange::Landscape,
+        wind: by_level("vegetation", 0.0, 0.1, 0.2, 0.3),
+        ..match grass() {
+            NodeKind::SpawnMesh(s) => s,
+            _ => unreachable!(),
+        }
+    });
+    let graph = ScatterGraph::chain([
+        NodeKind::RandomPoints { per_hectare: by_level("vegetation", 10.0, 50.0, 400.0, 800.0), seed: 3, world_seed: false },
+        landscape,
+    ]);
+    let rect = Rect::column(0, 0);
+    let low = graph.with_settings(&settings_at(Level::Low));
+    let ultra = graph.with_settings(&settings_at(Level::Ultra));
+    assert_eq!(low, ultra);
+    assert_eq!(spots(&placed(&low, &Plane::flat(), rect)), spots(&placed(&ultra, &Plane::flat(), rect)));
+    // At High's values.
+    assert_eq!(spawn_of(&low).wind, Param::Fixed(0.2));
+    // And the node editor is told so.
+    let ignored = graph.bindings_ignored();
+    assert_eq!(ignored.len(), 2);
+}
+
+/// A node feeding a landscape and a detail output is fixed at High for
+/// both.
+#[test]
+fn a_node_feeding_both_ranges_stays_at_high() {
+    let mut graph = ScatterGraph::default();
+    let points = graph.add(NodeKind::RandomPoints { per_hectare: by_level("vegetation", 10.0, 50.0, 400.0, 800.0), seed: 3, world_seed: false });
+    let detail = graph.add(grass());
+    let landscape = graph.add(NodeKind::SpawnMesh(SpawnMesh {
+        range: SpawnRange::Landscape,
+        ..match grass() {
+            NodeKind::SpawnMesh(s) => s,
+            _ => unreachable!(),
+        }
+    }));
+    graph.connect(points, 0, detail, 0);
+    graph.connect(points, 0, landscape, 0);
+    let low = graph.with_settings(&settings_at(Level::Low));
+    match &low.node(points).unwrap().kind {
+        NodeKind::RandomPoints { per_hectare, .. } => assert_eq!(*per_hectare, Param::Fixed(400.0)),
+        _ => unreachable!(),
+    }
+}
+
+/// R7: a lower density only drops points, never moves one.
+#[test]
+fn a_lower_density_only_drops_points() {
+    let graph = ScatterGraph::chain([surface(0.8), grass()]);
+    let rect = Rect::new(0.0, 0.0, 30.0, 30.0);
+    let full = spots(&placed(&graph.with_settings(&settings_at(Level::High)), &Plane::tilted(0.1), rect));
+    let half = spots(&placed(&graph.with_settings(&settings_at(Level::Low)), &Plane::tilted(0.1), rect));
+    assert!(half.len() < full.len() * 6 / 10 && half.len() > full.len() * 4 / 10, "{} of {}", half.len(), full.len());
+    assert!(half.iter().all(|spot| full.binary_search(spot).is_ok()));
+}
+
+#[test]
+fn values_are_bound_and_set_per_level_in_the_inspector() {
+    let mut kind = grass();
+    // Shown fixed, with what it may follow.
+    let names: Vec<String> = kind.properties().into_iter().map(|p| p.name.to_string()).collect();
+    assert!(names.contains(&"distance follows".to_string()), "{names:?}");
+    assert!(names.contains(&"distance".to_string()));
+    // Bound: one value per level, all at the value it had.
+    assert!(kind.set_property("distance follows", &PropertyValue::Text("vegetation".into())));
+    assert!(kind.set_property("distance low", &PropertyValue::Float(25.0)));
+    let names: Vec<String> = kind.properties().into_iter().map(|p| p.name.to_string()).collect();
+    assert!(names.contains(&"distance ultra".to_string()), "{names:?}");
+    assert!(!names.contains(&"distance".to_string()));
+    let NodeKind::SpawnMesh(spawn) = &kind else { unreachable!() };
+    assert_eq!(spawn.range, SpawnRange::Detail { distance: by_level("vegetation", 25.0, 60.0, 60.0, 60.0) });
+    // "fade mode" is not a level of "fade".
+    assert!(kind.set_property("fade mode", &PropertyValue::Text("thin".into())));
+    assert!(kind.set_property("shadows follows", &PropertyValue::Text("shadows".into())));
+    assert!(kind.set_property("shadows low", &PropertyValue::Bool(false)));
+    // Fixed again: the value it had at High.
+    assert!(kind.set_property("distance follows", &PropertyValue::Text("fixed".into())));
+    let NodeKind::SpawnMesh(spawn) = &kind else { unreachable!() };
+    assert_eq!(spawn.range, SpawnRange::Detail { distance: Param::Fixed(60.0) });
+    assert_eq!(spawn.fade_mode, FadeMode::Thin);
+    assert_eq!(spawn.shadows, Param::ByLevel { setting: "shadows".into(), values: PerLevel::new(false, false, false, false) });
+}
+
+#[test]
+fn a_graph_with_bound_values_round_trips_and_old_graphs_load() {
+    let mut spawn = match grass() {
+        NodeKind::SpawnMesh(spawn) => spawn,
+        _ => unreachable!(),
+    };
+    spawn.range = SpawnRange::Detail { distance: by_level("vegetation", 30.0, 45.0, 60.0, 90.0) };
+    spawn.density = by_level("vegetation", 0.4, 0.7, 1.0, 1.0);
+    let graph = ScatterGraph::chain([surface(1.0), NodeKind::SpawnMesh(spawn)]);
+    let text = graph.to_ron();
+    assert!(text.contains("setting: \"vegetation\""), "{text}");
+    assert_eq!(ScatterGraph::from_ron(&text).unwrap(), graph);
+    // A graph from before: plain numbers, no density.
+    let old = ScatterGraph::chain([surface(1.0), grass()]).to_ron();
+    assert!(!old.contains("density"), "{old}");
+    assert_eq!(ScatterGraph::from_ron(&old).unwrap(), ScatterGraph::chain([surface(1.0), grass()]));
 }

@@ -70,6 +70,8 @@ pub struct Scatter {
     previews: std::collections::HashMap<assets::AssetId, Arc<graph::ScatterGraph>>,
     /// The world's seed (see `set_world_seed`).
     world_seed: u64,
+    /// The graphics settings the detail outputs were planted with.
+    graphics: crate::core::graphics::Watch,
 }
 
 impl Scatter {
@@ -81,6 +83,7 @@ impl Scatter {
             removed: HashSet::new(),
             previews: std::collections::HashMap::new(),
             world_seed: 0,
+            graphics: Default::default(),
         }
     }
 
@@ -164,6 +167,16 @@ impl Scatter {
     /// Apply edits whose delay has run out (loading models as needed) and
     /// reload layers whose asset was saved again.
     pub fn tick(&mut self, delta_time: f64) {
+        // New graphics settings: the detail outputs that follow them are
+        // planted anew (their specs change, see `detail_specs`); the
+        // landscape is left as it is.
+        if let Some(settings) = self.graphics.changed() {
+            for layer in &mut self.layers {
+                if let Some(loaded) = &mut layer.loaded {
+                    loaded.follow_settings(&settings);
+                }
+            }
+        }
         for layer in &mut self.layers {
             if layer.apply_in.is_none() && layer.is_outdated() {
                 layer.apply_in = Some(0.0);
@@ -223,19 +236,26 @@ impl Scatter {
             let Some(loaded) = &layer.loaded else {
                 continue;
             };
-            for output in loaded.outputs.iter().filter(|o| wanted(o.range)) {
+            for output in &loaded.outputs {
+                let Some((range, spawn, planted)) = loaded.spawn(output.node) else {
+                    continue;
+                };
+                if !wanted(range) {
+                    continue;
+                }
+                // Fixed by `with_settings`: `high` is the value.
                 let spec = ScatterSpec {
                     model: output.model.clone(),
-                    graph: loaded.graph.clone(),
+                    graph: planted.graph.clone(),
                     output: output.node,
-                    graph_key: loaded.graph_key,
+                    graph_key: planted.key,
                     salt: layer.output_salt(output.node),
-                    range: output.range,
-                    shadows: output.spawn.shadows,
-                    wind: output.spawn.wind.clamp(0.0, 1.0),
-                    normals_up: output.spawn.normals_up.clamp(0.0, 1.0),
-                    fade: output.spawn.fade.clamp(0.0, 1.0),
-                    fade_mode: output.spawn.fade_mode,
+                    range,
+                    shadows: spawn.shadows.high(),
+                    wind: spawn.wind.high().clamp(0.0, 1.0),
+                    normals_up: spawn.normals_up.clamp(0.0, 1.0),
+                    fade: spawn.fade.high().clamp(0.0, 1.0),
+                    fade_mode: spawn.fade_mode,
                 };
                 // The same graph twice would plant the very same; once.
                 if !specs.iter().any(|s| s.same_as(&spec)) {

@@ -5,9 +5,97 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::core::entity::component::{Property, PropertyValue};
+use crate::core::{
+    entity::component::{Property, PropertyValue},
+    graphics::{self, Level, Param, SettingKind},
+};
 
-use super::{known_biomes, known_features, FadeMode, GraphNode, NodeId, NodeKind, PinRef, ScatterGraph, ScatterRange, SpawnMesh, SplitBy, Wire};
+use super::{known_biomes, known_features, FadeMode, GraphNode, NodeId, NodeKind, PinRef, ScatterGraph, SpawnMesh, SpawnRange, SplitBy, Wire};
+
+/// What `<name> follows` shows for a value not bound to a setting.
+pub const FIXED: &str = "fixed";
+
+/// The graphics settings a value can follow: those with levels.
+pub fn level_settings() -> Vec<String> {
+    graphics::definitions()
+        .into_iter()
+        .filter(|def| matches!(def.kind, SettingKind::Level))
+        .map(|def| def.key)
+        .collect()
+}
+
+/// The properties of a value that may follow a graphics setting: which
+/// one it follows (`<name> follows`), then the value, or one per level
+/// (`<name> low`, ...).
+fn param_properties<T: Copy>(name: &str, param: &Param<T>, value: impl Fn(String, T) -> Property) -> Vec<Property> {
+    let mut options = vec![FIXED.to_string()];
+    options.extend(level_settings());
+    let follows = param.setting().unwrap_or(FIXED).to_string();
+    if !options.contains(&follows) {
+        options.push(follows.clone());
+    }
+    let mut properties = vec![Property::choice(format!("{name} follows"), follows, options)];
+    match param {
+        Param::Fixed(v) => properties.push(value(name.to_string(), *v)),
+        Param::ByLevel { values, .. } => {
+            for level in Level::ALL {
+                properties.push(value(format!("{name} {}", level.name()), *values.get(level)));
+            }
+        }
+    }
+    properties
+}
+
+fn float_param(name: &str, param: &Param<f32>, min: f32, max: f32) -> Vec<Property> {
+    param_properties(name, param, |n, v| Property::ranged(n, v, min, max))
+}
+
+/// Set `param`'s property `property` (see `param_properties`) if it is one
+/// of `name`'s; `None` if it is not.
+fn set_param<T: Copy>(
+    name: &str,
+    param: &mut Param<T>,
+    property: &str,
+    value: &PropertyValue,
+    read: impl Fn(&PropertyValue) -> Option<T>,
+) -> Option<bool> {
+    let rest = property.strip_prefix(name)?;
+    if rest == " follows" {
+        let Some(setting) = value.as_text() else { return Some(false) };
+        let setting = setting.trim();
+        if setting.is_empty() {
+            return Some(false);
+        }
+        if setting == FIXED {
+            *param = Param::Fixed(param.high());
+        } else if let Param::ByLevel { setting: bound, .. } = param {
+            // Bound anew: every level keeps its value.
+            *bound = setting.to_string();
+        } else {
+            // Every level starts at the value it had.
+            *param = Param::bound(setting, param.high());
+        }
+        return Some(true);
+    }
+    // `<name>` or `<name> <level>`; anything else is another property
+    // ("fade mode" is not one of "fade"'s).
+    let level = match rest {
+        "" => None,
+        rest => Some(rest.strip_prefix(' ').and_then(Level::from_name)?),
+    };
+    let Some(v) = read(value) else { return Some(false) };
+    match (level, param) {
+        // A plain value: fixed from now on.
+        (None, param) => *param = Param::Fixed(v),
+        (Some(level), Param::ByLevel { values, .. }) => *values.get_mut(level) = v,
+        (Some(_), Param::Fixed(_)) => return Some(false),
+    }
+    Some(true)
+}
+
+fn set_float_param(name: &str, param: &mut Param<f32>, property: &str, value: &PropertyValue, min: f32) -> Option<bool> {
+    set_param(name, param, property, value, |v| v.as_f32().map(|v| v.max(min)))
+}
 
 impl ScatterGraph {
     /// Add a node at `position` (node editor units); returns its id.
@@ -126,8 +214,8 @@ impl NodeKind {
     /// node editor's "add" menu lists them.
     pub fn catalog() -> Vec<NodeKind> {
         vec![
-            NodeKind::SurfacePoints { spacing: 1.0, jitter: 1.0, seed: 1, world_seed: false },
-            NodeKind::RandomPoints { per_hectare: 20.0, seed: 1, world_seed: false },
+            NodeKind::SurfacePoints { spacing: Param::Fixed(1.0), jitter: 1.0, seed: 1, world_seed: false },
+            NodeKind::RandomPoints { per_hectare: Param::Fixed(20.0), seed: 1, world_seed: false },
             NodeKind::Slope { min: 0.0, max: 30.0, soft: 5.0 },
             NodeKind::Height { min: 0.0, max: 500.0, soft: 5.0 },
             NodeKind::WorldChance { tag: String::new() },
@@ -144,14 +232,15 @@ impl NodeKind {
             NodeKind::SpawnMesh(SpawnMesh {
                 asset: None,
                 model: String::new(),
-                range: ScatterRange::Landscape,
+                range: SpawnRange::Landscape,
                 collision: false,
-                shadows: true,
-                wind: 0.0,
+                shadows: Param::Fixed(true),
+                wind: Param::Fixed(0.0),
                 tint: 0.0,
                 normals_up: 0.0,
-                fade: 0.2,
+                fade: Param::Fixed(0.2),
                 fade_mode: FadeMode::Shrink,
+                density: Param::Fixed(1.0),
             }),
         ]
     }
@@ -161,17 +250,20 @@ impl NodeKind {
     pub fn properties(&self) -> Vec<Property> {
         let seed = |seed: &u64| Property::int("seed", *seed as i64);
         match self {
-            NodeKind::SurfacePoints { spacing, jitter, seed: s, world_seed } => vec![
-                Property::ranged("spacing", *spacing, 0.05, 50.0),
-                Property::ranged("jitter", *jitter, 0.0, 1.0),
-                seed(s),
-                Property::bool("world seed", *world_seed),
-            ],
-            NodeKind::RandomPoints { per_hectare, seed: s, world_seed } => vec![
-                Property::ranged("per hectare", *per_hectare, 0.0, 5000.0),
-                seed(s),
-                Property::bool("world seed", *world_seed),
-            ],
+            NodeKind::SurfacePoints { spacing, jitter, seed: s, world_seed } => {
+                let mut properties = float_param("spacing", spacing, 0.05, 50.0);
+                properties.extend([
+                    Property::ranged("jitter", *jitter, 0.0, 1.0),
+                    seed(s),
+                    Property::bool("world seed", *world_seed),
+                ]);
+                properties
+            }
+            NodeKind::RandomPoints { per_hectare, seed: s, world_seed } => {
+                let mut properties = float_param("per hectare", per_hectare, 0.0, 5000.0);
+                properties.extend([seed(s), Property::bool("world seed", *world_seed)]);
+                properties
+            }
             NodeKind::Clearance { feature, distance, soft } => {
                 let features = known_features();
                 let feature = if features.is_empty() {
@@ -252,27 +344,28 @@ impl NodeKind {
                     (None, "") => "(none)".to_string(),
                     (None, file) => file.to_string(),
                 };
-                let (range, distance) = match spawn.range {
-                    ScatterRange::Landscape => ("landscape", None),
-                    ScatterRange::Detail { distance } => ("detail", Some(distance)),
+                let (range, distance) = match &spawn.range {
+                    SpawnRange::Landscape => ("landscape", None),
+                    SpawnRange::Detail { distance } => ("detail", Some(distance)),
                 };
                 let mut properties = vec![
                     Property::text("model", model).read_only(),
                     Property::choice("range", range.to_string(), vec!["landscape".into(), "detail".into()]),
                 ];
                 if let Some(distance) = distance {
-                    properties.push(Property::ranged("distance", distance, 5.0, 300.0));
-                    properties.push(Property::ranged("fade", spawn.fade, 0.0, 1.0));
+                    properties.extend(float_param("distance", distance, 5.0, 300.0));
+                    properties.extend(float_param("fade", &spawn.fade, 0.0, 1.0));
                     properties.push(Property::choice(
                         "fade mode",
                         spawn.fade_mode.name().to_string(),
                         FadeMode::NAMES.iter().map(|n| n.to_string()).collect(),
                     ));
+                    properties.extend(float_param("density", &spawn.density, 0.0, 1.0));
                 }
+                properties.push(Property::bool("collision", spawn.collision));
+                properties.extend(param_properties("shadows", &spawn.shadows, |n, v| Property::bool(n, v)));
+                properties.extend(float_param("wind", &spawn.wind, 0.0, 1.0));
                 properties.extend([
-                    Property::bool("collision", spawn.collision),
-                    Property::bool("shadows", spawn.shadows),
-                    Property::ranged("wind", spawn.wind, 0.0, 1.0),
                     Property::ranged("tint", spawn.tint, 0.0, 1.0),
                     Property::ranged("normals up", spawn.normals_up, 0.0, 1.0),
                 ]);
@@ -300,10 +393,14 @@ impl NodeKind {
             _ => false,
         };
         match (self, name) {
-            (NodeKind::SurfacePoints { spacing, .. }, "spacing") => set(spacing),
+            (NodeKind::SurfacePoints { spacing, .. }, name) if name.starts_with("spacing") => {
+                set_float_param("spacing", spacing, name, value, 0.05).unwrap_or(false)
+            }
             (NodeKind::SurfacePoints { jitter, .. }, "jitter") => set(jitter),
             (NodeKind::SurfacePoints { seed, .. }, "seed") => set_seed(seed),
-            (NodeKind::RandomPoints { per_hectare, .. }, "per hectare") => set(per_hectare),
+            (NodeKind::RandomPoints { per_hectare, .. }, name) if name.starts_with("per hectare") => {
+                set_float_param("per hectare", per_hectare, name, value, 0.0).unwrap_or(false)
+            }
             (NodeKind::RandomPoints { seed, .. }, "seed") => set_seed(seed),
             (NodeKind::Slope { min, .. } | NodeKind::Height { min, .. }, "min") => set(min),
             (NodeKind::Slope { max, .. } | NodeKind::Height { max, .. }, "max") => set(max),
@@ -372,33 +469,24 @@ impl NodeKind {
             (NodeKind::Split { threshold, .. }, "threshold") => set(threshold),
             (NodeKind::SpawnMesh(spawn), name) => match (name, value) {
                 ("range", PropertyValue::Text(text)) => {
-                    spawn.range = match (text.as_str(), spawn.range) {
-                        ("landscape", _) => ScatterRange::Landscape,
-                        ("detail", ScatterRange::Detail { distance }) => ScatterRange::Detail { distance },
-                        ("detail", ScatterRange::Landscape) => ScatterRange::Detail { distance: 60.0 },
+                    spawn.range = match (text.as_str(), &spawn.range) {
+                        ("landscape", _) => SpawnRange::Landscape,
+                        ("detail", SpawnRange::Detail { distance }) => SpawnRange::Detail { distance: distance.clone() },
+                        ("detail", SpawnRange::Landscape) => SpawnRange::Detail { distance: Param::Fixed(60.0) },
                         _ => return false,
                     };
                     true
                 }
-                ("distance", _) => match (&mut spawn.range, float) {
-                    (ScatterRange::Detail { distance }, Some(v)) => {
-                        *distance = v.max(1.0);
-                        true
-                    }
-                    _ => false,
+                (name, _) if name.starts_with("distance") => match &mut spawn.range {
+                    SpawnRange::Detail { distance } => set_float_param("distance", distance, name, value, 1.0).unwrap_or(false),
+                    SpawnRange::Landscape => false,
                 },
                 ("collision", PropertyValue::Bool(v)) => {
                     spawn.collision = *v;
                     true
                 }
-                ("shadows", PropertyValue::Bool(v)) => {
-                    spawn.shadows = *v;
-                    true
-                }
-                ("wind", _) => set(&mut spawn.wind),
                 ("tint", _) => set(&mut spawn.tint),
                 ("normals up", _) => set(&mut spawn.normals_up),
-                ("fade", _) => set(&mut spawn.fade),
                 ("fade mode", PropertyValue::Text(text)) => {
                     spawn.fade_mode = match text.as_str() {
                         "shrink" => FadeMode::Shrink,
@@ -407,7 +495,17 @@ impl NodeKind {
                     };
                     true
                 }
-                _ => false,
+                (name, value) => {
+                    let bool_of = |v: &PropertyValue| match v {
+                        PropertyValue::Bool(b) => Some(*b),
+                        _ => None,
+                    };
+                    set_param("shadows", &mut spawn.shadows, name, value, bool_of)
+                        .or_else(|| set_float_param("wind", &mut spawn.wind, name, value, 0.0))
+                        .or_else(|| set_float_param("fade", &mut spawn.fade, name, value, 0.0))
+                        .or_else(|| set_float_param("density", &mut spawn.density, name, value, 0.0))
+                        .unwrap_or(false)
+                }
             },
             _ => false,
         }
