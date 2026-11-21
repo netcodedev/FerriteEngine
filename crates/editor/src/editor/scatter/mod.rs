@@ -74,8 +74,9 @@ pub struct ScatterEdit {
     pushed_rules: Option<u64>,
 }
 
-/// Per node, per output pin: where its points stand.
-pub type Trace = HashMap<NodeId, Vec<Vec<[f32; 3]>>>;
+/// Per node, per output pin: where its points stand and their density,
+/// `[x, y, z, density]`.
+pub type Trace = HashMap<NodeId, Vec<Vec<[f32; 4]>>>;
 
 /// What the counting thread worked out: per node its count and its points.
 type Worked = (HashMap<NodeId, usize>, Trace);
@@ -99,6 +100,16 @@ pub const PALETTE: [(f32, f32, f32); 6] = [
 const KEPT: (f32, f32, f32) = (0.35, 0.90, 0.35);
 const DROPPED: (f32, f32, f32) = (0.95, 0.30, 0.25);
 const AWAY_FROM: (f32, f32, f32) = (0.35, 0.60, 1.00);
+
+/// How much a fading filter let through, in steps: (above, up to, colour);
+/// the first is what it dropped.
+const FADE: [(Option<f32>, f32, (f32, f32, f32)); 5] = [
+    (None, 0.0, DROPPED),
+    (Some(0.0), 0.25, (0.95, 0.50, 0.25)),
+    (Some(0.25), 0.5, (0.95, 0.75, 0.25)),
+    (Some(0.5), 0.75, (0.85, 0.90, 0.30)),
+    (Some(0.75), 1.0, KEPT),
+];
 
 impl ScatterEdit {
     /// Open the scatter graph asset `id`.
@@ -350,12 +361,15 @@ impl ScatterEdit {
         let Some((_, trace)) = &self.trace else {
             return Vec::new();
         };
-        let pin = |node: NodeId, pin: u8| -> Vec<[f32; 3]> {
+        let traced = |node: NodeId, pin: u8| -> Vec<[f32; 4]> {
             trace.get(&node).and_then(|pins| pins.get(pin as usize)).cloned().unwrap_or_default()
         };
-        let into = |node: NodeId, input: u8| -> Vec<[f32; 3]> {
-            self.graph.wires_into(node, input).flat_map(|w| pin(w.from.node, w.from.pin)).collect()
+        let into_traced = |node: NodeId, input: u8| -> Vec<[f32; 4]> {
+            self.graph.wires_into(node, input).flat_map(|w| traced(w.from.node, w.from.pin)).collect()
         };
+        let at = |points: Vec<[f32; 4]>| -> Vec<[f32; 3]> { points.into_iter().map(|[x, y, z, _]| [x, y, z]).collect() };
+        let pin = |node: NodeId, pin: u8| at(traced(node, pin));
+        let into = |node: NodeId, input: u8| at(into_traced(node, input));
         let group = |label: String, color, points| PointGroup { label, color, points };
         let selected = match self.selection.as_slice() {
             [id] => self.graph.node(*id),
@@ -378,6 +392,34 @@ impl ScatterEdit {
         };
         let id = node.id;
         match (&node.kind, node.kind.role()) {
+            // Filters that fade density: each point coloured by how much of
+            // it they let through (the world's chance there, the slope's
+            // soft edge, the noise), dropped ones red.
+            (NodeKind::Slope { .. } | NodeKind::Height { .. } | NodeKind::WorldChance { .. } | NodeKind::Noise { .. }, _) => {
+                let factor_of: HashMap<[u32; 2], f32> = traced(id, 0)
+                    .into_iter()
+                    .map(|[x, _, z, density]| ([x.to_bits(), z.to_bits()], density))
+                    .collect();
+                let what = if matches!(node.kind, NodeKind::WorldChance { .. }) { "chance" } else { "kept" };
+                let mut groups: Vec<PointGroup> = FADE
+                    .iter()
+                    .map(|(low, high, color)| match low {
+                        None => group(format!("{what} 0 (dropped)"), *color, Vec::new()),
+                        Some(low) => group(format!("{what} {low:.2}–{high:.2}"), *color, Vec::new()),
+                    })
+                    .collect();
+                for [x, y, z, density] in into_traced(id, 0) {
+                    let out = factor_of.get(&[x.to_bits(), z.to_bits()]).copied().unwrap_or(0.0);
+                    let factor = if density > 0.0 { (out / density).clamp(0.0, 1.0) } else { 0.0 };
+                    let bucket = if out <= 0.0 {
+                        0
+                    } else {
+                        FADE.iter().position(|(low, high, _)| low.is_some_and(|low| factor > low && factor <= *high)).unwrap_or(FADE.len() - 1)
+                    };
+                    groups[bucket].points.push([x, y, z]);
+                }
+                groups
+            }
             (kind, NodeRole::Filter) => {
                 let kept = pin(id, 0);
                 let kept_at: std::collections::HashSet<[u32; 2]> =

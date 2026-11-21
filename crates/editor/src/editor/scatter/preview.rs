@@ -31,8 +31,8 @@ use super::super::{
 const HEADER_HEIGHT: f32 = 36.0;
 const MARGIN: f32 = 6.0;
 const LEGEND_ROWS: usize = 6;
-/// Kept free below the view for the legend's first rows and the note.
-const LEGEND_SPACE: f32 = 3.0 * 18.0 + 30.0;
+/// Kept free below the view for the legend (five rows) and the note.
+const LEGEND_SPACE: f32 = 5.0 * 18.0 + 30.0;
 const Z: f32 = 2.0;
 
 /// Where the 3D view (and the map) goes: a square at the top of the right

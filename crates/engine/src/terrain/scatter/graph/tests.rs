@@ -85,7 +85,7 @@ fn the_same_graph_places_the_same_every_time_and_on_any_thread() {
     let graph = ScatterGraph::chain([
         surface(0.7),
         NodeKind::Noise { wavelength: 12.0, threshold: 0.4, softness: 0.2, seed: 3 },
-        NodeKind::DensityCut,
+        NodeKind::DensityCut { multiplier: 1.0 },
         NodeKind::Rotate { yaw_min: 0.0, yaw_max: 360.0, align: 0.5, tilt: 10.0 },
         NodeKind::Scale { min: 0.3, max: 0.6, height_min: 0.8, height_max: 1.4, by_density: 0.5 },
         grass(),
@@ -140,7 +140,7 @@ fn nothing_grows_where_the_world_says_no() {
     let graph = ScatterGraph::chain([
         surface(1.0),
         NodeKind::WorldChance { tag: "grass".into() },
-        NodeKind::DensityCut,
+        NodeKind::DensityCut { multiplier: 1.0 },
         grass(),
     ]);
     let ground = Plane { bare_west_of: 16.0, ..Plane::flat() };
@@ -151,7 +151,7 @@ fn nothing_grows_where_the_world_says_no() {
 
 #[test]
 fn a_density_cut_keeps_about_the_chance() {
-    let graph = ScatterGraph::chain([surface(0.5), NodeKind::WorldChance { tag: String::new() }, NodeKind::DensityCut, grass()]);
+    let graph = ScatterGraph::chain([surface(0.5), NodeKind::WorldChance { tag: String::new() }, NodeKind::DensityCut { multiplier: 1.0 }, grass()]);
     let ground = Plane { chance: 0.3, ..Plane::flat() };
     let eval = evaluate(&graph, &ground, Rect::new(0.0, 0.0, 40.0, 40.0)).unwrap();
     let all = 80 * 80;
@@ -176,7 +176,7 @@ fn the_slope_filter_keeps_what_it_says() {
     let soft = ScatterGraph::chain([
         surface(1.0),
         NodeKind::Slope { min: 0.0, max: 40.0, soft: 10.0 },
-        NodeKind::DensityCut,
+        NodeKind::DensityCut { multiplier: 1.0 },
         grass(),
     ]);
     let some = placed(&soft, &steep, rect).len();
@@ -228,7 +228,7 @@ fn cutting_the_ground_into_cells_changes_nothing() {
     let rect = Rect::new(-16.0, -16.0, 16.0, 16.0);
     let (around_rocks, _) = grass_around_rocks();
     let graphs = [
-        ScatterGraph::chain([surface(0.6), NodeKind::Noise { wavelength: 8.0, threshold: 0.5, softness: 0.3, seed: 1 }, NodeKind::DensityCut, grass()]),
+        ScatterGraph::chain([surface(0.6), NodeKind::Noise { wavelength: 8.0, threshold: 0.5, softness: 0.3, seed: 1 }, NodeKind::DensityCut { multiplier: 1.0 }, grass()]),
         ScatterGraph::chain([NodeKind::RandomPoints { per_hectare: 900.0, seed: 2 }, grass()]),
         around_rocks,
     ];
@@ -292,12 +292,12 @@ fn split_and_merge_keep_every_point() {
 
 #[test]
 fn broken_graphs_are_refused() {
-    let mut cycle = ScatterGraph::chain([surface(1.0), NodeKind::Merge, NodeKind::DensityCut, grass()]);
+    let mut cycle = ScatterGraph::chain([surface(1.0), NodeKind::Merge, NodeKind::DensityCut { multiplier: 1.0 }, grass()]);
     cycle.connect(NodeId(2), 0, NodeId(1), 0);
     assert!(matches!(cycle.problems()[..], [GraphProblem::Cycle(_)]));
     assert!(evaluate(&cycle, &Plane::flat(), Rect::new(0.0, 0.0, 1.0, 1.0)).is_err());
 
-    let mut twice = ScatterGraph::chain([surface(1.0), NodeKind::DensityCut, grass()]);
+    let mut twice = ScatterGraph::chain([surface(1.0), NodeKind::DensityCut { multiplier: 1.0 }, grass()]);
     twice.connect(NodeId(0), 0, NodeId(1), 0);
     assert_eq!(twice.problems(), vec![GraphProblem::InputWiredTwice(PinRef { node: NodeId(1), pin: 0 })]);
 
@@ -399,7 +399,7 @@ fn wiring_keeps_the_graph_sound() {
     let mut graph = ScatterGraph::default();
     let a = graph.add_node(surface(1.0), [0.0, 0.0]);
     let b = graph.add_node(surface(2.0), [0.0, 100.0]);
-    let cut = graph.add_node(NodeKind::DensityCut, [200.0, 0.0]);
+    let cut = graph.add_node(NodeKind::DensityCut { multiplier: 1.0 }, [200.0, 0.0]);
     let merge = graph.add_node(NodeKind::Merge, [400.0, 0.0]);
     let out = graph.add_node(grass(), [600.0, 0.0]);
     let pin = |node, pin| PinRef { node, pin };
@@ -427,7 +427,7 @@ fn wiring_keeps_the_graph_sound() {
 
 #[test]
 fn copied_nodes_paste_with_new_ids_and_their_wires() {
-    let mut graph = ScatterGraph::chain([surface(1.0), NodeKind::DensityCut, grass()]);
+    let mut graph = ScatterGraph::chain([surface(1.0), NodeKind::DensityCut { multiplier: 1.0 }, grass()]);
     let part = graph.copy_nodes(&[NodeId(0), NodeId(1)]);
     assert_eq!(part.wires.len(), 1);
     let pasted = graph.paste(&part, [0.0, 300.0]);
@@ -469,7 +469,7 @@ fn edits_undo_and_redo() {
     let mut history = GraphHistory::default();
     let original = graph.clone();
     history.record(&graph);
-    graph.add_node(NodeKind::DensityCut, [10.0, 10.0]);
+    graph.add_node(NodeKind::DensityCut { multiplier: 1.0 }, [10.0, 10.0]);
     let added = graph.clone();
     history.record(&graph);
     graph.move_nodes(&[NodeId(0)], [5.0, 0.0]);
@@ -517,7 +517,7 @@ fn a_traced_run_keeps_every_nodes_points() {
     let graph = ScatterGraph::chain([
         surface(1.0),
         NodeKind::WorldChance { tag: String::new() },
-        NodeKind::DensityCut,
+        NodeKind::DensityCut { multiplier: 1.0 },
         grass(),
     ]);
     let ground = Plane { chance: 0.5, ..Plane::flat() };
@@ -532,6 +532,42 @@ fn a_traced_run_keeps_every_nodes_points() {
     }
     // What the cut kept is among what came in.
     let before: Vec<_> = traced.trace[&NodeId(1)][0].clone();
+    // The world chance halved every point's density.
+    assert!(before.iter().all(|p| (p[3] - 0.5).abs() < 1e-6));
     assert!(traced.trace[&NodeId(2)][0].iter().all(|p| before.contains(p)));
     assert!(traced.trace[&NodeId(2)][0].len() < before.len());
+}
+
+#[test]
+fn the_density_cut_multiplier_keeps_more_or_fewer() {
+    let ground = Plane { chance: 0.3, ..Plane::flat() };
+    let rect = Rect::new(0.0, 0.0, 40.0, 40.0);
+    let kept = |multiplier: f32| {
+        let graph = ScatterGraph::chain([
+            surface(0.5),
+            NodeKind::WorldChance { tag: String::new() },
+            NodeKind::DensityCut { multiplier },
+            grass(),
+        ]);
+        placed(&graph, &ground, rect).len() as f32 / (80.0 * 80.0)
+    };
+    assert!((kept(1.0) - 0.3).abs() < 0.03);
+    assert!((kept(2.0) - 0.6).abs() < 0.03, "{}", kept(2.0));
+    assert!((kept(0.5) - 0.15).abs() < 0.03, "{}", kept(0.5));
+    // Beyond certain, all of them; nothing at 0.
+    assert_eq!(kept(4.0), 1.0);
+    assert_eq!(kept(0.0), 0.0);
+}
+
+#[test]
+fn a_graph_from_before_the_multiplier_still_loads() {
+    let old = "(nodes: [(id: 0, kind: SurfacePoints(spacing: 1.0, jitter: 1.0, seed: 1)), (id: 1, kind: DensityCut), \
+               (id: 2, kind: DensityCut , position: (1.0, 2.0))], wires: [])";
+    let graph = ScatterGraph::from_ron(old).unwrap();
+    assert_eq!(graph.nodes[1].kind, NodeKind::DensityCut { multiplier: 1.0 });
+    assert_eq!(graph.nodes[2].kind, NodeKind::DensityCut { multiplier: 1.0 });
+    assert_eq!(graph.nodes[2].position, [1.0, 2.0]);
+    // A new one reads back as written.
+    let new = ScatterGraph::chain([NodeKind::DensityCut { multiplier: 2.5 }]);
+    assert_eq!(ScatterGraph::from_ron(&new.to_ron()).unwrap(), new);
 }

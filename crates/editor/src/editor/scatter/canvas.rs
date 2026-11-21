@@ -576,7 +576,8 @@ fn summary(kind: &NodeKind) -> String {
         NodeKind::WorldChance { tag } if tag.is_empty() => "untagged".into(),
         NodeKind::WorldChance { tag } => format!("tag \"{tag}\""),
         NodeKind::Noise { wavelength, threshold, .. } => format!("{} m patches, {} kept", n(*wavelength), n(1.0 - threshold)),
-        NodeKind::DensityCut => "keep by density".into(),
+        NodeKind::DensityCut { multiplier } if *multiplier == 1.0 => "keep by density".into(),
+        NodeKind::DensityCut { multiplier } => format!("keep by density ×{}", n(*multiplier)),
         NodeKind::KeepAwayFrom { radius } => format!("{} m", n(*radius)),
         NodeKind::Rotate { yaw_min, yaw_max, align, tilt } => {
             format!("yaw {}–{}°, align {}, tilt {}°", n(*yaw_min), n(*yaw_max), n(*align), n(*tilt))

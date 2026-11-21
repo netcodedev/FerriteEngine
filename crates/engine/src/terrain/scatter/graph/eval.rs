@@ -126,9 +126,10 @@ pub struct Evaluation {
     pub outputs: Vec<(NodeId, Vec<Placement>)>,
     /// Per node: how many points it put out (for the node editor).
     pub counts: HashMap<NodeId, usize>,
-    /// Per node, per output pin: where its points stand (`evaluate_traced`
-    /// only; a `SpawnMesh`'s are what came in).
-    pub trace: HashMap<NodeId, Vec<Vec<[f32; 3]>>>,
+    /// Per node, per output pin: where its points stand and their density,
+    /// `[x, y, z, density]` (`evaluate_traced` only; a `SpawnMesh`'s are
+    /// what came in).
+    pub trace: HashMap<NodeId, Vec<Vec<[f32; 4]>>>,
 }
 
 impl Evaluation {
@@ -178,7 +179,7 @@ fn run<G: Ground + ?Sized>(graph: &ScatterGraph, ground: &G, rect: Rect, traced:
             let points = eval.input(node, 0, rect)?;
             eval.counts.insert(node.id, points.len());
             if let Some(trace) = &mut eval.trace {
-                trace.insert(node.id, vec![points.iter().map(|p| p.position).collect()]);
+                trace.insert(node.id, vec![points.iter().map(Point::traced).collect()]);
             }
             let amount = spawn.tint.clamp(0.0, 1.0);
             let placements = points
@@ -229,6 +230,12 @@ impl Point {
         }
     }
 
+    /// As `Evaluation::trace` keeps it.
+    fn traced(&self) -> [f32; 4] {
+        let [x, y, z] = self.position;
+        [x, y, z, self.density]
+    }
+
     fn placement(&self) -> Placement {
         Placement { position: self.position, yaw: self.yaw, up: self.up, scale: self.scale, tint: [1.0; 3] }
     }
@@ -263,7 +270,7 @@ struct Evaluator<'a, G: Ground + ?Sized> {
     root: Rect,
     done: HashMap<(NodeId, [u32; 4]), Outputs>,
     counts: HashMap<NodeId, usize>,
-    trace: Option<HashMap<NodeId, Vec<Vec<[f32; 3]>>>>,
+    trace: Option<HashMap<NodeId, Vec<Vec<[f32; 4]>>>>,
 }
 
 impl<G: Ground + ?Sized> Evaluator<'_, G> {
@@ -293,7 +300,7 @@ impl<G: Ground + ?Sized> Evaluator<'_, G> {
         if rect == self.root {
             self.counts.insert(node.id, outputs.iter().map(Vec::len).sum());
             if let Some(trace) = &mut self.trace {
-                trace.insert(node.id, outputs.iter().map(|pin| pin.iter().map(|p| p.position).collect()).collect());
+                trace.insert(node.id, outputs.iter().map(|pin| pin.iter().map(Point::traced).collect()).collect());
             }
         }
         self.done.insert(key, outputs.clone());
@@ -344,9 +351,10 @@ impl<G: Ground + ?Sized> Evaluator<'_, G> {
                 }
                 one(alive(points))
             }
-            NodeKind::DensityCut => {
+            NodeKind::DensityCut { multiplier } => {
                 let mut points = self.input(node, 0, rect)?;
-                points.retain(|p| p.rand < p.density);
+                let multiplier = multiplier.max(0.0);
+                points.retain(|p| p.rand < p.density * multiplier);
                 one(points)
             }
             NodeKind::KeepAwayFrom { radius } => {

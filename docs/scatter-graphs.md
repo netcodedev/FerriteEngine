@@ -427,6 +427,16 @@ and variant; frame cost of grass < 2 ms on the user's machine.
      them; a test keeps the two in step). The canvas shows it after the
      cursor rests on a node for half a second, and in the add menu beside
      the highlighted kind. Not seen by me (needs the mouse).
+   - **Chance colours and a cut multiplier** (asked for on 2026-11-21):
+     the trace keeps each point's density, so a selected filter that
+     fades density (Slope, Height, World chance, Noise) colours what came
+     in by the share it let through, in five steps from dropped (red) to
+     0.75–1 (green); for World chance that share is the world's chance.
+     `Density cut` has a `multiplier` (0–4, default 1): kept if the
+     random number is under density × multiplier. Files from before load
+     with 1 (`upgrade` in `graph/mod.rs`). Checked in the demo editor: a
+     meadow cell all in chance 0.50–0.75; the multiplier at 2 took one
+     cell from 467 to 897 tufts.
 
 7. **Demo**: grass graph (meadows: lush biomes, gentle slopes, patches by
    noise, none on roads/water/towns), then stones and bushes with the same

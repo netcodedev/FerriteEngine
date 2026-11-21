@@ -133,6 +133,10 @@ fn yes() -> bool {
     true
 }
 
+fn one() -> f32 {
+    1.0
+}
+
 /// What a node does, with its settings. Angles are in degrees, lengths
 /// in metres.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -159,9 +163,13 @@ pub enum NodeKind {
     /// across, the share above `threshold` (0..1) kept, with an edge
     /// `softness` wide.
     Noise { wavelength: f32, threshold: f32, softness: f32, seed: u64 },
-    /// Keeps a point if its random number is under its density: turns soft
-    /// values into "there or not".
-    DensityCut,
+    /// Keeps a point if its random number is under its density times
+    /// `multiplier`: turns soft values into "there or not"; a multiplier
+    /// above 1 keeps more than the density says, below 1 fewer.
+    DensityCut {
+        #[serde(default = "one")]
+        multiplier: f32,
+    },
     /// Drops the points (first input) within `radius` of any point of the
     /// second input.
     KeepAwayFrom { radius: f32 },
@@ -222,7 +230,7 @@ impl NodeKind {
             NodeKind::Height { .. } => "Filter: Height",
             NodeKind::WorldChance { .. } => "Filter: World chance",
             NodeKind::Noise { .. } => "Filter: Noise",
-            NodeKind::DensityCut => "Filter: Density cut",
+            NodeKind::DensityCut { .. } => "Filter: Density cut",
             NodeKind::KeepAwayFrom { .. } => "Filter: Keep away from",
             NodeKind::Rotate { .. } => "Transform: Rotate",
             NodeKind::Scale { .. } => "Transform: Scale",
@@ -261,9 +269,10 @@ impl NodeKind {
                 "Lays a noise pattern over the ground and keeps the points in its patches: `wavelength` sets \
                  their size, `threshold` how much stays bare, `softness` how gently patches end."
             }
-            NodeKind::DensityCut => {
-                "Turns density into yes or no: keeps each point by chance, as likely as its density. Put it \
-                 after the filters that fade density (Slope, Height, World chance, Noise)."
+            NodeKind::DensityCut { .. } => {
+                "Turns density into yes or no: keeps each point by chance, as likely as its density times \
+                 `multiplier` (above 1 more, below 1 fewer). Put it after the filters that fade density \
+                 (Slope, Height, World chance, Noise)."
             }
             NodeKind::KeepAwayFrom { .. } => {
                 "Drops points within `radius` metres of the points wired into its second input, \
@@ -301,7 +310,7 @@ impl NodeKind {
             | NodeKind::Height { .. }
             | NodeKind::WorldChance { .. }
             | NodeKind::Noise { .. }
-            | NodeKind::DensityCut
+            | NodeKind::DensityCut { .. }
             | NodeKind::KeepAwayFrom { .. } => NodeRole::Filter,
             NodeKind::Rotate { .. } | NodeKind::Scale { .. } | NodeKind::Offset { .. } => NodeRole::Transform,
             NodeKind::Merge | NodeKind::Split { .. } => NodeRole::Flow,
@@ -388,7 +397,7 @@ impl ScatterGraph {
     }
 
     pub fn from_ron(text: &str) -> Result<Self, String> {
-        ron::from_str(text).map_err(|e| e.to_string())
+        ron::from_str(&upgrade(text)).map_err(|e| e.to_string())
     }
 
     pub fn to_ron(&self) -> String {
@@ -448,7 +457,7 @@ impl ScatterGraph {
         Self::chain([
             NodeKind::RandomPoints { per_hectare: layer.density.max(0.0), seed: salt },
             NodeKind::WorldChance { tag: layer.tag.clone() },
-            NodeKind::DensityCut,
+            NodeKind::DensityCut { multiplier: 1.0 },
             NodeKind::SpawnMesh(SpawnMesh {
                 asset: layer.asset.clone(),
                 model: layer.model.clone(),
@@ -545,4 +554,27 @@ impl ScatterGraph {
         }
         None
     }
+}
+
+/// A graph file brought up to date: `DensityCut` was a unit variant before
+/// it had a multiplier (2026-11-21); a bare one gets the multiplier 1.
+fn upgrade(text: &str) -> std::borrow::Cow<'_, str> {
+    const NAME: &str = "DensityCut";
+    if !text.contains(NAME) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + 32);
+    let mut rest = text;
+    while let Some(at) = rest.find(NAME) {
+        let after = &rest[at + NAME.len()..];
+        let word_before = rest[..at].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_');
+        let word_after = after.chars().next().is_some_and(|c| c.is_alphanumeric() || c == '_');
+        out.push_str(&rest[..at + NAME.len()]);
+        if !word_before && !word_after && !after.trim_start().starts_with('(') {
+            out.push_str("(multiplier: 1.0)");
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
 }

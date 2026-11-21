@@ -628,7 +628,7 @@ mod tests {
         let outside = TempDir::new("import-scatter");
         let project = TempDir::new("import-scatter-project");
         let file = outside.0.join("Meadow.scatter.ron");
-        ScatterGraph::chain([NodeKind::SurfacePoints { spacing: 1.0, jitter: 1.0, seed: 1 }, NodeKind::DensityCut])
+        ScatterGraph::chain([NodeKind::SurfacePoints { spacing: 1.0, jitter: 1.0, seed: 1 }, NodeKind::DensityCut { multiplier: 1.0 }])
             .save(&file)
             .unwrap();
         fs::write(outside.0.join("Broken.scatter.ron"), "not a graph").unwrap();
