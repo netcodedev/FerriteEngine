@@ -162,6 +162,14 @@ fn respond(request: BridgeRequest, cx: Context) -> BridgeResponse {
             }
             Ok(agent_json(state))
         }
+        BridgeRequest::Graphics { preset, set, reset, preview, project, save } => ferrite::core::graphics::apply_request(
+            preset.as_deref(),
+            set.as_ref(),
+            reset.as_deref(),
+            preview.as_deref(),
+            project.as_ref(),
+            save,
+        ),
         BridgeRequest::SetDebugViews {
             vsync,
             freeze_culling,

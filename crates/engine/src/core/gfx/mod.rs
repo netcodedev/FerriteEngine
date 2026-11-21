@@ -553,6 +553,13 @@ impl Drop for Texture {
 
 /// The sampler for `desc`, made once and kept.
 pub fn sampler(desc: &SamplerDesc) -> RawId {
+    // Anisotropic filtering, where a sampler asks for it, is as strong as
+    // the graphics settings say (`display.anisotropy`).
+    let mut desc = *desc;
+    if desc.anisotropy > 1 {
+        desc.anisotropy = crate::core::graphics::engine().anisotropy;
+    }
+    let desc = &desc;
     SAMPLERS.with(|s| {
         if let Some(&(_, raw)) = s.borrow().iter().find(|(d, _)| d == desc) {
             return raw;

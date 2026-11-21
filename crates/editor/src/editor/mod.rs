@@ -24,6 +24,7 @@ pub mod dialogs;
 pub mod drag;
 pub mod export;
 pub mod field_row;
+pub mod graphics_panel;
 pub mod hierarchy;
 pub mod inspector;
 pub mod layout;

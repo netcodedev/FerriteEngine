@@ -42,6 +42,9 @@ pub struct ProjectFile {
     /// Settings of the editor (its layout), which only it understands.
     #[serde(default = "unit", skip_serializing_if = "is_unit")]
     pub editor: Value,
+    /// The project's graphics settings (see `graphics::ProjectGraphics`).
+    #[serde(default, skip_serializing_if = "super::graphics::ProjectGraphics::is_default")]
+    pub graphics: super::graphics::ProjectGraphics,
 }
 
 fn unit() -> Value {
@@ -101,6 +104,7 @@ impl Project {
                 name,
                 startup_scene: Some(STARTER_SCENE_PATH.to_string()),
                 editor: Value::Unit,
+                graphics: Default::default(),
             },
         };
         project.save()?;
@@ -156,6 +160,7 @@ impl Project {
             let _ = std::fs::create_dir_all(folder);
         }
         assets::reopen();
+        super::graphics::init_for_project(self.name(), &self.file.graphics);
         Ok(())
     }
 

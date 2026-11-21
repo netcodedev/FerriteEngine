@@ -30,6 +30,9 @@ pub mod prelude {
         scene::Scene,
         script::{Behaviour, Script},
     };
+    // `graphics::level("vegetation")`, `graphics::get_bool("my.setting")`,
+    // a menu from `graphics::definitions()`: docs/graphics-settings.md.
+    pub use crate::core::graphics;
     pub use crate::Script;
     pub use cgmath::{
         Deg, EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, Vector3,

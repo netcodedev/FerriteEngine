@@ -166,6 +166,10 @@ impl Evaluation {
 /// refused (a spacing far too fine for the rectangle).
 pub const MAX_SOURCE_POINTS: usize = 2_000_000;
 
+/// Which of a `SpawnMesh`'s random numbers of a point decides whether it
+/// is kept for `SpawnMesh::density`.
+const DENSITY_RAND: u64 = 7;
+
 /// Smallest spacing of `SurfacePoints`.
 const MIN_SPACING: f32 = 0.05;
 
@@ -198,7 +202,13 @@ fn run<G: Ground + ?Sized>(graph: &ScatterGraph, ground: &G, rect: Rect, traced:
     let mut outputs = Vec::new();
     for node in &graph.nodes {
         if let NodeKind::SpawnMesh(spawn) = &node.kind {
-            let points = eval.input(node, 0, rect)?;
+            let mut points = eval.input(node, 0, rect)?;
+            // A share of them: each point keeps its own chance, so fewer
+            // only ever drops some.
+            let density = spawn.density.high();
+            if density < 1.0 {
+                points.retain(|p| p.rand_for(node.id, DENSITY_RAND) < density);
+            }
             eval.counts.insert(node.id, points.len());
             if let Some(trace) = &mut eval.trace {
                 trace.insert(node.id, vec![points.iter().map(Point::traced).collect()]);
@@ -344,8 +354,11 @@ impl<G: Ground + ?Sized> Evaluator<'_, G> {
         let id = node.id;
         let one = |points: Vec<Point>| Ok(vec![points]);
         match &node.kind {
-            NodeKind::SurfacePoints { spacing, jitter, seed, .. } => one(surface_points(ground, rect, *spacing, *jitter, *seed)?),
-            NodeKind::RandomPoints { per_hectare, seed, .. } => one(random_points(ground, rect, *per_hectare, *seed)?),
+            // Values bound to graphics settings are fixed by
+            // `ScatterGraph::with_settings` before a graph is planted;
+            // unresolved, a graph is worked out at High.
+            NodeKind::SurfacePoints { spacing, jitter, seed, .. } => one(surface_points(ground, rect, spacing.high(), *jitter, *seed)?),
+            NodeKind::RandomPoints { per_hectare, seed, .. } => one(random_points(ground, rect, per_hectare.high(), *seed)?),
             NodeKind::Clearance { feature, distance, soft } => {
                 let mut points = self.input(node, 0, rect)?;
                 for p in &mut points {

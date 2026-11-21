@@ -180,6 +180,26 @@ pub enum BridgeRequest {
         #[serde(default)]
         note: Option<String>,
     },
+    /// Read and change the graphics settings (docs/graphics-settings.md):
+    /// all at once, in this order: `preset`, then each of `set` (key to a
+    /// level or option name, true/false, or a number), `reset` (back to
+    /// the preset's value), `preview` (a level to show everything at, or
+    /// "off"), `project` (the project's part, as in its file). `save`
+    /// writes this machine's choice. Returns every setting.
+    Graphics {
+        #[serde(default)]
+        preset: Option<String>,
+        #[serde(default)]
+        set: Option<serde_json::Map<String, serde_json::Value>>,
+        #[serde(default)]
+        reset: Option<Vec<String>>,
+        #[serde(default)]
+        preview: Option<String>,
+        #[serde(default)]
+        project: Option<serde_json::Value>,
+        #[serde(default)]
+        save: bool,
+    },
     /// Switch VSync and the renderer's debug views (as the editor's
     /// Performance panel does); what is left out stays.
     SetDebugViews {

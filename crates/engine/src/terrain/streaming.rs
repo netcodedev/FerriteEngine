@@ -33,7 +33,7 @@ pub type ColumnKey = (i32, i32);
 /// How far around the anchor columns load: up to `load` metres from the
 /// anchor to the nearest point of their square, and stay loaded until
 /// `unload`. Up to `detail` they are made in full detail.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StreamRadius {
     pub load: f64,
     pub unload: f64,
@@ -41,11 +41,24 @@ pub struct StreamRadius {
 }
 
 impl StreamRadius {
+    /// The radii at the graphics settings' High (`view`).
     pub const DEFAULT: Self = Self {
         load: 720.0,
         unload: 720.0 + CHUNK_SIZE as f64,
         detail: 300.0,
     };
+
+    /// The radii the graphics settings ask for (`view`): columns stay
+    /// loaded a column's width past where they load.
+    pub fn current() -> Self {
+        let knobs = crate::core::graphics::engine();
+        let load = knobs.load_distance as f64;
+        Self {
+            load,
+            unload: load + CHUNK_SIZE as f64,
+            detail: (knobs.detail_distance as f64).min(load),
+        }
+    }
 }
 
 /// A column to make, and whether in full detail.
@@ -159,6 +172,20 @@ impl<R: Send + 'static> Streamer<R> {
             if tx.send(((column, detail), made)).is_err() {
                 return;
             }
+        }
+    }
+
+    pub fn radius(&self) -> StreamRadius {
+        self.radius
+    }
+
+    /// Load to other radii from the next `update` on: columns now in
+    /// reach are queued, those past the new unload radius dropped.
+    pub fn set_radius(&mut self, radius: StreamRadius) {
+        if self.radius != radius {
+            self.radius = radius;
+            // Worked out afresh, wherever the anchor is.
+            self.anchor = None;
         }
     }
 
@@ -376,6 +403,26 @@ mod tests {
         streamer.receive(Duration::from_secs(1), |_, _| more += 1);
         assert_eq!(more, 0);
         assert_eq!(streamer.in_flight(), 0);
+    }
+
+    #[test]
+    fn a_new_radius_loads_more_and_lets_go_of_what_is_past_it() {
+        let near = StreamRadius { load: 200.0, unload: 328.0, detail: 0.0 };
+        let far = StreamRadius { load: 400.0, unload: 528.0, detail: 0.0 };
+        let mut streamer = Streamer::new(3, near, |column, _| column);
+        streamer.update(10.0, 10.0);
+        let first = wait_for(&mut streamer, within(200.0, 10.0, 10.0));
+        // Farther: the columns between the radii come, the rest stay.
+        streamer.set_radius(far);
+        assert!(streamer.update(10.0, 10.0).is_empty());
+        let more = wait_for(&mut streamer, within(400.0, 10.0, 10.0) - first.len());
+        assert!(more.iter().all(|(c, _)| column_distance(*c, 10.0, 10.0) > 200.0));
+        // Nearer again: what lies past the new unload radius goes.
+        streamer.set_radius(near);
+        let unload = streamer.update(10.0, 10.0);
+        assert!(!unload.is_empty());
+        assert!(unload.iter().all(|c| column_distance(*c, 10.0, 10.0) > 328.0));
+        assert_eq!(streamer.loaded_count(), within(328.0, 10.0, 10.0));
     }
 
     #[test]

@@ -5,7 +5,10 @@ use std::{rc::Rc, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::{self, AssetKind, AssetRef};
+use crate::core::{
+    assets::{self, AssetKind, AssetRef},
+    graphics::{self, Resolved},
+};
 
 use super::graph::{NodeId, ScatterGraph, ScatterRange, SpawnMesh};
 
@@ -30,19 +33,68 @@ pub(super) const APPLY_DELAY: f64 = 0.6;
 /// What a layer plants right now: its graph and the models of the graph's
 /// outputs.
 pub(super) struct Loaded {
-    /// The graph as the world plants it (see `ScatterGraph::with_world_seed`).
-    pub(super) graph: Arc<ScatterGraph>,
-    /// A hash of the graph's file text (see `ScatterSpec::graph_key`).
-    pub(super) graph_key: u64,
-    /// Per `SpawnMesh` node, in node order: the node, its model and range.
+    /// The graph as the world plants it (see `ScatterGraph::with_world_seed`),
+    /// its values still bound to graphics settings.
+    source: ScatterGraph,
+    /// Planted for the landscape outputs: `source` at High, whatever the
+    /// settings (see `ScatterGraph::with_settings`), so changing them never
+    /// replants the landscape.
+    pub(super) landscape: Planted,
+    /// Planted for the detail outputs: `source` with the settings now.
+    pub(super) detail: Planted,
+    /// Per `SpawnMesh` node, in node order: the node and its model.
     pub(super) outputs: Vec<LoadedOutput>,
+}
+
+/// A graph as planted, with its fingerprint.
+pub(super) struct Planted {
+    pub(super) graph: Arc<ScatterGraph>,
+    /// A hash of the graph's text (see `ScatterSpec::graph_key`).
+    pub(super) key: u64,
+}
+
+impl Planted {
+    fn new(source: &ScatterGraph, settings: &Resolved) -> Self {
+        let graph = source.with_settings(settings);
+        Self { key: fnv1a(&graph.to_ron()), graph: Arc::new(graph) }
+    }
+}
+
+impl Loaded {
+    /// The output `node` as planted: its range and settings, fixed.
+    pub(super) fn spawn(&self, node: NodeId) -> Option<(ScatterRange, SpawnMesh, &Planted)> {
+        let landscape = self.landscape.graph.outputs().find(|(id, _)| *id == node)?.1;
+        let planted = match landscape.range.is_landscape() {
+            true => &self.landscape,
+            false => &self.detail,
+        };
+        let spawn = planted.graph.outputs().find(|(id, _)| *id == node)?.1;
+        Some((spawn.range.resolved(), spawn.clone(), planted))
+    }
+
+    /// Follow new graphics settings: whether what the detail outputs plant
+    /// changed.
+    pub(super) fn follow_settings(&mut self, settings: &Resolved) -> bool {
+        let detail = Planted::new(&self.source, settings);
+        if detail.key == self.detail.key {
+            return false;
+        }
+        self.detail = detail;
+        true
+    }
 }
 
 pub(super) struct LoadedOutput {
     pub(super) node: NodeId,
     pub(super) model: Rc<ScatterModel>,
-    pub(super) range: ScatterRange,
-    pub(super) spawn: SpawnMesh,
+}
+
+/// The settings everything is at High with: what landscape outputs are
+/// planted with (see `ScatterGraph::with_settings`).
+fn at_high() -> Arc<Resolved> {
+    static HIGH: std::sync::LazyLock<Arc<Resolved>> =
+        std::sync::LazyLock::new(|| graphics::Graphics::default().resolved());
+    HIGH.clone()
 }
 
 pub(super) struct ScatterLayer {
@@ -133,8 +185,13 @@ impl ScatterLayer {
                 (None, "") => continue,
                 (None, file) => ScatterModel::load(&file.replace('\\', "/"))?,
             };
-            outputs.push(LoadedOutput { node, model, range: spawn.range, spawn: spawn.clone() });
+            outputs.push(LoadedOutput { node, model });
         }
-        Ok(Loaded { graph_key: fnv1a(&graph.to_ron()), graph: Arc::new(graph), outputs })
+        Ok(Loaded {
+            landscape: Planted::new(&graph, &at_high()),
+            detail: Planted::new(&graph, &graphics::current()),
+            source: graph,
+            outputs,
+        })
     }
 }

@@ -160,6 +160,9 @@ impl Lighting {
                 shader.set_uniform_mat4_array("lightProjections", &projections);
                 let texels = cascades.map(|cascade| cascade.texel_size);
                 shader.set_uniform_1fv("cascadeTexel", &texels);
+                // The graphics settings may leave far cascades out.
+                let in_use = cascades.iter().take_while(|cascade| cascade.texel_size > 0.0).count();
+                shader.set_uniform_1i("shadowCascadeCount", in_use as i32);
                 shader.set_uniform_1i("useShadowMap", 1);
             }
             None => shader.set_uniform_1i("useShadowMap", 0),

@@ -17,7 +17,7 @@ use ferrite::{
         },
         scene::Scene,
     },
-    terrain::scatter::graph::{NodeId, NodeKind, NodeRole, PinRef, ScatterRange, SplitBy, Wire},
+    terrain::scatter::graph::{NodeId, NodeKind, NodeRole, PinRef, SpawnRange, SplitBy, Wire},
 };
 use ferrite_ui::ui::{
     clip,
@@ -583,9 +583,14 @@ fn summary(kind: &NodeKind) -> String {
         let s = format!("{v:.2}");
         s.trim_end_matches('0').trim_end_matches('.').to_string()
     };
+    // A value bound to a graphics setting: from Low to Ultra.
+    let p = |param: &ferrite::core::graphics::Param<f32>| match param {
+        ferrite::core::graphics::Param::Fixed(v) => n(*v),
+        ferrite::core::graphics::Param::ByLevel { values, .. } => format!("{}–{}", n(values.low), n(values.ultra)),
+    };
     match kind {
-        NodeKind::SurfacePoints { spacing, jitter, .. } => format!("every {} m, jitter {}", n(*spacing), n(*jitter)),
-        NodeKind::RandomPoints { per_hectare, .. } => format!("{} per hectare", n(*per_hectare)),
+        NodeKind::SurfacePoints { spacing, jitter, .. } => format!("every {} m, jitter {}", p(spacing), n(*jitter)),
+        NodeKind::RandomPoints { per_hectare, .. } => format!("{} per hectare", p(per_hectare)),
         NodeKind::Slope { min, max, .. } => format!("{}–{}°", n(*min), n(*max)),
         NodeKind::Height { min, max, .. } => format!("{}–{} m", n(*min), n(*max)),
         NodeKind::Clearance { feature, distance, .. } => format!("{} m from {}", n(*distance), if feature.is_empty() { "?" } else { feature }),
@@ -619,9 +624,9 @@ fn summary(kind: &NodeKind) -> String {
                 (None, "") => "no model".into(),
                 (None, file) => file.to_string(),
             };
-            match spawn.range {
-                ScatterRange::Landscape => format!("{model}, landscape"),
-                ScatterRange::Detail { distance } => format!("{model}, {} m", n(distance)),
+            match &spawn.range {
+                SpawnRange::Landscape => format!("{model}, landscape"),
+                SpawnRange::Detail { distance } => format!("{model}, {} m", p(distance)),
             }
         }
     }

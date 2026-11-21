@@ -18,7 +18,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::AssetRef;
+use crate::core::{
+    assets::AssetRef,
+    graphics::{Param, Resolved},
+};
 
 
 mod edit;
@@ -89,6 +92,32 @@ pub enum SplitBy {
     Random,
 }
 
+/// How far from the camera an output's models are planted, as the graph
+/// says: the detail distance may follow a graphics setting (see
+/// `ScatterGraph::with_settings`, which makes a `ScatterRange` of it).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum SpawnRange {
+    /// See `ScatterRange::Landscape`.
+    Landscape,
+    /// See `ScatterRange::Detail`.
+    Detail { distance: Param<f32> },
+}
+
+impl SpawnRange {
+    /// As planted: a bound distance at High unless the graph was resolved
+    /// (`ScatterGraph::with_settings`), when it is fixed.
+    pub fn resolved(&self) -> ScatterRange {
+        match self {
+            SpawnRange::Landscape => ScatterRange::Landscape,
+            SpawnRange::Detail { distance } => ScatterRange::Detail { distance: distance.high() },
+        }
+    }
+
+    pub fn is_landscape(&self) -> bool {
+        matches!(self, SpawnRange::Landscape)
+    }
+}
+
 /// How far from the camera an output's models are planted.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum ScatterRange {
@@ -109,15 +138,15 @@ pub struct SpawnMesh {
     /// A raw model file below `assets/models/`, when there is no asset.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub model: String,
-    pub range: ScatterRange,
+    pub range: SpawnRange,
     /// Whether the models get colliders (landscape range only).
     #[serde(default)]
     pub collision: bool,
     #[serde(default = "yes")]
-    pub shadows: bool,
+    pub shadows: Param<bool>,
     /// How much the models sway in the wind, 0..1.
     #[serde(default)]
-    pub wind: f32,
+    pub wind: Param<f32>,
     /// How much the models take on the colour of the ground they stand on
     /// (`TerrainSource::scatter_tint`), 0..1.
     #[serde(default)]
@@ -129,10 +158,15 @@ pub struct SpawnMesh {
     /// Detail range: the share of `distance`, at its far end, over which
     /// the models fade away (0..1).
     #[serde(default = "default_fade")]
-    pub fade: f32,
+    pub fade: Param<f32>,
     /// How they fade away there.
     #[serde(default)]
     pub fade_mode: FadeMode,
+    /// The share of the points that arriving get a model, 0..1: fewer
+    /// drops some, never moves one. For detail outputs the graphics
+    /// settings lower a fixed value further (`scatter.detail_density`).
+    #[serde(default = "full", skip_serializing_if = "is_full")]
+    pub density: Param<f32>,
 }
 
 /// How a detail output's models fade away towards the end of their range.
@@ -156,12 +190,20 @@ impl FadeMode {
     }
 }
 
-fn default_fade() -> f32 {
-    0.2
+fn default_fade() -> Param<f32> {
+    Param::Fixed(0.2)
 }
 
-fn yes() -> bool {
-    true
+fn yes() -> Param<bool> {
+    Param::Fixed(true)
+}
+
+fn full() -> Param<f32> {
+    Param::Fixed(1.0)
+}
+
+fn is_full(density: &Param<f32>) -> bool {
+    *density == Param::Fixed(1.0)
 }
 
 fn one() -> f32 {
@@ -176,7 +218,7 @@ pub enum NodeKind {
     /// the whole world, moved within it by up to `jitter` (0..1) of the
     /// spacing.
     SurfacePoints {
-        spacing: f32,
+        spacing: Param<f32>,
         jitter: f32,
         seed: u64,
         /// Mix the world's seed into `seed` (see `ScatterGraph::with_world_seed`).
@@ -187,7 +229,7 @@ pub enum NodeKind {
     /// spots the terrain's scatter layers use (see `chunk::scatter_spots`),
     /// each with its own turn about the up axis.
     RandomPoints {
-        per_hectare: f32,
+        per_hectare: Param<f32>,
         seed: u64,
         #[serde(default)]
         world_seed: bool,
@@ -530,20 +572,21 @@ impl ScatterGraph {
     /// lets grow for `tag` (`seed`: the old layer's salt).
     pub fn random_layer(model: Option<AssetRef>, per_hectare: f32, tag: &str, seed: u64) -> Self {
         Self::chain([
-            NodeKind::RandomPoints { per_hectare: per_hectare.max(0.0), seed, world_seed: false },
+            NodeKind::RandomPoints { per_hectare: Param::Fixed(per_hectare.max(0.0)), seed, world_seed: false },
             NodeKind::WorldChance { tag: tag.to_string() },
             NodeKind::DensityCut { multiplier: 1.0 },
             NodeKind::SpawnMesh(SpawnMesh {
                 asset: model,
                 model: String::new(),
-                range: ScatterRange::Landscape,
+                range: SpawnRange::Landscape,
                 collision: true,
-                shadows: true,
-                wind: 0.0,
+                shadows: yes(),
+                wind: Param::Fixed(0.0),
                 tint: 0.0,
                 normals_up: 0.0,
                 fade: default_fade(),
                 fade_mode: FadeMode::Shrink,
+                density: full(),
             }),
         ])
     }
@@ -572,6 +615,119 @@ impl ScatterGraph {
             }
         }
         graph
+    }
+
+    /// The graph as planted with the graphics settings `settings`: every
+    /// value bound to a setting fixed at its level, fixed detail
+    /// distances and densities scaled by the vegetation knobs.
+    ///
+    /// Graphics settings change the look, not the world: whatever leads
+    /// to a landscape output (colliders, trees to fell, the world cache)
+    /// is fixed at High and not scaled, whatever the settings say.
+    pub fn with_settings(&self, settings: &Resolved) -> ScatterGraph {
+        let landscape = self.feeding_landscape();
+        let knobs = &settings.engine;
+        let mut graph = self.clone();
+        for node in &mut graph.nodes {
+            let detail = !landscape.contains(&node.id);
+            let fixed = |param: &Param<f32>| match detail {
+                false => Param::Fixed(param.high()),
+                true => Param::Fixed(param.resolve(settings)),
+            };
+            match &mut node.kind {
+                NodeKind::SurfacePoints { spacing, .. } => *spacing = fixed(spacing),
+                NodeKind::RandomPoints { per_hectare, .. } => *per_hectare = fixed(per_hectare),
+                NodeKind::SpawnMesh(spawn) => {
+                    spawn.shadows = Param::Fixed(if detail { spawn.shadows.resolve(settings) } else { spawn.shadows.high() });
+                    spawn.wind = fixed(&spawn.wind);
+                    spawn.fade = fixed(&spawn.fade);
+                    // A fixed distance or density of a detail output
+                    // follows the vegetation level by the knobs; a bound
+                    // one is what its author gave for the level.
+                    let scale = |param: &Param<f32>, by: f32| match (detail, param) {
+                        (true, Param::Fixed(value)) => Param::Fixed(value * by),
+                        _ => fixed(param),
+                    };
+                    spawn.density = scale(&spawn.density, knobs.detail_density);
+                    if let SpawnRange::Detail { distance } = &mut spawn.range {
+                        *distance = scale(distance, knobs.detail_distance_factor);
+                    }
+                }
+                _ => {}
+            }
+        }
+        graph
+    }
+
+    /// The nodes whose points reach a landscape output (and those
+    /// outputs): fixed at High by `with_settings`.
+    pub fn feeding_landscape(&self) -> HashSet<NodeId> {
+        let mut found = HashSet::new();
+        let mut stack: Vec<NodeId> = self
+            .outputs()
+            .filter(|(_, spawn)| spawn.range.is_landscape())
+            .map(|(id, _)| id)
+            .collect();
+        while let Some(id) = stack.pop() {
+            if found.insert(id) {
+                stack.extend(self.wires.iter().filter(|w| w.to.node == id).map(|w| w.from.node));
+            }
+        }
+        found
+    }
+
+    /// The graphics settings its values are bound to (sorted, once each).
+    pub fn settings_used(&self) -> Vec<String> {
+        let mut used: Vec<String> = Vec::new();
+        let mut add = |setting: Option<&str>| {
+            if let Some(setting) = setting {
+                if !used.iter().any(|u| u == setting) {
+                    used.push(setting.to_string());
+                }
+            }
+        };
+        for node in &self.nodes {
+            match &node.kind {
+                NodeKind::SurfacePoints { spacing, .. } => add(spacing.setting()),
+                NodeKind::RandomPoints { per_hectare, .. } => add(per_hectare.setting()),
+                NodeKind::SpawnMesh(spawn) => {
+                    add(spawn.shadows.setting());
+                    add(spawn.wind.setting());
+                    add(spawn.fade.setting());
+                    add(spawn.density.setting());
+                    if let SpawnRange::Detail { distance } = &spawn.range {
+                        add(distance.setting());
+                    }
+                }
+                _ => {}
+            }
+        }
+        used.sort();
+        used
+    }
+
+    /// Nodes with a value bound to a graphics setting that leads to a
+    /// landscape output: `with_settings` ignores the binding there (the
+    /// node editor warns).
+    pub fn bindings_ignored(&self) -> Vec<NodeId> {
+        let landscape = self.feeding_landscape();
+        self.nodes
+            .iter()
+            .filter(|node| landscape.contains(&node.id))
+            .filter(|node| match &node.kind {
+                NodeKind::SurfacePoints { spacing, .. } => spacing.is_bound(),
+                NodeKind::RandomPoints { per_hectare, .. } => per_hectare.is_bound(),
+                NodeKind::SpawnMesh(spawn) => {
+                    spawn.shadows.is_bound()
+                        || spawn.wind.is_bound()
+                        || spawn.fade.is_bound()
+                        || spawn.density.is_bound()
+                        || matches!(&spawn.range, SpawnRange::Detail { distance } if distance.is_bound())
+                }
+                _ => false,
+            })
+            .map(|node| node.id)
+            .collect()
     }
 
     /// The outputs, in node order.

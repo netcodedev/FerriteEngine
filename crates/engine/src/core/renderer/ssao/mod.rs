@@ -214,6 +214,7 @@ impl Ssao {
         shader.set_uniform_mat4("inverseProjection", &inverse);
         shader.set_uniform_1f("radius", settings.radius);
         shader.set_uniform_1f("intensity", settings.intensity);
+        shader.set_uniform_1i("sampleCount", sample_count(crate::core::graphics::engine().ssao_samples) as i32);
         self.draw_quad();
         gfx::end_pass();
 
@@ -259,6 +260,16 @@ impl Ssao {
 /// Sample offsets in the hemisphere above +Z, within the unit sphere and
 /// more of them close to the centre, where occluders matter most. Always
 /// the same, so the occlusion does not shimmer between runs.
+/// The samples the graphics settings ask for, as a divisor of `SAMPLES`
+/// (the shader takes every n-th of the kernel).
+fn sample_count(wanted: u32) -> usize {
+    [16, 8, 4, 2, 1]
+        .into_iter()
+        .filter(|&n| SAMPLES % n == 0)
+        .find(|&n| n <= wanted.max(1) as usize)
+        .unwrap_or(1)
+}
+
 fn sample_kernel() -> [[f32; 3]; SAMPLES] {
     let mut state: u32 = 0x9E37_79B9;
     let mut random = move || {

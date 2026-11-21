@@ -53,7 +53,9 @@ impl PrecipitationRenderer {
             Precipitation::Rain => (MAX_DROPS, RAIN_BOX, false),
             Precipitation::Snow => (MAX_FLAKES, SNOW_BOX, true),
         };
-        let count = (count as f32 * amount.clamp(0.0, 1.0)) as u32;
+        // The graphics settings may draw fewer.
+        let share = crate::core::graphics::engine().precipitation;
+        let count = (count as f32 * amount.clamp(0.0, 1.0) * share) as u32;
         if count == 0 {
             return;
         }

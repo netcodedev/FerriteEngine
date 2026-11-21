@@ -327,6 +327,28 @@ pub fn catalog() -> Vec<Tool> {
             &["active"],
         ),
         tool(
+            "editor_graphics",
+            "Read and change the graphics settings (docs/graphics-settings.md). Without arguments it \
+             returns every setting (key, label, group, kind, value, whether changed by hand), the \
+             preset, the resolved knobs (shadow map size, distances, ...), the project's part and the \
+             generation. Changes, applied in this order: preset (low/medium/high/ultra; every setting \
+             to its value there), set (an object of key to value: a level name for level settings such \
+             as view, shadows, vegetation, effects; an option name such as \"4x\"; true/false; a number), \
+             reset (keys back to the preset's value), preview (a level to show everything at without \
+             changing the choice, or \"off\"), project (the project's graphics section as in its file: \
+             default_preset, settings, hidden, knobs), save (write this machine's choice now; the \
+             editor also saves on its own). Changes apply at once.",
+            json!({
+                "preset": {"type": "string"},
+                "set": {"type": "object"},
+                "reset": {"type": "array", "items": {"type": "string"}},
+                "preview": {"type": "string"},
+                "project": {"type": "object"},
+                "save": {"type": "boolean"},
+            }),
+            &[],
+        ),
+        tool(
             "editor_set_debug_views",
             "Switch VSync and the renderer's debug views, as the editor's Performance panel does; \
              what is left out stays. freeze_culling keeps culling the camera's view as it is \

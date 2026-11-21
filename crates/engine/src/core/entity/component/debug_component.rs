@@ -201,18 +201,18 @@ impl Component for DebugController {
         }
     }
 
-    fn handle_event(&mut self, glfw: &mut Glfw, _: &mut glfw::Window, event: &glfw::WindowEvent) {
+    fn handle_event(&mut self, _glfw: &mut Glfw, _: &mut glfw::Window, event: &glfw::WindowEvent) {
         match event {
             glfw::WindowEvent::Key(Key::F1, _, Action::Press, _) => {
                 self.wireframe = !self.wireframe;
                 crate::core::renderer::text::TextRenderer::set_wireframe(self.wireframe);
             }
             glfw::WindowEvent::Key(Key::F2, _, Action::Press, _) => {
-                self.vsync = !self.vsync;
-                if self.vsync {
-                    glfw.set_swap_interval(glfw::SwapInterval::Sync(1));
-                } else {
-                    glfw.set_swap_interval(glfw::SwapInterval::None);
+                // A graphics setting: the application applies it.
+                use crate::core::graphics;
+                self.vsync = !graphics::engine().vsync;
+                if let Err(e) = graphics::set("display.vsync", graphics::SettingValue::Toggle(self.vsync)) {
+                    log::warn!("{e}");
                 }
             }
             glfw::WindowEvent::Key(Key::F3, _, Action::Press, _) => {

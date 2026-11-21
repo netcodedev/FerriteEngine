@@ -16,6 +16,8 @@ uniform sampler2D depthMap;
 uniform mat4 projection;
 uniform mat4 inverseProjection;
 uniform vec3 kernel[SAMPLES];
+// Samples used, a divisor of SAMPLES (graphics settings).
+uniform int sampleCount;
 uniform float radius;
 uniform float intensity;
 
@@ -66,7 +68,10 @@ void main() {
     // Farther away a depth step covers more distance; the bias grows along.
     float bias = 0.02 + distance * 0.0015;
     float occluded = 0.0;
-    for (int i = 0; i < SAMPLES; ++i) {
+    // The graphics settings may take fewer: every n-th, so near and far
+    // samples stay mixed.
+    int stride = SAMPLES / clamp(sampleCount, 1, SAMPLES);
+    for (int i = 0; i < SAMPLES; i += stride) {
         vec3 S = P + TBN * kernel[i] * radius;
         vec4 clip = projection * vec4(S, 1.0);
         vec2 at = clip.xy / clip.w * 0.5 + 0.5;
@@ -79,6 +84,6 @@ void main() {
         float inRange = smoothstep(0.0, 1.0, radius / max(abs(P.z - sceneZ), 1e-4));
         occluded += (sceneZ >= S.z + bias ? 1.0 : 0.0) * inRange;
     }
-    float ao = pow(clamp(1.0 - occluded / float(SAMPLES), 0.0, 1.0), intensity);
+    float ao = pow(clamp(1.0 - occluded / float(SAMPLES / stride), 0.0, 1.0), intensity);
     occlusion = mix(ao, 1.0, smoothstep(FADE_START, FADE_END, distance));
 }

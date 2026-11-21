@@ -32,6 +32,8 @@ use ferrite::{
 struct CountedFor {
     rules: u64,
     cell: CellKey,
+    /// The graphics settings' generation: values may follow them.
+    graphics: u64,
 }
 
 /// The point counts of the nodes on the cell under the camera.
@@ -356,11 +358,12 @@ impl ScatterEdit {
             return;
         };
         let cell = ((eye.x / DETAIL_CELL).floor() as i32, (eye.z / DETAIL_CELL).floor() as i32);
-        let wanted = CountedFor { rules: self.rules, cell };
+        let wanted = CountedFor { rules: self.rules, cell, graphics: ferrite::core::graphics::generation() };
         if self.counted_for.as_ref() == Some(&wanted) {
             return;
         }
-        let graph = self.graph.clone();
+        // Counted as planted: with the graphics settings now.
+        let graph = self.graph.with_settings(&ferrite::core::graphics::current());
         let (sender, receiver) = mpsc::channel();
         let spawned = std::thread::Builder::new().name("scatter-counts".into()).spawn(move || {
             let result = evaluate_traced(&graph, &*source as &dyn TerrainSource, cell_rect(cell)).map(|e| (e.counts, e.trace));

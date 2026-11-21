@@ -439,7 +439,7 @@ impl DebugSwitches {
     /// Hand the switches as they are to the renderer and the window (whose
     /// GL context must be current).
     pub fn apply(&self) {
-        ferrite::core::window::set_vsync(self.vsync.read());
+        set_vsync(self.vsync.read());
         ViewFrustum::set_frozen(self.freeze_culling.read());
         debug_views::set_ambient_occlusion(self.ambient_occlusion.read());
         debug_views::set_sun_shadows(self.sun_shadow_maps.read());
@@ -697,6 +697,9 @@ const SECTIONS: &[(&str, &str, &[(Key, &str)])] = &[
             (Key::FrameMinMax, "Min / max"),
         ],
     ),
+    // The graphics settings, under the frame time they change (see
+    // `graphics_panel`).
+    (GRAPHICS_SECTION, icons::SLIDERS, &[]),
     (
         "Timings",
         icons::TIMER,
@@ -770,6 +773,8 @@ const SECTIONS: &[(&str, &str, &[(Key, &str)])] = &[
     ),
 ];
 
+const GRAPHICS_SECTION: &str = "Grafik";
+
 /// Docked right-hand panel with collapsible statistic sections.
 pub struct StatsPanel {
     handle: UIElementHandle,
@@ -783,6 +788,7 @@ pub struct StatsPanel {
     switches: DebugSwitches,
     built_width: Option<i32>,
     last_refresh: Option<Instant>,
+    graphics: super::graphics_panel::GraphicsRows,
 }
 
 impl StatsPanel {
@@ -807,6 +813,7 @@ impl StatsPanel {
             switches,
             built_width: None,
             last_refresh: None,
+            graphics: Default::default(),
         }
     }
 
@@ -824,8 +831,13 @@ impl StatsPanel {
                     "VSync",
                     self.switches.vsync.clone(),
                     content - 8.0,
-                    Box::new(|on, _| ferrite::core::window::set_vsync(on)),
+                    Box::new(|on, _| set_vsync(on)),
                 )));
+            }
+            if *title == GRAPHICS_SECTION {
+                for row in self.graphics.build(content - 8.0) {
+                    section.add_child(row);
+                }
             }
             if *title == "Debug views" {
                 let rows: [(&str, &DataSource<bool>, fn(bool)); 3] = [
@@ -923,8 +935,23 @@ fn shorten(text: &str, max: usize) -> String {
     }
 }
 
+/// VSync is a graphics setting (`display.vsync`): the switch sets it.
+fn set_vsync(on: bool) {
+    use ferrite::core::graphics;
+    if graphics::engine().vsync != on {
+        if let Err(e) = graphics::set("display.vsync", graphics::SettingValue::Toggle(on)) {
+            log::warn!("{e}");
+        }
+    }
+}
+
 impl UIElement for StatsPanel {
     fn update(&mut self, scene: &mut Scene) {
+        // The switch shows the setting, which the graphics panel changes too.
+        let vsync = ferrite::core::graphics::engine().vsync;
+        if self.switches.vsync.read() != vsync {
+            self.switches.vsync.write(vsync);
+        }
         let rect = self.state.borrow().layout.stats;
         if rect.w <= 0.0 {
             return;
@@ -938,7 +965,7 @@ impl UIElement for StatsPanel {
             (rect.w - 8.0).max(10.0),
             (rect.h - header - 8.0).max(10.0),
         ));
-        if self.built_width != Some(rect.w as i32) {
+        if self.built_width != Some(rect.w as i32) || self.graphics.outdated() {
             self.build(rect.w);
             self.built_width = Some(rect.w as i32);
         }
@@ -959,6 +986,7 @@ impl UIElement for StatsPanel {
 
         self.panel.update(scene);
         self.body.update(scene);
+        self.graphics.sync();
     }
 
     fn render(&self) {
@@ -967,6 +995,15 @@ impl UIElement for StatsPanel {
         }
         self.panel.render();
         self.body.render();
+    }
+
+    /// Open dropdown lists (the graphics settings') are drawn here, over
+    /// everything else.
+    fn render_overlay(&self) {
+        if self.state.borrow().layout.stats.w <= 0.0 {
+            return;
+        }
+        self.body.render_overlay();
     }
 
     fn handle_events(

@@ -26,6 +26,7 @@ use crate::core::{
 /// `pbr/lighting.glsl`.
 pub const SHADOW_CASCADES: usize = 4;
 /// How far from the camera shadows reach.
+#[cfg(test)]
 const SHADOW_DISTANCE: f32 = 300.0;
 /// Mix between logarithmic (1) and even (0) cascade splits.
 const SPLIT_LAMBDA: f32 = 0.75;
@@ -80,7 +81,9 @@ pub struct ShadowSettings {
 impl ShadowSettings {
     /// Every how many frames each cascade is drawn, nearest first.
     pub fn intervals(&self) -> [u64; SHADOW_CASCADES] {
-        [1, if self.stagger_second_cascade { 2 } else { 1 }, 2, 4]
+        // The scene can ask for it; the graphics settings can too.
+        let stagger = self.stagger_second_cascade || crate::core::graphics::engine().stagger_second_cascade;
+        [1, if stagger { 2 } else { 1 }, 2, 4]
     }
 }
 
@@ -298,9 +301,15 @@ impl SkyLight {
         let light_view =
             Matrix4::look_at_rh(Point3::origin(), Point3::from_vec(light_direction), light_up);
 
-        let splits = cascade_splits(projection.znear, SHADOW_DISTANCE);
+        let knobs = crate::core::graphics::engine();
+        let in_use = knobs.shadow_cascades.clamp(1, SHADOW_CASCADES);
+        let splits = cascade_splits(projection.znear, knobs.shadow_distance, in_use);
         let mut near = projection.znear;
-        for (cascade, far) in self.cascades.iter_mut().zip(splits) {
+        for (index, (cascade, far)) in self.cascades.iter_mut().zip(splits).enumerate() {
+            if index >= in_use {
+                *cascade = ShadowCascade::UNUSED;
+                continue;
+            }
             let corners: Vec<Point3<f32>> = [near, far]
                 .iter()
                 .flat_map(|&d| {
@@ -368,9 +377,10 @@ impl SkyLight {
     }
 
     fn refit_to_active_camera(&mut self, scene: &Scene) {
-        if let (Some(camera_component), Some((resolution, _))) =
+        if let (Some(camera_component), Some(_)) =
             (scene.get_active_camera(), scene.get_shadow_map_size())
         {
+            let resolution = crate::core::graphics::engine().shadow_map_size;
             let camera = camera_component.get_camera();
             let projection = camera_component.get_projection();
             self.update_light_view(camera, projection, resolution);
@@ -588,11 +598,26 @@ pub struct ShadowCascade {
     pub texel_size: f32,
 }
 
+impl ShadowCascade {
+    /// A cascade the graphics settings leave out: everything lands beyond
+    /// its far plane (so the shaders pass it by), and its texel size is 0.
+    pub const UNUSED: ShadowCascade = ShadowCascade {
+        view_projection: Matrix4::new(
+            0.0, 0.0, 0.0, 0.0, //
+            0.0, 0.0, 0.0, 0.0, //
+            0.0, 0.0, 0.0, 0.0, //
+            0.0, 0.0, 2.0, 1.0,
+        ),
+        texel_size: 0.0,
+    };
+}
+
 /// Far distance of each cascade: the "practical split scheme", a mix of
 /// logarithmic splits (even detail per distance) and even ones.
-fn cascade_splits(near: f32, far: f32) -> [f32; SHADOW_CASCADES] {
+/// Only the first `in_use` are spread over `near..far`; the rest are `far`.
+fn cascade_splits(near: f32, far: f32, in_use: usize) -> [f32; SHADOW_CASCADES] {
     std::array::from_fn(|i| {
-        let t = (i + 1) as f32 / SHADOW_CASCADES as f32;
+        let t = ((i + 1) as f32 / in_use.max(1) as f32).min(1.0);
         let logarithmic = near * (far / near).powf(t);
         let even = near + (far - near) * t;
         SPLIT_LAMBDA * logarithmic + (1.0 - SPLIT_LAMBDA) * even
@@ -605,7 +630,7 @@ mod tests {
 
     #[test]
     fn cascades_split_the_shadow_distance_closer_near_the_camera() {
-        let splits = cascade_splits(0.1, SHADOW_DISTANCE);
+        let splits = cascade_splits(0.1, SHADOW_DISTANCE, SHADOW_CASCADES);
         assert!((splits[SHADOW_CASCADES - 1] - SHADOW_DISTANCE).abs() < 1e-3);
         for pair in splits.windows(2) {
             assert!(pair[0] < pair[1]);
