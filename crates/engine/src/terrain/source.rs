@@ -436,6 +436,25 @@ pub trait TerrainSource: Send + Sync + 'static {
         [1.0; 3]
     }
 
+    /// The names of the world's features scatter graphs can keep clear of
+    /// (`Filter: Clearance`): houses, power lines, ... Default: none.
+    fn scatter_features(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// How far world `(x, z)` is from the nearest of the feature named
+    /// `feature`, metres (0 on or in it); infinite when none is within the
+    /// world's reach. Default: infinite.
+    fn scatter_distance(&self, _feature: &str, _x: f64, _z: f64) -> f32 {
+        f32::INFINITY
+    }
+
+    /// `scatter_distance` seen from far away (many spots at once, on a
+    /// thread of its own). Default: `scatter_distance`.
+    fn far_scatter_distance(&self, feature: &str, x: f64, z: f64) -> f32 {
+        self.scatter_distance(feature, x, z)
+    }
+
     /// The names of the world's biomes, for scatter graphs' `Filter: Biome`.
     /// Default: none.
     fn scatter_biomes(&self) -> Vec<String> {

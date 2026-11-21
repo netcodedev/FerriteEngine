@@ -662,3 +662,47 @@ fn the_biome_filter_keeps_its_biome_and_fades_at_the_border() {
     let none = ScatterGraph::chain([surface(1.0), NodeKind::Biome { biome: "Desert".into() }, grass()]);
     assert!(placed(&none, &Biomes, rect).is_empty());
 }
+
+/// A wall along x = 10 ("houses"); nothing else in reach.
+struct Wall;
+
+impl Ground for Wall {
+    fn height(&self, _x: f64, _z: f64) -> f32 {
+        0.0
+    }
+
+    fn chance(&self, _tag: &str, _x: f64, _y: f32, _z: f64) -> f32 {
+        1.0
+    }
+
+    fn distance(&self, feature: &str, x: f64, _z: f64) -> f32 {
+        match feature {
+            "houses" => (x as f32 - 10.0).abs(),
+            _ => f32::INFINITY,
+        }
+    }
+}
+
+#[test]
+fn a_clearance_keeps_the_ground_bare_around_its_feature() {
+    let rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let clear = |feature: &str, distance: f32, soft: f32, cut: bool| {
+        let mut kinds = vec![surface(0.5), NodeKind::Clearance { feature: feature.into(), distance, soft }];
+        if cut {
+            kinds.push(NodeKind::DensityCut { multiplier: 1.0 });
+        }
+        kinds.push(grass());
+        placed(&ScatterGraph::chain(kinds), &Wall, rect)
+    };
+    let hard = clear("houses", 3.0, 0.0, false);
+    assert!(!hard.is_empty());
+    assert!(hard.iter().all(|p| (p.position[0] - 10.0).abs() >= 3.0));
+    // Soft: still bare within 3 m, thinned out to 5 m, full beyond.
+    let soft = clear("houses", 3.0, 2.0, true);
+    let near = |ps: &[Placement], a: f32, b: f32| ps.iter().filter(|p| (a..b).contains(&(p.position[0] - 10.0).abs())).count();
+    assert_eq!(near(&soft, 0.0, 3.0), 0);
+    assert!(near(&soft, 3.0, 5.0) < near(&hard, 3.0, 5.0));
+    assert_eq!(near(&soft, 5.5, 9.0), near(&hard, 5.5, 9.0));
+    // A feature the world has none of within reach keeps everything.
+    assert_eq!(clear("power lines", 50.0, 0.0, false).len(), 1600);
+}

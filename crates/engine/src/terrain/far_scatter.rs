@@ -97,6 +97,10 @@ impl Ground for FarGround<'_> {
         self.source.far_scatter_chance(tag, x, z, y)
     }
 
+    fn distance(&self, feature: &str, x: f64, z: f64) -> f32 {
+        self.source.far_scatter_distance(feature, x, z)
+    }
+
     fn biome_weight(&self, biome: &str, x: f64, z: f64) -> f32 {
         if self.thinned(x as f32, z as f32).is_none() {
             return 0.0;

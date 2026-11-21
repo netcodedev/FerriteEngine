@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::core::entity::component::{Property, PropertyValue};
 
-use super::{known_biomes, GraphNode, NodeId, NodeKind, PinRef, ScatterGraph, ScatterRange, SpawnMesh, SplitBy, Wire};
+use super::{known_biomes, known_features, GraphNode, NodeId, NodeKind, PinRef, ScatterGraph, ScatterRange, SpawnMesh, SplitBy, Wire};
 
 impl ScatterGraph {
     /// Add a node at `position` (node editor units); returns its id.
@@ -132,6 +132,7 @@ impl NodeKind {
             NodeKind::Height { min: 0.0, max: 500.0, soft: 5.0 },
             NodeKind::WorldChance { tag: String::new() },
             NodeKind::Biome { biome: known_biomes().first().cloned().unwrap_or_default() },
+            NodeKind::Clearance { feature: known_features().first().cloned().unwrap_or_default(), distance: 3.0, soft: 0.0 },
             NodeKind::Noise { wavelength: 25.0, threshold: 0.5, softness: 0.2, seed: 1, world_seed: false },
             NodeKind::DensityCut { multiplier: 1.0 },
             NodeKind::KeepAwayFrom { radius: 2.0 },
@@ -169,6 +170,19 @@ impl NodeKind {
                 seed(s),
                 Property::bool("world seed", *world_seed),
             ],
+            NodeKind::Clearance { feature, distance, soft } => {
+                let features = known_features();
+                let feature = if features.is_empty() {
+                    Property::text("feature", feature.clone())
+                } else {
+                    let mut options = features;
+                    if !options.contains(feature) && !feature.is_empty() {
+                        options.push(feature.clone());
+                    }
+                    Property::choice("feature", feature.clone(), options)
+                };
+                vec![feature, Property::ranged("distance", *distance, 0.0, 100.0), Property::ranged("soft", *soft, 0.0, 50.0)]
+            }
             NodeKind::Biome { biome } => {
                 let biomes = known_biomes();
                 if biomes.is_empty() {
@@ -310,6 +324,15 @@ impl NodeKind {
                 }
                 _ => false,
             },
+            (NodeKind::Clearance { feature, .. }, "feature") => match value.as_text() {
+                Some(text) => {
+                    *feature = text.trim().to_string();
+                    true
+                }
+                None => false,
+            },
+            (NodeKind::Clearance { distance, .. }, "distance") => set(distance),
+            (NodeKind::Clearance { soft, .. }, "soft") => set(soft),
             (NodeKind::Biome { biome }, "biome") => match value.as_text() {
                 Some(text) => {
                     *biome = text.trim().to_string();

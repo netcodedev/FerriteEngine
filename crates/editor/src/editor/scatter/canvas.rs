@@ -588,6 +588,7 @@ fn summary(kind: &NodeKind) -> String {
         NodeKind::RandomPoints { per_hectare, .. } => format!("{} per hectare", n(*per_hectare)),
         NodeKind::Slope { min, max, .. } => format!("{}–{}°", n(*min), n(*max)),
         NodeKind::Height { min, max, .. } => format!("{}–{} m", n(*min), n(*max)),
+        NodeKind::Clearance { feature, distance, .. } => format!("{} m from {}", n(*distance), if feature.is_empty() { "?" } else { feature }),
         NodeKind::Biome { biome } if biome.is_empty() => "no biome chosen".into(),
         NodeKind::Biome { biome } => biome.clone(),
         NodeKind::WorldChance { tag } if tag.is_empty() => "untagged".into(),
@@ -702,6 +703,7 @@ impl UIElement for ScatterCanvas {
         self.state.borrow_mut().scatter_camera =
             scene.get_active_camera().map(|c| c.get_camera().get_eye_position()).map(|p| [p.x, p.z]);
         self.with_edit_mut(|e| {
+            e.follow_file();
             e.update_counts(scene);
             // The world shows the graph as it is being edited.
             e.push_preview(scene);
@@ -750,7 +752,11 @@ impl UIElement for ScatterCanvas {
         self.footer_bg
             .set_position(Position::new(rect.x, area.y + area.h, Z));
         self.footer_bg.set_size(Size::new(rect.w, FOOTER_HEIGHT));
-        let footer = if let Some(problem) = problems.first() {
+        let changed_on_disk = self.with_edit(|e| e.changed_on_disk).unwrap_or(false);
+        let footer = if changed_on_disk {
+            self.footer.set_color(theme::WARNING);
+            "The file was changed elsewhere; saving would overwrite that. Revert to take it up.".to_string()
+        } else if let Some(problem) = problems.first() {
             self.footer.set_color(theme::DANGER);
             format!("The graph cannot be worked out: {problem}")
         } else {
