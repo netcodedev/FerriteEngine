@@ -37,6 +37,13 @@ pub trait Ground {
     fn biome_weight(&self, _biome: &str, _x: f64, _z: f64) -> f32 {
         0.0
     }
+
+    /// How far `(x, z)` is from the nearest of the world's `feature`,
+    /// metres (see `TerrainSource::scatter_distance`); infinite (far away)
+    /// by default.
+    fn distance(&self, _feature: &str, _x: f64, _z: f64) -> f32 {
+        f32::INFINITY
+    }
 }
 
 impl<T: TerrainSource + ?Sized> Ground for T {
@@ -54,6 +61,10 @@ impl<T: TerrainSource + ?Sized> Ground for T {
 
     fn biome_weight(&self, biome: &str, x: f64, z: f64) -> f32 {
         self.scatter_biome_weight(biome, x, z)
+    }
+
+    fn distance(&self, feature: &str, x: f64, z: f64) -> f32 {
+        self.scatter_distance(feature, x, z)
     }
 }
 
@@ -335,6 +346,14 @@ impl<G: Ground + ?Sized> Evaluator<'_, G> {
         match &node.kind {
             NodeKind::SurfacePoints { spacing, jitter, seed, .. } => one(surface_points(ground, rect, *spacing, *jitter, *seed)?),
             NodeKind::RandomPoints { per_hectare, seed, .. } => one(random_points(ground, rect, *per_hectare, *seed)?),
+            NodeKind::Clearance { feature, distance, soft } => {
+                let mut points = self.input(node, 0, rect)?;
+                for p in &mut points {
+                    let d = ground.distance(feature, p.position[0] as f64, p.position[2] as f64);
+                    p.density *= clearance(d, *distance, *soft);
+                }
+                one(alive(points))
+            }
             NodeKind::Biome { biome } => {
                 let mut points = self.input(node, 0, rect)?;
                 for p in &mut points {
@@ -528,6 +547,18 @@ impl SpotGrid {
         }
         false
     }
+}
+
+/// 1 at least `distance + soft` away, 0 nearer than `distance`, fading in
+/// between; nothing in reach (infinite) is far enough.
+fn clearance(away: f32, distance: f32, soft: f32) -> f32 {
+    if !away.is_finite() {
+        return 1.0;
+    }
+    if soft <= 0.0 {
+        return (away >= distance) as u8 as f32;
+    }
+    smoothstep(distance, distance + soft, away)
 }
 
 /// 1 between `min` and `max`, fading to 0 over `soft` beyond them.

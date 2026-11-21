@@ -185,6 +185,10 @@ pub enum NodeKind {
     /// is at the point (`TerrainSource::scatter_biome_weight`): 1 inside it,
     /// fading at its borders, 0 elsewhere.
     Biome { biome: String },
+    /// Keeps points at least `distance` metres from the world's `feature`
+    /// (`TerrainSource::scatter_distance`: houses, power lines, ...), their
+    /// density fading in over `soft` metres beyond.
+    Clearance { feature: String, distance: f32, soft: f32 },
     /// Keeps a point if its random number is under its density times
     /// `multiplier`: turns soft values into "there or not"; a multiplier
     /// above 1 keeps more than the density says, below 1 fewer.
@@ -253,6 +257,7 @@ impl NodeKind {
             NodeKind::WorldChance { .. } => "Filter: World chance",
             NodeKind::Noise { .. } => "Filter: Noise",
             NodeKind::Biome { .. } => "Filter: Biome",
+            NodeKind::Clearance { .. } => "Filter: Clearance",
             NodeKind::DensityCut { .. } => "Filter: Density cut",
             NodeKind::KeepAwayFrom { .. } => "Filter: Keep away from",
             NodeKind::Rotate { .. } => "Transform: Rotate",
@@ -298,6 +303,11 @@ impl NodeKind {
                  `biome` there is (1 inside, fading at its borders). Start a graph with it to make it a \
                  graph for that biome."
             }
+            NodeKind::Clearance { .. } => {
+                "Keeps the ground clear around one of the world's features (houses, power lines, poles, \
+                 wind turbines): keeps points at least `distance` metres from the nearest `feature`, their \
+                 density fading in over `soft` metres beyond."
+            }
             NodeKind::DensityCut { .. } => {
                 "Turns density into yes or no: keeps each point by chance, as likely as its density times \
                  `multiplier` (above 1 more, below 1 fewer). Put it after the filters that fade density \
@@ -340,6 +350,7 @@ impl NodeKind {
             | NodeKind::WorldChance { .. }
             | NodeKind::Noise { .. }
             | NodeKind::Biome { .. }
+            | NodeKind::Clearance { .. }
             | NodeKind::DensityCut { .. }
             | NodeKind::KeepAwayFrom { .. } => NodeRole::Filter,
             NodeKind::Rotate { .. } | NodeKind::Scale { .. } | NodeKind::Offset { .. } => NodeRole::Transform,
@@ -648,4 +659,19 @@ pub fn set_known_biomes(biomes: Vec<String>) {
 /// The biomes of the world loaded (see `set_known_biomes`).
 pub fn known_biomes() -> Vec<String> {
     KNOWN_BIOMES.read().map(|k| k.clone()).unwrap_or_default()
+}
+
+static KNOWN_FEATURES: std::sync::RwLock<Vec<String>> = std::sync::RwLock::new(Vec::new());
+
+/// Tell the node editor the features of the world loaded (for `Filter:
+/// Clearance`'s choices); the terrain does when its world changes.
+pub fn set_known_features(features: Vec<String>) {
+    if let Ok(mut known) = KNOWN_FEATURES.write() {
+        *known = features;
+    }
+}
+
+/// The features of the world loaded (see `set_known_features`).
+pub fn known_features() -> Vec<String> {
+    KNOWN_FEATURES.read().map(|k| k.clone()).unwrap_or_default()
 }

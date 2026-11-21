@@ -1054,6 +1054,10 @@ impl Component for Terrain {
             if biomes != graph::known_biomes() {
                 graph::set_known_biomes(biomes);
             }
+            let features = source.scatter_features();
+            if features != graph::known_features() {
+                graph::set_known_features(features);
+            }
         }
         self.scatter.tick(delta_time);
         // One time for the wind in all of this frame's passes.

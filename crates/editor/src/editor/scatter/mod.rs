@@ -72,6 +72,15 @@ pub struct ScatterEdit {
     counting: Option<(CountedFor, Receiver<Result<Worked, String>>)>,
     /// The rules last handed to the terrain to plant (see `push_preview`).
     pushed_rules: Option<u64>,
+    /// When the file was last written, as this copy knows it.
+    file_time: Option<std::time::SystemTime>,
+    /// The file changed on disk while this copy had unsaved edits: saving
+    /// would overwrite that change.
+    pub changed_on_disk: bool,
+}
+
+fn file_time(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 /// Per node, per output pin: where its points stand and their density,
@@ -123,11 +132,14 @@ impl ScatterEdit {
             (entry.meta.name.clone(), entry.source_path())
         };
         let graph = ScatterGraph::load(&path)?;
+        let written = file_time(&path);
         Ok(Self {
             asset: id,
             name,
             path,
             saved: graph.clone(),
+            file_time: written,
+            changed_on_disk: false,
             graph,
             history: GraphHistory::default(),
             selection: Vec::new(),
@@ -264,11 +276,18 @@ impl ScatterEdit {
             .ok_or_else(|| format!("asset {} does not exist", self.asset))?;
         assets::database().update(meta).map_err(|e| e.to_string())?;
         self.saved = self.graph.clone();
+        self.file_time = file_time(&self.path);
+        self.changed_on_disk = false;
         Ok(())
     }
 
-    /// Back to the saved graph (an undo step, so it can be undone).
+    /// Back to the graph in the file (an undo step, so it can be undone).
     pub fn revert(&mut self) {
+        if let Ok(graph) = ScatterGraph::load(&self.path) {
+            self.saved = graph;
+            self.file_time = file_time(&self.path);
+        }
+        self.changed_on_disk = false;
         let saved = self.saved.clone();
         self.edit(|graph| *graph = saved);
     }
@@ -285,6 +304,29 @@ impl ScatterEdit {
     /// Keep the point counts up to date for the cell under the editor
     /// camera: picked up when worked out, asked for again (on a thread of
     /// their own) when the graph or the cell changed.
+    /// Take up a change of the file made elsewhere (another tool, by hand):
+    /// an unchanged copy loads it (as an undo step); a copy with unsaved
+    /// edits keeps them and notes the clash (`changed_on_disk`).
+    pub fn follow_file(&mut self) {
+        let now = file_time(&self.path);
+        if now == self.file_time || now.is_none() {
+            return;
+        }
+        self.file_time = now;
+        let Ok(graph) = ScatterGraph::load(&self.path) else {
+            return;
+        };
+        if graph == self.saved {
+            return;
+        }
+        if self.dirty() {
+            self.changed_on_disk = true;
+            return;
+        }
+        self.saved = graph.clone();
+        self.edit(|g| *g = graph);
+    }
+
     pub fn update_counts(&mut self, scene: &Scene) {
         if let Some((_, receiver)) = &self.counting {
             match receiver.try_recv() {
@@ -400,7 +442,8 @@ impl ScatterEdit {
                 | NodeKind::Height { .. }
                 | NodeKind::WorldChance { .. }
                 | NodeKind::Noise { .. }
-                | NodeKind::Biome { .. },
+                | NodeKind::Biome { .. }
+                | NodeKind::Clearance { .. },
                 _,
             ) => {
                 let factor_of: HashMap<[u32; 2], f32> = traced(id, 0)

@@ -472,6 +472,33 @@ and variant; frame cost of grass < 2 ms on the user's machine.
        tools look a name up among scatter graphs first (the model Trees and
        the graph Trees share a name).
 
+   - **Clearances in graphs** (user's request, 2026-11-21): no fixed
+     rule in the world may keep the ground bare around power lines or
+     houses; graphs decide. Design:
+     - the world names features and measures distances to them
+       (`TerrainSource::scatter_features`, `scatter_distance`, far:
+       `far_scatter_distance`; infinite beyond its reach, 64 m in the
+       demo): "houses", "power lines", "power poles" (poles and boxes),
+       "wind turbines";
+     - `Filter: Clearance { feature, distance, soft }` keeps points at
+       least `distance` metres from the feature, density fading in over
+       `soft` beyond;
+     - the demo's `scatter_chance` loses the power grid's and the houses'
+       clearings (town rules stay); the Trees graph gets the old
+       distances (lines 4.5, poles 3, turbines 35, houses 3 m), the
+       Meadow keeps grass out of houses only (0.5 m).
+     - *As built* (2026-11-21): as designed; demo test
+       `the_trees_graph_keeps_clear_of_power_and_houses` (no tree nearer
+       than the four distances in columns with a pole, a turbine and the
+       start); in the editor, grass now grows under a power line by the
+       start. Found on the way: the graph editor kept an open copy of the
+       Trees graph and saved it over the new file; it now follows the file
+       on disk (an unchanged copy reloads, an edited one warns).
+       Then (user's wish): the demo's systems announce their features
+       themselves (`CLEARANCE_FEATURES` in `houses.rs` and
+       `power/world.rs`), `landscape/features.rs` gathers them, the terrain
+       source names none.
+
 7. **Demo**: grass graph (meadows: lush biomes, gentle slopes, patches by
    noise, none on roads/water/towns), then stones and bushes with the same
    system when the user has models for them.
