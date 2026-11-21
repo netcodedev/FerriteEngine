@@ -339,6 +339,7 @@ impl AssetPreview {
                     None => Shown::Texture(image),
                 }
             }
+            AssetKind::ScatterGraph(_) => Shown::Note("A scatter graph. It is edited in the node editor (to come).".into()),
             AssetKind::Animation(animation) => Shown::Note(format!(
                 "{} animation clip{}. Use them in an animation graph to see them play.",
                 animation.clips.len(),

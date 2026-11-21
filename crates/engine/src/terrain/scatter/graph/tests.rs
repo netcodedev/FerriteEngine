@@ -1,0 +1,325 @@
+//! The rules of docs/scatter-graphs.md ("Rules and how each is checked").
+
+use super::*;
+use crate::terrain::{
+    chunk::scatter_points_at,
+    hills::{Hills, HillsSettings},
+    source::{ChunkCoord, TerrainGenerator, TerrainSource},
+};
+
+/// A plane: height `tilt * x`; nothing grows west of `bare_west_of`; the
+/// chance is `chance` elsewhere.
+struct Plane {
+    tilt: f32,
+    bare_west_of: f32,
+    chance: f32,
+}
+
+impl Plane {
+    fn flat() -> Self {
+        Plane { tilt: 0.0, bare_west_of: f32::MIN, chance: 1.0 }
+    }
+
+    fn tilted(tilt: f32) -> Self {
+        Plane { tilt, ..Self::flat() }
+    }
+}
+
+impl Ground for Plane {
+    fn height(&self, x: f64, _z: f64) -> f32 {
+        self.tilt * x as f32
+    }
+
+    fn chance(&self, _tag: &str, x: f64, _y: f32, _z: f64) -> f32 {
+        if (x as f32) < self.bare_west_of {
+            0.0
+        } else {
+            self.chance
+        }
+    }
+}
+
+fn grass() -> NodeKind {
+    NodeKind::SpawnMesh(SpawnMesh {
+        asset: None,
+        model: "grass/grass.glb".into(),
+        range: ScatterRange::Detail { distance: 60.0 },
+        collision: false,
+        shadows: false,
+        wind: 1.0,
+    })
+}
+
+fn surface(spacing: f32) -> NodeKind {
+    NodeKind::SurfacePoints { spacing, jitter: 1.0, seed: 11 }
+}
+
+/// The placements of the graph's first output.
+fn placed<G: Ground + ?Sized>(graph: &ScatterGraph, ground: &G, rect: Rect) -> Vec<Placement> {
+    let eval = evaluate(graph, ground, rect).unwrap();
+    eval.outputs.into_iter().next().unwrap().1
+}
+
+fn spots(placements: &[Placement]) -> Vec<[u32; 3]> {
+    let mut spots: Vec<[u32; 3]> = placements.iter().map(|p| p.position.map(f32::to_bits)).collect();
+    spots.sort();
+    spots
+}
+
+/// The four quarters of `rect`.
+fn quarters(rect: Rect) -> [Rect; 4] {
+    let (mx, mz) = ((rect.x0 + rect.x1) / 2.0, (rect.z0 + rect.z1) / 2.0);
+    [
+        Rect::new(rect.x0, rect.z0, mx, mz),
+        Rect::new(mx, rect.z0, rect.x1, mz),
+        Rect::new(rect.x0, mz, mx, rect.z1),
+        Rect::new(mx, mz, rect.x1, rect.z1),
+    ]
+}
+
+#[test]
+fn the_same_graph_places_the_same_every_time_and_on_any_thread() {
+    let graph = ScatterGraph::chain([
+        surface(0.7),
+        NodeKind::Noise { wavelength: 12.0, threshold: 0.4, softness: 0.2, seed: 3 },
+        NodeKind::DensityCut,
+        NodeKind::Rotate { yaw_min: 0.0, yaw_max: 360.0, align: 0.5, tilt: 10.0 },
+        NodeKind::Scale { min: 0.3, max: 0.6, height_min: 0.8, height_max: 1.4, by_density: 0.5 },
+        grass(),
+    ]);
+    let ground = Plane::tilted(0.2);
+    let rect = Rect::new(-20.0, 5.0, 12.0, 37.0);
+    let first = placed(&graph, &ground, rect);
+    assert!(!first.is_empty());
+    assert_eq!(first, placed(&graph, &ground, rect));
+    let (a, b) = std::thread::scope(|s| {
+        let a = s.spawn(|| placed(&graph, &ground, rect));
+        let b = s.spawn(|| placed(&graph, &ground, rect));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    assert_eq!(first, a);
+    assert_eq!(first, b);
+}
+
+#[test]
+fn a_layer_as_a_graph_keeps_its_spots() {
+    let hills = Hills::create(7, HillsSettings::default());
+    let mut layer = ScatterLayerData::file("Trees/Trees.gltf", 60.0);
+    layer.tag = "tree".into();
+    let salt = 0x5eed_1234;
+    let graph = ScatterGraph::from_layer(&layer, salt);
+    let attempts = (60.0f32 * 128.0 * 128.0 / 10_000.0).round() as u32;
+    let mut compared = 0;
+    for (cx, cz) in [(0, 0), (3, -2), (-1, 5), (-4, -4)] {
+        let got: Vec<(u32, u32, u32, u32)> = {
+            let mut v: Vec<_> = placed(&graph, &*hills, Rect::column(cx, cz))
+                .iter()
+                .map(|p| (p.position[0].to_bits(), p.position[1].to_bits(), p.position[2].to_bits(), p.yaw.to_bits()))
+                .collect();
+            v.sort();
+            v
+        };
+        let mut expected: Vec<(u32, u32, u32, u32)> = hills
+            .vertical_range((cx, cz), false)
+            .flat_map(|cy| scatter_points_at(&*hills, ChunkCoord::new(cx, cy, cz), "tree", salt, attempts))
+            .map(|(x, y, z, yaw)| (x.to_bits(), y.to_bits(), z.to_bits(), yaw.to_bits()))
+            .collect();
+        expected.sort();
+        assert_eq!(got, expected, "column ({cx}, {cz})");
+        compared += got.len();
+    }
+    // Some columns are under the sea; not all of them.
+    assert!(compared > 0);
+}
+
+#[test]
+fn nothing_grows_where_the_world_says_no() {
+    let graph = ScatterGraph::chain([
+        surface(1.0),
+        NodeKind::WorldChance { tag: "grass".into() },
+        NodeKind::DensityCut,
+        grass(),
+    ]);
+    let ground = Plane { bare_west_of: 16.0, ..Plane::flat() };
+    let placements = placed(&graph, &ground, Rect::new(0.0, 0.0, 32.0, 32.0));
+    assert!(!placements.is_empty());
+    assert!(placements.iter().all(|p| p.position[0] >= 16.0));
+}
+
+#[test]
+fn a_density_cut_keeps_about_the_chance() {
+    let graph = ScatterGraph::chain([surface(0.5), NodeKind::WorldChance { tag: String::new() }, NodeKind::DensityCut, grass()]);
+    let ground = Plane { chance: 0.3, ..Plane::flat() };
+    let eval = evaluate(&graph, &ground, Rect::new(0.0, 0.0, 40.0, 40.0)).unwrap();
+    let all = 80 * 80;
+    let kept = eval.outputs[0].1.len();
+    assert!((kept as f32 / all as f32 - 0.3).abs() < 0.03, "{kept} of {all}");
+    // Every node says how many points it put out.
+    assert_eq!(eval.counts[&NodeId(0)], all);
+    assert_eq!(eval.counts[&NodeId(2)], kept);
+    assert_eq!(eval.counts[&NodeId(3)], kept);
+}
+
+#[test]
+fn the_slope_filter_keeps_what_it_says() {
+    let rect = Rect::new(0.0, 0.0, 20.0, 20.0);
+    let gentle = |min, max| ScatterGraph::chain([surface(1.0), NodeKind::Slope { min, max, soft: 0.0 }, grass()]);
+    // 45 degrees.
+    let steep = Plane::tilted(1.0);
+    assert!(placed(&gentle(0.0, 30.0), &steep, rect).is_empty());
+    assert_eq!(placed(&gentle(40.0, 50.0), &steep, rect).len(), 400);
+    assert_eq!(placed(&gentle(0.0, 5.0), &Plane::flat(), rect).len(), 400);
+    // A soft edge lowers the density instead of cutting.
+    let soft = ScatterGraph::chain([
+        surface(1.0),
+        NodeKind::Slope { min: 0.0, max: 40.0, soft: 10.0 },
+        NodeKind::DensityCut,
+        grass(),
+    ]);
+    let some = placed(&soft, &steep, rect).len();
+    assert!(some > 0 && some < 400, "{some}");
+}
+
+#[test]
+fn the_height_filter_keeps_what_it_says() {
+    let graph = ScatterGraph::chain([surface(1.0), NodeKind::Height { min: 10.0, max: 20.0, soft: 0.0 }, grass()]);
+    // Height = x.
+    let placements = placed(&graph, &Plane::tilted(1.0), Rect::new(0.0, 0.0, 40.0, 10.0));
+    assert!(!placements.is_empty());
+    assert!(placements.iter().all(|p| (10.0..=20.0).contains(&p.position[1])));
+}
+
+/// Grass kept 2 m away from random rocks.
+fn grass_around_rocks() -> (ScatterGraph, NodeId) {
+    let mut graph = ScatterGraph::default();
+    let points = graph.add(surface(0.8));
+    let rocks = graph.add(NodeKind::RandomPoints { per_hectare: 3000.0, seed: 5 });
+    let away = graph.add(NodeKind::KeepAwayFrom { radius: 2.0 });
+    let out = graph.add(grass());
+    graph.connect(points, 0, away, 0);
+    graph.connect(rocks, 0, away, 1);
+    graph.connect(away, 0, out, 0);
+    (graph, rocks)
+}
+
+#[test]
+fn keep_away_respects_the_radius_across_the_edge() {
+    let (graph, _) = grass_around_rocks();
+    let rect = Rect::new(0.0, 0.0, 16.0, 16.0);
+    let blades = placed(&graph, &Plane::flat(), rect);
+    assert!(!blades.is_empty());
+    // The rocks, also those just past the edge.
+    let rocks_only = ScatterGraph::chain([NodeKind::RandomPoints { per_hectare: 3000.0, seed: 5 }, grass()]);
+    let rocks = placed(&rocks_only, &Plane::flat(), Rect::new(-3.0, -3.0, 19.0, 19.0));
+    assert!(rocks.iter().any(|r| !rect.contains(r.position[0], r.position[2])));
+    for g in &blades {
+        for r in &rocks {
+            let d = (g.position[0] - r.position[0]).hypot(g.position[2] - r.position[2]);
+            assert!(d > 2.0, "grass at {:?} is {d} m from a rock", g.position);
+        }
+    }
+}
+
+#[test]
+fn cutting_the_ground_into_cells_changes_nothing() {
+    let rect = Rect::new(-16.0, -16.0, 16.0, 16.0);
+    let (around_rocks, _) = grass_around_rocks();
+    let graphs = [
+        ScatterGraph::chain([surface(0.6), NodeKind::Noise { wavelength: 8.0, threshold: 0.5, softness: 0.3, seed: 1 }, NodeKind::DensityCut, grass()]),
+        ScatterGraph::chain([NodeKind::RandomPoints { per_hectare: 900.0, seed: 2 }, grass()]),
+        around_rocks,
+    ];
+    let ground = Plane::tilted(0.3);
+    for graph in &graphs {
+        let whole = spots(&placed(graph, &ground, rect));
+        let mut cut: Vec<Placement> = Vec::new();
+        for quarter in quarters(rect) {
+            cut.extend(placed(graph, &ground, quarter));
+        }
+        assert!(!whole.is_empty());
+        assert_eq!(whole, spots(&cut));
+    }
+}
+
+#[test]
+fn transforms_stay_in_their_ranges() {
+    let graph = ScatterGraph::chain([
+        surface(1.0),
+        NodeKind::Rotate { yaw_min: 10.0, yaw_max: 20.0, align: 1.0, tilt: 0.0 },
+        NodeKind::Scale { min: 0.5, max: 0.8, height_min: 1.0, height_max: 2.0, by_density: 0.0 },
+        NodeKind::Offset { min: -0.3, max: -0.1 },
+        grass(),
+    ]);
+    // 45 degrees, rising to +x: the normal leans to -x.
+    let placements = placed(&graph, &Plane::tilted(1.0), Rect::new(0.0, 0.0, 10.0, 10.0));
+    assert_eq!(placements.len(), 100);
+    let half = std::f32::consts::FRAC_1_SQRT_2;
+    for p in &placements {
+        assert!((10f32.to_radians()..=20f32.to_radians()).contains(&p.yaw));
+        assert!((p.up[0] + half).abs() < 1e-3 && (p.up[1] - half).abs() < 1e-3, "{:?}", p.up);
+        let s = p.scale[0];
+        assert!((0.5..=0.8).contains(&s) && p.scale[2] == s);
+        assert!((s..=2.0 * s).contains(&p.scale[1]));
+        let below = p.position[0] - p.position[1];
+        assert!((0.1..=0.3).contains(&below), "{below}");
+    }
+    // The model's up axis ends up along `up`.
+    let up = placements[0].rotation() * cgmath::Vector3::unit_y();
+    assert!((up.x + half).abs() < 1e-3 && (up.y - half).abs() < 1e-3);
+}
+
+#[test]
+fn split_and_merge_keep_every_point() {
+    let mut graph = ScatterGraph::default();
+    let points = graph.add(surface(1.0));
+    let split = graph.add(NodeKind::Split { by: SplitBy::Random, threshold: 0.3 });
+    let flowers = graph.add(grass());
+    let merge = graph.add(NodeKind::Merge);
+    let all = graph.add(grass());
+    graph.connect(points, 0, split, 0);
+    graph.connect(split, 1, flowers, 0);
+    graph.connect(split, 0, merge, 0);
+    graph.connect(split, 1, merge, 0);
+    graph.connect(merge, 0, all, 0);
+    let eval = evaluate(&graph, &Plane::flat(), Rect::new(0.0, 0.0, 40.0, 40.0)).unwrap();
+    let below = eval.placements(flowers).len();
+    assert!((below as f32 / 1600.0 - 0.3).abs() < 0.04, "{below}");
+    assert_eq!(eval.placements(all).len(), 1600);
+}
+
+#[test]
+fn broken_graphs_are_refused() {
+    let mut cycle = ScatterGraph::chain([surface(1.0), NodeKind::Merge, NodeKind::DensityCut, grass()]);
+    cycle.connect(NodeId(2), 0, NodeId(1), 0);
+    assert!(matches!(cycle.problems()[..], [GraphProblem::Cycle(_)]));
+    assert!(evaluate(&cycle, &Plane::flat(), Rect::new(0.0, 0.0, 1.0, 1.0)).is_err());
+
+    let mut twice = ScatterGraph::chain([surface(1.0), NodeKind::DensityCut, grass()]);
+    twice.connect(NodeId(0), 0, NodeId(1), 0);
+    assert_eq!(twice.problems(), vec![GraphProblem::InputWiredTwice(PinRef { node: NodeId(1), pin: 0 })]);
+
+    let mut nowhere = ScatterGraph::chain([surface(1.0), grass()]);
+    nowhere.connect(NodeId(0), 0, NodeId(1), 3);
+    nowhere.connect(NodeId(7), 0, NodeId(1), 0);
+    assert_eq!(nowhere.problems().len(), 2);
+
+    // Far too fine for the ground asked for.
+    let fine = ScatterGraph::chain([surface(0.01), grass()]);
+    assert!(evaluate(&fine, &Plane::flat(), Rect::new(0.0, 0.0, 128.0, 128.0)).is_err());
+}
+
+#[test]
+fn an_unwired_output_gets_nothing() {
+    let graph = ScatterGraph::chain([grass()]);
+    let eval = evaluate(&graph, &Plane::flat(), Rect::new(0.0, 0.0, 10.0, 10.0)).unwrap();
+    assert_eq!(eval.outputs, vec![(NodeId(0), Vec::new())]);
+}
+
+#[test]
+fn a_graph_reads_back_as_written() {
+    let (graph, _) = grass_around_rocks();
+    let text = graph.to_ron();
+    assert_eq!(ScatterGraph::from_ron(&text).unwrap(), graph);
+    assert!(is_scatter_graph_file(Path::new("assets/scatter/Meadow.scatter.ron")));
+    assert_eq!(scatter_graph_name(Path::new("assets/scatter/Meadow.scatter.ron")), "Meadow");
+}

@@ -180,13 +180,16 @@ impl AssetBrowser {
         };
         let database = assets::database();
         let entry = database.get(asset.id)?;
+        let kind = match entry.meta.kind {
+            AssetKind::Model(_) => DragKind::Model,
+            AssetKind::Texture(_) => DragKind::Texture,
+            AssetKind::Animation(_) => DragKind::Animation,
+            // Nothing takes a scatter graph by dragging yet.
+            AssetKind::ScatterGraph(_) => return None,
+        };
         Some(AssetDrag {
             label: database.display_name(&asset)?,
-            kind: match entry.meta.kind {
-                AssetKind::Model(_) => DragKind::Model,
-                AssetKind::Texture(_) => DragKind::Texture,
-                AssetKind::Animation(_) => DragKind::Animation,
-            },
+            kind,
             asset,
             origin: (x, y),
             position: (x, y),
@@ -232,6 +235,7 @@ fn describe(entry: &AssetEntry) -> String {
             entry.meta.name,
             count(animation.clips.len(), "clip"),
         ),
+        AssetKind::ScatterGraph(_) => format!("{}  ·  Scatter graph  ·  {source}", entry.meta.name),
     }
 }
 
@@ -314,6 +318,7 @@ fn build_items(database: &AssetDatabase) -> (Vec<TreeItem>, HashMap<u64, Row>) {
                 AssetKind::Model(_) => icons::PACKAGE,
                 AssetKind::Texture(_) => icons::LAYOUT_GRID,
                 AssetKind::Animation(_) => icons::ACTIVITY,
+                AssetKind::ScatterGraph(_) => icons::LIST_TREE,
             }),
         });
         rows.insert(id, Row::Asset(entry.meta.id));

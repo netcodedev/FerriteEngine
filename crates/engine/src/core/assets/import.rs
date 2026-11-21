@@ -6,11 +6,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::core::model::{clip_file, material_maps, outline};
+use crate::{
+    core::model::{clip_file, material_maps, outline},
+    terrain::scatter::graph::{self, ScatterGraph},
+};
 
 use super::{
     AnimationSettings, AssetDatabase, AssetError, AssetId, AssetKind, AssetMeta, ClipInfo,
-    MaterialSettings, ModelSettings, TextureSettings, VariantInfo, ASSET_META_VERSION,
+    MaterialSettings, ModelSettings, ScatterGraphSettings, TextureSettings, VariantInfo, ASSET_META_VERSION,
     META_SUFFIX,
 };
 
@@ -21,6 +24,7 @@ const TEXTURE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "tga", "bmp", "tif"
 const MODEL_FOLDER: &str = "models";
 const TEXTURE_FOLDER: &str = "textures";
 const ANIMATION_FOLDER: &str = "animations";
+const SCATTER_FOLDER: &str = "scatter";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FileKind {
@@ -28,11 +32,16 @@ enum FileKind {
     Texture,
     /// An animation clip made in the editor (`*.clip.ron`).
     Clip,
+    /// A scatter graph (`*.scatter.ron`).
+    ScatterGraph,
 }
 
 fn file_kind(path: &Path) -> Option<FileKind> {
     if clip_file::is_clip_file(path) {
         return Some(FileKind::Clip);
+    }
+    if graph::is_scatter_graph_file(path) {
+        return Some(FileKind::ScatterGraph);
     }
     let extension = path.extension()?.to_str()?.to_lowercase();
     if MODEL_EXTENSIONS.contains(&extension.as_str()) {
@@ -87,7 +96,25 @@ impl AssetDatabase {
             }
             FileKind::Model => self.import_model(file),
             FileKind::Clip => self.import_clip(file),
+            FileKind::ScatterGraph => self.import_scatter_graph(file),
         }
+    }
+
+    /// Register a scatter graph file (checked to be one).
+    fn import_scatter_graph(&mut self, file: &Path) -> Result<AssetId, AssetError> {
+        ScatterGraph::load(file).map_err(|e| AssetError::Import(file.to_path_buf(), e))?;
+        let source = match self.path_in_root(file) {
+            Some(inside) => inside,
+            None => copy_into(file, &self.root().join(SCATTER_FOLDER), true)?,
+        };
+        let meta = AssetMeta {
+            version: ASSET_META_VERSION,
+            id: AssetId::new(),
+            name: graph::scatter_graph_name(&source),
+            source: file_name_of(&source),
+            kind: AssetKind::ScatterGraph(ScatterGraphSettings {}),
+        };
+        self.register(meta, source.parent().unwrap_or(Path::new(".")))
     }
 
     /// Register a clip file as an animation asset with one clip.
@@ -593,6 +620,26 @@ mod tests {
         let mut fresh = AssetDatabase::new(&project.0);
         fresh.scan();
         assert_eq!(fresh.get(id).unwrap().meta, database.get(id).unwrap().meta);
+    }
+
+    #[test]
+    fn a_scatter_graph_is_an_asset() {
+        use crate::terrain::scatter::graph::{NodeKind, ScatterGraph};
+        let outside = TempDir::new("import-scatter");
+        let project = TempDir::new("import-scatter-project");
+        let file = outside.0.join("Meadow.scatter.ron");
+        ScatterGraph::chain([NodeKind::SurfacePoints { spacing: 1.0, jitter: 1.0, seed: 1 }, NodeKind::DensityCut])
+            .save(&file)
+            .unwrap();
+        fs::write(outside.0.join("Broken.scatter.ron"), "not a graph").unwrap();
+
+        let mut database = AssetDatabase::new(&project.0);
+        let id = database.import(&file).unwrap();
+        let entry = database.get(id).unwrap();
+        assert_eq!(entry.source_path(), project.0.join("scatter").join("Meadow.scatter.ron"));
+        assert_eq!(entry.meta.name, "Meadow");
+        assert!(matches!(entry.meta.kind, AssetKind::ScatterGraph(_)));
+        assert!(database.import(&outside.0.join("Broken.scatter.ron")).is_err());
     }
 
     #[test]

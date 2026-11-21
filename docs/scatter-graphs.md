@@ -197,8 +197,21 @@ and variant; frame cost of grass < 2 ms on the user's machine.
    `CREDITS.md`. Checked in a scratch project's editor (asset preview
    and as a terrain layer): upright, blades cut out cleanly. Later
    (engine): name-free multi-mesh packs as variants, node rotations.
-2. **Graph data + evaluation** (engine): node types above, RON asset
-   `*.scatter.ron`, pure evaluator, tests from the table.
+2. **Graph data + evaluation** (engine). Done 2026-11-21:
+   `terrain/scatter/graph/` — `ScatterGraph` (nodes with stable ids,
+   wires pin to pin, `problems()` finds broken wires, doubly wired
+   inputs and cycles), `evaluate(graph, ground, rect)`, and the asset
+   kind `ScatterGraph` for `*.scatter.ron` files (imported into
+   `assets/scatter/`). Sources lay points on world-wide structures (a
+   grid; the columns' `scatter_spots`), so cutting the ground into cells
+   changes nothing and `Keep away from` looks past a cell's edge by its
+   radius. Points whose density falls to 0 are dropped. `Ground` is what
+   a graph asks of the world (height, chance); every `TerrainSource` is
+   one. The ground's normal is only sampled where a node needs it
+   (`Slope`, `Rotate` with `align`). Tests: 13 in `graph/tests.rs` plus
+   the import test, covering the rules table. Left out for now: the
+   minimum distance of `Surface points`, and `Keep away from` another
+   graph (it works within one graph).
 3. **Layers → graphs**: terrain holds graphs; old scene layers load as
    generated graphs (no change to existing worlds); far scatter reads
    landscape outputs as before.
