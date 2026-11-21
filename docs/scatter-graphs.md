@@ -1,0 +1,226 @@
+# Scatter graphs: plan
+
+Status: plan (2026-11-21), nothing built yet. Name: Scatter Graph (not
+"PCG", which is Unreal's term).
+
+## Why
+
+The world looks good but empty (wishlist item 3, 2026-11-18): no grass, few
+stones, no bushes. The wish is a system like Unreal's procedural foliage:
+rules the user puts together themselves, filters on the points (slope,
+height, ...), and adjustments on the output (random rotation, scale, ...).
+First user: grass from `lowpoly_grass_link_in_description.glb`.
+
+## What exists today
+
+`terrain/scatter` already scatters models over the terrain:
+
+- A terrain has **layers**: model (asset or file) + density (attempts per
+  hectare, max 200) + tag. Saved in the scene file (`ScatterLayerData`).
+- Per **chunk (128 m)** and layer, `scatter_spots` draws `attempts` random
+  spots from a hash of (column, salt), so they are deterministic.
+  `planting.rs` asks the terrain source on 2 worker threads:
+  `surface_height` and `scatter_chance(tag, x, y, z)`. The demo's
+  `scatter_chance` knows water, roads, towns, power-line corridors and the
+  biome's vegetation.
+- `ScatterInstances` draws them instanced per (variant, LOD), culled in
+  cells; models get trimesh colliders (trees can be felled, `removed`).
+- `far_scatter` draws impostors on the same spots beyond the loaded chunks.
+- The PBR material already cuts out alpha < 0.5 (foliage cards).
+
+What is missing for grass and a rule system:
+
+1. **Scale.** Trees: ~20 per hectare. Grass: several per m² — 30 000+
+   per chunk. Planting that over every loaded chunk, with colliders and
+   impostors, is far too much. Grass is only needed within ~50–80 m.
+2. **Rules.** The only rule is "chance from the game's source × density".
+   There is no slope or height filter, no scale/tilt, no "no grass under
+   rocks", no evenly spaced points (random spots clump and leave gaps).
+3. **Look.** No wind, no double-sided drawing, no fade-out at the edge of
+   the range, no colour match with the ground.
+
+## The idea
+
+A **scatter graph** is an asset (`*.scatter.ron`, next to `*.clip.ron`):
+a small graph of nodes that turns a piece of ground into placements. The
+terrain gets a list of graphs (as it has layers today). The graph is pure
+data and its evaluation a pure function of (graph, seed, cell, terrain
+source), so the result is the same every time and can be cached or saved
+later (see chunk persistence: generation may get slower, runtime may not).
+
+### Nodes (v1)
+
+Points flow from top to bottom; every point carries position, normal,
+slope, height, a density value 0..1 and a random seed.
+
+**Sources** (make points)
+
+- `Surface points` — evenly spread points on the ground of the cell:
+  jittered grid (spacing in m, jitter 0..1); optional minimum distance
+  (Poisson-like). Replaces the clumpy random spots for dense things.
+- `Random points` — today's behaviour (attempts per hectare), for sparse
+  things like trees, so existing worlds keep their tree spots.
+
+**Filters** (drop points or lower their density)
+
+- `Slope` — keep between min/max degrees (soft edge).
+- `Height` — keep between min/max world height (soft edge).
+- `World chance` — multiply by the game's `scatter_chance(tag)`: water,
+  roads, towns, biomes stay the game's knowledge, written once.
+- `Noise` — multiply by a noise mask (scale, threshold, contrast): patches
+  and clearings instead of an even carpet.
+- `Density cut` — keep a point if its density > its random number (the
+  step that turns soft values into "there or not").
+- `Keep away from` — drop points near the output of another graph or node
+  (radius): no grass in rocks, bushes not inside tree trunks.
+
+**Transforms** (change the points)
+
+- `Rotate` — random yaw range; tilt with the ground normal (0 = upright,
+  1 = fully along the slope); random extra tilt.
+- `Scale` — random uniform range, optional extra height range; scale by
+  density (thinner at the edge of a patch: smaller).
+- `Offset` — move along the up axis (sink rocks into the ground).
+
+**Output**
+
+- `Spawn mesh` — model asset, variants with weights, **range** (near:
+  only within N m of the camera; far: like today's trees, whole loaded
+  world + impostors), collision on/off, cast shadows on/off, wind amount.
+
+Graphs are evaluated off the main thread on the existing planting workers.
+
+### Two ranges: detail and landscape
+
+- **Landscape** outputs (trees, big rocks) work as today: per chunk, with
+  colliders, felling and far impostors. The existing layers become graphs
+  of `Random points → World chance → Density cut → Rotate → Spawn mesh`.
+- **Detail** outputs (grass, flowers, pebbles) live in small cells
+  (16 m × 16 m) in a ring around the camera, up to the output's range
+  (default 60 m). Cells are planted as the camera comes close and
+  dropped as it leaves; no colliders, no impostors. Past ~80 % of the range
+  the instances shrink to nothing (no hard edge where grass pops).
+  The ground's own texture carries the green further out.
+
+### Drawing grass
+
+- Double-sided (no back-face culling) for detail outputs, with the
+  normal facing the camera side so both sides are lit.
+- Alpha cut-out (exists), never alpha blending: the GLB's materials are
+  `BLEND` and are read as cut-out.
+- Wind: a vertex sway in the scatter vertex shader, stronger towards the
+  top of the model (by local height), phase from world position; one
+  global wind direction + strength (later from the weather).
+- Ground tint: the base of the blade takes on the terrain colour under it
+  (optional, per output), so grass matches dry or lush ground.
+- Shadows: off by default for grass (cost), on for bushes and rocks.
+
+**Structure** (because graphs branch, decided 2026-11-21)
+
+- `Merge` — joins the points of several inputs.
+- `Split` — sends points above / below a density or random threshold
+  down two outputs (e.g. 80 % grass, 20 % flowers from the same points).
+- A graph may have several `Spawn mesh` outputs.
+
+### Editing: node editor (decided 2026-11-21)
+
+A graph asset opens in its own editor tab (like the clip editor), built
+in `ferrite-ui`:
+
+- canvas with pan and zoom, grid;
+- nodes as boxes with input pins on the left and output pins on the right,
+  coloured by what flows (points; later maybe numbers/masks);
+- drag from a pin to a pin to wire; a wire into an occupied input replaces
+  the old one; only type-matching pins connect, no cycles;
+- right-click (or Space) opens a searchable "add node" menu; Delete
+  removes; box select, drag to move, copy/paste, undo/redo through the
+  editor's existing undo;
+- the selected node's properties in the inspector;
+- each node shows its point count from the last evaluation (cell under
+  the camera), so a filter that drops everything is seen at once.
+
+Edits replant after the same short delay as today. Node positions are
+saved in the asset (editor-only data).
+
+Debug views (from the editor's debug menu), showing what is really
+planted, never plan data:
+
+- point density per graph as a colour on the ground;
+- counts per output and cell, time per cell in the profiler.
+
+## The grass model
+
+`~/Downloads/lowpoly_grass_link_in_description.glb` (Sketchfab, 1.3 MB):
+
+- 6 meshes: 3 flat cards (6–8 vertices) and 3 clumps (60–104 vertices),
+  each ~1–2 m across in the file; 2 PNG textures.
+- Materials `BLEND` + double-sided → read as cut-out (see above).
+- The meshes lie in a Z-up frame and the file turns them with a node
+  transform; the engine's model loader does not apply node transforms
+  (`PreTransformVertices` is off), so the grass may come in lying flat.
+  First step checks this; fix at import (bake node transforms for
+  scatter models) rather than in the file.
+- Licence **CC-BY-4.0**, author Atrikumar Das: needs a credit line in the
+  demo (credits file / about screen).
+- Scale: the clumps are ~1 m tall in the file, too tall for grass; the
+  graph's `Scale` node (e.g. 0.3–0.6) handles that.
+
+## Rules and how each is checked
+
+| Rule | Check |
+|---|---|
+| Same world, same placements, every load | test: evaluate a graph twice and on two threads → identical |
+| Existing tree/rock worlds keep their spots | test: old layer → converted graph gives today's `scatter_points_at` points |
+| No grass on water, roads, in towns, under power lines | `World chance` uses `scatter_chance`; test on the demo source at known road/water points |
+| Slope / height filters do what they say | unit tests with a flat and a 45° test source |
+| `Keep away from` respects the radius | unit test |
+| Detail cells only within range; dropped when leaving | test with a moving camera; instance count bounded |
+| No frame spikes from planting | planting stays off the main thread; profiler: frame time while flying fast over grass |
+| Looks right in the real demo | editor screenshots taken by me, not plotted data; the user flies around |
+
+Budget to aim for (to measure, not promised): grass within 60 m at
+~2 instances/m² is ~22 000 instances in view, a few draw calls per cell
+and variant; frame cost of grass < 2 ms on the user's machine.
+
+## Steps
+
+1. **Import the grass.** Done 2026-11-21, differently than planned: the
+   file is fixed, not the engine. Baking node rotations alone would not
+   have been enough: the engine finds variants by LOD names, and the
+   Sketchfab file has none, so all six meshes would have become one
+   variant, stacked. `tools/grass_model.py` (demo, Blender headless)
+   bakes the node chain, centres each mesh on its base and writes
+   `assets/models/grass/grass.glb` with six variants `grass_card_1..3`,
+   `grass_clump_1..3` (each `<name>_LOD0`). Scatter pipelines already
+   draw both sides (`Cull::None`) and cut out alpha < 0.5; the sidecar
+   marks the materials as foliage (no collision). Credit in the demo's
+   `CREDITS.md`. Checked in a scratch project's editor (asset preview
+   and as a terrain layer): upright, blades cut out cleanly. Later
+   (engine): name-free multi-mesh packs as variants, node rotations.
+2. **Graph data + evaluation** (engine): node types above, RON asset
+   `*.scatter.ron`, pure evaluator, tests from the table.
+3. **Layers → graphs**: terrain holds graphs; old scene layers load as
+   generated graphs (no change to existing worlds); far scatter reads
+   landscape outputs as before.
+4. **Detail range**: camera ring of 16 m cells, planting on the workers,
+   shrink-out at the edge, no colliders/impostors.
+5. **Grass drawing**: wind sway, double-sided, ground tint, shadow switch.
+6. **Node editor**: graph asset in the asset browser, opens in its own
+   tab (canvas, pins, wires, add menu, undo), properties in the
+   inspector, point counts on the nodes, debug views. MCP tools to
+   create/edit graphs (add node, connect, set property), so I can build
+   and test graphs too. The biggest step; split into canvas + display
+   first, then editing.
+7. **Demo**: grass graph (meadows: lush biomes, gentle slopes, patches by
+   noise, none on roads/water/towns), then stones and bushes with the same
+   system when the user has models for them.
+
+Each step ends with tests passing and, from step 4 on, a look in the real
+editor.
+
+## Decisions (the user's, 2026-11-21)
+
+1. Name: **Scatter Graph** (assets `*.scatter.ron`).
+2. Editing: a **real node editor** with wires from the start, not a list.
+3. Grass is **looks only**: walk-through, no colliders, no ids per
+   instance (detail outputs cannot be removed one by one).
