@@ -320,6 +320,9 @@ fn a_graph_reads_back_as_written() {
     let (graph, _) = grass_around_rocks();
     let text = graph.to_ron();
     assert_eq!(ScatterGraph::from_ron(&text).unwrap(), graph);
+    // Ids are plain numbers, easy to read and write by hand.
+    assert!(text.contains("id: 0,"), "{text}");
+    assert!(text.contains("node: 0,"), "{text}");
     assert!(is_scatter_graph_file(Path::new("assets/scatter/Meadow.scatter.ron")));
     assert_eq!(scatter_graph_name(Path::new("assets/scatter/Meadow.scatter.ron")), "Meadow");
 }

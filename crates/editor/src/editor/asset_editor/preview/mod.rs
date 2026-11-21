@@ -18,7 +18,7 @@ use ferrite::{
         renderer::text::{icons, Text},
         utils::DataSource,
     },
-    terrain::scatter::{ScatterInstances, ScatterModel, ScatterSpec},
+    terrain::scatter::{graph::Placement, ScatterInstances, ScatterModel, ScatterSpec},
 };
 use ferrite_ui::ui::{
     element_handle::UIElementHandle,
@@ -709,14 +709,9 @@ impl AssetPreview {
                             .fold(0.0f32, |sum, half| sum + half * half)
                             .sqrt()
                             .max(0.01);
-                        let spec = ScatterSpec {
-                            model: loaded,
-                            attempts: 1,
-                            salt: 0,
-                            tag: String::new(),
-                        };
+                        let spec = ScatterSpec::of_model(loaded);
                         Shown::Model {
-                            instances: ScatterInstances::new(&spec, &[(0.0, 0.0, 0.0, 0.0)]),
+                            instances: ScatterInstances::new(&spec, &[Placement::upright([0.0; 3], 0.0)]),
                             center,
                             radius,
                             floor: min[1],

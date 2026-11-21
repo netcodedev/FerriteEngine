@@ -82,6 +82,11 @@ pub struct Placement {
 }
 
 impl Placement {
+    /// Standing upright on `position`, turned by `yaw`, at its own size.
+    pub fn upright(position: [f32; 3], yaw: f32) -> Self {
+        Self { position, yaw, up: [0.0, 1.0, 0.0], scale: [1.0; 3] }
+    }
+
     pub fn rotation(&self) -> Quaternion<f32> {
         let up = Vector3::from(self.up);
         let lean = Quaternion::from_arc(Vector3::unit_y(), up, None);

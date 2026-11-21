@@ -821,16 +821,14 @@ impl Terrain {
                 // Worked out by the planting workers; a chunk without
                 // ground grows nothing.
                 let mut points = if chunk.has_ground() {
-                    match self.planting.take(&source, chunk.coord(), &spec.tag, spec.salt, spec.attempts) {
+                    match self.planting.take(&source, chunk.coord(), spec) {
                         Some(points) => points,
                         None => continue,
                     }
                 } else {
                     Vec::new()
                 };
-                points.retain(|&(x, y, z, _)| {
-                    !self.scatter.is_removed(spec.salt, Point3::new(x, y, z))
-                });
+                points.retain(|p| !self.scatter.is_removed(spec.salt, Point3::from(p.position)));
                 let chunk_body = chunk_entity
                     .get_own_component::<RigidBody>()
                     .map(|body| body.rigid_body_handle);

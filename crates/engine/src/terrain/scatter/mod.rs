@@ -205,28 +205,37 @@ impl Scatter {
         self.removed.len()
     }
 
-    /// What every chunk should carry right now, one entry per active layer.
+    /// What every chunk should carry right now: one entry per landscape
+    /// output of every loaded layer (detail outputs are planted around
+    /// the camera instead).
     pub fn specs(&self) -> Vec<ScatterSpec> {
         let mut specs: Vec<ScatterSpec> = Vec::new();
         for layer in &self.layers {
-            let Some(model) = &layer.loaded else {
+            let Some(loaded) = &layer.loaded else {
                 continue;
             };
-            let chunk_area = CHUNK_SIZE_FLOAT * CHUNK_SIZE_FLOAT;
-            let attempts = (layer.applied_density.max(0.0) * chunk_area / DENSITY_AREA).round() as u32;
-            if attempts == 0 {
-                continue;
+            // A model layer at density 0 plants nothing anywhere.
+            if !layer.is_graph() {
+                let chunk_area = CHUNK_SIZE_FLOAT * CHUNK_SIZE_FLOAT;
+                if (layer.density.max(0.0) * chunk_area / DENSITY_AREA).round() as u32 == 0 {
+                    continue;
+                }
             }
-            let spec = ScatterSpec {
-                model: model.clone(),
-                attempts,
-                salt: layer.salt(),
-                tag: layer.applied_tag.clone(),
-            };
-            // The same model at the same density twice would land on the
-            // very same spots; plant it once.
-            if !specs.iter().any(|s| s.same_as(&spec)) {
-                specs.push(spec);
+            for output in &loaded.outputs {
+                if output.range != graph::ScatterRange::Landscape {
+                    continue;
+                }
+                let spec = ScatterSpec {
+                    model: output.model.clone(),
+                    graph: loaded.graph.clone(),
+                    output: output.node,
+                    salt: layer.output_salt(output.node),
+                };
+                // The same model at the same density twice would land on
+                // the very same spots; plant it once.
+                if !specs.iter().any(|s| s.same_as(&spec)) {
+                    specs.push(spec);
+                }
             }
         }
         specs
@@ -242,13 +251,16 @@ impl Scatter {
                 Some(_) => Property::text(name, layer.label()).read_only(),
                 None => Property::text(name, layer.model.clone()),
             });
-            properties.push(Property::ranged(
-                format!("{DENSITY_PROPERTY}{number}"),
-                layer.density,
-                0.0,
-                MAX_DENSITY,
-            ));
-            properties.push(Property::text(format!("{TAG_PROPERTY}{number}"), layer.tag.clone()));
+            // A graph has its own rules.
+            if !layer.is_graph() {
+                properties.push(Property::ranged(
+                    format!("{DENSITY_PROPERTY}{number}"),
+                    layer.density,
+                    0.0,
+                    MAX_DENSITY,
+                ));
+                properties.push(Property::text(format!("{TAG_PROPERTY}{number}"), layer.tag.clone()));
+            }
         }
         properties.push(Property::text("scatter", self.status()).read_only());
         properties

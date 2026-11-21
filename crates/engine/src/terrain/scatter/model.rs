@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use rapier3d::prelude::{SharedShape, TriMeshFlags, Vector};
 
@@ -18,6 +19,7 @@ use crate::core::{
 };
 
 use super::*;
+use super::graph::{NodeId, ScatterGraph};
 
 thread_local! {
     static MODEL_CACHE: RefCell<ModelCache> = RefCell::new(ModelCache::default());
@@ -228,24 +230,31 @@ impl ScatterModel {
     }
 }
 
-/// What one layer wants on every chunk.
+/// What one landscape output of a layer wants on every chunk: the model
+/// planted where the output of the graph puts it.
 #[derive(Clone)]
 pub struct ScatterSpec {
     pub model: Rc<ScatterModel>,
-    /// Placements tried per chunk; some are rejected by height.
-    pub attempts: u32,
-    /// Makes each model scatter to its own spots.
+    /// The layer's rules (for a model layer, `ScatterGraph::from_layer`).
+    pub graph: Arc<ScatterGraph>,
+    /// The `SpawnMesh` node of `graph` this is.
+    pub output: NodeId,
+    /// Tells this output's instances from others' (felled trees are kept
+    /// by it). A model layer's is the one it always had.
     pub salt: u64,
-    /// What the world makes of the layer (see `ScatterLayerData::tag`).
-    pub tag: String,
 }
 
 impl ScatterSpec {
+    /// A model on its own, placed by hand (previews): no rules of its own.
+    pub fn of_model(model: Rc<ScatterModel>) -> Self {
+        Self { model, graph: Arc::new(ScatterGraph::default()), output: NodeId(0), salt: 0 }
+    }
+
     pub(super) fn same_as(&self, other: &ScatterSpec) -> bool {
         Rc::ptr_eq(&self.model, &other.model)
-            && self.attempts == other.attempts
+            && self.output == other.output
             && self.salt == other.salt
-            && self.tag == other.tag
+            && (Arc::ptr_eq(&self.graph, &other.graph) || self.graph == other.graph)
     }
 }
 

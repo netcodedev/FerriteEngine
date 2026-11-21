@@ -3,9 +3,10 @@
 //! horizon's ground, as flat pictures of the models
 //! that turn toward the camera (see `scatter::impostor`).
 //!
-//! They stand on the very spots the chunks plant them on (see
-//! `chunk::scatter_spots`), as many as the source lets grow there from
-//! afar (`TerrainSource::far_scatter_chance`), placed on a thread of their
+//! They stand where the chunks plant them: each landscape output's graph
+//! is worked out on the horizon's ground (`FarGround`), as many as the
+//! source lets grow there from afar (`TerrainSource::far_scatter_chance`)
+//! and thinned with distance, placed on a thread of their
 //! own whenever the horizon moves or the layers change. A column's models
 //! are drawn here until its chunks are loaded and carry their own (see
 //! `leave_to_chunks`), so the two take turns exactly, wherever the chunks
@@ -32,7 +33,7 @@ use crate::core::{
 };
 
 use super::{
-    chunk::scatter_spots,
+    scatter::graph::{evaluate, Ground, NodeId, Rect, ScatterGraph},
     columns::{ColumnMap, COLUMNS_GLSL},
     horizon::{self, HeightGrid, SINK},
     scatter::{impostor::{self, FRAMES}, pick_variant_index, spot_key, Scatter, ScatterModel, ScatterSpec},
@@ -43,23 +44,57 @@ use super::{
 
 
 
-/// What a layer is placed by.
+/// What a landscape output is placed by.
 #[derive(Clone, PartialEq, Debug)]
 struct Layer {
-    tag: String,
+    graph: Arc<ScatterGraph>,
+    output: NodeId,
     salt: u64,
-    attempts: u32,
     variants: usize,
 }
 
 impl Layer {
     fn of(spec: &ScatterSpec) -> Self {
         Self {
-            tag: spec.tag.clone(),
+            graph: spec.graph.clone(),
+            output: spec.output,
             salt: spec.salt,
-            attempts: spec.attempts,
             variants: spec.model.variant_count(),
         }
+    }
+}
+
+/// The ground as seen from far away, for one output: the horizon's
+/// heights, and the source's far chances, thinned with distance first
+/// (cheap, and most far spots go that way).
+struct FarGround<'a> {
+    source: &'a dyn TerrainSource,
+    heights: &'a HeightGrid,
+    centre: [f64; 2],
+    salt: u64,
+}
+
+impl FarGround<'_> {
+    /// The share kept at `(x, z)` and how much larger it is drawn, or
+    /// `None` if this spot is thinned out.
+    fn thinned(&self, x: f32, z: f32) -> Option<f32> {
+        let (dx, dz) = (x as f64 - self.centre[0], z as f64 - self.centre[1]);
+        let (kept, scale) = thinning(dx.hypot(dz));
+        (kept >= 1.0 || keep_draw(x, z, self.salt) < kept).then_some(scale)
+    }
+}
+
+impl Ground for FarGround<'_> {
+    /// Beyond the horizon: not a number (nothing grows there).
+    fn height(&self, x: f64, z: f64) -> f32 {
+        self.heights.height(x, z).unwrap_or(f32::NAN)
+    }
+
+    fn chance(&self, tag: &str, x: f64, y: f32, z: f64) -> f32 {
+        if y.is_nan() || self.thinned(x as f32, z as f32).is_none() {
+            return 0.0;
+        }
+        self.source.far_scatter_chance(tag, x, z, y)
     }
 }
 
@@ -119,28 +154,27 @@ fn place(
             return;
         }
         for (layer, slots) in layers.iter().zip(out.iter_mut()) {
+            let ground = FarGround { source, heights, centre, salt: layer.salt };
             for x in cx - span..=cx + span {
                 let distance = super::streaming::column_distance((x, z), centre[0], centre[1]);
                 if distance > reach {
                     continue;
                 }
-                for (px, pz, grow, turn) in scatter_spots((x, z), layer.salt, layer.attempts) {
-                    let (dx, dz) = (px as f64 - centre[0], pz as f64 - centre[1]);
-                    let (kept, scale) = thinning(dx.hypot(dz));
-                    if kept < 1.0 && keep_draw(px, pz, layer.salt) >= kept {
-                        continue;
-                    }
-                    if !removed.is_empty() && removed.contains(&(layer.salt, spot_key(px, pz))) {
-                        continue;
-                    }
-                    let Some(height) = heights.height(px as f64, pz as f64) else {
+                let Ok(evaluation) = evaluate(&layer.graph, &ground, Rect::column(x, z)) else {
+                    continue;
+                };
+                for p in evaluation.placements(layer.output) {
+                    let [px, py, pz] = p.position;
+                    // Thinned again for graphs that never ask for a chance.
+                    let Some(scale) = ground.thinned(px, pz) else {
                         continue;
                     };
-                    if grow >= source.far_scatter_chance(&layer.tag, px as f64, pz as f64, height) {
+                    if py.is_nan() || (!removed.is_empty() && removed.contains(&(layer.salt, spot_key(px, pz)))) {
                         continue;
                     }
                     let variant = pick_variant_index(px, pz, layer.variants);
-                    slots[variant].push([px, height - SINK, pz, turn, scale]);
+                    // A picture can only grow as a whole: by the height.
+                    slots[variant].push([px, py - SINK, pz, p.yaw, scale * p.scale[1]]);
                 }
             }
         }
@@ -448,21 +482,88 @@ impl FarScatter {
 mod tests {
     use super::*;
     use crate::terrain::{
+        chunk::scatter_spots,
         hills::{Hills, HillsSettings},
         horizon,
+        scatter::{graph::ScatterGraph, ScatterLayerData},
         source::TerrainGenerator,
     };
+
+    /// Density that tries 30 spots per column.
+    const THIRTY_PER_COLUMN: f32 = 30.0 * 10_000.0 / (128.0 * 128.0);
+
+    /// A model layer of old as a graph: 30 spots per column, untagged.
+    fn test_layer(salt: u64, variants: usize) -> Layer {
+        let graph = ScatterGraph::from_layer(&ScatterLayerData::file("tree.glb", THIRTY_PER_COLUMN), salt);
+        let output = graph.outputs().next().unwrap().0;
+        Layer { graph: Arc::new(graph), output, salt, variants }
+    }
+
+    /// `place` as it was before scatter graphs, for one layer: spots,
+    /// thinning, taken out, horizon height, far chance.
+    fn place_as_before(source: &dyn TerrainSource, heights: &HeightGrid, salt: u64, variants: usize, removed: &HashSet<(u64, [i32; 2])>) -> Vec<Vec<[f32; 5]>> {
+        let centre = heights.centre();
+        let size = CHUNK_SIZE as f64;
+        let reach = horizon::reach();
+        let span = (reach / size).ceil() as i32 + 1;
+        let (cx, cz) = ((centre[0] / size).floor() as i32, (centre[1] / size).floor() as i32);
+        let mut slots = vec![Vec::new(); variants];
+        for z in cz - span..=cz + span {
+            for x in cx - span..=cx + span {
+                if crate::terrain::streaming::column_distance((x, z), centre[0], centre[1]) > reach {
+                    continue;
+                }
+                for (px, pz, grow, turn) in scatter_spots((x, z), salt, 30) {
+                    let (dx, dz) = (px as f64 - centre[0], pz as f64 - centre[1]);
+                    let (kept, scale) = thinning(dx.hypot(dz));
+                    if kept < 1.0 && keep_draw(px, pz, salt) >= kept {
+                        continue;
+                    }
+                    if removed.contains(&(salt, spot_key(px, pz))) {
+                        continue;
+                    }
+                    let Some(height) = heights.height(px as f64, pz as f64) else {
+                        continue;
+                    };
+                    if grow >= source.far_scatter_chance("", px as f64, pz as f64, height) {
+                        continue;
+                    }
+                    slots[pick_variant_index(px, pz, variants)].push([px, height - SINK, pz, turn, scale]);
+                }
+            }
+        }
+        slots
+    }
+
+    fn sorted(mut models: Vec<[f32; 5]>) -> Vec<[u32; 5]> {
+        models.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        models.into_iter().map(|m| m.map(f32::to_bits)).collect()
+    }
+
+    #[test]
+    fn a_layer_as_a_graph_stands_where_it_stood_far_away() {
+        let source = Hills::create(3, HillsSettings::default());
+        let built = horizon::build(&*source, [300.0, -200.0]);
+        let mut removed = HashSet::new();
+        let placed = place(&*source, &built.heights, &[test_layer(77, 3)], &removed, &AtomicBool::new(false)).unwrap();
+        let before = place_as_before(&*source, &built.heights, 77, 3, &removed);
+        assert!(before.iter().map(Vec::len).sum::<usize>() > 10_000);
+        for (now, then) in placed[0].iter().zip(&before) {
+            assert_eq!(sorted(now.clone()), sorted(then.clone()));
+        }
+        // And with a model taken out.
+        let taken = before[1][before[1].len() / 2];
+        removed.insert((77, spot_key(taken[0], taken[2])));
+        let placed = place(&*source, &built.heights, &[test_layer(77, 3)], &removed, &AtomicBool::new(false)).unwrap();
+        let before = place_as_before(&*source, &built.heights, 77, 3, &removed);
+        assert_eq!(sorted(placed[0][1].clone()), sorted(before[1].clone()));
+    }
 
     #[test]
     fn far_models_stand_where_the_chunks_plant_them_and_reach_far() {
         let source = Hills::create(3, HillsSettings::default());
         let built = horizon::build(&*source, [0.0, 0.0]);
-        let layer = Layer {
-            tag: String::new(),
-            salt: 77,
-            attempts: 30,
-            variants: 3,
-        };
+        let layer = test_layer(77, 3);
         let placed = place(&*source, &built.heights, &[layer.clone()], &HashSet::new(), &AtomicBool::new(false)).unwrap();
         let all: Vec<[f32; 5]> = placed[0].iter().flatten().copied().collect();
         assert!(all.len() > 10_000, "{}", all.len());
@@ -491,12 +592,7 @@ mod tests {
     fn a_placement_given_up_places_nothing() {
         let source = Hills::create(3, HillsSettings::default());
         let built = horizon::build(&*source, [0.0, 0.0]);
-        let layer = Layer {
-            tag: String::new(),
-            salt: 77,
-            attempts: 30,
-            variants: 1,
-        };
+        let layer = test_layer(77, 1);
         assert!(place(&*source, &built.heights, &[layer], &HashSet::new(), &AtomicBool::new(true)).is_none());
     }
 
@@ -504,12 +600,7 @@ mod tests {
     fn instances_taken_out_are_not_drawn_far_away() {
         let source = Hills::create(3, HillsSettings::default());
         let built = horizon::build(&*source, [0.0, 0.0]);
-        let layer = Layer {
-            tag: String::new(),
-            salt: 77,
-            attempts: 30,
-            variants: 1,
-        };
+        let layer = test_layer(77, 1);
         let spots = |placed: &Placed| -> Vec<(f32, f32)> {
             placed[0][0].iter().map(|m| (m[0], m[2])).collect()
         };

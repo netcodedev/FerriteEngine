@@ -1,17 +1,21 @@
-//! Scatter layers: a model plus a density, as stored and as loaded.
+//! Scatter layers, as stored and as loaded: a model plus a density (and a
+//! tag), or a scatter graph.
 
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::{self, AssetRef};
+use crate::core::assets::{self, AssetKind, AssetRef};
+
+use super::graph::{NodeId, ScatterGraph, ScatterRange};
 
 use super::*;
 
 /// One scatter layer as stored in a scene file.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ScatterLayerData {
-    /// The model asset to scatter: all its variants, or the one named.
+    /// The asset to scatter: a model (all its variants, or the one named),
+    /// or a scatter graph (then `density` and `tag` are not used).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset: Option<AssetRef>,
     /// A raw model file, as a path relative to `assets/models/`. Used by
@@ -51,20 +55,32 @@ impl ScatterLayerData {
 /// typing a path or dragging the density does not replant on every change.
 pub(super) const APPLY_DELAY: f64 = 0.6;
 
+/// What a layer plants right now: its graph and the models of the graph's
+/// outputs.
+pub(super) struct Loaded {
+    pub(super) graph: Arc<ScatterGraph>,
+    /// Per `SpawnMesh` node, in node order: the node, its model and range.
+    pub(super) outputs: Vec<LoadedOutput>,
+}
+
+pub(super) struct LoadedOutput {
+    pub(super) node: NodeId,
+    pub(super) model: Rc<ScatterModel>,
+    pub(super) range: ScatterRange,
+}
+
 pub(super) struct ScatterLayer {
-    /// The asset to scatter. Takes precedence over `model`.
+    /// The asset to scatter: a model, or a scatter graph. Takes precedence
+    /// over `model`.
     pub(super) asset: Option<AssetRef>,
     /// Raw model file as typed; empty when unused.
     pub(super) model: String,
     pub(super) density: f32,
     pub(super) tag: String,
-    /// The tag of what is planted right now.
-    pub(super) applied_tag: String,
     /// What is planted right now.
-    pub(super) loaded: Option<Rc<ScatterModel>>,
+    pub(super) loaded: Option<Loaded>,
     /// Revision of the asset `loaded` was built from.
     loaded_revision: u64,
-    pub(super) applied_density: f32,
     pub(super) error: Option<String>,
     /// Countdown until the edited values are applied; `None` when they are.
     pub(super) apply_in: Option<f64>,
@@ -90,11 +106,9 @@ impl ScatterLayer {
             asset: data.asset,
             model: data.model,
             density: data.density,
-            applied_tag: data.tag.clone(),
             tag: data.tag,
             loaded: None,
             loaded_revision: 0,
-            applied_density: data.density,
             error: None,
             apply_in: Some(0.0),
         }
@@ -113,6 +127,16 @@ impl ScatterLayer {
         }
     }
 
+    /// The salt of the instances of `output`: a model layer's own salt
+    /// (its one output), else mixed with the node.
+    pub(super) fn output_salt(&self, output: NodeId) -> u64 {
+        if self.is_graph() {
+            fnv1a(&format!("{}#{}", self.salt(), output.0))
+        } else {
+            self.salt()
+        }
+    }
+
     /// The model path as used for loading and saving: trimmed, with forward
     /// slashes so a scene saved on Windows also loads on Linux.
     pub(super) fn path(&self) -> String {
@@ -122,6 +146,16 @@ impl ScatterLayer {
     /// Neither an asset nor a file: the layer scatters nothing.
     pub(super) fn is_unused(&self) -> bool {
         self.asset.is_none() && self.path().is_empty()
+    }
+
+    /// Whether the layer's asset is a scatter graph (rather than a model).
+    pub(super) fn is_graph(&self) -> bool {
+        let Some(asset) = &self.asset else {
+            return false;
+        };
+        assets::database()
+            .get(asset.id)
+            .is_some_and(|entry| matches!(entry.meta.kind, AssetKind::ScatterGraph(_)))
     }
 
     /// What the layer scatters, for messages.
@@ -145,29 +179,69 @@ impl ScatterLayer {
     }
 
     pub(super) fn apply(&mut self) {
-        self.applied_density = self.density;
-        self.applied_tag = self.tag.clone();
         self.error = None;
         self.loaded = None;
-        let result = match &self.asset {
-            Some(asset) => ScatterModel::load_asset(asset).map(|(model, revision)| {
-                self.loaded_revision = revision;
-                model
-            }),
-            None => {
-                let path = self.path();
-                if path.is_empty() {
-                    return;
-                }
-                ScatterModel::load(&path)
-            }
-        };
+        if self.is_unused() {
+            return;
+        }
+        let result = if self.is_graph() { self.load_graph() } else { self.load_model() };
         match result {
-            Ok(model) => self.loaded = Some(model),
+            Ok(loaded) => self.loaded = Some(loaded),
             Err(e) => {
                 log::warn!("terrain scatter: could not load {}: {e}", self.label());
                 self.error = Some(e);
             }
         }
+    }
+
+    /// A model layer: its model on the rules of `ScatterGraph::from_layer`.
+    fn load_model(&mut self) -> Result<Loaded, String> {
+        let model = match &self.asset {
+            Some(asset) => {
+                let (model, revision) = ScatterModel::load_asset(asset)?;
+                self.loaded_revision = revision;
+                model
+            }
+            None => ScatterModel::load(&self.path())?,
+        };
+        let data = ScatterLayerData {
+            asset: self.asset.clone(),
+            model: self.path(),
+            density: self.density,
+            tag: self.tag.clone(),
+        };
+        let graph = Arc::new(ScatterGraph::from_layer(&data, self.salt()));
+        let outputs = graph
+            .outputs()
+            .map(|(node, spawn)| LoadedOutput { node, model: model.clone(), range: spawn.range })
+            .collect();
+        Ok(Loaded { graph, outputs })
+    }
+
+    /// A graph layer: the graph file and the models of its outputs.
+    fn load_graph(&mut self) -> Result<Loaded, String> {
+        let asset = self.asset.clone().expect("a graph layer has an asset");
+        let (source, revision) = {
+            let database = assets::database();
+            let entry = database
+                .get(asset.id)
+                .ok_or_else(|| format!("asset {} does not exist", asset.id))?;
+            (entry.source_path(), entry.revision)
+        };
+        let graph = ScatterGraph::load(&source)?;
+        if let Some(problem) = graph.problems().first() {
+            return Err(problem.to_string());
+        }
+        self.loaded_revision = revision;
+        let mut outputs = Vec::new();
+        for (node, spawn) in graph.outputs() {
+            let model = match (&spawn.asset, spawn.model.trim()) {
+                (Some(asset), _) => ScatterModel::load_asset(asset)?.0,
+                (None, "") => continue,
+                (None, file) => ScatterModel::load(&file.replace('\\', "/"))?,
+            };
+            outputs.push(LoadedOutput { node, model, range: spawn.range });
+        }
+        Ok(Loaded { graph: Arc::new(graph), outputs })
     }
 }

@@ -22,6 +22,7 @@ use crate::core::{
 use super::super::ChunkBounds;
 
 use super::*;
+use super::graph::Placement;
 
 /// An instance taken out of a `ScatterInstances`.
 pub struct TakenInstance {
@@ -45,8 +46,8 @@ pub struct ScatterInstances {
     center: Point3<f32>,
     /// Box around every instance, for frustum culling.
     bounds: ChunkBounds,
-    /// `(x, y, z, yaw)` of each instance, in the order of `colliders`.
-    placements: Vec<(f32, f32, f32, f32)>,
+    /// Each instance, in the order of `colliders`.
+    placements: Vec<Placement>,
     /// Colliders these instances added, so they can be taken out again
     /// without removing the chunk they stand on.
     colliders: Vec<ColliderHandle>,
@@ -175,7 +176,7 @@ struct VariantGpu {
 }
 
 impl ScatterInstances {
-    pub fn new(spec: &ScatterSpec, placements: &[(f32, f32, f32, f32)]) -> Self {
+    pub fn new(spec: &ScatterSpec, placements: &[Placement]) -> Self {
         let spec = spec.clone();
         if placements.is_empty() {
             return Self {
@@ -196,21 +197,19 @@ impl ScatterInstances {
         let mut instances_by_variant: Vec<Vec<Matrix4<f32>>> =
             (0..variant_count).map(|_| Vec::new()).collect();
 
-        for &(x, y, z, yaw) in placements {
-            let variant_idx = pick_variant_index(x, z, variant_count);
-            let translation = Matrix4::from_translation(Vector3::new(x, y, z));
-            let yaw_rot: Matrix4<f32> = Quaternion::from_angle_y(Rad(yaw)).into();
-            instances_by_variant[variant_idx].push(translation * yaw_rot);
+        for p in placements {
+            let variant_idx = pick_variant_index(p.position[0], p.position[2], variant_count);
+            instances_by_variant[variant_idx].push(p.matrix());
         }
 
         let sum: Vector3<f32> = placements
             .iter()
-            .fold(Vector3::zero(), |acc, &(x, y, z, _)| {
-                acc + Vector3::new(x, y, z)
-            });
+            .fold(Vector3::zero(), |acc, p| acc + Vector3::from(p.position));
         let center = Point3::from_vec(sum / placements.len() as f32);
 
-        // Every variant's box, turned any way around its upright axis.
+        // Every variant's box, turned any way around its upright axis, as
+        // large as the largest instance; a leaning one may reach out as far
+        // as it is tall.
         let (mut reach, mut low, mut high) = (0.0f32, 0.0f32, 0.0f32);
         for variant in &spec.model.variants {
             let (min, max) = variant.bounds;
@@ -218,9 +217,15 @@ impl ScatterInstances {
             low = low.min(min[1]);
             high = high.max(max[1]);
         }
+        let largest = placements.iter().flat_map(|p| p.scale).fold(1.0f32, f32::max);
+        let leaning = placements.iter().any(|p| p.up != [0.0, 1.0, 0.0]);
+        (reach, low, high) = (reach * largest, low * largest, high * largest);
+        if leaning {
+            reach = reach.max(high).max(-low);
+        }
         let mut min = [f32::MAX; 3];
         let mut max = [f32::MIN; 3];
-        for &(x, y, z, _) in placements {
+        for &Placement { position: [x, y, z], .. } in placements {
             min = [min[0].min(x - reach), min[1].min(y + low), min[2].min(z - reach)];
             max = [max[0].max(x + reach), max[1].max(y + high), max[2].max(z + reach)];
         }
@@ -282,7 +287,7 @@ impl ScatterInstances {
     ) -> Option<TakenInstance> {
         let index = self.colliders.iter().position(|c| *c == collider)?;
         physics.remove_collider(self.colliders.remove(index));
-        let (x, y, z, yaw) = self.placements.remove(index);
+        let Placement { position: [x, y, z], yaw, .. } = self.placements.remove(index);
         let variant_count = self.spec.model.variants.len();
         let variant = pick_variant_index(x, z, variant_count);
         // Rebuilt from what is left; the GPU buffers follow on the next draw.
@@ -304,7 +309,7 @@ impl ScatterInstances {
         if self.spec.salt != salt {
             return None;
         }
-        let index = self.placements.iter().position(|&(x, y, z, _)| {
+        let index = self.placements.iter().position(|&Placement { position: [x, y, z], .. }| {
             (x - position.x).abs() < 0.05
                 && (y - position.y).abs() < 0.05
                 && (z - position.z).abs() < 0.05
@@ -316,7 +321,7 @@ impl ScatterInstances {
     /// `collider`, if it is one of these.
     pub fn instance_of(&self, collider: ColliderHandle) -> Option<(u64, Point3<f32>)> {
         let index = self.colliders.iter().position(|c| *c == collider)?;
-        let (x, y, z, _) = self.placements[index];
+        let [x, y, z] = self.placements[index].position;
         Some((self.spec.salt, Point3::new(x, y, z)))
     }
 
@@ -337,15 +342,19 @@ impl ScatterInstances {
     /// them be removed together with the chunk.
     pub fn add_colliders(
         &mut self,
-        placements: &[(f32, f32, f32, f32)],
+        placements: &[Placement],
         scene: &mut Scene,
         parent: Option<rapier3d::prelude::RigidBodyHandle>,
     ) {
+        // The colliders stand and lean as the models do, at the model's own
+        // size (a scaled instance is not scaled here).
         let variant_count = self.spec.model.variants.len();
-        for &(x, y, z, yaw) in placements {
+        for p in placements {
+            let [x, y, z] = p.position;
             let variant_idx = pick_variant_index(x, z, variant_count);
             let translation = Vector::new(x, y, z);
-            let rotation = Rotation::from_rotation_y(yaw);
+            let q = p.rotation();
+            let rotation = Rotation::from_xyzw(q.v.x, q.v.y, q.v.z, q.s);
             let pose = Pose::from_parts(translation, rotation);
             let collider = ColliderBuilder::new(self.spec.model.variants[variant_idx].collider_shape.clone())
                 .position(pose)

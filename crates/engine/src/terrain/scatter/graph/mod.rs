@@ -50,7 +50,9 @@ pub fn scatter_graph_name(path: &Path) -> String {
 }
 
 /// A node's id, stable for the life of the graph (wires refer to it).
+/// Written as a plain number.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(transparent)]
 pub struct NodeId(pub u32);
 
 /// One pin of a node: `pin` counts the node's inputs (or outputs) from 0.

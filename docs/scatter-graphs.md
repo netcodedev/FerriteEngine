@@ -215,6 +215,42 @@ and variant; frame cost of grass < 2 ms on the user's machine.
 3. **Layers → graphs**: terrain holds graphs; old scene layers load as
    generated graphs (no change to existing worlds); far scatter reads
    landscape outputs as before.
+
+   Design (2026-11-21):
+   - **No new scene field.** A scatter layer's asset may now be a
+     scatter graph instead of a model; the scene stays
+     `scatter: [(asset: ..., density: ...)]`. A model layer becomes
+     `ScatterGraph::from_layer` inside (density and tag as before); a
+     graph layer loads its file and the models of its outputs. The
+     inspector shows density and tag only for model layers; the scatter
+     asset picker offers graphs too.
+   - **One spec per landscape output.** `ScatterSpec` carries the graph,
+     the output node and a salt (a model layer keeps its old salt, so
+     felled trees and spots stay; a graph layer's outputs get the layer
+     salt mixed with the node id). Detail outputs plant nothing until
+     step 4.
+   - **Near.** The planting workers evaluate the graph on the chunk's
+     column and keep the output's placements inside the chunk's height
+     band (as `scatter_points_at` did). Instances draw the full
+     placement (tilt, scale); colliders take position and tilt, not the
+     scale (noted limit: scaled landscape models collide at size 1).
+   - **Far.** `far_scatter` evaluates each landscape output per column
+     on a `FarGround`: heights from the horizon grid, chance from
+     `far_scatter_chance`, thinned with distance inside `chance` (before
+     the costly lookup, as now), and once more on the output for graphs
+     without a `World chance`. Impostors take yaw and the height scale.
+   - **As built** (2026-11-21): as designed. Graph node ids are written
+     as plain numbers (`id: 0`, `node: 2`), found when writing a graph by
+     hand. Checked: the old-vs-new tests pass bit for bit; in the demo
+     editor the culling counts at the start view are exactly those of
+     the editor before the change (scatter cells 989 of 3622 drawn); a
+     hand-written graph layer (random points, slope, tilt, 2–4x scale)
+     planted leaning, scaled grass in a scratch project.
+   - **Checks.** A test keeps the old far placement loop as a reference
+     and compares it with the new one bit for bit for a converted layer;
+     the planting job is compared with `scatter_points_at`; the existing
+     far, felling and planting tests keep passing; then a look at the
+     demo in the editor (same trees as before).
 4. **Detail range**: camera ring of 16 m cells, planting on the workers,
    shrink-out at the edge, no colliders/impostors.
 5. **Grass drawing**: wind sway, double-sided, ground tint, shadow switch.
