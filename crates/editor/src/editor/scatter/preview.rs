@@ -19,7 +19,7 @@ use ferrite::{
 use ferrite_ui::ui::{
     element_handle::UIElementHandle,
     elements::button::{Button, ButtonStyle},
-    theme, UIElement,
+    theme, UIElement, UI,
 };
 use glfw::{Glfw, WindowEvent};
 
@@ -57,6 +57,9 @@ pub struct ScatterPreview {
     note: Text,
     view_3d: Button,
     view_map: Button,
+    /// Whether the points are shown, and its label.
+    points: Box<dyn UIElement>,
+    points_label: Text,
     legend: Vec<Text>,
     showing_3d: Option<bool>,
 }
@@ -76,6 +79,7 @@ fn toggle(label: &str, icon: &str, state: &Shared, to_3d: bool) -> Button {
 
 impl ScatterPreview {
     pub fn new(state: Shared) -> Self {
+        let points = UI::checkbox(state.borrow().scatter_show_points.clone());
         let view_3d = toggle("3D", icons::BOX, &state, true);
         let view_map = toggle("Map", icons::LAYOUT_GRID, &state, false);
         Self {
@@ -94,6 +98,8 @@ impl ScatterPreview {
             note: theme::text("", theme::FONT_SIZE_SMALL, theme::TEXT_DIM),
             view_3d,
             view_map,
+            points,
+            points_label: theme::text("Points", theme::FONT_SIZE_SMALL, theme::TEXT),
             legend: (0..LEGEND_ROWS).map(|_| theme::text("", theme::FONT_SIZE_SMALL, theme::TEXT)).collect(),
             showing_3d: None,
         }
@@ -138,6 +144,15 @@ impl UIElement for ScatterPreview {
             button.set_offset(Offset { x: bx, y: by });
             bx -= 4.0;
         }
+        // "[x] Points" left of the view buttons.
+        bx -= 10.0 + self.points_label.measure_width();
+        self.points_label
+            .prepare_render_at(Position::new(bx, r.y + theme::center_y(&self.points_label, HEADER_HEIGHT), Z + 1.0));
+        self.points_label.set_z_index(Z + 1.0);
+        let check = self.points.get_size().height.max(16.0);
+        bx -= 6.0 + self.points.get_size().width.max(16.0);
+        self.points.set_offset(Offset { x: bx, y: r.y + (HEADER_HEIGHT - check) * 0.5 });
+        self.points.update(scene);
         if self.showing_3d != Some(showing_3d) {
             self.view_3d.set_style(if showing_3d { ButtonStyle::Primary } else { ButtonStyle::Ghost });
             self.view_map.set_style(if showing_3d { ButtonStyle::Ghost } else { ButtonStyle::Primary });
@@ -189,13 +204,19 @@ impl UIElement for ScatterPreview {
                 s.scatter_preview_3d,
                 (s.layout.window_w, s.layout.window_h),
                 s.scatter.as_ref().and_then(|e| e.trace.as_ref().map(|(cell, _)| *cell)),
-                s.scatter.as_ref().map(|e| e.shown_points()).unwrap_or_default(),
+                if s.scatter_show_points.read() {
+                    s.scatter.as_ref().map(|e| e.shown_points()).unwrap_or_default()
+                } else {
+                    Vec::new()
+                },
             )
         };
         self.header.render();
         self.title.render();
         self.view_3d.render();
         self.view_map.render();
+        self.points.render();
+        self.points_label.render();
         for text in &self.legend {
             text.render();
         }
@@ -247,6 +268,9 @@ impl UIElement for ScatterPreview {
                 return true;
             }
         }
+        if self.points.handle_events(scene, window, glfw, event) && !matches!(event, WindowEvent::CursorPos(..)) {
+            return true;
+        }
         if let WindowEvent::MouseButton(..) | WindowEvent::Scroll(..) = event {
             let (x, y) = window.get_cursor_pos();
             let state = self.state.borrow();
@@ -285,6 +309,7 @@ impl UIElement for ScatterPreview {
     fn set_z_index(&mut self, _z: f32) {
         self.view_3d.set_z_index(Z + 2.0);
         self.view_map.set_z_index(Z + 2.0);
+        self.points.set_z_index(Z + 2.0);
     }
 }
 
@@ -294,9 +319,12 @@ pub fn draw_points_3d(state: &super::super::Shared, scene: &Scene) {
     let Some(view_projection) = scene.get_active_camera().map(|c| c.get_view_projection()) else {
         return;
     };
-    let groups = match state.borrow().scatter.as_ref() {
-        Some(edit) => edit.shown_points(),
-        None => return,
+    let groups = {
+        let state = state.borrow();
+        match state.scatter.as_ref() {
+            Some(edit) if state.scatter_show_points.read() => edit.shown_points(),
+            _ => return,
+        }
     };
     for group in groups {
         if group.points.is_empty() {

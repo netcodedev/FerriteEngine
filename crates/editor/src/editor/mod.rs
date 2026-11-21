@@ -249,6 +249,8 @@ pub struct EditorState {
     pub scatter_fit: bool,
     /// The scatter preview shows the world in 3D (else the map of points).
     pub scatter_preview_3d: bool,
+    /// Whether the scatter preview shows the points (in 3D and on the map).
+    pub scatter_show_points: DataSource<bool>,
     /// Where the editor camera is (x, z), for the scatter preview's map.
     pub scatter_camera: Option<[f32; 2]>,
     /// Graph-space point at the centre of the node canvas (new states go
@@ -319,6 +321,7 @@ impl EditorState {
             scatter_open_menu: false,
             scatter_fit: false,
             scatter_preview_3d: true,
+            scatter_show_points: DataSource::new(true),
             scatter_camera: None,
             anim_canvas_center: None,
             gizmo: GizmoMode::Translate,
