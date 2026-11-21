@@ -44,7 +44,10 @@ impl EditorLayer {
         }
     }
 
-    fn run(&mut self, command: Command) {
+    pub(super) fn run(&mut self, command: Command) {
+        if self.run_asset_command(&command) {
+            return;
+        }
         let mode = self.state.borrow().mode;
         // Closing during play: leave play mode first, then ask about unsaved
         // edits as usual.
@@ -85,6 +88,20 @@ impl EditorLayer {
         }
 
         match command {
+            // Done by `run_asset_command` above.
+            Command::NewAssetDialog { .. }
+            | Command::NewAsset { .. }
+            | Command::NewFolderDialog(_)
+            | Command::NewFolder { .. }
+            | Command::RenameAssetDialog(_)
+            | Command::RenameAsset { .. }
+            | Command::RenameFolderDialog(_)
+            | Command::RenameFolder { .. }
+            | Command::DuplicateAsset(_)
+            | Command::DeleteAssetDialog(_)
+            | Command::DeleteAsset(_)
+            | Command::DeleteFolderDialog(_)
+            | Command::DeleteFolder(_) => {}
             Command::NewScene => match Scene::from_file(&self.new_scene_file()) {
                 Ok(scene) => {
                     self.replace_scene(scene);
@@ -540,13 +557,6 @@ impl EditorLayer {
                 self.run(Command::SetWorkspace(Workspace::Material));
             }
             Command::CloseMaterialEditor => self.run(Command::SetWorkspace(Workspace::Scene)),
-            Command::NewMaterial { graph } => {
-                let made = ferrite::core::material::asset::create(&mut assets::database(), None, graph);
-                match made {
-                    Ok(id) => self.run(Command::EditAsset { id, variant: None }),
-                    Err(e) => self.state.borrow_mut().set_status(format!("Could not make the material: {e}")),
-                }
-            }
             Command::SaveMaterial => {
                 let result = self.state.borrow_mut().material.as_mut().map(|edit| edit.save().map(|_| edit.name.clone()));
                 let message = match result {

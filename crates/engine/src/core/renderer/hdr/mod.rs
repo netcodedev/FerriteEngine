@@ -60,6 +60,20 @@ const ADAPTED_SAMPLER: SamplerDesc = SamplerDesc::NEAREST_CLAMP;
 /// Raw id of the HDR target while the camera's view is drawn into it, 0
 /// otherwise.
 static VIEW_TARGET: AtomicU64 = AtomicU64::new(0);
+/// A render target an editor picture (a thumbnail) is drawn into: a view
+/// in display colour, like the window, not a shadow map. 0: none.
+static PICTURE_TARGET: AtomicU64 = AtomicU64::new(0);
+
+/// Count `target` as a view drawn in display colour (as previews in the
+/// window are) until `None` is given: for pictures drawn into a target of
+/// their own.
+pub fn set_picture_target(target: Option<TargetRef>) {
+    let raw = match target {
+        Some(TargetRef::Target(raw)) => raw,
+        _ => 0,
+    };
+    PICTURE_TARGET.store(raw, Ordering::Relaxed);
+}
 
 /// The target drawn into now. Code that does not draw through `gfx`
 /// passes yet binds GL framebuffers itself, through `framebuffer::bind`
@@ -105,7 +119,9 @@ pub fn draws_to_view() -> bool {
     }
     match drawing_into() {
         None | Some(TargetRef::Window) => true,
-        Some(TargetRef::Target(raw)) => raw == VIEW_TARGET.load(Ordering::Relaxed),
+        Some(TargetRef::Target(raw)) => {
+            raw == VIEW_TARGET.load(Ordering::Relaxed) || raw == PICTURE_TARGET.load(Ordering::Relaxed)
+        }
     }
 }
 

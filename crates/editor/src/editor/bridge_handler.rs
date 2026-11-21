@@ -150,6 +150,15 @@ fn respond(request: BridgeRequest, cx: Context) -> BridgeResponse {
         }
         BridgeRequest::Focus { id } => focus(scene, state, id),
         BridgeRequest::OpenAsset { asset } => open_asset(state, &asset),
+        BridgeRequest::AssetReferences { asset } => super::asset_bridge::references(&asset),
+        BridgeRequest::AssetDelete { asset, confirm } => super::asset_bridge::delete(state, &asset, confirm),
+        BridgeRequest::AssetRename { asset, name } => super::asset_bridge::rename(state, &asset, &name),
+        BridgeRequest::AssetCreate { kind, folder, name } => super::asset_bridge::create(state, &kind, folder.as_deref(), name.as_deref()),
+        BridgeRequest::AssetBrowser { category, folder, search, asset, menu, expand } => {
+            super::asset_bridge::browser(state, category, folder, search, asset, menu, expand)
+        }
+        BridgeRequest::FolderCreate { path } => super::asset_bridge::create_folder(state, &path),
+        BridgeRequest::FolderDelete { path, confirm } => super::asset_bridge::delete_folder(state, &path, confirm),
         BridgeRequest::ScatterGraphRead { asset } => scatter_graph_read(state, &asset),
         BridgeRequest::MaterialRead { asset } => super::material::bridge::read(state, &asset),
         BridgeRequest::MaterialEdit { asset, set, ops, save } => super::material::bridge::edit(state, &asset, set, ops, save),

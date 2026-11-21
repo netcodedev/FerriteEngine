@@ -157,6 +157,55 @@ pub enum BridgeRequest {
     /// Open an asset (by id, name or source path below the asset folder)
     /// in the asset workspace, as a double click in the browser does.
     OpenAsset { asset: String },
+    /// The files of the project that refer to an asset (by id, or a
+    /// script by its path).
+    AssetReferences { asset: String },
+    /// Move an asset's file and sidecar to the trash. Without `confirm`
+    /// only says what would go and what refers to it.
+    AssetDelete {
+        asset: String,
+        #[serde(default)]
+        confirm: bool,
+    },
+    /// Rename an asset: display name, source file and sidecar.
+    AssetRename { asset: String, name: String },
+    /// Make a new asset of `kind` (material, material_graph,
+    /// scatter_graph) in `folder` below the asset folder (default: the
+    /// kind's own), named `name` (default: the first free "New … N").
+    AssetCreate {
+        kind: String,
+        #[serde(default)]
+        folder: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Point the asset browser at a category (`Category::key`), a folder
+    /// below the asset folder, a search, an asset to select; `menu` opens
+    /// the context menu of the selected card (or of the folder).
+    AssetBrowser {
+        #[serde(default)]
+        category: Option<String>,
+        #[serde(default)]
+        folder: Option<String>,
+        #[serde(default)]
+        search: Option<String>,
+        #[serde(default)]
+        asset: Option<String>,
+        #[serde(default)]
+        menu: bool,
+        /// Unfold (true) or fold the selected pack's parts.
+        #[serde(default)]
+        expand: Option<bool>,
+    },
+    /// Make a folder (`path` below the asset folder).
+    FolderCreate { path: String },
+    /// Move a folder below the asset folder, with all its assets, to the
+    /// trash. Without `confirm` only says what would go.
+    FolderDelete {
+        path: String,
+        #[serde(default)]
+        confirm: bool,
+    },
     /// A scatter graph asset's nodes, wires, settings, problems and point
     /// counts (the editor's copy if it is open there, else the file).
     ScatterGraphRead { asset: String },

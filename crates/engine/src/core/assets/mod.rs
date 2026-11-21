@@ -4,6 +4,7 @@
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+pub mod create;
 pub(crate) mod database;
 mod id;
 mod import;
@@ -11,7 +12,8 @@ mod meta;
 #[cfg(test)]
 pub(crate) mod test_models;
 
-pub use database::{AssetDatabase, AssetEntry, AssetError};
+pub use database::{remove_path, split_file_name, AssetDatabase, AssetEntry, AssetError, Reference, Removal};
+pub use create::NewAsset;
 pub use id::{AssetId, AssetRef};
 pub use meta::{
     AnimationSettings, AssetKind, AssetMeta, ClipInfo, MaterialAssetSettings, MaterialGraphSettings, MaterialMap,

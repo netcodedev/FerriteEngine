@@ -179,14 +179,29 @@ the component comes back once the cause is fixed.
 
 ## Editor
 
-### Asset browser (phase 4)
+### Asset browser (phase 4, redone 2026-11-21)
 
 Docked below the viewport, resizable, can be hidden from the Window menu.
+Details and decisions in `docs/asset-browser.md`.
 
-- Tree of folders and assets; a model asset expands into its variants.
-- Import (file dialog) and Refresh (rescan).
-- Selecting an asset shows a one-line summary. Opening it in the asset
-  editor comes with phase 6.
+- Categories on the left (all assets, models, textures, materials,
+  material graphs, animations, scatter graphs) with their counts; the
+  open folder (path bar, "up") or a search of the category as cards on
+  the right, folders first. A model pack or an animation file with
+  several clips unfolds (arrow on its card) into cards of its parts.
+- Textures, materials, material graphs and models show a picture, made
+  once and kept in `.ferrite-cache/thumbnails/` with a key; it is made
+  again only when the asset, its file or an asset it uses changes.
+- Right click on a card: open, rename, duplicate, copy path, show in the
+  file manager, delete. Right click beside the cards, or "New": a new
+  material, material graph, scatter graph or folder in the open folder;
+  import; scan again.
+- Deleting asks first, naming the files that still refer to the asset
+  (`AssetDatabase::references_to`: anything storing its id, scripts naming
+  its path); the source file and sidecar go to the system trash.
+- Renaming renames the source file (its ending kept) and the sidecar;
+  references by id stay intact.
+- The category and folder are kept in the project file.
 
 ### Using assets in fields (phase 4 and 5)
 
@@ -242,15 +257,16 @@ Each phase is one or a few commits and leaves the editor usable.
 - [x] **7. More users** — model component, player model, animation clips
   in graphs; automatic registration and upgrade of old references;
   placeholders for components that cannot be built.
+- [x] **8. Browser 2** — categories, cards with thumbnails, search,
+  context menu; new, rename, duplicate, delete (to the trash, with a
+  reference check) for assets and folders; MCP tools for them.
 
 ## Later
 
 - Reimport: refresh a model asset's variants and materials from its
   source file, keeping the settings of what still exists.
 - Ask before quitting with unsaved asset edits.
-- Thumbnails rendered from the preview.
-- Rename, move and delete in the browser, with a check for scenes that
-  still refer to the asset.
+- Moving assets between folders (drag a card onto a folder).
 - File watching: reimport when a source file changes on disk.
 - Texture settings (sRGB, filtering, wrap) and an opacity slot.
 - A cooked cache so large models do not go through Assimp on every start.

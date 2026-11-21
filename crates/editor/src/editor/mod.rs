@@ -7,7 +7,7 @@
 use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Instant};
 
 use ferrite::core::{
-    assets::{AssetId, AssetRef},
+    assets::{AssetId, AssetRef, NewAsset},
     entity::EntityHandle,
     scene::scene_file::ComponentData,
     utils::DataSource,
@@ -16,6 +16,7 @@ use ferrite_ui::ui::elements::tree::NO_SELECTION;
 
 pub mod anim;
 pub mod asset_browser;
+mod asset_bridge;
 pub mod bridge_handler;
 pub mod asset_editor;
 pub mod clip_editor;
@@ -221,8 +222,28 @@ pub enum Command {
     MaterialUndo,
     MaterialRedo,
     MaterialDelete,
-    /// Make a new material (or material graph) asset and open it.
-    NewMaterial { graph: bool },
+    /// Ask for the name of a new asset of `kind` in `folder` (default: the
+    /// kind's own folder).
+    NewAssetDialog { kind: NewAsset, folder: Option<PathBuf> },
+    /// Make a new asset of `kind` in `folder` and show it in the browser.
+    NewAsset { kind: NewAsset, folder: Option<PathBuf>, name: Option<String> },
+    /// Ask for the name of a new folder inside this one.
+    NewFolderDialog(PathBuf),
+    NewFolder { parent: PathBuf, name: String },
+    RenameAssetDialog(AssetId),
+    /// Rename an asset: display name, source file and sidecar.
+    RenameAsset { id: AssetId, name: String },
+    RenameFolderDialog(PathBuf),
+    RenameFolder { path: PathBuf, name: String },
+    /// Copy an asset next to it under a new id.
+    DuplicateAsset(AssetId),
+    /// Ask before deleting an asset, naming what refers to it.
+    DeleteAssetDialog(AssetId),
+    /// Move an asset's source file and sidecar to the trash.
+    DeleteAsset(AssetId),
+    DeleteFolderDialog(PathBuf),
+    /// Move a folder with all its assets to the trash.
+    DeleteFolder(PathBuf),
     /// Add a parameter to the open material graph.
     MaterialAddParam,
     MaterialRemoveParam(String),
@@ -232,6 +253,17 @@ pub enum Command {
         node: ferrite::terrain::scatter::graph::NodeId,
         asset: AssetRef,
     },
+}
+
+/// What the MCP bridge asks the asset browser to show.
+#[derive(Clone, Debug, Default)]
+pub struct BrowserRequest {
+    pub category: Option<String>,
+    pub folder: Option<PathBuf>,
+    pub search: Option<String>,
+    pub asset: Option<AssetId>,
+    pub menu: bool,
+    pub expand: Option<bool>,
 }
 
 /// An agent at the controls (see `BridgeRequest::AgentControl`).
@@ -318,6 +350,16 @@ pub struct EditorState {
     pub console: console::ConsoleFilter,
     /// What is selected in the asset browser.
     pub asset_selection: Option<AssetRef>,
+    /// An asset the browser should show and select next (just made,
+    /// renamed or opened from elsewhere).
+    pub asset_reveal: Option<AssetId>,
+    /// A folder the browser should open next.
+    pub asset_folder_reveal: Option<PathBuf>,
+    /// A wish for the browser's view from the MCP bridge.
+    pub asset_browser_request: Option<BrowserRequest>,
+    /// The browser's category key and open folder (below the asset root),
+    /// kept in the project file.
+    pub asset_view: (String, String),
     /// The asset pressed or being dragged in the asset browser.
     pub drag: Option<drag::AssetDrag>,
     /// Where an asset can be dropped this frame; panels register their
@@ -384,6 +426,10 @@ impl EditorState {
             show_console: DataSource::new(true),
             console: console::ConsoleFilter::default(),
             asset_selection: None,
+            asset_reveal: None,
+            asset_folder_reveal: None,
+            asset_view: (String::new(), String::new()),
+            asset_browser_request: None,
             drag: None,
             drop_targets: Vec::new(),
             stats: stats::Stats::new(),

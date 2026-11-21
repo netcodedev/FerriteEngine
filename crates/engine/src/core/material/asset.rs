@@ -489,34 +489,11 @@ pub fn ensure_all_model_materials(database: &mut AssetDatabase) -> (usize, Vec<S
 
 /// Make a new material (Standard PBR, defaults) or material graph (a copy
 /// of Standard PBR to change) in `assets/materials/`, named `name` or the
-/// first free "New material N". Returns its id.
+/// first free "New material N". Returns its id. See `assets::create` for
+/// other kinds and folders.
 pub fn create(database: &mut AssetDatabase, name: Option<&str>, graph: bool) -> Result<AssetId, String> {
-    let suffix = if graph { super::graph::MATERIAL_GRAPH_SUFFIX } else { MATERIAL_SUFFIX };
-    let folder = database.root().join("materials");
-    std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
-    let base = name.map(str::trim).filter(|n| !n.is_empty()).map(str::to_string);
-    let stem = match base {
-        Some(name) => {
-            if folder.join(format!("{name}{suffix}")).exists() {
-                return Err(format!("'{name}' exists already"));
-            }
-            name
-        }
-        None => {
-            let word = if graph { "New material graph" } else { "New material" };
-            (1..)
-                .map(|n| format!("{word} {n}"))
-                .find(|n| !folder.join(format!("{n}{suffix}")).exists())
-                .expect("a free name")
-        }
-    };
-    let path = folder.join(format!("{stem}{suffix}"));
-    if graph {
-        standard::standard_pbr().save(&path)?;
-    } else {
-        MaterialFile { alpha: AlphaMode::Opaque, ..Default::default() }.save(&path)?;
-    }
-    database.import(&path).map_err(|e| e.to_string())
+    let kind = if graph { assets::NewAsset::MaterialGraph } else { assets::NewAsset::Material };
+    assets::create::create(database, kind, None, name)
 }
 
 /// Model assets a scatter graph asset plants with wind.

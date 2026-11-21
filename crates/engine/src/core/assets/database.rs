@@ -6,6 +6,9 @@ use std::{
 
 use super::{AssetId, AssetMeta, AssetRef, ASSET_META_VERSION, META_SUFFIX};
 
+mod manage;
+pub use manage::{remove_path, split_file_name, Reference, Removal};
+
 #[derive(Debug)]
 pub enum AssetError {
     Io(PathBuf, io::Error),

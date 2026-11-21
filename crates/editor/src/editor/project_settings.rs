@@ -15,6 +15,10 @@ pub struct EditorSettings {
     pub show_console: bool,
     /// The console's level and source filters.
     pub console: super::console::ConsoleFilter,
+    /// The asset browser's category (`view::Category::key`) and open folder
+    /// (below the asset root, `/`-separated).
+    pub asset_category: String,
+    pub asset_folder: String,
     /// The sections of the Performance panel that are folded, by title.
     pub closed_stats_sections: Vec<String>,
     /// Window size in pixels; `None` keeps the default.
@@ -31,6 +35,8 @@ impl Default for EditorSettings {
             show_assets: true,
             show_console: true,
             console: super::console::ConsoleFilter::default(),
+            asset_category: String::new(),
+            asset_folder: String::new(),
             closed_stats_sections: Vec::new(),
             window: None,
             maximized: false,
@@ -77,6 +83,8 @@ impl EditorSettings {
             show_assets: state.show_assets.read(),
             show_console: state.show_console.read(),
             console: state.console.clone(),
+            asset_category: state.asset_view.0.clone(),
+            asset_folder: state.asset_view.1.clone(),
             closed_stats_sections: super::stats::section_titles()
                 .zip(&state.stats_open)
                 .filter(|(_, open)| !open.read())
@@ -95,6 +103,7 @@ impl EditorSettings {
         state.show_assets.write(self.show_assets);
         state.show_console.write(self.show_console);
         state.console = self.console.clone();
+        state.asset_view = (self.asset_category.clone(), self.asset_folder.clone());
         for (title, open) in super::stats::section_titles().zip(&state.stats_open) {
             open.write(!self.closed_stats_sections.iter().any(|closed| closed == title));
         }

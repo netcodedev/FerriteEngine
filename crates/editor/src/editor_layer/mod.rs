@@ -59,6 +59,7 @@ use crate::editor::{
 };
 use crate::{loading::Prepared, project_lock};
 
+mod asset_commands;
 mod commands;
 
 /// How often the editor's arrangement is checked and saved to the project.

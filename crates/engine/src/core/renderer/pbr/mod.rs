@@ -44,7 +44,7 @@ pub fn fragment_source(body: &str) -> String {
 
 thread_local! {
     /// The lighting each program was last given, by program and pass kind.
-    static APPLIED: std::cell::RefCell<Vec<((u64, bool, bool), Lighting)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static APPLIED: std::cell::RefCell<Vec<(u64, (bool, bool, Lighting))>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The light a PBR shader is drawn with.
@@ -122,13 +122,17 @@ impl Lighting {
         // The uniforms stay set on the program: the same lighting in the
         // same kind of pass needs no setting again (dozens of uniforms per
         // drawn model otherwise).
-        let key = (shader.program().serial(), hdr::draws_to_view(), hdr::writes_linear());
+        // Per program, with the kind of pass: one program drawn in two
+        // kinds of pass (the scene's view and an editor picture) must get
+        // its uniforms set again on every switch, not keep the other's.
+        let program = shader.program().serial();
+        let wanted = (hdr::draws_to_view(), hdr::writes_linear(), *self);
         let unchanged = APPLIED.with(|applied| {
             let mut applied = applied.borrow_mut();
-            match applied.iter_mut().find(|(k, _)| *k == key) {
-                Some((_, lighting)) if lighting == self => true,
-                Some((_, lighting)) => {
-                    *lighting = *self;
+            match applied.iter_mut().find(|(k, _)| *k == program) {
+                Some((_, last)) if *last == wanted => true,
+                Some((_, last)) => {
+                    *last = wanted;
                     false
                 }
                 None => {
@@ -136,7 +140,7 @@ impl Lighting {
                     if applied.len() >= 64 {
                         applied.remove(0);
                     }
-                    applied.push((key, *self));
+                    applied.push((program, wanted));
                     false
                 }
             }

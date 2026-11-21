@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use ferrite::core::{
-    assets::{self, AssetDatabase, AssetId, AssetKind, AssetRef},
+    assets::{self, AssetDatabase, AssetId, AssetKind, AssetRef, NewAsset},
     entity::EntityHandle,
     primitives::{Offset, Size},
     scene::{scene_file::ComponentData, Scene},
@@ -709,4 +709,178 @@ mod tests {
             "There are unsaved changes in the scene, the animation graph and the edited asset."
         );
     }
+}
+
+/// A dialog asking for one name: `prompt`, a field holding `initial`, and
+/// `action` / Cancel. `make` turns the entered name into the command to run.
+fn ask_name(state: &Shared, title: &str, prompt: &str, initial: &str, action: &str, make: impl Fn(String) -> Command + 'static) {
+    let name = DataSource::new(initial.to_string());
+    let open_flag = DataSource::new(true);
+    let (ok_state, ok_name, ok_open) = (state.clone(), name.clone(), open_flag.clone());
+    let cancel_open = open_flag.clone();
+    let children: Vec<Box<dyn UIElement>> = vec![
+        UI::label(prompt, 14.0),
+        UI::input_sized(name, Size::new(380.0, 22.0)),
+        button_row(vec![
+            UI::button(
+                action,
+                Box::new(move |_| {
+                    let name = ok_name.read().trim().to_owned();
+                    if name.is_empty() {
+                        return;
+                    }
+                    send(&ok_state, make(name));
+                    ok_open.write(false);
+                }),
+            ),
+            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+        ]),
+    ];
+    show(state, title, open_flag, children);
+}
+
+/// Ask for the name of a new asset of `kind` in `folder`.
+pub fn new_asset(state: &Shared, kind: NewAsset, folder: Option<PathBuf>) {
+    let root = assets::database().root().to_path_buf();
+    let target = folder.clone().unwrap_or_else(|| root.join(kind.default_folder()));
+    let suggestion = (1..)
+        .map(|n| format!("New {} {n}", kind.label().to_lowercase()))
+        .find(|n| !target.join(format!("{n}{}", kind.suffix())).exists())
+        .expect("a free name");
+    let place = target.strip_prefix(root.parent().unwrap_or(&root)).unwrap_or(&target).to_string_lossy().replace('\\', "/");
+    ask_name(
+        state,
+        &format!("New {}", kind.label().to_lowercase()),
+        &format!("Name of the new {} (in {place}):", kind.label().to_lowercase()),
+        &suggestion,
+        "Create",
+        move |name| Command::NewAsset { kind, folder: folder.clone(), name: Some(name) },
+    );
+}
+
+/// Ask for the name of a new folder inside `parent`.
+pub fn new_folder(state: &Shared, parent: PathBuf) {
+    ask_name(state, "New folder", "Name of the new folder:", "New folder", "Create", move |name| Command::NewFolder {
+        parent: parent.clone(),
+        name,
+    });
+}
+
+/// Ask for an asset's new name.
+pub fn rename_asset(state: &Shared, id: AssetId, current: &str) {
+    ask_name(
+        state,
+        "Rename asset",
+        "New name (the file is renamed too; references stay intact):",
+        current,
+        "Rename",
+        move |name| Command::RenameAsset { id, name },
+    );
+}
+
+/// Ask for a folder's new name.
+pub fn rename_folder(state: &Shared, path: PathBuf) {
+    let current = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    ask_name(state, "Rename folder", "New name of the folder:", &current, "Rename", move |name| Command::RenameFolder {
+        path: path.clone(),
+        name,
+    });
+}
+
+/// At most this many referring files are listed by name.
+const LISTED_REFERENCES: usize = 8;
+
+/// Lines naming the files in `references`: the asset they belong to (with
+/// its kind) or their path below the project.
+fn reference_lines(database: &AssetDatabase, references: &[assets::Reference]) -> Vec<String> {
+    let project = database.project_root();
+    let mut lines: Vec<String> = references
+        .iter()
+        .take(LISTED_REFERENCES)
+        .map(|r| {
+            let path = r.file.strip_prefix(&project).unwrap_or(&r.file).to_string_lossy().replace('\\', "/");
+            match r.asset.and_then(|id| database.get(id)) {
+                Some(entry) => format!("  ·  {} ({})", entry.meta.name, entry.meta.kind.label().to_lowercase()),
+                None => format!("  ·  {}", path.trim_start_matches("./")),
+            }
+        })
+        .collect();
+    if references.len() > LISTED_REFERENCES {
+        lines.push(format!("  ·  and {} more", references.len() - LISTED_REFERENCES));
+    }
+    lines
+}
+
+/// Ask before moving an asset to the trash, saying what still refers to it.
+pub fn delete_asset(state: &Shared, id: AssetId) {
+    let (lines, warning) = {
+        let database = assets::database();
+        let Some(entry) = database.get(id) else {
+            return;
+        };
+        let project = database.project_root();
+        let source = entry.source_path();
+        let path = source.strip_prefix(&project).unwrap_or(&source).to_string_lossy().replace('\\', "/");
+        let mut lines = vec![
+            format!("Move {} '{}' to the trash?", entry.meta.kind.label().to_lowercase(), entry.meta.name),
+            format!("{}  (and its .asset.ron)", path.trim_start_matches("./")),
+        ];
+        let references = database.references_to(id);
+        let warning = !references.is_empty();
+        if warning {
+            lines.push(String::new());
+            lines.push(format!(
+                "Still used by {} — they will miss it:",
+                if references.len() == 1 { "1 file".to_string() } else { format!("{} files", references.len()) }
+            ));
+            lines.extend(reference_lines(&database, &references));
+        } else {
+            lines.push("Nothing in the project refers to it.".into());
+        }
+        (lines, warning)
+    };
+    confirm_delete(state, if warning { "Delete asset (in use)" } else { "Delete asset" }, lines, Command::DeleteAsset(id));
+}
+
+/// Ask before moving a folder and all assets in it to the trash.
+pub fn delete_folder(state: &Shared, path: PathBuf) {
+    let lines = {
+        let database = assets::database();
+        let inside = database.assets_in(&path);
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut lines = vec![
+            format!("Move folder '{name}' to the trash?"),
+            match inside.len() {
+                0 => "It holds no assets.".to_string(),
+                1 => "It holds 1 asset.".to_string(),
+                n => format!("It holds {n} assets."),
+            },
+        ];
+        let references = database.references_into(&path);
+        if !references.is_empty() {
+            lines.push(String::new());
+            lines.push(format!("{} outside refer to assets in it:", if references.len() == 1 { "1 file".to_string() } else { format!("{} files", references.len()) }));
+            lines.extend(reference_lines(&database, &references));
+        }
+        lines
+    };
+    confirm_delete(state, "Delete folder", lines, Command::DeleteFolder(path));
+}
+
+fn confirm_delete(state: &Shared, title: &str, lines: Vec<String>, then: Command) {
+    let open_flag = DataSource::new(true);
+    let (ok_state, ok_open) = (state.clone(), open_flag.clone());
+    let cancel_open = open_flag.clone();
+    let mut children: Vec<Box<dyn UIElement>> = lines.iter().map(|line| UI::label(line, 14.0) as Box<dyn UIElement>).collect();
+    children.push(button_row(vec![
+        UI::button(
+            "Move to trash",
+            Box::new(move |_| {
+                send(&ok_state, then.clone());
+                ok_open.write(false);
+            }),
+        ),
+        UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+    ]));
+    show(state, title, open_flag, children);
 }

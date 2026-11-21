@@ -260,6 +260,10 @@ impl Plane {
     pub fn set_color(&mut self, color: (f32, f32, f32, f32)) {
         self.color = color;
     }
+
+    pub fn set_border_color(&mut self, color: (f32, f32, f32, f32)) {
+        self.border_color = color;
+    }
 }
 
 impl VertexAttributes for PlaneVertex {

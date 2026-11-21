@@ -285,6 +285,64 @@ pub fn catalog() -> Vec<Tool> {
             &["asset"],
         ),
         tool(
+            "editor_asset_references",
+            "The files of the project that refer to an asset (id, path below assets/, or a name only \
+             one asset has): sidecars and asset files naming its id (model slots → materials, \
+             materials → graphs and textures, scatter graphs → models, clips → models), scenes, and \
+             scripts naming its path. Each with the asset it belongs to, if any.",
+            json!({"asset": {"type": "string"}}),
+            &["asset"],
+        ),
+        tool(
+            "editor_asset_delete",
+            "Delete an asset: its source file and .asset.ron sidecar go to the system trash and it \
+             leaves the asset database; editors open on it close (refused while they hold unsaved \
+             changes). Without confirm: true nothing happens: the answer only names the asset and \
+             what refers to it (those files will miss it). Ask the user before confirming.",
+            json!({"asset": {"type": "string"}, "confirm": {"type": "boolean"}}),
+            &["asset"],
+        ),
+        tool(
+            "editor_asset_rename",
+            "Rename an asset: its display name, source file (ending kept) and sidecar. References \
+             by id stay intact; scripts naming the old path do not.",
+            json!({"asset": {"type": "string"}, "name": {"type": "string"}}),
+            &["asset", "name"],
+        ),
+        tool(
+            "editor_asset_create",
+            "Make a new asset: kind material (Standard PBR), material_graph (a copy of Standard \
+             PBR) or scatter_graph (random points into a mesh spawner), in folder (below assets/; \
+             default: materials/ or scatter/), named name (default: the first free \"New … N\"). \
+             The asset browser shows it. Returns its id, name and path.",
+            json!({"kind": {"type": "string", "enum": ["material", "material_graph", "scatter_graph"]}, "folder": {"type": "string"}, "name": {"type": "string"}}),
+            &["kind"],
+        ),
+        tool(
+            "editor_asset_browser",
+            "Point the asset browser: category (all, models, textures, materials, material_graphs, \
+             animations, scatter_graphs), folder below assets/, search text (\"\" clears it), asset \
+             to select (opens its folder), menu: true to open the context menu of the selected card \
+             (or of the folder) for a screenshot, expand: true/false to unfold or fold the selected \
+             pack's variants (an animation file's clips). Left out stays as it is.",
+            json!({"category": {"type": "string"}, "folder": {"type": "string"}, "search": {"type": "string"}, "asset": {"type": "string"}, "menu": {"type": "boolean"}, "expand": {"type": "boolean"}}),
+            &[],
+        ),
+        tool(
+            "editor_folder_create",
+            "Make a folder below assets/ (path like \"props/rocks\"); the asset browser opens it.",
+            json!({"path": {"type": "string"}}),
+            &["path"],
+        ),
+        tool(
+            "editor_folder_delete",
+            "Delete a folder below assets/ with every asset in it (to the system trash). Without \
+             confirm: true nothing happens: the answer lists the assets in it and the files outside \
+             that refer to them. Ask the user before confirming.",
+            json!({"path": {"type": "string"}, "confirm": {"type": "boolean"}}),
+            &["path"],
+        ),
+        tool(
             "editor_scatter_graph_read",
             "Read a scatter graph asset (id, name or path): its nodes (id, kind, position, pins, \
              settings), wires, problems; if it is open in the editor also whether it is unsaved \
@@ -339,7 +397,8 @@ pub fn catalog() -> Vec<Tool> {
             "editor_material_create",
             "Make a new material asset (Standard PBR, defaults) or, with graph: true, a material graph \
              asset (a copy of Standard PBR to change) in assets/materials/, named name (default: the \
-             first free \"New material N\"). Returns its id and name.",
+             first free \"New material N\"). Returns its id and name. editor_asset_create does the \
+             same for any folder and also makes scatter graphs.",
             json!({"name": {"type": "string"}, "graph": {"type": "boolean"}}),
             &[],
         ),
