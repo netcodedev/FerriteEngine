@@ -499,6 +499,14 @@ and variant; frame cost of grass < 2 ms on the user's machine.
        `power/world.rs`), `landscape/features.rs` gathers them, the terrain
        source names none.
 
+   - **Fade settings** (user's wish, 2026-11-21): a detail `Spawn mesh`
+     has `fade` (the share of its distance, at the far end, it fades over;
+     0.2 as before) and `fade mode`: `shrink` (as before) or `thin` (each
+     model vanishes whole at its own point of the fade, from a number of
+     its own position; vertex shader only, so all passes agree). Older
+     graphs load with 0.2 and shrink. Checked in the demo editor with fade
+     0.6: the two modes differ only in the fading band, not within 24 m.
+
 7. **Demo**: grass graph (meadows: lush biomes, gentle slopes, patches by
    noise, none on roads/water/towns), then stones and bushes with the same
    system when the user has models for them.

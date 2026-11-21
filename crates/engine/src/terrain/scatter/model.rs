@@ -19,7 +19,7 @@ use crate::core::{
 };
 
 use super::*;
-use super::graph::{NodeId, ScatterGraph, ScatterRange};
+use super::graph::{FadeMode, NodeId, ScatterGraph, ScatterRange};
 
 thread_local! {
     static MODEL_CACHE: RefCell<ModelCache> = RefCell::new(ModelCache::default());
@@ -253,6 +253,9 @@ pub struct ScatterSpec {
     pub wind: f32,
     /// How far their shading normals bend towards the sky, 0..1.
     pub normals_up: f32,
+    /// Detail range: the share of it over which they fade, and how.
+    pub fade: f32,
+    pub fade_mode: FadeMode,
 }
 
 impl ScatterSpec {
@@ -268,6 +271,8 @@ impl ScatterSpec {
             shadows: true,
             wind: 0.0,
             normals_up: 0.0,
+            fade: 0.2,
+            fade_mode: FadeMode::Shrink,
         }
     }
 
@@ -280,6 +285,8 @@ impl ScatterSpec {
             && self.shadows == other.shadows
             && self.wind == other.wind
             && self.normals_up == other.normals_up
+            && self.fade == other.fade
+            && self.fade_mode == other.fade_mode
             && (Arc::ptr_eq(&self.graph, &other.graph) || self.graph == other.graph)
     }
 }

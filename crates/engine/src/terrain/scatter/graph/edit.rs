@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::core::entity::component::{Property, PropertyValue};
 
-use super::{known_biomes, known_features, GraphNode, NodeId, NodeKind, PinRef, ScatterGraph, ScatterRange, SpawnMesh, SplitBy, Wire};
+use super::{known_biomes, known_features, FadeMode, GraphNode, NodeId, NodeKind, PinRef, ScatterGraph, ScatterRange, SpawnMesh, SplitBy, Wire};
 
 impl ScatterGraph {
     /// Add a node at `position` (node editor units); returns its id.
@@ -150,6 +150,8 @@ impl NodeKind {
                 wind: 0.0,
                 tint: 0.0,
                 normals_up: 0.0,
+                fade: 0.2,
+                fade_mode: FadeMode::Shrink,
             }),
         ]
     }
@@ -260,6 +262,12 @@ impl NodeKind {
                 ];
                 if let Some(distance) = distance {
                     properties.push(Property::ranged("distance", distance, 5.0, 300.0));
+                    properties.push(Property::ranged("fade", spawn.fade, 0.0, 1.0));
+                    properties.push(Property::choice(
+                        "fade mode",
+                        spawn.fade_mode.name().to_string(),
+                        FadeMode::NAMES.iter().map(|n| n.to_string()).collect(),
+                    ));
                 }
                 properties.extend([
                     Property::bool("collision", spawn.collision),
@@ -390,6 +398,15 @@ impl NodeKind {
                 ("wind", _) => set(&mut spawn.wind),
                 ("tint", _) => set(&mut spawn.tint),
                 ("normals up", _) => set(&mut spawn.normals_up),
+                ("fade", _) => set(&mut spawn.fade),
+                ("fade mode", PropertyValue::Text(text)) => {
+                    spawn.fade_mode = match text.as_str() {
+                        "shrink" => FadeMode::Shrink,
+                        "thin" => FadeMode::Thin,
+                        _ => return false,
+                    };
+                    true
+                }
                 _ => false,
             },
             _ => false,
