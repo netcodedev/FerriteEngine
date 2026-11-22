@@ -28,8 +28,10 @@ use std::{
 
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 
-use super::{shader::Shader, taa};
-use crate::core::gfx::{self, BlasGeometry, Format, SamplerDesc, TextureDesc, TlasInstance};
+use super::{shader::Shader, taa, texture::Texture};
+use crate::core::gfx::{
+    self, BlasGeometry, Format, SamplerDesc, TextureDesc, TextureKind, TlasInstance,
+};
 
 /// Texture unit the lit shaders read the shadows from.
 pub const RT_SHADOW_UNIT: u32 = 25;
@@ -40,12 +42,23 @@ const KEEP_FRAMES: u64 = 120;
 /// Instance masks: opaque meshes, and cut-outs (leaves).
 pub const MASK_OPAQUE: u8 = 1;
 pub const MASK_CUTOUT: u8 = 2;
-/// Share of the light a leaf card (any cut-out) stops, as the texture is
-/// not looked at: about the share of a card that is leaf.
+/// Share of the light a cut-out stops whose texture the rays cannot test
+/// (none found, not loaded yet, or the atlas full): about the share of a
+/// leaf card that is leaf.
 const CUTOUT_COVERAGE: f32 = 0.55;
-/// Angular radius of the sun's disc (radians); a little larger than the
-/// real one (0.0047), for shadows that soften visibly with distance.
-const SUN_RADIUS: f32 = 0.008;
+/// The cut-out textures the rays test against: their opacity, one layer
+/// each of an array this big.
+const ATLAS_SIZE: u32 = 256;
+const ATLAS_LAYERS: u32 = 64;
+/// Texture unit and buffer slot of the atlas and the cut-out records in
+/// the trace program.
+const ATLAS_UNIT: u32 = 1;
+const CUTOUT_SLOT: u32 = 5;
+/// An instance's custom index without a cut-out record.
+const NO_CUTOUT: u32 = 0xFF_FFFF;
+/// Angular radius of the sun's disc (radians), the real one: shadows
+/// soften with the distance to what casts them, as they do outside.
+const SUN_RADIUS: f32 = 0.0047;
 /// How far rays look for something in the way (metres).
 const MAX_DISTANCE: f32 = 4000.0;
 /// Share of this frame in the denoised result where the history is fine.
@@ -56,6 +69,105 @@ thread_local! {
     static FRAME: Cell<u64> = const { Cell::new(0) };
     static INSTANCES: RefCell<Vec<TlasInstance>> = const { RefCell::new(Vec::new()) };
     static CACHE: RefCell<BlasCache> = RefCell::new(BlasCache::default());
+    static CUTOUTS: RefCell<Cutouts> = RefCell::new(Cutouts::default());
+}
+
+/// A cut-out mesh's opacity texture, which rays test its triangles
+/// against (alpha testing, as the drawn leaves are cut out).
+pub struct Cutout<'a> {
+    pub texture: &'a Texture,
+    /// The texture's channel the opacity is in (0 to 3).
+    pub channel: u32,
+    /// Opacity below which the surface is cut away.
+    pub cutoff: f32,
+    /// Where in each vertex its UV (two `f32`) starts, in bytes.
+    pub uv_offset: u32,
+}
+
+impl<'a> Cutout<'a> {
+    /// What rays test `material` against, for vertices with their UV at
+    /// byte `uv_offset`; `None` for an opaque material or one whose
+    /// opacity comes from no texture.
+    pub fn of(material: &'a crate::core::material::Material, uv_offset: u32) -> Option<Self> {
+        let crate::core::material::AlphaMode::Cutout(cutoff) = material.alpha else {
+            return None;
+        };
+        let (texture, channel) = material.opacity_texture()?;
+        Some(Cutout {
+            texture,
+            channel,
+            cutoff,
+            uv_offset,
+        })
+    }
+}
+
+/// One cut-out record for the trace shader (`Cutout` in `trace.glsl`):
+/// vertex and index buffer addresses, vertex stride and UV offset in
+/// words, atlas layer, cut-off, whether indexed.
+type CutoutRecord = [u32; 12];
+
+/// The cut-outs of the frame being collected, and the atlas layers given
+/// to opacity textures.
+#[derive(Default)]
+struct Cutouts {
+    records: Vec<CutoutRecord>,
+    by_key: HashMap<(BlasGeometry, u32, u32), u32>,
+    /// Atlas layer by texture and channel.
+    layers: HashMap<(gfx::RawId, u32), u32>,
+    /// Layers given out but not drawn yet: the texture and its channel.
+    pending: Vec<(Texture, u32, u32)>,
+}
+
+impl Cutouts {
+    /// The record index for `geometry` cut out by `cutout`, `NO_CUTOUT`
+    /// when the rays cannot test it.
+    fn record(&mut self, geometry: &BlasGeometry, cutout: &Cutout) -> u32 {
+        let texture = cutout.texture.raw();
+        if texture == 0 {
+            // Still loading.
+            return NO_CUTOUT;
+        }
+        let layer = match self.layers.get(&(texture, cutout.channel)) {
+            Some(&layer) => layer,
+            None => {
+                let layer = self.layers.len() as u32;
+                if layer >= ATLAS_LAYERS {
+                    return NO_CUTOUT;
+                }
+                self.layers.insert((texture, cutout.channel), layer);
+                self.pending
+                    .push((cutout.texture.share(), cutout.channel, layer));
+                layer
+            }
+        };
+        let key = (*geometry, layer, cutout.cutoff.to_bits());
+        if let Some(&index) = self.by_key.get(&key) {
+            return index;
+        }
+        let vertices = gfx::buffer_address(geometry.vertices);
+        let indices = geometry.indices.map_or(0, gfx::buffer_address);
+        if vertices == 0 || (geometry.indices.is_some() && indices == 0) {
+            return NO_CUTOUT;
+        }
+        let index = self.records.len() as u32;
+        self.records.push([
+            vertices as u32,
+            (vertices >> 32) as u32,
+            indices as u32,
+            (indices >> 32) as u32,
+            geometry.stride / 4,
+            cutout.uv_offset / 4,
+            layer,
+            cutout.cutoff.to_bits(),
+            geometry.indices.is_some() as u32,
+            0,
+            0,
+            0,
+        ]);
+        self.by_key.insert(key, index);
+        index
+    }
 }
 
 /// Bottom level structures by the meshes they were built from.
@@ -99,6 +211,11 @@ pub fn collecting() -> bool {
 pub fn begin_collect() {
     FRAME.with(|f| f.set(f.get() + 1));
     INSTANCES.with(|i| i.borrow_mut().clear());
+    CUTOUTS.with(|c| {
+        let mut c = c.borrow_mut();
+        c.records.clear();
+        c.by_key.clear();
+    });
     COLLECTING.with(|c| c.set(true));
 }
 
@@ -123,13 +240,18 @@ fn mask(opaque: bool) -> u8 {
     }
 }
 
-/// A mesh placed at `transform` (object to world).
-pub fn add_mesh(geometry: BlasGeometry, transform: &Matrix4<f32>) {
-    add_instances(geometry, std::iter::once(*transform));
+/// A mesh placed at `transform` (object to world); `cutout` for a mesh
+/// that is not opaque.
+pub fn add_mesh(geometry: BlasGeometry, cutout: Option<Cutout>, transform: &Matrix4<f32>) {
+    add_instances(geometry, cutout, std::iter::once(*transform));
 }
 
 /// A mesh placed at each of `transforms`.
-pub fn add_instances(geometry: BlasGeometry, transforms: impl IntoIterator<Item = Matrix4<f32>>) {
+pub fn add_instances(
+    geometry: BlasGeometry,
+    cutout: Option<Cutout>,
+    transforms: impl IntoIterator<Item = Matrix4<f32>>,
+) {
     if !collecting() || geometry.count < 3 {
         return;
     }
@@ -138,6 +260,10 @@ pub fn add_instances(geometry: BlasGeometry, transforms: impl IntoIterator<Item 
         return;
     };
     let mask = mask(geometry.opaque);
+    let custom = match (&cutout, geometry.opaque) {
+        (Some(cutout), false) => CUTOUTS.with(|c| c.borrow_mut().record(&geometry, cutout)),
+        _ => NO_CUTOUT,
+    };
     INSTANCES.with(|instances| {
         let mut instances = instances.borrow_mut();
         for transform in transforms {
@@ -146,7 +272,7 @@ pub fn add_instances(geometry: BlasGeometry, transforms: impl IntoIterator<Item 
                 transform: TlasInstance::rows(&columns),
                 blas,
                 mask,
-                custom: 0,
+                custom,
             });
         }
     });
@@ -234,6 +360,12 @@ pub struct RayTracedShadows {
     previous: Option<Matrix4<f32>>,
     /// Instances in the top level structure last built.
     pub instance_count: usize,
+    /// Opacity of cut-out textures, a layer each (see `Cutouts`).
+    atlas: gfx::Texture,
+    atlas_targets: Vec<Option<gfx::RenderTarget>>,
+    atlas_shader: Shader,
+    /// This frame's cut-out records.
+    cutouts: gfx::Buffer,
 }
 
 /// The fullscreen strip, no depth, no blending.
@@ -287,6 +419,22 @@ impl RayTracedShadows {
             history_valid: false,
             previous: None,
             instance_count: 0,
+            atlas: gfx::Texture::new(TextureDesc {
+                kind: TextureKind::D2Array,
+                format: Format::R8,
+                width: ATLAS_SIZE,
+                height: ATLAS_SIZE,
+                layers: ATLAS_LAYERS,
+                mips: 1,
+                samples: 1,
+            }),
+            atlas_targets: (0..ATLAS_LAYERS).map(|_| None).collect(),
+            atlas_shader: Shader::new(vertex, include_str!("opacity.glsl")),
+            cutouts: gfx::Buffer::new(
+                gfx::BufferUsage::STORAGE,
+                gfx::BufferMemory::Dynamic,
+                std::mem::size_of::<CutoutRecord>(),
+            ),
         })
     }
 
@@ -307,10 +455,56 @@ impl RayTracedShadows {
         );
     }
 
-    /// Build this frame's top level structure from `instances`.
+    /// Build this frame's top level structure from `instances`, with the
+    /// cut-outs collected with them.
     pub fn build(&mut self, instances: &[TlasInstance]) {
         self.instance_count = instances.len();
+        let (records, pending) = CUTOUTS.with(|c| {
+            let mut c = c.borrow_mut();
+            (
+                std::mem::take(&mut c.records),
+                std::mem::take(&mut c.pending),
+            )
+        });
+        for (texture, channel, layer) in pending {
+            self.draw_opacity(&texture, channel, layer);
+        }
+        let mut bytes: Vec<u8> = records
+            .iter()
+            .flatten()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        if bytes.is_empty() {
+            // Never empty: a zero-sized storage buffer cannot be bound.
+            bytes.resize(std::mem::size_of::<CutoutRecord>(), 0);
+        }
+        self.cutouts.replace(&bytes);
         self.tlas.build(instances);
+    }
+
+    /// Draw `channel` of `texture` into atlas `layer`.
+    fn draw_opacity(&mut self, texture: &Texture, channel: u32, layer: u32) {
+        let Some(slot) = self.atlas_targets.get_mut(layer as usize) else {
+            return;
+        };
+        let target = slot.get_or_insert_with(|| {
+            gfx::RenderTarget::new(&[self.atlas.attachment(0, Some(layer))], None)
+        });
+        gfx::begin_pass(
+            target.reference(),
+            (ATLAS_SIZE, ATLAS_SIZE),
+            gfx::Load::Color([0.0; 4]),
+            gfx::Load::Keep,
+        );
+        let shader = &self.atlas_shader;
+        gfx::set_pipeline(shader.pipeline(&fullscreen()));
+        texture.bind_to(0);
+        shader.set_uniform_1i("source", 0);
+        shader.set_uniform_1i("channel", channel as i32);
+        gfx::set_vertex_buffer(0, &self.quad, 0, 8);
+        gfx::draw(0, 4);
+        gfx::end_pass();
+        gfx::unbind_texture(0, TextureKind::D2);
     }
 
     /// Trace and denoise the shadows of `view`, and bind them to
@@ -357,6 +551,9 @@ impl RayTracedShadows {
         shader.set_uniform_1f("maxDistance", MAX_DISTANCE);
         shader.set_uniform_1f("cutoutCoverage", CUTOUT_COVERAGE);
         shader.set_uniform_1i("frame", self.frame as i32);
+        gfx::bind_texture(ATLAS_UNIT, &self.atlas, &SamplerDesc::LINEAR_REPEAT);
+        shader.set_uniform_1i("opacityAtlas", ATLAS_UNIT as i32);
+        gfx::bind_storage_buffer(CUTOUT_SLOT, &self.cutouts);
         self.draw_quad();
         gfx::end_pass();
 

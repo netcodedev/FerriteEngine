@@ -25,8 +25,14 @@ Each frame:
 2. **Depth prepass**: runs whenever the setting is on, as it does for SSAO.
 3. **Trace** (`trace.glsl`): one ray per pixel from the visible surface
    toward a random point on the sun's disc (the moon at night, as the
-   shadow map would be). Opaque meshes stop the ray; cut-out materials
-   (leaves) let 45 % of the light through each.
+   shadow map would be; the sun's real angular size, so shadows soften
+   with distance). Opaque meshes stop the ray. Cut-out materials (leaves)
+   are alpha-tested as when drawn: the ray looks up the hit's UV in the
+   mesh's own buffers (device addresses, `GL_EXT_buffer_reference`) and
+   the material's opacity in an atlas (`opacity.glsl`: the texture the
+   graph's opacity comes from, `Material::opacity_texture`, one 256×256
+   layer each, 64 layers). A cut-out whose texture is not loaded yet, or
+   past the atlas, lets 45 % of the light through instead.
 4. **Denoise**: blended into the frames before, moved with the camera
    (`accumulate.glsl`, history dropped where it showed another surface,
    clamped to the neighbourhood), then a 5×5 blur within a surface
@@ -36,11 +42,9 @@ Each frame:
 
 ## Limits
 
-- **Leaves are not alpha-tested**: a leaf card stops a share of the light
-  across its whole quad, so tree shadows are soft blobs without the leaf
-  pattern the cascades show. Alpha-testing needs the leaf textures in the
-  trace shader (bindless textures); the next step if the shadows should
-  keep their detail.
+- Leaves are tested against their texture at 256×256 and the UV the
+  mesh has; a graph that moves or scales the UV before sampling is not
+  followed.
 - Skinned models (characters) cast no ray traced shadows yet: their
   structure would have to be refit each frame.
 - Detail scatter (grass) casts none: too many instances for what it adds.

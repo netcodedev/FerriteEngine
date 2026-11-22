@@ -1,11 +1,16 @@
 #version 460 core
 #extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
 
 // Ray traced sun shadows, one ray per pixel: from the surface the view
 // shows toward a random point on the sun's disc (a new one every frame,
 // so the frames blended later give soft shadows). Opaque geometry stops
-// the ray; cut-out geometry (leaf cards) lets part of the light through,
-// as its texture is not looked at. Writes the light that arrives (1 = all).
+// the ray; cut-out geometry (leaf cards) stops it where its opacity
+// texture (a layer of `opacityAtlas`, found through the instance's record
+// in `cutouts`) is at least the cut-off, as the drawn leaves are cut out.
+// A cut-out without a record lets a share of the light through instead.
+// Writes the light that arrives (1 = all).
 
 in vec2 uv;
 out vec4 FragColor;
@@ -22,6 +27,52 @@ uniform float maxDistance;
 // Share of the light a cut-out surface stops.
 uniform float cutoutCoverage;
 uniform int frame;
+uniform sampler2DArray opacityAtlas;
+
+// A mesh's buffers, read through their device addresses.
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Words {
+    uint w[];
+};
+
+// As `CutoutRecord` in `raytracing/mod.rs`.
+struct Cutout {
+    uvec2 vertices;
+    uvec2 indices;
+    uint stride;
+    uint uvOffset;
+    uint layer;
+    uint cutoff;
+    uint indexed;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+};
+layout(std430, binding = 5) readonly buffer Cutouts {
+    Cutout cutouts[];
+};
+
+const uint NO_CUTOUT = 0xFFFFFFu;
+
+vec2 uvOf(Cutout c, uint vertex) {
+    Words v = Words(c.vertices);
+    uint at = vertex * c.stride + c.uvOffset;
+    return uintBitsToFloat(uvec2(v.w[at], v.w[at + 1u]));
+}
+
+// Whether the candidate hit of `query` lands on the solid part of its
+// cut-out: its UV looked up in the opacity atlas.
+bool solidAt(rayQueryEXT query, Cutout c) {
+    uint primitive = uint(rayQueryGetIntersectionPrimitiveIndexEXT(query, false));
+    vec2 b = rayQueryGetIntersectionBarycentricsEXT(query, false);
+    uvec3 corners = uvec3(primitive * 3u) + uvec3(0u, 1u, 2u);
+    if (c.indexed == 1u) {
+        Words i = Words(c.indices);
+        corners = uvec3(i.w[corners.x], i.w[corners.y], i.w[corners.z]);
+    }
+    vec2 uv = uvOf(c, corners.x) * (1.0 - b.x - b.y) + uvOf(c, corners.y) * b.x + uvOf(c, corners.z) * b.y;
+    float opacity = textureLod(opacityAtlas, vec3(uv, float(c.layer)), 0.0).r;
+    return opacity >= uintBitsToFloat(c.cutoff);
+}
 
 vec3 relativeAt(ivec2 texel) {
     ivec2 size = textureSize(sceneDepth, 0);
@@ -80,6 +131,14 @@ void main() {
     while (rayQueryProceedEXT(query)) {
         // Only cut-outs come here; opaque hits end the query by themselves.
         if (rayQueryGetIntersectionTypeEXT(query, false) == gl_RayQueryCandidateIntersectionTriangleEXT) {
+            uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, false));
+            if (record != NO_CUTOUT) {
+                if (solidAt(query, cutouts[record])) {
+                    // With "terminate on first hit" this ends the query.
+                    rayQueryConfirmIntersectionEXT(query);
+                }
+                continue;
+            }
             light *= 1.0 - cutoutCoverage;
             if (light < 0.02) {
                 rayQueryConfirmIntersectionEXT(query);

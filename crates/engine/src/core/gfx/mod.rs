@@ -120,6 +120,11 @@ pub trait Device {
     /// Bind `accel` (a top level structure) at `slot` for the draws that
     /// follow (`layout(binding = slot) uniform accelerationStructureEXT`).
     fn bind_accel(&self, _slot: u32, _accel: RawId) {}
+    /// The device address of `buffer` (for shaders that read it through
+    /// a pointer); 0 where there are none.
+    fn buffer_address(&self, _buffer: RawId) -> u64 {
+        0
+    }
 
     fn begin_pass(&self, target: TargetRef, size: (u32, u32), color: Load, depth: Load);
     /// Re-enter `target` after a nested pass ended (contents kept).
@@ -719,6 +724,12 @@ impl Drop for Tlas {
 /// Bind `tlas` at `slot` for the draws that follow.
 pub fn bind_accel(slot: u32, tlas: &Tlas) {
     device().bind_accel(slot, tlas.raw);
+}
+
+/// The device address of `buffer` (made with `BufferUsage::RAY_TRACING_INPUT`
+/// where ray tracing is supported), 0 where there are none.
+pub fn buffer_address(buffer: RawId) -> u64 {
+    device().buffer_address(buffer)
 }
 
 // ── Programs and pipelines ─────────────────────────────────────────────

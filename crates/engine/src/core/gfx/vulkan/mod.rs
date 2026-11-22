@@ -796,6 +796,13 @@ impl Device for VkDevice {
         })
     }
 
+    fn buffer_address(&self, buffer: RawId) -> u64 {
+        self.with(|s| match (s.gpu.accel_fn.is_some(), s.use_buffer(buffer)) {
+            (true, Some((b, _))) => s.buffer_address(b),
+            _ => 0,
+        })
+    }
+
     fn begin_pass(&self, target: TargetRef, size: (u32, u32), color: Load, depth: Load) {
         self.with(|s| s.begin_pass(target, size, color, depth))
     }

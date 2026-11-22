@@ -272,7 +272,7 @@ impl TerrainChunk {
         };
         let corner = self.position();
         let placed = transform * Matrix4::from_translation(Vector3::new(corner.x, corner.y, corner.z));
-        crate::core::renderer::raytracing::add_mesh(geometry, &placed);
+        crate::core::renderer::raytracing::add_mesh(geometry, None, &placed);
     }
 
     /// The chunk's water and where it is drawn, under `parent_transform`

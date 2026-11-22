@@ -564,7 +564,8 @@ impl ScatterInstances {
                     continue;
                 };
                 for sub in &kind.lods[tier].submeshes {
-                    let (shadows, opaque) = match kind.model.material(sub.material_index) {
+                    let material = kind.model.material(sub.material_index);
+                    let (shadows, opaque) = match material {
                         Some(material) => (material.shadows, material.alpha == crate::core::material::AlphaMode::Opaque),
                         None => (true, true),
                     };
@@ -580,7 +581,9 @@ impl ScatterInstances {
                         count: sub.index_count,
                         opaque,
                     };
-                    raytracing::add_instances(geometry, transforms.iter().map(|t| parent_transform * t));
+                    // The UV follows position and normal (`vertex_layout`).
+                    let cutout = material.and_then(|material| raytracing::Cutout::of(material, 24));
+                    raytracing::add_instances(geometry, cutout, transforms.iter().map(|t| parent_transform * t));
                 }
             }
         }

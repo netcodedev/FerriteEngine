@@ -19,7 +19,7 @@ void main() {
     for (int y = -2; y <= 2; y++) {
         for (int x = -2; x <= 2; x++) {
             vec2 s = texelFetch(accumulated, clamp(texel + ivec2(x, y), ivec2(0), size - 1), 0).rg;
-            float w = exp(-0.5 * float(x * x + y * y) / 2.0);
+            float w = exp(-0.5 * float(x * x + y * y));
             w *= max(0.0, 1.0 - abs(s.g - center.g) / tolerance);
             sum += s.r * w;
             weights += w;

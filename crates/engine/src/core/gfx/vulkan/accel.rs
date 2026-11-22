@@ -32,7 +32,7 @@ const SCRATCH_USAGE: vk::BufferUsageFlags = vk::BufferUsageFlags::from_raw(
 );
 
 impl State {
-    fn buffer_address(&self, buffer: vk::Buffer) -> u64 {
+    pub(super) fn buffer_address(&self, buffer: vk::Buffer) -> u64 {
         unsafe {
             self.gpu
                 .device

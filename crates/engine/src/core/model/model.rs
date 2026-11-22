@@ -594,7 +594,8 @@ impl Model {
             if !shown || mesh.root_bone.is_some() {
                 continue;
             }
-            let (shadows, opaque) = match self.materials.get(mesh.material_index) {
+            let material = self.materials.get(mesh.material_index);
+            let (shadows, opaque) = match material {
                 Some(material) => (material.shadows, material.alpha == crate::core::material::AlphaMode::Opaque),
                 None => (true, true),
             };
@@ -604,7 +605,9 @@ impl Model {
             let Some(geometry) = mesh.vertex_array.as_ref().and_then(|v| v.blas_geometry(opaque)) else {
                 continue;
             };
-            raytracing::add_mesh(geometry, model);
+            let uv_offset = std::mem::offset_of!(ModelMeshVertex, texture_coords) as u32;
+            let cutout = material.and_then(|material| raytracing::Cutout::of(material, uv_offset));
+            raytracing::add_mesh(geometry, cutout, model);
         }
     }
 

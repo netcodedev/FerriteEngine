@@ -240,6 +240,48 @@ impl Material {
         Material::new(standard_graph())
     }
 
+    /// The texture a cut-out material's opacity is read from, and its
+    /// channel (0 to 3), followed upstream from the output's opacity: for
+    /// ray traced shadows, which test leaves against it. `None` when the
+    /// opacity comes from no texture, or the texture is not set.
+    pub fn opacity_texture(&self) -> Option<(&Texture, u32)> {
+        use graph::NodeKind;
+        let graph = &self.graph.graph;
+        let output = graph.output_node()?;
+        let wire = graph.wire_into(output.id, graph::output::OPACITY)?;
+        // Straight from a texture's R, G, B or A pin: that channel; through
+        // other nodes: the first texture upstream, its alpha.
+        let mut channel = match (graph.node(wire.from.node).map(|n| &n.kind), wire.from.pin) {
+            (Some(NodeKind::SampleTexture), 2..=5) => Some(u32::from(wire.from.pin) - 2),
+            _ => None,
+        };
+        let mut stack = vec![wire.from.node];
+        let mut seen = Vec::new();
+        while let Some(id) = stack.pop() {
+            if seen.contains(&id) {
+                continue;
+            }
+            seen.push(id);
+            let Some(node) = graph.node(id) else {
+                continue;
+            };
+            if node.kind == NodeKind::SampleTexture {
+                let param = graph.wire_into(id, 0).and_then(|w| graph.node(w.from.node)).and_then(|n| match &n.kind {
+                    NodeKind::Parameter(name) => Some(name.clone()),
+                    _ => None,
+                });
+                let index = param.and_then(|name| graph.params.iter().position(|p| p.name == name));
+                if let Some(ParamValue::Texture(Some(texture))) = index.and_then(|i| self.values.get(i)) {
+                    return Some((texture, channel.take().unwrap_or(3)));
+                }
+                continue;
+            }
+            channel = None;
+            stack.extend(graph.wires.iter().filter(|w| w.to.node == id).map(|w| w.from.node));
+        }
+        None
+    }
+
     pub fn graph(&self) -> &Rc<CompiledGraph> {
         &self.graph
     }
