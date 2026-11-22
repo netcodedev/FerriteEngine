@@ -70,7 +70,20 @@ thread_local! {
     static INSTANCES: RefCell<Vec<TlasInstance>> = const { RefCell::new(Vec::new()) };
     static CACHE: RefCell<BlasCache> = RefCell::new(BlasCache::default());
     static CUTOUTS: RefCell<Cutouts> = RefCell::new(Cutouts::default());
+    static SKINNED: RefCell<HashMap<(u64, usize), Skinned>> = RefCell::new(HashMap::new());
 }
+
+/// A skinned mesh in one pose: its posed positions and the structure
+/// built from them.
+struct Skinned {
+    _positions: gfx::Buffer,
+    blas: gfx::Blas,
+    used: u64,
+}
+
+/// Frames a skinned mesh's structure is kept after its pose was last
+/// seen (a pose that changed is not seen again).
+const KEEP_SKINNED_FRAMES: u64 = 2;
 
 /// A cut-out mesh's opacity texture, which rays test its triangles
 /// against (alpha testing, as the drawn leaves are cut out).
@@ -224,6 +237,7 @@ pub fn end_collect() -> Vec<TlasInstance> {
     COLLECTING.with(|c| c.set(false));
     let frame = FRAME.with(Cell::get);
     CACHE.with(|c| c.borrow_mut().sweep(frame));
+    SKINNED.with(|s| s.borrow_mut().retain(|_, skinned| frame - skinned.used <= KEEP_SKINNED_FRAMES));
     INSTANCES.with(|i| std::mem::take(&mut *i.borrow_mut()))
 }
 
@@ -278,6 +292,65 @@ pub fn add_instances(
     });
 }
 
+/// A skinned mesh placed at `transform`, in the pose `key` names (a
+/// model's pose revision and the mesh's index): `positions` (posed, in
+/// the model's space) are asked for only when that pose has no structure
+/// yet. `indices` and `count` as for `BlasGeometry`. Cut-outs on skinned
+/// meshes (hair) let a share of the light through.
+pub fn add_skinned(
+    key: (u64, usize),
+    positions: impl FnOnce() -> Vec<[f32; 3]>,
+    indices: Option<gfx::RawId>,
+    count: u32,
+    opaque: bool,
+    transform: &Matrix4<f32>,
+) {
+    if !collecting() || count < 3 {
+        return;
+    }
+    let frame = FRAME.with(Cell::get);
+    let blas = SKINNED.with(|skinned| {
+        let mut skinned = skinned.borrow_mut();
+        if let Some(entry) = skinned.get_mut(&key) {
+            entry.used = frame;
+            return Some(entry.blas.raw());
+        }
+        let positions = positions();
+        if positions.is_empty() {
+            return None;
+        }
+        let buffer = gfx::Buffer::from_slice(
+            gfx::BufferUsage::VERTEX | gfx::BufferUsage::RAY_TRACING_INPUT,
+            gfx::BufferMemory::Static,
+            &positions,
+        );
+        let geometry = BlasGeometry {
+            vertices: buffer.raw(),
+            stride: 12,
+            vertex_count: positions.len() as u32,
+            indices,
+            count,
+            opaque,
+        };
+        let blas = gfx::Blas::new(&[geometry])?;
+        let raw = blas.raw();
+        skinned.insert(key, Skinned { _positions: buffer, blas, used: frame });
+        Some(raw)
+    });
+    let Some(blas) = blas else {
+        return;
+    };
+    let columns: [[f32; 4]; 4] = (*transform).into();
+    INSTANCES.with(|instances| {
+        instances.borrow_mut().push(TlasInstance {
+            transform: TlasInstance::rows(&columns),
+            blas,
+            mask: mask(opaque),
+            custom: NO_CUTOUT,
+        })
+    });
+}
+
 /// The view the scene is collected with: everything within `radius`
 /// metres of `eye` (horizontally), from far below to far above, so the
 /// drawing code's culling keeps it all.
@@ -311,7 +384,8 @@ impl Targets {
             let target = gfx::RenderTarget::new(&[texture.attachment(0, None)], None);
             (texture, target)
         };
-        let (raw, raw_target) = image(Format::R8);
+        // Light and the distance to what is in the way.
+        let (raw, raw_target) = image(Format::RG16F);
         let (h0, t0) = image(Format::RG16F);
         let (h1, t1) = image(Format::RG16F);
         let (filtered, filtered_target) = image(Format::R8);
@@ -603,6 +677,10 @@ impl RayTracedShadows {
         gfx::set_pipeline(shader.pipeline(&fullscreen()));
         gfx::bind_texture(0, &targets.history[next], &SamplerDesc::NEAREST_CLAMP);
         shader.set_uniform_1i("accumulated", 0);
+        gfx::bind_texture(1, &targets.raw, &SamplerDesc::NEAREST_CLAMP);
+        shader.set_uniform_1i("occluders", 1);
+        shader.set_uniform_1f("pixelScale", pixel_scale(&view.view_projection, targets.height));
+        shader.set_uniform_1f("lightRadius", SUN_RADIUS);
         self.draw_quad();
         gfx::end_pass();
         for unit in 0..3 {
@@ -625,6 +703,15 @@ impl RayTracedShadows {
     pub fn result_texture(&self) -> Option<gfx::RawId> {
         self.targets.as_ref().map(|t| t.filtered.raw())
     }
+}
+
+/// How many pixels (of a view `height` tall) a metre spans one metre in
+/// front of the camera of `view_projection`: its focal length (the length
+/// of the projection's y row, the view's rotation keeps it) times half the
+/// height.
+fn pixel_scale(view_projection: &Matrix4<f32>, height: i32) -> f32 {
+    let row = Vector3::new(view_projection.x.y, view_projection.y.y, view_projection.z.y);
+    row.magnitude() * height as f32 * 0.5
 }
 
 /// Whether `eye` moved so far since `last` that the history is useless.
@@ -675,5 +762,13 @@ mod tests {
         }
         let far = vp * Point3::new(900.0, 80.0, -200.0).to_homogeneous();
         assert!((far.x / far.w).abs() > 1.0);
+    }
+
+    #[test]
+    fn a_metre_spans_the_pixels_the_field_of_view_gives() {
+        let projection = cgmath::perspective(cgmath::Deg(90.0), 1.5, 0.1, 1000.0);
+        let view = Matrix4::look_at_rh(Point3::new(5.0, 2.0, 1.0), Point3::new(9.0, 1.0, 3.0), Vector3::unit_y());
+        // 90°: one metre at one metre spans half the height.
+        assert!((pixel_scale(&(projection * view), 600) - 300.0).abs() < 0.01);
     }
 }

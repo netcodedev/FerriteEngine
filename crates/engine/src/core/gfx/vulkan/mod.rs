@@ -786,8 +786,8 @@ impl Device for VkDevice {
         self.with(|s| s.create_blas(geometries))
     }
 
-    fn build_tlas(&self, tlas: RawId, instances: &[TlasInstance]) -> RawId {
-        self.with(|s| s.build_tlas(tlas, instances))
+    fn build_tlas(&self, tlas: RawId, instances: &[TlasInstance], refit: bool) -> RawId {
+        self.with(|s| s.build_tlas(tlas, instances, refit))
     }
 
     fn bind_accel(&self, slot: u32, accel: RawId) {

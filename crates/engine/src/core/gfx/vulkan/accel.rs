@@ -2,9 +2,10 @@
 //!
 //! A bottom level structure is built once from a mesh's buffers, in the
 //! upload commands (which run before the frame's draws). A top level one
-//! is built anew whenever asked, in the frame's commands where it is
-//! asked, into fresh memory: the frame before may still be reading the
-//! last one, which is retired like any other resource.
+//! is built in the frame's commands where it is asked: anew, into fresh
+//! memory (the last one is retired like any other resource), or, when
+//! only its instances' transforms changed, refit in place (after a
+//! barrier: the frame before has finished reading it by then).
 
 use ash::vk;
 use gpu_allocator::MemoryLocation;
@@ -38,6 +39,22 @@ impl State {
                 .device
                 .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
         }
+    }
+
+    /// The address of `size` bytes of scratch memory for a build, retired
+    /// with this frame (done with once the build ran).
+    fn scratch(&mut self, size: u64) -> Option<u64> {
+        let align = self.gpu.scratch_alignment;
+        let scratch_size = size + align;
+        let (scratch, scratch_allocation) = self.raw_buffer(
+            scratch_size,
+            SCRATCH_USAGE,
+            MemoryLocation::GpuOnly,
+            "acceleration structure scratch",
+        )?;
+        let scratch_address = self.buffer_address(scratch).next_multiple_of(align);
+        self.retire(Retired::Buffer(scratch, scratch_allocation, scratch_size as usize));
+        Some(scratch_address)
     }
 
     /// A structure of `ty` big enough for `sizes`, and scratch memory to
@@ -78,25 +95,11 @@ impl State {
                     .acceleration_structure(handle),
             )
         };
-        let align = self.gpu.scratch_alignment;
-        let scratch_size = sizes.build_scratch_size + align;
-        let Some((scratch, scratch_allocation)) = self.raw_buffer(
-            scratch_size,
-            SCRATCH_USAGE,
-            MemoryLocation::GpuOnly,
-            "acceleration structure scratch",
-        ) else {
+        let Some(scratch_address) = self.scratch(sizes.build_scratch_size) else {
             unsafe { accel_fn.destroy_acceleration_structure(handle, None) };
             self.retire(Retired::Buffer(buffer, allocation, size as usize));
             return None;
         };
-        let scratch_address = self.buffer_address(scratch).next_multiple_of(align);
-        // Done with once the build ran.
-        self.retire(Retired::Buffer(
-            scratch,
-            scratch_allocation,
-            scratch_size as usize,
-        ));
         Some((
             Accel {
                 handle,
@@ -197,7 +200,10 @@ impl State {
         id
     }
 
-    pub(super) fn build_tlas(&mut self, tlas: RawId, instances: &[TlasInstance]) -> RawId {
+    /// Build top level structure `tlas` (0: a new one) from `instances`;
+    /// with `refit`, update it in place (the instances are the same ones
+    /// as when it was built, moved).
+    pub(super) fn build_tlas(&mut self, tlas: RawId, instances: &[TlasInstance], refit: bool) -> RawId {
         let Some(accel_fn) = self.gpu.accel_fn.clone() else {
             return 0;
         };
@@ -265,7 +271,10 @@ impl State {
         let count = records.len() as u32;
         let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
             .ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
-            .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_BUILD)
+            .flags(
+                vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_BUILD
+                    | vk::BuildAccelerationStructureFlagsKHR::ALLOW_UPDATE,
+            )
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
             .geometries(&geometry);
         let mut sizes = vk::AccelerationStructureBuildSizesInfoKHR::default();
@@ -277,6 +286,25 @@ impl State {
                 &mut sizes,
             );
         }
+        let range = [vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(count)];
+        let existing = if refit { self.accels.get(&tlas).map(|a| a.handle) } else { None };
+        if let Some(handle) = existing {
+            let Some(scratch) = self.scratch(sizes.update_scratch_size) else {
+                return tlas;
+            };
+            let info = info
+                .mode(vk::BuildAccelerationStructureModeKHR::UPDATE)
+                .src_acceleration_structure(handle)
+                .dst_acceleration_structure(handle)
+                .scratch_data(vk::DeviceOrHostAddressKHR { device_address: scratch });
+            self.interrupt_rendering();
+            let cmd = self.cmd();
+            // After the frame before traced through it.
+            self.global_barrier(cmd);
+            unsafe { accel_fn.cmd_build_acceleration_structures(cmd, &[info], &[&range]) };
+            self.global_barrier(cmd);
+            return tlas;
+        }
         let Some((accel, scratch)) =
             self.make_accel(vk::AccelerationStructureTypeKHR::TOP_LEVEL, &sizes)
         else {
@@ -287,7 +315,6 @@ impl State {
                 device_address: scratch,
             },
         );
-        let range = [vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(count)];
         // Outside rendering, after what wrote the bottom level structures,
         // before what traces rays through it.
         self.interrupt_rendering();

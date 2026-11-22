@@ -1,7 +1,7 @@
 # Ray traced sun shadows
 
-Status (2026-11-22): built on branch `feat/rt-shadows` (on top of
-`feat/motion-vectors`), off by default.
+Status (2026-11-22): built on branch `feat/rt-shadows` (PR #82), off by
+default.
 
 ## What it does
 
@@ -20,8 +20,14 @@ Each frame:
    plus 128 m), into a 1×1 target. Models, terrain chunks and landscape
    scatter do not draw then but hand their meshes over. Each mesh gets a
    bottom level acceleration structure once (kept while it is used), each
-   placed mesh an instance in this frame's top level structure, which is
-   built anew every frame.
+   placed mesh an instance in this frame's top level structure. That
+   structure is left as it is when nothing changed, refit in place when
+   only transforms changed (at most 30 times in a row), and built anew
+   when instances came or went. Skinned meshes (characters) are skinned
+   on the CPU per pose, as `vertex.glsl` does, and each pose gets its own
+   bottom level structure (kept two frames). With **"Raytracing-Schatten
+   von Gras"** (`shadows.raytraced_grass`, off at every preset) detail
+   scatter within 40 m is collected as well.
 2. **Depth prepass**: runs whenever the setting is on, as it does for SSAO.
 3. **Trace** (`trace.glsl`): one ray per pixel from the visible surface
    toward a random point on the sun's disc (the moon at night, as the
@@ -35,8 +41,12 @@ Each frame:
    past the atlas, lets 45 % of the light through instead.
 4. **Denoise**: blended into the frames before, moved with the camera
    (`accumulate.glsl`, history dropped where it showed another surface,
-   clamped to the neighbourhood), then a 5×5 blur within a surface
-   (`filter.glsl`).
+   clamped to the neighbourhood), then a blur within a surface
+   (`filter.glsl`) as wide as the penumbra there: the trace also writes
+   how far along the ray the blocker was, the filter averages that over
+   the neighbourhood and works out the penumbra's width on screen from
+   the sun's size, so contact shadows stay sharp and shadows of far
+   blockers soft (sigma 0.5–3 px).
 5. The lit shaders read the result per pixel in `sunShadow`
    (`pbr/lighting.glsl`) instead of the cascades.
 
@@ -45,12 +55,13 @@ Each frame:
 - Leaves are tested against their texture at 256×256 and the UV the
   mesh has; a graph that moves or scales the UV before sampling is not
   followed.
-- Skinned models (characters) cast no ray traced shadows yet: their
-  structure would have to be refit each frame.
-- Detail scatter (grass) casts none: too many instances for what it adds.
+- Skinned models are skinned on the CPU and get a new bottom level
+  structure for every pose; fine for a few characters, costly for crowds.
+- Grass casts shadows only with its own setting and only within 40 m:
+  dense grass means many instances.
 - Water and particles take the shadow of the surface behind them.
-- The top level structure is rebuilt every frame; with many instances that
-  costs CPU and GPU time. Not measured on a real GPU yet.
+- While terrain streams in, the top level structure is built anew each
+  frame. Not measured on a real GPU yet.
 - Vegetation sways in the wind; the rays see it at rest.
 
 ## Files

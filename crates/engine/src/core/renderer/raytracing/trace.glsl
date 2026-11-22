@@ -10,7 +10,9 @@
 // texture (a layer of `opacityAtlas`, found through the instance's record
 // in `cutouts`) is at least the cut-off, as the drawn leaves are cut out.
 // A cut-out without a record lets a share of the light through instead.
-// Writes the light that arrives (1 = all).
+// Writes the light that arrives (r, 1 = all) and how far along the ray
+// the first thing in the way was (g, metres; 0 when nothing was), which
+// tells the filter how wide the penumbra is.
 
 in vec2 uv;
 out vec4 FragColor;
@@ -95,7 +97,7 @@ void main() {
     float depth = texelFetch(sceneDepth, texel, 0).r;
     if (depth >= 1.0) {
         // Sky.
-        FragColor = vec4(1.0);
+        FragColor = vec4(1.0, 0.0, 0.0, 1.0);
         return;
     }
     vec3 position = relativeAt(texel);
@@ -128,6 +130,7 @@ void main() {
     rayQueryEXT query;
     rayQueryInitializeEXT(query, scene, gl_RayFlagsTerminateOnFirstHitEXT, 0xFF, origin, 0.01, direction, maxDistance);
     float light = 1.0;
+    float blocker = 0.0;
     while (rayQueryProceedEXT(query)) {
         // Only cut-outs come here; opaque hits end the query by themselves.
         if (rayQueryGetIntersectionTypeEXT(query, false) == gl_RayQueryCandidateIntersectionTriangleEXT) {
@@ -139,6 +142,9 @@ void main() {
                 }
                 continue;
             }
+            if (blocker == 0.0) {
+                blocker = rayQueryGetIntersectionTEXT(query, false);
+            }
             light *= 1.0 - cutoutCoverage;
             if (light < 0.02) {
                 rayQueryConfirmIntersectionEXT(query);
@@ -148,6 +154,8 @@ void main() {
     }
     if (rayQueryGetIntersectionTypeEXT(query, true) != gl_RayQueryCommittedIntersectionNoneEXT) {
         light = 0.0;
+        float t = rayQueryGetIntersectionTEXT(query, true);
+        blocker = blocker == 0.0 ? t : min(blocker, t);
     }
-    FragColor = vec4(light, light, light, 1.0);
+    FragColor = vec4(light, blocker, 0.0, 1.0);
 }

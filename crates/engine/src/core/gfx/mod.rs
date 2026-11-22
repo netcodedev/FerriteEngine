@@ -114,7 +114,9 @@ pub trait Device {
     }
     /// (Re)build top level structure `tlas` (0: a new one) from
     /// `instances`, now in the frame's commands; returns its id.
-    fn build_tlas(&self, _tlas: RawId, _instances: &[TlasInstance]) -> RawId {
+    /// With `refit`, `tlas` is updated in place: `instances` are the ones
+    /// it was built from, only their transforms changed.
+    fn build_tlas(&self, _tlas: RawId, _instances: &[TlasInstance], _refit: bool) -> RawId {
         0
     }
     /// Bind `accel` (a top level structure) at `slot` for the draws that
@@ -690,17 +692,56 @@ impl Drop for Blas {
 #[derive(Default)]
 pub struct Tlas {
     raw: RawId,
+    /// The instances it was last built or refit from.
+    instances: Vec<TlasInstance>,
+    /// Refits since it was last built anew.
+    refits: u32,
 }
+
+/// Refits in a row before a top level structure is built anew: a refit
+/// keeps the old tree, which fits worse the more things moved.
+const MAX_REFITS: u32 = 30;
 
 impl Tlas {
     pub fn new() -> Self {
-        Tlas { raw: 0 }
+        Tlas { raw: 0, instances: Vec::new(), refits: 0 }
     }
 
-    /// Build it from `instances` now (in the frame's commands, before
-    /// what is drawn after).
+    /// Bring it up to `instances` now (in the frame's commands, before
+    /// what is drawn after): nothing to do when nothing changed, a refit
+    /// when only transforms did, else built anew.
     pub fn build(&mut self, instances: &[TlasInstance]) {
-        self.raw = device().build_tlas(self.raw, instances);
+        match self.change(instances) {
+            Change::None => return,
+            Change::Moved if self.refits < MAX_REFITS => {
+                self.raw = device().build_tlas(self.raw, instances, true);
+                self.refits += 1;
+            }
+            _ => {
+                self.raw = device().build_tlas(self.raw, instances, false);
+                self.refits = 0;
+            }
+        }
+        self.instances.clear();
+        self.instances.extend_from_slice(instances);
+    }
+
+    fn change(&self, instances: &[TlasInstance]) -> Change {
+        if self.raw == 0 || self.instances.len() != instances.len() {
+            return Change::Other;
+        }
+        let mut moved = false;
+        for (a, b) in self.instances.iter().zip(instances) {
+            if (a.blas, a.mask, a.custom) != (b.blas, b.mask, b.custom) {
+                return Change::Other;
+            }
+            moved |= a.transform != b.transform;
+        }
+        if moved {
+            Change::Moved
+        } else {
+            Change::None
+        }
     }
 
     /// Built at least once.
@@ -711,6 +752,15 @@ impl Tlas {
     pub fn raw(&self) -> RawId {
         self.raw
     }
+}
+
+/// How a top level structure's instances changed since it was built.
+#[derive(Debug, PartialEq)]
+enum Change {
+    None,
+    /// Only transforms.
+    Moved,
+    Other,
 }
 
 impl Drop for Tlas {
