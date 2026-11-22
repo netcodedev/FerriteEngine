@@ -20,6 +20,9 @@
 //!   with a uniform set decides, at draw time, what is bound there); one
 //!   with an explicit `binding` keeps it as its unit and binding;
 //! - buffer blocks with `binding = n` get `BUFFER_BINDING_BASE + n`;
+//! - acceleration structures (`layout(binding = n) uniform
+//!   accelerationStructureEXT`, for ray queries) get
+//!   `ACCEL_BINDING_BASE + n`;
 //! - `gl_VertexID`/`gl_InstanceID` become Vulkan's `gl_VertexIndex`/
 //!   `gl_InstanceIndex` (the engine draws them from 0, where they agree),
 //!   and the version becomes 4.60.
@@ -35,6 +38,8 @@ pub const OWN_BLOCK_BYTES: u32 = 1024;
 /// Bindings below this are samplers; buffer slot `n` is bound at this
 /// plus `n`.
 pub const BUFFER_BINDING_BASE: u32 = 32;
+/// Acceleration structure slot `n` is bound at this plus `n`.
+pub const ACCEL_BINDING_BASE: u32 = 56;
 
 /// A member of the params block.
 #[derive(Clone, Debug, PartialEq)]
@@ -92,6 +97,9 @@ pub struct VulkanProgram {
     pub blocks: Vec<u32>,
     pub samplers: Vec<Sampler>,
     pub buffers: Vec<BufferBlock>,
+    /// Slots of the acceleration structures the program traces rays
+    /// through.
+    pub accels: Vec<u32>,
 }
 
 impl VulkanProgram {
@@ -118,6 +126,10 @@ struct Declaration {
 
 fn is_opaque(ty: &str) -> bool {
     ty.contains("sampler") || ty.contains("image")
+}
+
+fn is_accel(ty: &str) -> bool {
+    ty == "accelerationStructureEXT"
 }
 
 /// The statements of `source` at global scope that declare a loose
@@ -292,12 +304,20 @@ pub fn to_vulkan(vertex: &str, fragment: &str) -> Result<VulkanProgram, String> 
     let stages = [vertex, fragment];
     let mut params: Vec<Param> = Vec::new();
     let mut samplers: Vec<Sampler> = Vec::new();
+    let mut accels: Vec<u32> = Vec::new();
     let mut offset = 0u32;
     let mut per_stage: Vec<Vec<Declaration>> = Vec::new();
     for source in stages {
         let found = loose_uniforms(source);
         let defs = defines(source);
         for d in &found {
+            if is_accel(&d.ty) {
+                let slot = d.binding.unwrap_or(0);
+                if !accels.contains(&slot) {
+                    accels.push(slot);
+                }
+                continue;
+            }
             if is_opaque(&d.ty) {
                 if samplers.iter().any(|s| s.name == d.name) {
                     continue;
@@ -374,7 +394,10 @@ pub fn to_vulkan(vertex: &str, fragment: &str) -> Result<VulkanProgram, String> 
     for (source, found) in stages.iter().zip(&per_stage) {
         let mut text = source.to_string();
         for d in found {
-            let replacement = if is_opaque(&d.ty) {
+            let replacement = if is_accel(&d.ty) {
+                let slot = d.binding.unwrap_or(0);
+                format!("layout(set = 0, binding = {}) uniform {} {};", ACCEL_BINDING_BASE + slot, d.ty, d.name)
+            } else if is_opaque(&d.ty) {
                 let s = samplers.iter().find(|s| s.name == d.name).expect("collected above");
                 format!("layout(set = 0, binding = {}) uniform {} {};", s.binding, d.ty, d.name)
             } else {
@@ -387,7 +410,7 @@ pub fn to_vulkan(vertex: &str, fragment: &str) -> Result<VulkanProgram, String> 
     }
     let fragment = out.pop().unwrap_or_default();
     let vertex = out.pop().unwrap_or_default();
-    Ok(VulkanProgram { vertex, fragment, params, blocks, samplers, buffers })
+    Ok(VulkanProgram { vertex, fragment, params, blocks, samplers, buffers, accels })
 }
 
 fn declaration_of<'a>(stages: &'a [Vec<Declaration>], name: &str) -> Option<&'a Declaration> {

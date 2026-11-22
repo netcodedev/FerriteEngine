@@ -8,6 +8,7 @@ use super::{
         hdr::Hdr,
         light::skylight::{ShadowCascade, SHADOW_CASCADES},
         pbr::Lighting,
+        raytracing::RayTracedShadows,
         light::{
             clusters::ClusterBuffers,
             light::{LightBuffer, LightSource},
@@ -51,6 +52,12 @@ pub struct Scene {
     /// Window position of the ambient occlusion while the camera's view is
     /// shaded with it, `None` otherwise (see `pbr::Lighting`).
     ambient_occlusion_origin: Cell<Option<[i32; 2]>>,
+    /// Ray traced sun shadows (graphics setting), made on the first frame
+    /// that uses them.
+    ray_traced: RefCell<Option<RayTracedShadows>>,
+    /// Window position of the ray traced shadows while the camera's view
+    /// is shaded with them, `None` otherwise (see `pbr::Lighting`).
+    ray_traced_shadows_origin: Cell<Option<[i32; 2]>>,
     /// Rain and snow: the sky exposure map, the snow trails and the falling
     /// drops, made on the first frame with weather.
     weather: RefCell<Option<WeatherTargets>>,

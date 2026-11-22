@@ -104,6 +104,15 @@ impl State {
                     .stage_flags(stages),
             );
         }
+        for &slot in &reflect.accels {
+            bindings.push(
+                vk::DescriptorSetLayoutBinding::default()
+                    .binding(glsl::ACCEL_BINDING_BASE + slot)
+                    .descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
+                    .descriptor_count(1)
+                    .stage_flags(stages),
+            );
+        }
         if reflect.blocks.len() > MAX_PARAM_BLOCKS {
             return Err(format!("shader program ({label}) has {} params blocks, at most {MAX_PARAM_BLOCKS}", reflect.blocks.len()));
         }
@@ -576,6 +585,19 @@ impl State {
                 vk::DescriptorBufferInfo { buffer, offset: offset as u64, range },
             ));
         }
+        // The acceleration structures the program traces rays through: a
+        // draw without one bound would read nothing valid.
+        let mut accels: Vec<(u32, [vk::AccelerationStructureKHR; 1])> = Vec::new();
+        for i in 0..self.programs[&program].reflect.accels.len() {
+            let slot = self.programs[&program].reflect.accels[i];
+            match self.bound_accels.get(&slot).and_then(|id| self.accels.get(id)) {
+                Some(accel) => accels.push((glsl::ACCEL_BINDING_BASE + slot, [accel.handle])),
+                None => {
+                    self.warn_once(format!("a draw that traces rays without a scene bound at slot {slot} is skipped"));
+                    return false;
+                }
+            }
+        }
         let image_infos: Vec<(u32, vk::DescriptorImageInfo)> = images
             .iter()
             .map(|&(binding, view, sampler, _)| {
@@ -595,6 +617,9 @@ impl State {
         }
         for (binding, _, info) in &buffer_infos {
             key.extend([*binding as u64, vk::Handle::as_raw(info.buffer), info.offset, info.range]);
+        }
+        for (binding, handle) in &accels {
+            key.extend([*binding as u64, vk::Handle::as_raw(handle[0])]);
         }
         if key == self.last_push {
             self.scratch_push = key;
@@ -616,6 +641,19 @@ impl State {
                     .dst_binding(*binding)
                     .descriptor_type(*kind)
                     .buffer_info(std::slice::from_ref(info)),
+            );
+        }
+        let mut accel_writes: Vec<vk::WriteDescriptorSetAccelerationStructureKHR> = accels
+            .iter()
+            .map(|(_, handle)| vk::WriteDescriptorSetAccelerationStructureKHR::default().acceleration_structures(handle))
+            .collect();
+        for ((binding, _), accel) in accels.iter().zip(accel_writes.iter_mut()) {
+            writes.push(
+                vk::WriteDescriptorSet::default()
+                    .dst_binding(*binding)
+                    .descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
+                    .descriptor_count(1)
+                    .push_next(accel),
             );
         }
         if !writes.is_empty() {

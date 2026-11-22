@@ -623,3 +623,43 @@ pub enum UniformValue<'a> {
     Floats(&'a [f32]),
     Mat4s(&'a [[f32; 16]]),
 }
+
+/// Triangles a bottom level acceleration structure is built from: vertex
+/// positions (three `f32` at the start of each vertex) and, optionally,
+/// `u32` indices, in buffers made with `BufferUsage::RAY_TRACING_INPUT`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BlasGeometry {
+    pub vertices: super::RawId,
+    pub stride: u32,
+    pub vertex_count: u32,
+    pub indices: Option<super::RawId>,
+    /// Indices (or vertices, without) from the first.
+    pub count: u32,
+    /// Rays stop at it without asking (no cut-out to test).
+    pub opaque: bool,
+}
+
+/// One placed bottom level structure in a top level one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TlasInstance {
+    /// Object to world, the top three rows of the matrix (row major).
+    pub transform: [[f32; 4]; 3],
+    pub blas: super::RawId,
+    /// Rays whose mask shares no bit with it pass it by.
+    pub mask: u8,
+    /// Free for the shader (`rayQueryGetIntersectionInstanceCustomIndexEXT`).
+    pub custom: u32,
+}
+
+impl TlasInstance {
+    /// `transform` (column major, as cgmath's) as the rows the structure
+    /// takes.
+    pub fn rows(transform: &[[f32; 4]; 4]) -> [[f32; 4]; 3] {
+        let m = transform;
+        [
+            [m[0][0], m[1][0], m[2][0], m[3][0]],
+            [m[0][1], m[1][1], m[2][1], m[3][1]],
+            [m[0][2], m[1][2], m[2][2], m[3][2]],
+        ]
+    }
+}

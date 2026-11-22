@@ -59,6 +59,10 @@ pub struct Lighting {
     /// Window position of the scene's ambient occlusion (bound to
     /// `SSAO_UNIT`) while it shades the camera's view.
     pub ambient_occlusion_origin: Option<[i32; 2]>,
+    /// Window position of the ray traced sun shadows (bound to
+    /// `raytracing::RT_SHADOW_UNIT`) while they shade the camera's view;
+    /// the shadow cascades are not used then.
+    pub ray_traced_shadows: Option<[i32; 2]>,
     /// Rain and snow on surfaces.
     pub weather: WeatherShading,
     /// Where the weather's maps lie (bound to `weather::EXPOSURE_UNIT` and
@@ -78,6 +82,7 @@ impl Lighting {
         // what the passes change is read again.
         if let Some(mut lighting) = scene.frame_lighting() {
             lighting.ambient_occlusion_origin = scene.ambient_occlusion_origin();
+            lighting.ray_traced_shadows = scene.ray_traced_shadows_origin();
             lighting.weather_maps = scene.weather_maps();
             lighting.light_count = scene.light_count();
             return Some(lighting);
@@ -95,6 +100,7 @@ impl Lighting {
                 .get_shadow_map_size()
                 .map(|_| *skylight.shadow_cascades()),
             ambient_occlusion_origin: scene.ambient_occlusion_origin(),
+            ray_traced_shadows: scene.ray_traced_shadows_origin(),
             weather: skylight.weather().shading(),
             weather_maps: scene.weather_maps(),
             indirect: skylight.indirect_shading(),
@@ -110,6 +116,7 @@ impl Lighting {
             cloud_coverage: 0.0,
             shadow_cascades: None,
             ambient_occlusion_origin: None,
+            ray_traced_shadows: None,
             weather: WeatherShading::default(),
             weather_maps: None,
             indirect: IndirectShading::preview(sun_direction.normalize()),
@@ -180,6 +187,15 @@ impl Lighting {
                 shader.set_uniform_2i("ssaoOrigin", x, y);
             }
             None => shader.set_uniform_1i("useSsao", 0),
+        }
+        // Like `ssaoMap`: set even when unused.
+        shader.set_uniform_1i("rayTracedShadows", crate::core::renderer::raytracing::RT_SHADOW_UNIT as i32);
+        match self.ray_traced_shadows {
+            Some([x, y]) => {
+                shader.set_uniform_1i("useRayTracedShadows", 1);
+                shader.set_uniform_2i("rayTracedShadowOrigin", x, y);
+            }
+            None => shader.set_uniform_1i("useRayTracedShadows", 0),
         }
         let indirect = &self.indirect;
         shader.set_uniform_3fv("moonDirection", &indirect.moon_direction);

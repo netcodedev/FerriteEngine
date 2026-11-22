@@ -1228,6 +1228,21 @@ impl Component for Terrain {
         let Some(look) = &self.look else {
             return;
         };
+        if crate::core::renderer::raytracing::collecting() {
+            // Each chunk at the level it is drawn at, so the ground casts
+            // the shadows it shows.
+            let eye = Lighting::from_scene(scene).map(|lighting| lighting.camera_position);
+            for child in entity.get_children() {
+                let Some(chunk) = child.get_own_component::<TerrainChunk>() else {
+                    continue;
+                };
+                if ViewFrustum::is_bounds_in_frustum_matrix(view_projection, chunk.get_drawn_bounds()) {
+                    let distance = eye.map_or(0.0, |eye| chunk.get_bounds().distance_xz(eye));
+                    chunk.collect_for_ray_tracing(&(transform * child.local_transform()), distance);
+                }
+            }
+            return;
+        }
         // Depth alone: no textures, no light.
         let shader = match &look.depth_shader {
             Some(depth_shader) if depth_pass::is_active() => depth_shader,
@@ -1365,6 +1380,11 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
             indices,
             vertices,
         }
+    }
+
+    /// Its triangles for ray tracing (`None` until buffered).
+    pub fn blas_geometry(&self) -> Option<gfx::BlasGeometry> {
+        self.vertex_array.as_ref()?.blas_geometry(true)
     }
 
     pub fn buffer_data(&mut self) {

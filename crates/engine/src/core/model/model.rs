@@ -18,6 +18,7 @@ use crate::core::{
         depth_pass,
         hdr,
         pbr::Lighting,
+        raytracing,
         shader::DynamicVertexArray,
         ssao,
         taa::motion,
@@ -429,6 +430,12 @@ impl Model {
                 return;
             }
         }
+        if raytracing::collecting() {
+            if tint.is_none() {
+                self.collect_for_ray_tracing(only, &model_transform);
+            }
+            return;
+        }
         // A tinted model writes no depth: nothing to draw in a depth pass.
         let depth_only = depth_pass::is_active();
         if depth_only && tint.is_some() {
@@ -572,6 +579,32 @@ impl Model {
                 self.record_motion(index, mesh, material.two_sided, placed * Matrix4::from_scale(self.scale));
             }
             mesh.render(shader, placed, Some(self.scale));
+        }
+    }
+
+    /// Hand the meshes that cast shadows to the ray traced shadows' scene,
+    /// placed at `model`. Skinned meshes are left out: their structure
+    /// would have to be rebuilt as they move.
+    fn collect_for_ray_tracing(&self, only: Option<&std::collections::HashSet<String>>, model: &Matrix4<f32>) {
+        for (name, mesh) in &self.meshes {
+            let shown = match only {
+                Some(only) => only.contains(name),
+                None => self.visible.as_ref().is_none_or(|visible| visible.contains(name)),
+            };
+            if !shown || mesh.root_bone.is_some() {
+                continue;
+            }
+            let (shadows, opaque) = match self.materials.get(mesh.material_index) {
+                Some(material) => (material.shadows, material.alpha == crate::core::material::AlphaMode::Opaque),
+                None => (true, true),
+            };
+            if !shadows {
+                continue;
+            }
+            let Some(geometry) = mesh.vertex_array.as_ref().and_then(|v| v.blas_geometry(opaque)) else {
+                continue;
+            };
+            raytracing::add_mesh(geometry, model);
         }
     }
 

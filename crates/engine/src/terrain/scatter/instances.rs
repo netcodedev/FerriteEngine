@@ -521,6 +521,71 @@ impl ScatterInstances {
         self.draw_lit(view_projection, parent_transform, lighting, lod, false);
     }
 
+    /// Hand the instances to the ray traced shadows' scene: landscape
+    /// instances that cast shadows (trees, rocks), each cell at the detail
+    /// tier its shadow would take. Detail scatter (grass) is left out: far
+    /// too many instances for what its shadows add.
+    fn collect_for_ray_tracing(&self, view_projection: &Matrix4<f32>, parent_transform: &Matrix4<f32>, eye: Point3<f32>) {
+        use crate::core::renderer::raytracing;
+        if !self.spec.shadows || !matches!(self.spec.range, ScatterRange::Landscape) {
+            return;
+        }
+        self.ensure_gpu();
+        let gpu_borrow = self.gpu.borrow();
+        let gpu = gpu_borrow.as_ref().expect("gpu just initialized");
+        let r = &*self.spec.model;
+        let planes = ViewFrustum::planes(view_projection);
+        for (variant_idx, variant_gpu) in gpu.variants.iter().enumerate() {
+            if variant_gpu.is_none() {
+                continue;
+            }
+            let kind = &r.variants[variant_idx];
+            let tiers = kind.lods.len();
+            if tiers == 0 {
+                continue;
+            }
+            let Some(placed) = self.instances_by_variant.get(variant_idx) else {
+                continue;
+            };
+            // (tier, first instance, instances).
+            let runs: Vec<(usize, usize, usize)> = match self.cells_by_variant.get(variant_idx) {
+                Some(cells) if !cells.is_empty() => cells
+                    .iter()
+                    .filter(|cell| ViewFrustum::is_sphere_visible(&planes, cell.center, cell.radius))
+                    .map(|cell| {
+                        let tier = shadow_lod_index((cell.center - eye).magnitude(), tiers);
+                        (tier, cell.start as usize, cell.count as usize)
+                    })
+                    .collect(),
+                _ => vec![(shadow_lod_index((self.center - eye).magnitude(), tiers), 0, placed.len())],
+            };
+            for (tier, start, count) in runs {
+                let Some(transforms) = placed.get(start..start + count) else {
+                    continue;
+                };
+                for sub in &kind.lods[tier].submeshes {
+                    let (shadows, opaque) = match kind.model.material(sub.material_index) {
+                        Some(material) => (material.shadows, material.alpha == crate::core::material::AlphaMode::Opaque),
+                        None => (true, true),
+                    };
+                    if !shadows {
+                        continue;
+                    }
+                    let stride = vertex_layout().stride;
+                    let geometry = gfx::BlasGeometry {
+                        vertices: sub.vertices.raw(),
+                        stride,
+                        vertex_count: (sub.vertices.size() / stride as usize) as u32,
+                        indices: Some(sub.indices.raw()),
+                        count: sub.index_count,
+                        opaque,
+                    };
+                    raytracing::add_instances(geometry, transforms.iter().map(|t| parent_transform * t));
+                }
+            }
+        }
+    }
+
     /// `draw`; with `in_pass`, `lighting` is the scene's for this pass and
     /// is set on the program only if it was not yet in this pass.
     fn draw_lit(
@@ -532,6 +597,10 @@ impl ScatterInstances {
         in_pass: bool,
     ) {
         if self.is_empty() {
+            return;
+        }
+        if crate::core::renderer::raytracing::collecting() {
+            self.collect_for_ray_tracing(view_projection, parent_transform, lighting.camera_position);
             return;
         }
         self.ensure_gpu();

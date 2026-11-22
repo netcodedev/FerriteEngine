@@ -16,6 +16,7 @@ pub const VSYNC: &str = "display.vsync";
 pub const FPS_CAP: &str = "display.fps_cap";
 pub const ANISOTROPY: &str = "display.anisotropy";
 pub const TAA: &str = "display.taa";
+pub const RAY_TRACED_SHADOWS: &str = "shadows.raytraced";
 
 pub const MSAA_OPTIONS: [&str; 4] = ["off", "2x", "4x", "8x"];
 pub const ANISOTROPY_OPTIONS: [&str; 4] = ["1x", "4x", "8x", "16x"];
@@ -42,6 +43,7 @@ pub const TODAY: EngineKnobs = EngineKnobs {
     detail_density: 1.0,
     ssao_samples: 16,
     taa: false,
+    ray_traced_shadows: false,
     bloom: true,
     cloud_downscale: 2,
     precipitation: 1.0,
@@ -121,6 +123,13 @@ pub fn engine_definitions() -> Vec<SettingDef> {
         level(VIEW, "Sichtweite", "Welt", "Wie weit Terrain geladen und fein gezeichnet wird."),
         level(VEGETATION, "Vegetation", "Welt", "Detailstufen von Bäumen und Steinen, Reichweite und Dichte von Gras."),
         level(SHADOWS, "Schatten", "Licht", "Auflösung und Reichweite der Schatten."),
+        SettingDef {
+            key: RAY_TRACED_SHADOWS.into(),
+            label: "Raytracing-Schatten".into(),
+            group: "Licht".into(),
+            kind: SettingKind::Toggle { per_preset: PerLevel::all(false) },
+            description: "Sonnenschatten per Raytracing statt Schattenkarten: weich, ohne Reichweitengrenze. Nur mit Vulkan auf Grafikkarten mit Raytracing.".into(),
+        },
         level(EFFECTS, "Effekte", "Licht", "Umgebungsverdeckung, Bloom, Wolken und Niederschlag."),
     ]
 }
@@ -190,6 +199,7 @@ pub fn engine_values(resolved: &Resolved) -> EngineKnobs {
         detail_density: k("scatter.detail_density", 1.0).clamp(0.0, 1.0),
         ssao_samples: (k("effects.ssao_samples", 16.0).round() as u32).clamp(0, 16),
         taa: resolved.toggle(TAA).unwrap_or(t.taa),
+        ray_traced_shadows: resolved.toggle(RAY_TRACED_SHADOWS).unwrap_or(t.ray_traced_shadows),
         bloom: k("effects.bloom", 1.0) >= 0.5,
         cloud_downscale: (k("effects.cloud_downscale", 2.0).round() as i32).clamp(1, 8),
         precipitation: k("effects.precipitation", 1.0).clamp(0.0, 1.0),
