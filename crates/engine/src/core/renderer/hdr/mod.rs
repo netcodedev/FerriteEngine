@@ -17,9 +17,14 @@ use std::{
     time::Instant,
 };
 
+use cgmath::Matrix4;
 use serde::{Deserialize, Serialize};
 
-use super::{light::light::clamp_finite, shader::Shader};
+use super::{
+    light::light::clamp_finite,
+    shader::Shader,
+    taa::{self, Taa, TaaTargets},
+};
 use crate::core::gfx::{self, Filter, Format, Rect, SamplerDesc, TargetRef, TextureDesc, Wrap};
 
 /// Shared GLSL: `tonemap`, `linearToSrgb`.
@@ -304,10 +309,12 @@ struct ViewTargets {
     depth: gfx::Texture,
     /// Bloom chain, half the view's size and down from there.
     bloom: Vec<Target>,
+    /// Motion vectors and history, with TAA on.
+    taa: Option<TaaTargets>,
 }
 
 impl ViewTargets {
-    fn new(width: i32, height: i32, samples: u32) -> Self {
+    fn new(width: i32, height: i32, samples: u32, with_taa: bool) -> Self {
         let (w, h) = (width as u32, height as u32);
         let color_buffer = gfx::Texture::new(TextureDesc::d2(COLOR_FORMAT, w, h).with_samples(samples));
         let depth_buffer =
@@ -333,6 +340,7 @@ impl ViewTargets {
             h = (h / 2).max(1);
             bloom.push(Target::new(w, h, BLOOM_FORMAT, false, SamplerDesc::LINEAR_CLAMP));
         }
+        let taa = with_taa.then(|| TaaTargets::new(width, height, &depth));
 
         Self {
             width,
@@ -345,6 +353,7 @@ impl ViewTargets {
             color,
             depth,
             bloom,
+            taa,
         }
     }
 
@@ -392,6 +401,8 @@ pub struct Hdr {
     adaptation_fresh: bool,
     last_frame: Option<Instant>,
     destination: Option<Destination>,
+    /// Temporal anti-aliasing's state, while it is on.
+    taa: Option<Taa>,
 }
 
 /// The state the post passes draw with: the fullscreen strip, no depth,
@@ -453,6 +464,7 @@ impl Hdr {
             adaptation_fresh: true,
             last_frame: None,
             destination: None,
+            taa: None,
         }
     }
 
@@ -469,18 +481,27 @@ impl Hdr {
         let scaled = |size: u32| ((size.max(1) as f32 * knobs.resolution_scale).round() as i32).max(1);
         let (width, height) = (scaled(viewport.width), scaled(viewport.height));
         // As many samples as the window has (8× MSAA) and the settings
-        // allow, so the view keeps its anti-aliasing.
-        let samples = match gfx::current_target() {
-            Some(TargetRef::Window) | None => gfx::window_samples().min(knobs.msaa.max(1)),
-            Some(TargetRef::Target(_)) => 1,
+        // allow, so the view keeps its anti-aliasing. TAA smooths the view
+        // instead, which is drawn with one sample then.
+        let to_window = matches!(gfx::current_target(), Some(TargetRef::Window) | None);
+        let with_taa = to_window && knobs.taa;
+        let samples = match to_window && !with_taa {
+            true => gfx::window_samples().min(knobs.msaa.max(1)),
+            false => 1,
         };
-        if self
-            .view
-            .as_ref()
-            .map_or(true, |v| (v.width, v.height, v.samples) != (width, height, samples))
-        {
+        if self.view.as_ref().map_or(true, |v| {
+            (v.width, v.height, v.samples, v.taa.is_some()) != (width, height, samples, with_taa)
+        }) {
             self.view = None;
-            self.view = Some(ViewTargets::new(width, height, samples));
+            self.view = Some(ViewTargets::new(width, height, samples, with_taa));
+            if let Some(taa) = &mut self.taa {
+                taa.reset();
+            }
+        }
+        if with_taa {
+            self.taa.get_or_insert_with(Taa::new);
+        } else {
+            self.taa = None;
         }
         let view = self.view.as_ref().expect("just created");
         self.destination = Some(Destination { viewport });
@@ -497,6 +518,20 @@ impl Hdr {
         VIEW_TARGET.store(view.target.raw(), Ordering::Relaxed);
         OPAQUE_COLOR.store(0, Ordering::Relaxed);
         OPAQUE_DEPTH.store(0, Ordering::Relaxed);
+    }
+
+    /// What the camera's view is drawn with, given its view-projection:
+    /// with TAA, shifted by this frame's jitter (and models record their
+    /// motion until `finish`); otherwise as it is. Call after `begin`.
+    pub fn view_projection(&mut self, view_projection: Matrix4<f32>) -> Matrix4<f32> {
+        let (Some(view), Some(taa)) = (self.view.as_ref(), self.taa.as_mut()) else {
+            return view_projection;
+        };
+        if self.destination.is_none() || view.taa.is_none() {
+            return view_projection;
+        }
+        taa::motion::begin_frame();
+        taa.begin_frame(view_projection, view.width, view.height)
     }
 
     /// The target the scene is drawn into, with its size, while it is.
@@ -524,6 +559,7 @@ impl Hdr {
     /// bloom, expose and tone map it into the pass it was begun in, at the
     /// viewport it had then (left set), along with the scene's depth.
     pub fn finish(&mut self, settings: &HdrSettings) {
+        taa::motion::end_frame();
         VIEW_TARGET.store(0, Ordering::Relaxed);
         OPAQUE_COLOR.store(0, Ordering::Relaxed);
         OPAQUE_DEPTH.store(0, Ordering::Relaxed);
@@ -553,8 +589,23 @@ impl Hdr {
 
         view.resolve();
 
+        // With TAA, this frame blended into the ones before is what the
+        // rest works with.
+        let quad = &self.quad;
+        let draw_quad = || {
+            gfx::set_vertex_buffer(0, quad, 0, 8);
+            gfx::draw(0, 4);
+        };
+        let color = match (&mut self.taa, &view.taa) {
+            (Some(taa), Some(targets)) => {
+                taa.draw_velocity(targets, &view.depth, &draw_quad);
+                taa.resolve(targets, &view.color, &view.depth, &draw_quad)
+            }
+            _ => &view.color,
+        };
+
         if settings.auto_exposure {
-            self.adapt(view, settings, delta);
+            self.adapt(color, settings, delta);
         } else {
             self.adaptation_fresh = true;
         }
@@ -569,7 +620,7 @@ impl Hdr {
 
         let bloom = settings.bloom && settings.bloom_intensity > 0.0 && !view.bloom.is_empty();
         if bloom {
-            self.render_bloom(view, settings, &bind_exposure);
+            self.render_bloom(view, color, settings, &bind_exposure);
         }
 
         // Back in the pass the view was begun in, at its viewport. The
@@ -582,7 +633,7 @@ impl Hdr {
         };
         let shader = &self.composite_shader;
         gfx::set_pipeline(shader.pipeline(&desc));
-        gfx::bind_texture(SCENE_UNIT, &view.color, &SamplerDesc::LINEAR_CLAMP);
+        gfx::bind_texture(SCENE_UNIT, color, &SamplerDesc::LINEAR_CLAMP);
         shader.set_uniform_1i("hdrColor", SCENE_UNIT as i32);
         gfx::bind_texture(DEPTH_UNIT, &view.depth, &DEPTH_SAMPLER);
         shader.set_uniform_1i("sceneDepth", DEPTH_UNIT as i32);
@@ -613,7 +664,7 @@ impl Hdr {
 
     /// Average the scene's log luminance and move the adapted value toward
     /// it.
-    fn adapt(&mut self, view: &ViewTargets, settings: &HdrSettings, delta: f32) {
+    fn adapt(&mut self, color: &gfx::Texture, settings: &HdrSettings, delta: f32) {
         let blend = if self.adaptation_fresh {
             1.0
         } else {
@@ -626,7 +677,7 @@ impl Hdr {
         self.luminance.begin();
         let shader = &self.luminance_shader;
         gfx::set_pipeline(shader.pipeline(&post_pipeline(None)));
-        gfx::bind_texture(SCENE_UNIT, &view.color, &SamplerDesc::LINEAR_CLAMP);
+        gfx::bind_texture(SCENE_UNIT, color, &SamplerDesc::LINEAR_CLAMP);
         shader.set_uniform_1i("hdrColor", SCENE_UNIT as i32);
         self.draw_quad();
         gfx::end_pass();
@@ -651,7 +702,13 @@ impl Hdr {
 
     /// Downsample the bright parts of the scene through the bloom chain and
     /// add them back up again; the result ends up in the first level.
-    fn render_bloom(&self, view: &ViewTargets, settings: &HdrSettings, bind_exposure: &dyn Fn(&Shader)) {
+    fn render_bloom(
+        &self,
+        view: &ViewTargets,
+        color: &gfx::Texture,
+        settings: &HdrSettings,
+        bind_exposure: &dyn Fn(&Shader),
+    ) {
         let shader = &self.downsample_shader;
         let pipeline = shader.pipeline(&post_pipeline(None));
         gfx::set_pipeline(pipeline);
@@ -664,7 +721,7 @@ impl Hdr {
             level.begin();
             gfx::set_pipeline(pipeline);
             match i {
-                0 => gfx::bind_texture(SCENE_UNIT, &view.color, &SamplerDesc::LINEAR_CLAMP),
+                0 => gfx::bind_texture(SCENE_UNIT, color, &SamplerDesc::LINEAR_CLAMP),
                 _ => view.bloom[i - 1].bind_to(SCENE_UNIT),
             }
             shader.set_uniform_2f(

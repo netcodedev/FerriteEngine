@@ -83,6 +83,9 @@ pub struct Model {
     /// for skinned models, whose bones can move vertices anywhere, and
     /// before `init`.
     cull_bounds: Option<(Point3<f32>, Point3<f32>)>,
+    /// Where each mesh was drawn in the last view, for the motion vectors
+    /// of TAA (see `renderer::taa::motion`).
+    motion: crate::core::renderer::taa::motion::History,
 }
 
 /// Raw per-submesh geometry extracted from a `Model` for callers that need

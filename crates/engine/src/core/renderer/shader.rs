@@ -205,6 +205,13 @@ impl<T: VertexAttributes + Clone> DynamicVertexArray<T> {
         });
     }
 
+    /// Raw ids of the vertex and index buffers, for a draw recorded now
+    /// and drawn later in the frame (`taa::motion`).
+    pub fn raw_buffers(&self) -> Option<(gfx::RawId, Option<gfx::RawId>)> {
+        let vertices = self.vertices.as_ref()?;
+        Some((vertices.raw(), self.indices.as_ref().map(gfx::Buffer::raw)))
+    }
+
     pub fn get_element_count(&self) -> usize {
         self.index_count.unwrap_or(self.vertex_count)
     }

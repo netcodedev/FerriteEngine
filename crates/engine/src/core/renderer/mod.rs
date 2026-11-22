@@ -11,6 +11,7 @@ pub mod profiler;
 pub mod shader;
 pub mod sky;
 pub mod ssao;
+pub mod taa;
 pub mod text;
 pub mod texture;
 pub mod weather;
