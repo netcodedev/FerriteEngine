@@ -15,6 +15,7 @@ pub const RESOLUTION_SCALE: &str = "display.resolution_scale";
 pub const VSYNC: &str = "display.vsync";
 pub const FPS_CAP: &str = "display.fps_cap";
 pub const ANISOTROPY: &str = "display.anisotropy";
+pub const TAA: &str = "display.taa";
 
 pub const MSAA_OPTIONS: [&str; 4] = ["off", "2x", "4x", "8x"];
 pub const ANISOTROPY_OPTIONS: [&str; 4] = ["1x", "4x", "8x", "16x"];
@@ -40,6 +41,7 @@ pub const TODAY: EngineKnobs = EngineKnobs {
     detail_distance_factor: 1.0,
     detail_density: 1.0,
     ssao_samples: 16,
+    taa: false,
     bloom: true,
     cloud_downscale: 2,
     precipitation: 1.0,
@@ -74,6 +76,13 @@ pub fn engine_definitions() -> Vec<SettingDef> {
     vec![
         choice(MSAA, "Kantenglättung (MSAA)", &MSAA_OPTIONS, ["off", "4x", "8x", "8x"],
             "Glättet Kanten. Höher kostet vor allem Grafikspeicher und Füllrate."),
+        SettingDef {
+            key: TAA.into(),
+            label: "Temporale Kantenglättung (TAA)".into(),
+            group: "Anzeige".into(),
+            kind: SettingKind::Toggle { per_preset: PerLevel::all(false) },
+            description: "Glättet Kanten über mehrere Bilder, auch an Gras und Blättern. Ersetzt MSAA, solange es an ist.".into(),
+        },
         SettingDef {
             key: RESOLUTION_SCALE.into(),
             label: "Auflösungsskala".into(),
@@ -180,6 +189,7 @@ pub fn engine_values(resolved: &Resolved) -> EngineKnobs {
         detail_distance_factor: k("scatter.detail_distance_factor", 1.0).clamp(0.1, 10.0),
         detail_density: k("scatter.detail_density", 1.0).clamp(0.0, 1.0),
         ssao_samples: (k("effects.ssao_samples", 16.0).round() as u32).clamp(0, 16),
+        taa: resolved.toggle(TAA).unwrap_or(t.taa),
         bloom: k("effects.bloom", 1.0) >= 0.5,
         cloud_downscale: (k("effects.cloud_downscale", 2.0).round() as i32).clamp(1, 8),
         precipitation: k("effects.precipitation", 1.0).clamp(0.0, 1.0),

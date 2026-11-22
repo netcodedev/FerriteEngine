@@ -609,6 +609,8 @@ impl Scene {
             let hdr = hdr.get_or_insert_with(Hdr::new);
             profiler::mark(Pass::DepthPrepass);
             hdr.begin();
+            // With TAA the view is drawn with a sub-pixel jitter.
+            let view_projection = hdr.view_projection(view_projection);
 
             // Ambient occlusion — the opaque scene's depth from the camera,
             // and from it the occlusion the lit shaders darken their ambient

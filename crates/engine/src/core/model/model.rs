@@ -20,6 +20,7 @@ use crate::core::{
         pbr::Lighting,
         shader::DynamicVertexArray,
         ssao,
+        taa::motion,
         texture::Texture,
     },
 };
@@ -122,6 +123,7 @@ impl Model {
             bone_cache: Default::default(),
             pose_revision: next_pose_revision(),
             cull_bounds: None,
+            motion: Default::default(),
         }
     }
 
@@ -565,12 +567,36 @@ impl Model {
                     .set_uniform_mat4_array("boneTransforms", &vec![Matrix4::identity()]);
             }
             material.bind(shader);
-            mesh.render(
-                shader,
-                parent_transform * Matrix4::from_translation(self.position.to_vec().into()),
-                Some(self.scale),
-            );
+            let placed = parent_transform * Matrix4::from_translation(self.position.to_vec().into());
+            if matches!(look, Look::Normal) && motion::recording() && hdr::writes_linear() {
+                self.record_motion(index, mesh, material.two_sided, placed * Matrix4::from_scale(self.scale));
+            }
+            mesh.render(shader, placed, Some(self.scale));
         }
+    }
+
+    /// Tell the motion vectors where mesh `index` is drawn now, with the
+    /// bones uploaded for it.
+    fn record_motion(&self, index: usize, mesh: &ModelMesh, two_sided: bool, model: Matrix4<f32>) {
+        let Some(vertex_array) = &mesh.vertex_array else {
+            return;
+        };
+        let Some((vertices, indices)) = vertex_array.raw_buffers() else {
+            return;
+        };
+        let collapse = !self.hidden_bones.is_empty();
+        let cache = self.bone_cache[collapse as usize].borrow();
+        let bones = mesh.root_bone.as_ref().and_then(|_| cache.get(&index)).map(Vec::as_slice);
+        self.motion.record(motion::MeshDraw {
+            index,
+            vertices,
+            indices,
+            count: vertex_array.get_element_count() as u32,
+            layout: DynamicVertexArray::<ModelMeshVertex>::layout(),
+            two_sided,
+            model,
+            bones,
+        });
     }
 
     /// Distance along the ray (`dir` normalized) to the nearest triangle of

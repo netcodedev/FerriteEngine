@@ -282,6 +282,8 @@ pub struct EngineKnobs {
     pub detail_distance_factor: f32,
     pub detail_density: f32,
     pub ssao_samples: u32,
+    /// Temporal anti-aliasing instead of MSAA (`renderer::taa`).
+    pub taa: bool,
     pub bloom: bool,
     pub cloud_downscale: i32,
     pub precipitation: f32,

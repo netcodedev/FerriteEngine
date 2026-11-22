@@ -897,6 +897,17 @@ pub fn set_index_buffer(buffer: &Buffer, format: IndexFormat) {
     device().set_index_buffer(buffer.raw, format);
 }
 
+/// `set_vertex_buffer` by the buffer's raw id, for a draw recorded earlier
+/// in the frame and drawn later (the buffer must still be alive).
+pub fn set_raw_vertex_buffer(slot: u32, buffer: RawId, offset: usize, stride: u32) {
+    device().set_vertex_buffer(slot, buffer, offset, stride);
+}
+
+/// `set_index_buffer` by the buffer's raw id (see `set_raw_vertex_buffer`).
+pub fn set_raw_index_buffer(buffer: RawId, format: IndexFormat) {
+    device().set_index_buffer(buffer, format);
+}
+
 pub fn draw(first_vertex: u32, vertices: u32) {
     if vertices > 0 {
         device().draw(first_vertex, vertices, 0, 1);
