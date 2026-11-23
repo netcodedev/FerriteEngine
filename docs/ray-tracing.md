@@ -37,8 +37,11 @@ Each frame:
    mesh's own buffers (device addresses, `GL_EXT_buffer_reference`) and
    the material's opacity in an atlas (`opacity.glsl`: the texture the
    graph's opacity comes from, `Material::opacity_texture`, one 256×256
-   layer each, 64 layers). A cut-out whose texture is not loaded yet, or
-   past the atlas, lets 45 % of the light through instead.
+   layer each, 64 layers). The atlas and the layers it gives out are
+   shared by every scene (the editor makes a new one after play mode);
+   when all are taken, a layer unused for 120 frames goes to the next
+   texture. A cut-out whose texture is not loaded yet, or finds no free
+   layer, lets 45 % of the light through instead.
 4. **Denoise**: blended into the frames before, moved with the camera
    (`accumulate.glsl`, history dropped where it showed another surface,
    clamped to the neighbourhood), then a blur within a surface

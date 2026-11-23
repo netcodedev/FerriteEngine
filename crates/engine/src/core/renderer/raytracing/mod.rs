@@ -70,6 +70,7 @@ thread_local! {
     static INSTANCES: RefCell<Vec<TlasInstance>> = const { RefCell::new(Vec::new()) };
     static CACHE: RefCell<BlasCache> = RefCell::new(BlasCache::default());
     static CUTOUTS: RefCell<Cutouts> = RefCell::new(Cutouts::default());
+    static ATLAS: RefCell<Option<OpacityAtlas>> = const { RefCell::new(None) };
     static SKINNED: RefCell<HashMap<(u64, usize), Skinned>> = RefCell::new(HashMap::new());
 }
 
@@ -126,10 +127,48 @@ type CutoutRecord = [u32; 12];
 struct Cutouts {
     records: Vec<CutoutRecord>,
     by_key: HashMap<(BlasGeometry, u32, u32), u32>,
-    /// Atlas layer by texture and channel.
-    layers: HashMap<(gfx::RawId, u32), u32>,
+    /// Which layer of the opacity atlas (`OpacityAtlas`) holds which
+    /// texture. Like the atlas, shared by every scene: a scene made later
+    /// (the editor's after play mode) finds the layers drawn already.
+    layers: AtlasLayers,
     /// Layers given out but not drawn yet: the texture and its channel.
     pending: Vec<(Texture, u32, u32)>,
+}
+
+/// The layers of the opacity atlas given to textures (raw id and channel),
+/// with the frame each was last used in. When all are given out, the one
+/// unused the longest (`KEEP_FRAMES` at least) goes to the next texture.
+#[derive(Default)]
+struct AtlasLayers {
+    by_texture: HashMap<(gfx::RawId, u32), (u32, u64)>,
+}
+
+impl AtlasLayers {
+    /// The layer of `key` in `frame`, and whether it was just given (its
+    /// texture still to be drawn); `None` when every layer is in use.
+    fn layer(&mut self, key: (gfx::RawId, u32), frame: u64) -> Option<(u32, bool)> {
+        if let Some((layer, used)) = self.by_texture.get_mut(&key) {
+            *used = frame;
+            return Some((*layer, false));
+        }
+        let layer = if (self.by_texture.len() as u32) < ATLAS_LAYERS {
+            // Layers are given in order and only taken back to be given
+            // again, so the next one is free.
+            self.by_texture.len() as u32
+        } else {
+            let (&oldest, &(layer, used)) = self
+                .by_texture
+                .iter()
+                .min_by_key(|(_, (_, used))| *used)?;
+            if frame.saturating_sub(used) <= KEEP_FRAMES {
+                return None;
+            }
+            self.by_texture.remove(&oldest);
+            layer
+        };
+        self.by_texture.insert(key, (layer, frame));
+        Some((layer, true))
+    }
 }
 
 impl Cutouts {
@@ -141,19 +180,14 @@ impl Cutouts {
             // Still loading.
             return NO_CUTOUT;
         }
-        let layer = match self.layers.get(&(texture, cutout.channel)) {
-            Some(&layer) => layer,
-            None => {
-                let layer = self.layers.len() as u32;
-                if layer >= ATLAS_LAYERS {
-                    return NO_CUTOUT;
-                }
-                self.layers.insert((texture, cutout.channel), layer);
-                self.pending
-                    .push((cutout.texture.share(), cutout.channel, layer));
-                layer
-            }
+        let frame = FRAME.with(Cell::get);
+        let Some((layer, new)) = self.layers.layer((texture, cutout.channel), frame) else {
+            return NO_CUTOUT;
         };
+        if new {
+            self.pending
+                .push((cutout.texture.share(), cutout.channel, layer));
+        }
         let key = (*geometry, layer, cutout.cutoff.to_bits());
         if let Some(&index) = self.by_key.get(&key) {
             return index;
@@ -434,10 +468,6 @@ pub struct RayTracedShadows {
     previous: Option<Matrix4<f32>>,
     /// Instances in the top level structure last built.
     pub instance_count: usize,
-    /// Opacity of cut-out textures, a layer each (see `Cutouts`).
-    atlas: gfx::Texture,
-    atlas_targets: Vec<Option<gfx::RenderTarget>>,
-    atlas_shader: Shader,
     /// This frame's cut-out records.
     cutouts: gfx::Buffer,
 }
@@ -469,6 +499,58 @@ fn inverse_relative(view_projection: &Matrix4<f32>, eye: Point3<f32>) -> Matrix4
         .map_or(Matrix4::identity(), |m| m.cast().expect("f64 fits f32"))
 }
 
+/// Opacity of the cut-out textures the rays test against, a layer each
+/// (given out by `AtlasLayers`). One for every scene, as the layers are.
+struct OpacityAtlas {
+    texture: gfx::Texture,
+    targets: Vec<Option<gfx::RenderTarget>>,
+    shader: Shader,
+}
+
+impl OpacityAtlas {
+    fn new() -> Self {
+        Self {
+            texture: gfx::Texture::new(TextureDesc {
+                kind: TextureKind::D2Array,
+                format: Format::R8,
+                width: ATLAS_SIZE,
+                height: ATLAS_SIZE,
+                layers: ATLAS_LAYERS,
+                mips: 1,
+                samples: 1,
+            }),
+            targets: (0..ATLAS_LAYERS).map(|_| None).collect(),
+            shader: Shader::new(include_str!("../hdr/vertex.glsl"), include_str!("opacity.glsl")),
+        }
+    }
+
+    /// Draw `channel` of `texture` into `layer`, with the fullscreen
+    /// strip `quad`.
+    fn draw(&mut self, quad: &gfx::Buffer, texture: &Texture, channel: u32, layer: u32) {
+        let Some(slot) = self.targets.get_mut(layer as usize) else {
+            return;
+        };
+        let target = slot.get_or_insert_with(|| {
+            gfx::RenderTarget::new(&[self.texture.attachment(0, Some(layer))], None)
+        });
+        gfx::begin_pass(
+            target.reference(),
+            (ATLAS_SIZE, ATLAS_SIZE),
+            gfx::Load::Color([0.0; 4]),
+            gfx::Load::Keep,
+        );
+        let shader = &self.shader;
+        gfx::set_pipeline(shader.pipeline(&fullscreen()));
+        texture.bind_to(0);
+        shader.set_uniform_1i("source", 0);
+        shader.set_uniform_1i("channel", channel as i32);
+        gfx::set_vertex_buffer(0, quad, 0, 8);
+        gfx::draw(0, 4);
+        gfx::end_pass();
+        gfx::unbind_texture(0, TextureKind::D2);
+    }
+}
+
 impl RayTracedShadows {
     /// `None` where the device cannot trace rays.
     pub fn new() -> Option<Self> {
@@ -493,17 +575,6 @@ impl RayTracedShadows {
             history_valid: false,
             previous: None,
             instance_count: 0,
-            atlas: gfx::Texture::new(TextureDesc {
-                kind: TextureKind::D2Array,
-                format: Format::R8,
-                width: ATLAS_SIZE,
-                height: ATLAS_SIZE,
-                layers: ATLAS_LAYERS,
-                mips: 1,
-                samples: 1,
-            }),
-            atlas_targets: (0..ATLAS_LAYERS).map(|_| None).collect(),
-            atlas_shader: Shader::new(vertex, include_str!("opacity.glsl")),
             cutouts: gfx::Buffer::new(
                 gfx::BufferUsage::STORAGE,
                 gfx::BufferMemory::Dynamic,
@@ -540,9 +611,13 @@ impl RayTracedShadows {
                 std::mem::take(&mut c.pending),
             )
         });
-        for (texture, channel, layer) in pending {
-            self.draw_opacity(&texture, channel, layer);
-        }
+        ATLAS.with(|atlas| {
+            let mut atlas = atlas.borrow_mut();
+            let atlas = atlas.get_or_insert_with(OpacityAtlas::new);
+            for (texture, channel, layer) in pending {
+                atlas.draw(&self.quad, &texture, channel, layer);
+            }
+        });
         let mut bytes: Vec<u8> = records
             .iter()
             .flatten()
@@ -554,31 +629,6 @@ impl RayTracedShadows {
         }
         self.cutouts.replace(&bytes);
         self.tlas.build(instances);
-    }
-
-    /// Draw `channel` of `texture` into atlas `layer`.
-    fn draw_opacity(&mut self, texture: &Texture, channel: u32, layer: u32) {
-        let Some(slot) = self.atlas_targets.get_mut(layer as usize) else {
-            return;
-        };
-        let target = slot.get_or_insert_with(|| {
-            gfx::RenderTarget::new(&[self.atlas.attachment(0, Some(layer))], None)
-        });
-        gfx::begin_pass(
-            target.reference(),
-            (ATLAS_SIZE, ATLAS_SIZE),
-            gfx::Load::Color([0.0; 4]),
-            gfx::Load::Keep,
-        );
-        let shader = &self.atlas_shader;
-        gfx::set_pipeline(shader.pipeline(&fullscreen()));
-        texture.bind_to(0);
-        shader.set_uniform_1i("source", 0);
-        shader.set_uniform_1i("channel", channel as i32);
-        gfx::set_vertex_buffer(0, &self.quad, 0, 8);
-        gfx::draw(0, 4);
-        gfx::end_pass();
-        gfx::unbind_texture(0, TextureKind::D2);
     }
 
     /// Trace and denoise the shadows of `view`, and bind them to
@@ -625,7 +675,11 @@ impl RayTracedShadows {
         shader.set_uniform_1f("maxDistance", MAX_DISTANCE);
         shader.set_uniform_1f("cutoutCoverage", CUTOUT_COVERAGE);
         shader.set_uniform_1i("frame", self.frame as i32);
-        gfx::bind_texture(ATLAS_UNIT, &self.atlas, &SamplerDesc::LINEAR_REPEAT);
+        ATLAS.with(|atlas| {
+            let mut atlas = atlas.borrow_mut();
+            let atlas = atlas.get_or_insert_with(OpacityAtlas::new);
+            gfx::bind_texture(ATLAS_UNIT, &atlas.texture, &SamplerDesc::LINEAR_REPEAT);
+        });
         shader.set_uniform_1i("opacityAtlas", ATLAS_UNIT as i32);
         gfx::bind_storage_buffer(CUTOUT_SLOT, &self.cutouts);
         self.draw_quad();
@@ -770,5 +824,26 @@ mod tests {
         let view = Matrix4::look_at_rh(Point3::new(5.0, 2.0, 1.0), Point3::new(9.0, 1.0, 3.0), Vector3::unit_y());
         // 90°: one metre at one metre spans half the height.
         assert!((pixel_scale(&(projection * view), 600) - 300.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn atlas_layers_are_kept_and_given_again_once_unused() {
+        let mut layers = AtlasLayers::default();
+        assert_eq!(layers.layer((7, 3), 1), Some((0, true)));
+        assert_eq!(layers.layer((8, 3), 1), Some((1, true)));
+        // Asked again (a scene made later): drawn already.
+        assert_eq!(layers.layer((7, 3), 2), Some((0, false)));
+        for texture in 9..ATLAS_LAYERS as u64 + 7 {
+            assert!(layers.layer((texture, 0), 2).is_some_and(|(_, new)| new));
+        }
+        // Full, and everything used lately.
+        assert_eq!(layers.layer((500, 0), 3), None);
+        // Texture 8 alone is used no more: its layer goes to the next.
+        let later = 3 + KEEP_FRAMES + 1;
+        for texture in (9..ATLAS_LAYERS as u64 + 7).chain([7]) {
+            let channel = if texture == 7 { 3 } else { 0 };
+            assert!(layers.layer((texture, channel), later).is_some_and(|(_, new)| !new));
+        }
+        assert_eq!(layers.layer((500, 0), later), Some((1, true)));
     }
 }
