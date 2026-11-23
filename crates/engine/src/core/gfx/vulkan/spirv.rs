@@ -21,6 +21,7 @@ const OP_TYPE_POINTER: u32 = 32;
 const OP_VARIABLE: u32 = 59;
 const OP_DECORATE: u32 = 71;
 const DECORATION_LOCATION: u32 = 30;
+const OP_TYPE_ACCELERATION_STRUCTURE: u32 = 5341;
 
 pub const STORAGE_INPUT: u32 = 1;
 pub const STORAGE_OUTPUT: u32 = 3;
@@ -122,6 +123,23 @@ pub fn interface(words: &[u32], storage: u32) -> Vec<Interface> {
         .collect()
 }
 
+/// Whether the stage declares an acceleration structure type (traces
+/// rays).
+pub fn declares_accel(words: &[u32]) -> bool {
+    let mut i = 5;
+    while i < words.len() {
+        let count = (words[i] >> 16) as usize;
+        if count == 0 {
+            break;
+        }
+        if words[i] & 0xFFFF == OP_TYPE_ACCELERATION_STRUCTURE {
+            return true;
+        }
+        i += count;
+    }
+    false
+}
+
 /// Give `fragment`'s inputs the locations `vertex` gave its outputs of the
 /// same names.
 pub fn link_locations(vertex: &[u32], fragment: &mut [u32]) {
@@ -164,5 +182,20 @@ mod tests {
         assert_eq!(interface(&fs, STORAGE_INPUT)[0].location, tex);
         let ids = outputs.iter().find(|v| v.name == "Ids").unwrap();
         assert_eq!(ids.scalar, Scalar::Int);
+    }
+
+    /// A structure declared under an `#ifdef` that is off is not in the
+    /// program (the reflection, which reads the source, still lists it).
+    #[test]
+    fn only_a_declared_structure_counts() {
+        let source = |rays: bool| {
+            format!(
+                "#version 460\n{}#ifdef RAY_QUERIES\nlayout(binding = 0) uniform accelerationStructureEXT scene;\n#endif\n\
+                 out vec4 c;\nvoid main(){{\n#ifdef RAY_QUERIES\nrayQueryEXT q;\nrayQueryInitializeEXT(q, scene, 0u, 0xFFu, vec3(0), 0.0, vec3(0, 1, 0), 1.0);\n#endif\nc=vec4(1);}}\n",
+                if rays { "#extension GL_EXT_ray_query : require\n#define RAY_QUERIES 1\n" } else { "" }
+            )
+        };
+        assert!(declares_accel(&compile(&source(true), shaderc::ShaderKind::Fragment)));
+        assert!(!declares_accel(&compile(&source(false), shaderc::ShaderKind::Fragment)));
     }
 }

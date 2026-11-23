@@ -768,6 +768,9 @@ impl State {
         self.dummy_buffer = self.create_buffer(BufferUsage::UNIFORM, BufferMemory::Static, 65536, Some(&[0u8; 65536]));
         let attribute: Vec<u8> = [0.0f32, 0.0, 0.0, 1.0].iter().flat_map(|f| f.to_le_bytes()).collect();
         self.default_attribute = self.create_buffer(BufferUsage::VERTEX, BufferMemory::Static, 16, Some(&attribute));
+        if self.gpu.accel_fn.is_some() {
+            self.dummy_tlas = self.build_tlas(0, &[], false);
+        }
     }
 
     /// Make the window's target the window's size (when it changed).

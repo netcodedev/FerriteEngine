@@ -270,6 +270,11 @@ struct State {
     // Stand-ins for what a draw reads but nothing was bound for.
     dummy_textures: FxHashMap<(TextureKind, bool), RawId>,
     dummy_buffer: RawId,
+    /// An empty top level structure (0 where rays cannot be traced), for
+    /// programs that trace rays drawn while nothing is bound to trace
+    /// through: the lit shaders trace their reflections only when asked,
+    /// but declare the structure wherever the device can trace.
+    dummy_tlas: RawId,
     /// Zeros with w = 1, for vertex inputs no buffer feeds.
     default_attribute: RawId,
     warned: FxHashSet<String>,
@@ -647,6 +652,7 @@ pub(super) fn create(
         index_type: vk::IndexType::UINT32,
         dummy_textures: FxHashMap::default(),
         dummy_buffer: 0,
+        dummy_tlas: 0,
         default_attribute: 0,
         warned: FxHashSet::default(),
         scratch_images: Vec::new(),

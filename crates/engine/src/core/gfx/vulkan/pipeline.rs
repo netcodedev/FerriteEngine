@@ -66,12 +66,18 @@ fn compile_cached(
 
 impl State {
     pub(super) fn create_program(&mut self, vertex: &str, fragment: &str, label: &str) -> Result<RawId, String> {
-        let reflect = glsl::to_vulkan(vertex, fragment)
+        let mut reflect = glsl::to_vulkan(vertex, fragment)
             .map_err(|e| format!("shader program ({label}) cannot be made for Vulkan: {e}"))?;
         let compiler = self.compiler.as_ref().ok_or("no shader compiler")?;
         let vs = compile_cached(compiler, &reflect.vertex, shaderc::ShaderKind::Vertex, "vertex", label)?;
         let mut fs = compile_cached(compiler, &reflect.fragment, shaderc::ShaderKind::Fragment, "fragment", label)?;
         spirv::link_locations(&vs, &mut fs);
+        // The reflection reads the source without its `#ifdef`s: a
+        // structure declared under `RAY_QUERIES` where the device cannot
+        // trace is not in the program, and needs no binding.
+        if !spirv::declares_accel(&vs) && !spirv::declares_accel(&fs) {
+            reflect.accels.clear();
+        }
         let inputs = spirv::interface(&vs, spirv::STORAGE_INPUT).into_iter().map(|v| (v.location, v.scalar)).collect();
 
         let mut buffers: Vec<glsl::BufferBlock> = Vec::new();
@@ -590,7 +596,11 @@ impl State {
         let mut accels: Vec<(u32, [vk::AccelerationStructureKHR; 1])> = Vec::new();
         for i in 0..self.programs[&program].reflect.accels.len() {
             let slot = self.programs[&program].reflect.accels[i];
-            match self.bound_accels.get(&slot).and_then(|id| self.accels.get(id)) {
+            // Nothing bound (the lit shaders while reflections are not ray
+            // traced, or before the scene's structure is built): the empty
+            // one, which such programs do not trace through.
+            let bound = self.bound_accels.get(&slot).and_then(|id| self.accels.get(id));
+            match bound.or_else(|| self.accels.get(&self.dummy_tlas)) {
                 Some(accel) => accels.push((glsl::ACCEL_BINDING_BASE + slot, [accel.handle])),
                 None => {
                     self.warn_once(format!("a draw that traces rays without a scene bound at slot {slot} is skipped"));
