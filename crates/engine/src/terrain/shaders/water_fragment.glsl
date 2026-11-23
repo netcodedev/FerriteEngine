@@ -26,6 +26,9 @@ uniform sampler2D sceneDepth;
 // 0 when the opaque scene is not at hand (depth captures, previews): the
 // water is then drawn see-through without refraction or shore blending.
 uniform int hasScene;
+// 1: the scene reflected by marching it in screen space (graphics setting
+// "Reflexionen" SSR, or RT where rays cannot be traced).
+uniform int screenReflections;
 uniform mat4 viewProjection;
 uniform mat4 inverseViewProjection;
 // The far water is left out where the chunks are loaded (`columnLoaded`),
@@ -395,11 +398,23 @@ void main()
     if (hasScene == 1 && !below) {
         vec4 skyOnScreen = screenSky(R);
         reflection = mix(reflection, skyOnScreen.rgb, skyOnScreen.a);
-        // Marched along a calmer normal: the ripples would scatter the
-        // reflection of the shore into specks.
-        vec3 Rs = reflect(-V, normalize(mix(waves.normal, N, 0.3)));
-        Rs.y = abs(Rs.y);
-        vec4 scene = screenReflection(WorldPos, normalize(Rs));
+    }
+    // Along a calmer normal: the ripples would scatter the reflection of
+    // the shore into specks.
+    vec3 Rs = reflect(-V, normalize(mix(waves.normal, N, 0.3)));
+    Rs.y = abs(Rs.y);
+    Rs = normalize(Rs);
+    bool traced = false;
+#ifdef RAY_QUERIES
+    if (useRayTracedReflections == 1 && !below) {
+        // The scene, off screen too; the sky where the ray meets nothing.
+        vec4 scene = traceReflection(WorldPos + vec3(0.0, 0.05, 0.0), Rs, REFLECTION_DISTANCE);
+        reflection = mix(reflection, scene.rgb, scene.a);
+        traced = true;
+    }
+#endif
+    if (!traced && hasScene == 1 && screenReflections == 1 && !below) {
+        vec4 scene = screenReflection(WorldPos, Rs);
         reflection = mix(reflection, scene.rgb, scene.a);
     }
     float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - NdotV, 5.0);

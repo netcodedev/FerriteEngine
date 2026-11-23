@@ -15,6 +15,9 @@ pub const CHUNK_SIZE: u64 = 8 << 20;
 /// Staging memory a frame may fill before what was recorded is submitted
 /// and waited for (loading a scene uploads far more than a frame does).
 const STAGING_LIMIT: u64 = 256 << 20;
+/// Most bytes of retired host-visible buffers kept for reuse (`spare`):
+/// past it they are freed.
+pub(super) const SPARE_LIMIT: usize = 64 << 20;
 
 pub(super) const BUFFER_USAGE: vk::BufferUsageFlags = vk::BufferUsageFlags::from_raw(
     vk::BufferUsageFlags::VERTEX_BUFFER.as_raw()
@@ -70,9 +73,10 @@ impl State {
     }
 
     /// Fresh storage for a buffer.
-    fn storage(&mut self, memory: BufferMemory, size: usize) -> Option<(vk::Buffer, Allocation, *mut u8)> {
+    pub(super) fn storage(&mut self, memory: BufferMemory, size: usize) -> Option<(vk::Buffer, Allocation, *mut u8)> {
         if memory == BufferMemory::Dynamic {
             if let Some((b, a)) = self.spare.get_mut(&size).and_then(|s| s.pop()) {
+                self.spare_bytes = self.spare_bytes.saturating_sub(size);
                 let ptr = a.mapped_ptr().map_or(std::ptr::null_mut(), |p| p.as_ptr() as *mut u8);
                 return Some((b, a, ptr));
             }

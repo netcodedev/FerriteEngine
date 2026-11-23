@@ -196,6 +196,7 @@ fn respond(request: BridgeRequest, cx: Context) -> BridgeResponse {
             ambient_occlusion,
             sun_shadow_maps,
             lamp_shadows,
+            ground_maps,
         } => {
             let switches = &state.debug;
             for (wanted, switch) in [
@@ -204,6 +205,7 @@ fn respond(request: BridgeRequest, cx: Context) -> BridgeResponse {
                 (ambient_occlusion, &switches.ambient_occlusion),
                 (sun_shadow_maps, &switches.sun_shadow_maps),
                 (lamp_shadows, &switches.lamp_shadows),
+                (ground_maps, &switches.ground_maps),
             ] {
                 if let Some(on) = wanted {
                     switch.write(on);

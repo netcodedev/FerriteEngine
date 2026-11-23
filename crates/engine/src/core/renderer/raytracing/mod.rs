@@ -35,9 +35,11 @@ use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3}
 
 mod ao;
 mod denoise;
+mod ground;
 mod lamps;
 
 use super::{shader::Shader, taa, texture::Texture};
+pub use ground::{baking_ground, GroundMapPlaces};
 pub use lamps::RT_LIGHT_SHADOW_UNIT;
 use crate::core::gfx::{
     self, BlasGeometry, Format, SamplerDesc, TextureDesc, TextureKind, TlasInstance,
@@ -87,12 +89,28 @@ const CUTOUT_COVERAGE: f32 = 0.55;
 /// each of an array this big.
 const ATLAS_SIZE: u32 = 256;
 const ATLAS_LAYERS: u32 = 64;
-/// Texture unit and buffer slot of the atlas and the cut-out records in
-/// the trace program.
+/// The colour textures reflections look up: one layer each of an array
+/// this big (sRGB, RGBA8).
+const ALBEDO_LAYERS: u32 = 128;
+/// Texture units and buffer slot of the atlases and the surface records
+/// in the passes that trace rays.
 const ATLAS_UNIT: u32 = 1;
-const CUTOUT_SLOT: u32 = 5;
-/// An instance's custom index without a cut-out record.
-const NO_CUTOUT: u32 = 0xFF_FFFF;
+const ALBEDO_UNIT: u32 = 3;
+const RECORD_SLOT: u32 = 5;
+/// Units the atlases are bound to for the lit shaders, which trace
+/// reflections (`pbr/lighting.glsl`): past every other unit.
+pub const LIT_ATLAS_UNIT: u32 = 27;
+pub const LIT_ALBEDO_UNIT: u32 = 28;
+/// The ground's colour from above (`ground`): units in the passes that
+/// trace rays, and for the lit shaders.
+const GROUND_NEAR_UNIT: u32 = 6;
+const GROUND_FAR_UNIT: u32 = 7;
+pub const LIT_GROUND_NEAR_UNIT: u32 = 29;
+pub const LIT_GROUND_FAR_UNIT: u32 = 30;
+/// An instance's custom index without a surface record.
+const NO_RECORD: u32 = 0xFF_FFFF;
+/// A record field without a value (no layer, no offset).
+const NONE: u32 = u32::MAX;
 /// Angular radius of the sun's disc (radians), the real one: shadows
 /// soften with the distance to what casts them, as they do outside.
 const SUN_RADIUS: f32 = 0.0047;
@@ -106,8 +124,9 @@ thread_local! {
     static FRAME: Cell<u64> = const { Cell::new(0) };
     static INSTANCES: RefCell<Vec<TlasInstance>> = const { RefCell::new(Vec::new()) };
     static CACHE: RefCell<BlasCache> = RefCell::new(BlasCache::default());
-    static CUTOUTS: RefCell<Cutouts> = RefCell::new(Cutouts::default());
-    static ATLAS: RefCell<Option<OpacityAtlas>> = const { RefCell::new(None) };
+    static SURFACES: RefCell<Surfaces> = RefCell::new(Surfaces::default());
+    static ATLAS: RefCell<Option<Atlas>> = const { RefCell::new(None) };
+    static ALBEDO_ATLAS: RefCell<Option<Atlas>> = const { RefCell::new(None) };
     static SKINNED: RefCell<HashMap<(u64, usize), Skinned>> = RefCell::new(HashMap::new());
 }
 
@@ -116,6 +135,8 @@ thread_local! {
 struct Skinned {
     _positions: gfx::Buffer,
     blas: gfx::Blas,
+    /// What the structure was built from (its record's buffers).
+    geometry: BlasGeometry,
     used: u64,
 }
 
@@ -171,47 +192,165 @@ impl<'a> Cutout<'a> {
     }
 }
 
-/// Whether rays treat `material` as opaque: opaque materials, and cut-outs
-/// whose opacity comes from no texture they could test (the pickup's
-/// glass: drawn whole, as the shadow maps draw it). Before, those let a
-/// share of the light through like leaves still loading, and shadows under
-/// a car looked as if cast by something half transparent.
-pub fn opaque_for_rays(material: &crate::core::material::Material) -> bool {
+/// How rays see a material.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RayVisibility {
+    /// Not at all: cut away whole, as drawn.
+    Hidden,
+    /// Whole.
+    Opaque,
+    /// Tested against its opacity texture (leaves).
+    Tested,
+}
+
+/// How rays see `material`, as it is drawn: opaque materials whole; a
+/// cut-out with an opacity texture tested against it; a cut-out without
+/// one by its colour's alpha, which is the opacity everywhere then (the
+/// pickup's glass, alpha 0.35 under the cut-off 0.5: cut away, so rays
+/// pass it; its paint, alpha 1: whole). Before, all of those let a share
+/// of the light through like leaves still loading, and the shadow under
+/// the pickup looked as if cast by something half transparent.
+pub fn ray_visibility(material: &crate::core::material::Material) -> RayVisibility {
+    use crate::core::material::{standard::params, AlphaMode};
     match material.alpha {
-        crate::core::material::AlphaMode::Opaque => true,
-        crate::core::material::AlphaMode::Cutout(_) => material.opacity_texture().is_none(),
+        AlphaMode::Opaque => RayVisibility::Opaque,
+        AlphaMode::Cutout(_) if material.opacity_texture().is_some() => RayVisibility::Tested,
+        AlphaMode::Cutout(cutoff) => {
+            let alpha = material.number(params::BASE_COLOR).map_or(1.0, |c| c[3]);
+            if alpha >= cutoff {
+                RayVisibility::Opaque
+            } else {
+                RayVisibility::Hidden
+            }
+        }
     }
 }
 
-/// One cut-out record for the trace shader (`Cutout` in `trace.glsl`):
-/// vertex and index buffer addresses, vertex stride and UV offset in
-/// words, atlas layer, cut-off, whether indexed, the wind's strength,
-/// flutter and bend height.
-type CutoutRecord = [u32; 12];
+/// What a mesh looks like where a reflection ray meets it: its colour
+/// (a texture and a factor, or the vertices' own colour for the ground),
+/// and the light it gives off.
+#[derive(Clone, Copy)]
+pub struct Look<'a> {
+    /// The colour texture, looked up at the hit's UV.
+    pub albedo: Option<&'a Texture>,
+    /// Linear colour the texture is multiplied by (the colour alone
+    /// without a texture).
+    pub base_color: [f32; 4],
+    /// Light given off (linear, times its strength).
+    pub emissive: [f32; 3],
+    /// UV scale (xy) and offset (zw) the material applies.
+    pub uv_transform: [f32; 4],
+    /// Where in each vertex its UV starts, in bytes.
+    pub uv_offset: Option<u32>,
+    /// The ground: where in each vertex its colour (three `f32`, display
+    /// space) starts, in bytes.
+    pub color_offset: Option<u32>,
+}
 
-/// The cut-outs of the frame being collected, and the atlas layers given
-/// to opacity textures.
-#[derive(Default)]
-struct Cutouts {
-    records: Vec<CutoutRecord>,
-    by_key: HashMap<(BlasGeometry, u32, u32, [u32; 3]), u32>,
-    /// Which layer of the opacity atlas (`OpacityAtlas`) holds which
-    /// texture. Like the atlas, shared by every scene: a scene made later
-    /// (the editor's after play mode) finds the layers drawn already.
+impl<'a> Look<'a> {
+    /// Plain light grey (no material known).
+    pub const PLAIN: Look<'static> = Look {
+        albedo: None,
+        base_color: [0.6, 0.6, 0.6, 1.0],
+        emissive: [0.0; 3],
+        uv_transform: [1.0, 1.0, 0.0, 0.0],
+        uv_offset: None,
+        color_offset: None,
+    };
+
+    /// The look of `material` (Standard PBR's parameters by name; other
+    /// graphs with the same names alike), its UV at byte `uv_offset` of
+    /// each vertex (`None`: the colour alone).
+    pub fn of(material: Option<&'a crate::core::material::Material>, uv_offset: Option<u32>) -> Self {
+        use crate::core::material::standard::params;
+        let Some(material) = material else {
+            return Look { uv_offset, ..Look::PLAIN };
+        };
+        let base_color = material.number(params::BASE_COLOR).unwrap_or([1.0; 4]);
+        let strength = material.number(params::EMISSIVE_STRENGTH).map_or(1.0, |v| v[0]);
+        let emissive = material.number(params::EMISSIVE).map_or([0.0; 3], |e| [e[0] * strength, e[1] * strength, e[2] * strength]);
+        let scale = material.number(params::UV_SCALE).unwrap_or([1.0; 4]);
+        let offset = material.number(params::UV_OFFSET).unwrap_or([0.0; 4]);
+        let albedo = material.texture(params::BASE_COLOR_MAP);
+        // A texture the rays cannot place (no UV): about its average.
+        let base_color = match (albedo, uv_offset) {
+            (Some(_), None) => base_color.map(|c| c * 0.5),
+            _ => base_color,
+        };
+        Look {
+            albedo: albedo.filter(|_| uv_offset.is_some()),
+            base_color,
+            emissive,
+            uv_transform: [scale[0], scale[1], offset[0], offset[1]],
+            uv_offset,
+            color_offset: None,
+        }
+    }
+
+    /// The ground: its colour comes from the maps drawn from above
+    /// (`ground`), past them from its vertices' colour at byte
+    /// `color_offset`.
+    pub fn ground(color_offset: u32) -> Look<'static> {
+        Look { base_color: [1.0; 4], color_offset: Some(color_offset), ..Look::PLAIN }
+    }
+}
+
+/// One surface record for the shaders (`Surface` in `rays.glsl`): vertex
+/// and index buffer addresses, vertex stride and UV offset in words,
+/// opacity atlas layer, cut-off, whether indexed, the wind's strength,
+/// flutter and bend height, the ground colour's offset in words, albedo
+/// atlas layer, base colour (4), emission (3), UV scale and offset (4), a
+/// word of padding (std430 aligns the struct to its `uvec2`s).
+type SurfaceRecord = [u32; 26];
+
+/// The surfaces of the frame being collected, and the atlas layers given
+/// to textures.
+struct Surfaces {
+    records: Vec<SurfaceRecord>,
+    by_key: HashMap<SurfaceRecord, u32>,
+    /// Which layer of the opacity atlas holds which texture. Like the
+    /// atlases, shared by every scene: a scene made later (the editor's
+    /// after play mode) finds the layers drawn already.
     layers: AtlasLayers,
     /// Layers given out but not drawn yet: the texture and its channel.
     pending: Vec<(Texture, u32, u32)>,
+    /// The same for the albedo atlas.
+    albedo_layers: AtlasLayers,
+    albedo_pending: Vec<(Texture, u32)>,
 }
 
-/// The layers of the opacity atlas given to textures (raw id and channel),
-/// with the frame each was last used in. When all are given out, the one
-/// unused the longest (`KEEP_FRAMES` at least) goes to the next texture.
-#[derive(Default)]
+/// The layers of an atlas given to textures (raw id and channel), with
+/// the frame each was last used in. When all are given out, the one unused
+/// the longest (`KEEP_FRAMES` at least) goes to the next texture.
 struct AtlasLayers {
     by_texture: HashMap<(gfx::RawId, u32), (u32, u64)>,
+    capacity: u32,
+}
+
+impl Default for Surfaces {
+    fn default() -> Self {
+        Self {
+            records: Vec::new(),
+            by_key: HashMap::new(),
+            layers: AtlasLayers::default(),
+            pending: Vec::new(),
+            albedo_layers: AtlasLayers::with_capacity(ALBEDO_LAYERS),
+            albedo_pending: Vec::new(),
+        }
+    }
+}
+
+impl Default for AtlasLayers {
+    fn default() -> Self {
+        Self { by_texture: HashMap::new(), capacity: ATLAS_LAYERS }
+    }
 }
 
 impl AtlasLayers {
+    fn with_capacity(capacity: u32) -> Self {
+        Self { by_texture: HashMap::new(), capacity }
+    }
+
     /// The layer of `key` in `frame`, and whether it was just given (its
     /// texture still to be drawn); `None` when every layer is in use.
     fn layer(&mut self, key: (gfx::RawId, u32), frame: u64) -> Option<(u32, bool)> {
@@ -219,7 +358,7 @@ impl AtlasLayers {
             *used = frame;
             return Some((*layer, false));
         }
-        let layer = if (self.by_texture.len() as u32) < ATLAS_LAYERS {
+        let layer = if (self.by_texture.len() as u32) < self.capacity {
             // Layers are given in order and only taken back to be given
             // again, so the next one is free.
             self.by_texture.len() as u32
@@ -239,48 +378,87 @@ impl AtlasLayers {
     }
 }
 
-impl Cutouts {
-    /// The record index for `geometry` cut out by `cutout`, `NO_CUTOUT`
-    /// when the rays cannot test it.
-    fn record(&mut self, geometry: &BlasGeometry, cutout: &Cutout) -> u32 {
-        let texture = cutout.texture.raw();
-        if texture == 0 {
-            // Still loading.
-            return NO_CUTOUT;
-        }
+impl Surfaces {
+    /// The record index for `geometry` cut out by `cutout` and looking
+    /// like `look`, `NO_RECORD` when the rays cannot read its buffers.
+    fn record(&mut self, geometry: &BlasGeometry, cutout: Option<&Cutout>, look: &Look) -> u32 {
         let frame = FRAME.with(Cell::get);
-        let Some((layer, new)) = self.layers.layer((texture, cutout.channel), frame) else {
-            return NO_CUTOUT;
-        };
-        if new {
-            self.pending
-                .push((cutout.texture.share(), cutout.channel, layer));
-        }
-        let key = (*geometry, layer, cutout.cutoff.to_bits(), cutout.wind.map(f32::to_bits));
-        if let Some(&index) = self.by_key.get(&key) {
-            return index;
-        }
         let vertices = gfx::buffer_address(geometry.vertices);
         let indices = geometry.indices.map_or(0, gfx::buffer_address);
         if vertices == 0 || (geometry.indices.is_some() && indices == 0) {
-            return NO_CUTOUT;
+            return NO_RECORD;
         }
-        let index = self.records.len() as u32;
-        self.records.push([
+        // The opacity texture's layer, when the rays can test it (else the
+        // cut-out lets a share of the light through).
+        let mut opacity_layer = NONE;
+        let (mut cutoff, mut wind, mut uv) = (0.0f32, [0.0f32; 3], look.uv_offset);
+        if let Some(cutout) = cutout.filter(|_| !geometry.opaque) {
+            uv = Some(cutout.uv_offset);
+            let texture = cutout.texture.raw();
+            if texture != 0 {
+                if let Some((layer, new)) = self.layers.layer((texture, cutout.channel), frame) {
+                    if new {
+                        self.pending.push((cutout.texture.share(), cutout.channel, layer));
+                    }
+                    opacity_layer = layer;
+                    cutoff = cutout.cutoff;
+                    wind = cutout.wind;
+                }
+            }
+        }
+        let mut albedo_layer = NONE;
+        if let (Some(texture), Some(_)) = (look.albedo, look.uv_offset) {
+            let raw = texture.raw();
+            if raw != 0 {
+                if let Some((layer, new)) = self.albedo_layers.layer((raw, 0), frame) {
+                    if new {
+                        self.albedo_pending.push((texture.share(), layer));
+                    }
+                    albedo_layer = layer;
+                }
+            }
+        }
+        let f = f32::to_bits;
+        let [r, g, b, a] = look.base_color;
+        let [er, eg, eb] = look.emissive;
+        let [su, sv, ou, ov] = look.uv_transform;
+        let record: SurfaceRecord = [
             vertices as u32,
             (vertices >> 32) as u32,
             indices as u32,
             (indices >> 32) as u32,
             geometry.stride / 4,
-            cutout.uv_offset / 4,
-            layer,
-            cutout.cutoff.to_bits(),
+            uv.map_or(NONE, |o| o / 4),
+            opacity_layer,
+            f(cutoff),
             geometry.indices.is_some() as u32,
-            cutout.wind[0].to_bits(),
-            cutout.wind[1].to_bits(),
-            cutout.wind[2].to_bits(),
-        ]);
-        self.by_key.insert(key, index);
+            f(wind[0]),
+            f(wind[1]),
+            f(wind[2]),
+            look.color_offset.map_or(NONE, |o| o / 4),
+            albedo_layer,
+            f(r),
+            f(g),
+            f(b),
+            f(a),
+            f(er),
+            f(eg),
+            f(eb),
+            f(su),
+            f(sv),
+            f(ou),
+            f(ov),
+            0,
+        ];
+        if let Some(&index) = self.by_key.get(&record) {
+            return index;
+        }
+        let index = self.records.len() as u32;
+        if index >= NO_RECORD {
+            return NO_RECORD;
+        }
+        self.records.push(record);
+        self.by_key.insert(record, index);
         index
     }
 }
@@ -326,7 +504,7 @@ pub fn collecting() -> bool {
 pub fn begin_collect() {
     FRAME.with(|f| f.set(f.get() + 1));
     INSTANCES.with(|i| i.borrow_mut().clear());
-    CUTOUTS.with(|c| {
+    SURFACES.with(|c| {
         let mut c = c.borrow_mut();
         c.records.clear();
         c.by_key.clear();
@@ -356,16 +534,17 @@ fn mask(opaque: bool) -> u8 {
     }
 }
 
-/// A mesh placed at `transform` (object to world); `cutout` for a mesh
-/// that is not opaque.
-pub fn add_mesh(geometry: BlasGeometry, cutout: Option<Cutout>, transform: &Matrix4<f32>) {
-    add_instances(geometry, cutout, std::iter::once(*transform));
+/// A mesh placed at `transform` (object to world), looking like `look`;
+/// `cutout` for a mesh that is not opaque.
+pub fn add_mesh(geometry: BlasGeometry, cutout: Option<Cutout>, look: &Look, transform: &Matrix4<f32>) {
+    add_instances(geometry, cutout, look, std::iter::once(*transform));
 }
 
 /// A mesh placed at each of `transforms`.
 pub fn add_instances(
     geometry: BlasGeometry,
     cutout: Option<Cutout>,
+    look: &Look,
     transforms: impl IntoIterator<Item = Matrix4<f32>>,
 ) {
     if !collecting() || geometry.count < 3 {
@@ -376,10 +555,7 @@ pub fn add_instances(
         return;
     };
     let mask = mask(geometry.opaque);
-    let custom = match (&cutout, geometry.opaque) {
-        (Some(cutout), false) => CUTOUTS.with(|c| c.borrow_mut().record(&geometry, cutout)),
-        _ => NO_CUTOUT,
-    };
+    let custom = SURFACES.with(|c| c.borrow_mut().record(&geometry, cutout.as_ref(), look));
     INSTANCES.with(|instances| {
         let mut instances = instances.borrow_mut();
         for transform in transforms {
@@ -398,13 +574,15 @@ pub fn add_instances(
 /// model's pose revision and the mesh's index): `positions` (posed, in
 /// the model's space) are asked for only when that pose has no structure
 /// yet. `indices` and `count` as for `BlasGeometry`. Cut-outs on skinned
-/// meshes (hair) let a share of the light through.
+/// meshes (hair) let a share of the light through. Reflections see them
+/// in `look`'s colour (the posed vertices have no UV).
 pub fn add_skinned(
     key: (u64, usize),
     positions: impl FnOnce() -> Vec<[f32; 3]>,
     indices: Option<gfx::RawId>,
     count: u32,
     opaque: bool,
+    look: &Look,
     transform: &Matrix4<f32>,
 ) {
     if !collecting() || count < 3 {
@@ -417,6 +595,7 @@ pub fn add_skinned(
             entry.used = frame;
             return Some(entry.blas.raw());
         }
+
         let positions = positions();
         if positions.is_empty() {
             return None;
@@ -436,19 +615,22 @@ pub fn add_skinned(
         };
         let blas = gfx::Blas::new(&[geometry])?;
         let raw = blas.raw();
-        skinned.insert(key, Skinned { _positions: buffer, blas, used: frame });
+        skinned.insert(key, Skinned { _positions: buffer, blas, geometry, used: frame });
         Some(raw)
     });
     let Some(blas) = blas else {
         return;
     };
+    let geometry = SKINNED.with(|s| s.borrow().get(&key).map(|s| s.geometry));
+    let look = Look { uv_offset: None, albedo: None, ..*look };
+    let custom = geometry.map_or(NO_RECORD, |geometry| SURFACES.with(|c| c.borrow_mut().record(&geometry, None, &look)));
     let columns: [[f32; 4]; 4] = (*transform).into();
     INSTANCES.with(|instances| {
         instances.borrow_mut().push(TlasInstance {
             transform: TlasInstance::rows(&columns),
             blas,
             mask: mask(opaque),
-            custom: NO_CUTOUT,
+            custom,
         })
     });
 }
@@ -536,12 +718,14 @@ pub struct RayTracedShadows {
     previous: Option<Matrix4<f32>>,
     /// Instances in the top level structure last built.
     pub instance_count: usize,
-    /// This frame's cut-out records.
+    /// This frame's surface records.
     cutouts: gfx::Buffer,
     /// The lamps' shadows, made when first traced.
     lamps: Option<lamps::LampShadows>,
     /// The ambient occlusion, made when first traced.
     ao: Option<ao::RayTracedAo>,
+    /// The ground's colour from above, for reflections.
+    ground: RefCell<Option<ground::GroundMaps>>,
 }
 
 /// The fullscreen strip, no depth, no blending.
@@ -571,33 +755,44 @@ fn inverse_relative(view_projection: &Matrix4<f32>, eye: Point3<f32>) -> Matrix4
         .map_or(Matrix4::identity(), |m| m.cast().expect("f64 fits f32"))
 }
 
-/// Opacity of the cut-out textures the rays test against, a layer each
-/// (given out by `AtlasLayers`). One for every scene, as the layers are.
-struct OpacityAtlas {
+/// Textures drawn into the layers of an array the rays look them up in
+/// (given out by `AtlasLayers`): the cut-outs' opacity, the colours.
+/// One each for every scene, as the layers are.
+struct Atlas {
     texture: gfx::Texture,
     targets: Vec<Option<gfx::RenderTarget>>,
     shader: Shader,
 }
 
-impl OpacityAtlas {
-    fn new() -> Self {
+impl Atlas {
+    /// The opacity atlas: one channel of each texture (`opacity.glsl`).
+    fn opacity() -> Self {
+        Self::new(Format::R8, ATLAS_LAYERS, include_str!("opacity.glsl"))
+    }
+
+    /// The colour atlas: each texture's colour, sRGB (`albedo.glsl`).
+    fn albedo() -> Self {
+        Self::new(Format::Srgba8, ALBEDO_LAYERS, include_str!("albedo.glsl"))
+    }
+
+    fn new(format: Format, layers: u32, fragment: &str) -> Self {
         Self {
             texture: gfx::Texture::new(TextureDesc {
                 kind: TextureKind::D2Array,
-                format: Format::R8,
+                format,
                 width: ATLAS_SIZE,
                 height: ATLAS_SIZE,
-                layers: ATLAS_LAYERS,
+                layers,
                 mips: 1,
                 samples: 1,
             }),
-            targets: (0..ATLAS_LAYERS).map(|_| None).collect(),
-            shader: Shader::new(include_str!("../hdr/vertex.glsl"), include_str!("opacity.glsl")),
+            targets: (0..layers).map(|_| None).collect(),
+            shader: Shader::new(include_str!("../hdr/vertex.glsl"), fragment),
         }
     }
 
-    /// Draw `channel` of `texture` into `layer`, with the fullscreen
-    /// strip `quad`.
+    /// Draw `channel` of `texture` (the opacity atlas; the colour atlas
+    /// takes all of it) into `layer`, with the fullscreen strip `quad`.
     fn draw(&mut self, quad: &gfx::Buffer, texture: &Texture, channel: u32, layer: u32) {
         let Some(slot) = self.targets.get_mut(layer as usize) else {
             return;
@@ -650,10 +845,11 @@ impl RayTracedShadows {
             cutouts: gfx::Buffer::new(
                 gfx::BufferUsage::STORAGE,
                 gfx::BufferMemory::Dynamic,
-                std::mem::size_of::<CutoutRecord>(),
+                std::mem::size_of::<SurfaceRecord>(),
             ),
             lamps: None,
             ao: None,
+            ground: RefCell::new(None),
         })
     }
 
@@ -678,18 +874,26 @@ impl RayTracedShadows {
     /// cut-outs collected with them.
     pub fn build(&mut self, instances: &[TlasInstance]) {
         self.instance_count = instances.len();
-        let (records, pending) = CUTOUTS.with(|c| {
+        let (records, pending, albedo_pending) = SURFACES.with(|c| {
             let mut c = c.borrow_mut();
             (
                 std::mem::take(&mut c.records),
                 std::mem::take(&mut c.pending),
+                std::mem::take(&mut c.albedo_pending),
             )
         });
         ATLAS.with(|atlas| {
             let mut atlas = atlas.borrow_mut();
-            let atlas = atlas.get_or_insert_with(OpacityAtlas::new);
+            let atlas = atlas.get_or_insert_with(Atlas::opacity);
             for (texture, channel, layer) in pending {
                 atlas.draw(&self.quad, &texture, channel, layer);
+            }
+        });
+        ALBEDO_ATLAS.with(|atlas| {
+            let mut atlas = atlas.borrow_mut();
+            let atlas = atlas.get_or_insert_with(Atlas::albedo);
+            for (texture, layer) in albedo_pending {
+                atlas.draw(&self.quad, &texture, 0, layer);
             }
         });
         let mut bytes: Vec<u8> = records
@@ -699,7 +903,7 @@ impl RayTracedShadows {
             .collect();
         if bytes.is_empty() {
             // Never empty: a zero-sized storage buffer cannot be bound.
-            bytes.resize(std::mem::size_of::<CutoutRecord>(), 0);
+            bytes.resize(std::mem::size_of::<SurfaceRecord>(), 0);
         }
         self.cutouts.replace(&bytes);
         self.tlas.build(instances);
@@ -809,23 +1013,64 @@ impl RayTracedShadows {
     /// Bind what `rays.glsl` traces through for `shader` (bound): the top
     /// level structure, the cut-out records and their atlas, the wind.
     fn bind_rays(&self, shader: &Shader) {
+        set_ray_uniforms(shader, ATLAS_UNIT, ALBEDO_UNIT, None);
+        shader.set_uniform_1i("groundNear", GROUND_NEAR_UNIT as i32);
+        shader.set_uniform_1i("groundFar", GROUND_FAR_UNIT as i32);
+        self.bind_scene(ATLAS_UNIT, ALBEDO_UNIT);
+    }
+
+    /// Draw the ground's colour from above where due (`ground`), around
+    /// `eye`, the far level `radius` metres to each side; `draw` draws the
+    /// ground with the matrix it gets. True when anything was drawn.
+    pub fn update_ground(&self, eye: Point3<f32>, radius: f32, draw: &dyn Fn(&Matrix4<f32>)) -> bool {
+        let mut ground = self.ground.borrow_mut();
+        ground.get_or_insert_with(ground::GroundMaps::new).update(eye, radius, draw)
+    }
+
+    /// Raw ids of the ground's colour maps (near, far), for debug views.
+    pub fn ground_textures(&self) -> Option<[gfx::RawId; 2]> {
+        self.ground.borrow().as_ref().map(ground::GroundMaps::textures)
+    }
+
+    /// Where the ground's colour maps lie (once both are drawn).
+    pub fn ground_places(&self) -> Option<GroundMapPlaces> {
+        self.ground.borrow().as_ref().and_then(ground::GroundMaps::places)
+    }
+
+    /// Bind the top level structure, the surface records and the atlases
+    /// (to `atlas_unit` and `albedo_unit`): what `rays.glsl` reads.
+    fn bind_scene(&self, atlas_unit: u32, albedo_unit: u32) {
+        // The ground maps, made here at the latest: `rays.glsl` declares
+        // them, so every program that traces has them bound.
+        let (near, far) = if atlas_unit == LIT_ATLAS_UNIT {
+            (LIT_GROUND_NEAR_UNIT, LIT_GROUND_FAR_UNIT)
+        } else {
+            (GROUND_NEAR_UNIT, GROUND_FAR_UNIT)
+        };
+        self.ground.borrow_mut().get_or_insert_with(ground::GroundMaps::new).bind(near, far);
         gfx::bind_accel(SCENE_SLOT, &self.tlas);
-        shader.set_uniform_1f("cutoutCoverage", CUTOUT_COVERAGE);
-        let (direction, strength) = crate::core::material::wind::WIND;
-        shader.set_uniform_4f(
-            "wind",
-            direction[0],
-            direction[1],
-            strength,
-            crate::core::material::wind::clock(),
-        );
         ATLAS.with(|atlas| {
             let mut atlas = atlas.borrow_mut();
-            let atlas = atlas.get_or_insert_with(OpacityAtlas::new);
-            gfx::bind_texture(ATLAS_UNIT, &atlas.texture, &SamplerDesc::LINEAR_REPEAT);
+            let atlas = atlas.get_or_insert_with(Atlas::opacity);
+            gfx::bind_texture(atlas_unit, &atlas.texture, &SamplerDesc::LINEAR_REPEAT);
         });
-        shader.set_uniform_1i("opacityAtlas", ATLAS_UNIT as i32);
-        gfx::bind_storage_buffer(CUTOUT_SLOT, &self.cutouts);
+        ALBEDO_ATLAS.with(|atlas| {
+            let mut atlas = atlas.borrow_mut();
+            let atlas = atlas.get_or_insert_with(Atlas::albedo);
+            gfx::bind_texture(albedo_unit, &atlas.texture, &SamplerDesc::LINEAR_REPEAT);
+        });
+        gfx::bind_storage_buffer(RECORD_SLOT, &self.cutouts);
+    }
+
+    /// Bind what the lit shaders' reflection rays read (`pbr/lighting.glsl`
+    /// under `RAY_QUERIES`) for the shading passes that follow; false when
+    /// there is nothing built to trace through.
+    pub fn bind_for_reflections(&self) -> bool {
+        if !self.tlas.is_built() {
+            return false;
+        }
+        self.bind_scene(LIT_ATLAS_UNIT, LIT_ALBEDO_UNIT);
+        true
     }
 
     /// Trace and denoise the lamps' shadows of `view` with ReSTIR, for the
@@ -878,6 +1123,30 @@ impl RayTracedShadows {
     pub fn result_texture(&self) -> Option<gfx::RawId> {
         self.targets.as_ref().map(|t| t.filtered.raw())
     }
+}
+
+/// Set the uniforms `rays.glsl` reads for `shader` (bound), the atlases on
+/// `atlas_unit` and `albedo_unit`, the ground's colour maps where `ground`
+/// says (on the lit shaders' units).
+pub fn set_ray_uniforms(shader: &Shader, atlas_unit: u32, albedo_unit: u32, ground: Option<GroundMapPlaces>) {
+    shader.set_uniform_1i("groundNear", LIT_GROUND_NEAR_UNIT as i32);
+    shader.set_uniform_1i("groundFar", LIT_GROUND_FAR_UNIT as i32);
+    shader.set_uniform_1i("useGroundMaps", ground.is_some() as i32);
+    if let Some(ground) = ground {
+        shader.set_uniform_mat4("groundNearMatrix", &ground.near);
+        shader.set_uniform_mat4("groundFarMatrix", &ground.far);
+    }
+    shader.set_uniform_1f("cutoutCoverage", CUTOUT_COVERAGE);
+    let (direction, strength) = crate::core::material::wind::WIND;
+    shader.set_uniform_4f(
+        "rayWind",
+        direction[0],
+        direction[1],
+        strength,
+        crate::core::material::wind::clock(),
+    );
+    shader.set_uniform_1i("opacityAtlas", atlas_unit as i32);
+    shader.set_uniform_1i("albedoAtlas", albedo_unit as i32);
 }
 
 /// Set what `surface.glsl` reads for `shader` (bound): the depth (on unit
@@ -933,11 +1202,29 @@ mod tests {
             ("accumulate", include_str!("accumulate.glsl").to_string()),
             ("filter", include_str!("filter.glsl").to_string()),
         ];
+        // The lit shaders with their reflection rays, as `gfx::Program`
+        // gives them where rays can be traced.
+        let rays = |fragment: String| {
+            let (version, rest) = fragment.split_at(fragment.find('\n').unwrap() + 1);
+            format!(
+                "{version}#extension GL_EXT_ray_query : require\n#extension GL_EXT_buffer_reference : require\n\
+                 #extension GL_EXT_buffer_reference_uvec2 : require\n#define RAY_QUERIES 1\n{rest}"
+            )
+        };
+        let terrain = format!("{}\n{}", crate::terrain::shaders::fragment_prelude(), crate::terrain::shaders::DEFAULT_FRAGMENT);
+        let (water_vertex, water) = crate::terrain::shaders::water_sources();
+        let mut passes = passes.to_vec();
+        passes.push(("terrain_reflections", rays(terrain)));
+        let lit = [("water_reflections", water_vertex, rays(water))];
         let out = std::env::temp_dir().join(format!("ferrite-rt-passes-{}", std::process::id()));
         std::fs::create_dir_all(&out).unwrap();
         let mut failures = Vec::new();
-        for (name, fragment) in passes {
-            let program = match crate::core::gfx::glsl::to_vulkan(vertex, &fragment) {
+        let programs = passes
+            .into_iter()
+            .map(|(name, fragment)| (name, vertex.to_string(), fragment))
+            .chain(lit);
+        for (name, vertex, fragment) in programs {
+            let program = match crate::core::gfx::glsl::to_vulkan(&vertex, &fragment) {
                 Ok(program) => program,
                 Err(e) => {
                     failures.push(format!("{name}: {e}"));

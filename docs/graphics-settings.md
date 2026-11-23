@@ -279,6 +279,10 @@ Which ambient occlusion is its own choice, **"Umgebungsverdeckung"**
 `RT-AO` (ray traced, `docs/ray-tracing.md`; SSAO where the device cannot
 trace rays). The samples above only set SSAO's quality.
 
+**"Reflexionen"** (`effects.reflections`, group "Licht") is a choice too:
+`Sky`, `SSR` (every preset) or `RT` (`docs/ray-tracing.md`; SSR where the
+device cannot trace rays).
+
 SSAO and bloom stay switchable in the scene's look; the settings can only
 switch them *off* or lower them, never on where the scene has them off.
 

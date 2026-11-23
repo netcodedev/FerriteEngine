@@ -52,7 +52,7 @@ pub fn horizon_depth_fragment() -> String {
 }
 
 /// The water's programs (see `water`).
-pub(super) fn water_sources() -> (String, String) {
+pub(crate) fn water_sources() -> (String, String) {
     (
         format!(
             "#version 460 core\n{}\n{}",

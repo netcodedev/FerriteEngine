@@ -14,6 +14,16 @@ use crate::core::gfx;
 static AMBIENT_OCCLUSION: AtomicBool = AtomicBool::new(false);
 static SUN_SHADOWS: AtomicBool = AtomicBool::new(false);
 static LAMP_SHADOWS: AtomicBool = AtomicBool::new(false);
+static GROUND_MAPS: AtomicBool = AtomicBool::new(false);
+
+/// Show the ground's colour maps for reflections along the bottom.
+pub fn set_ground_maps(on: bool) {
+    GROUND_MAPS.store(on, Ordering::Relaxed);
+}
+
+pub fn ground_maps() -> bool {
+    GROUND_MAPS.load(Ordering::Relaxed)
+}
 
 /// Show the ray traced lamp shadows (the share of the shadow casting
 /// lamps' light that arrives, per colour) instead of the scene.
@@ -112,6 +122,28 @@ pub fn draw_colour(texture: gfx::RawId) {
         gfx::bind_raw_texture(0, texture, gfx::TextureKind::D2, &gfx::SamplerDesc::LINEAR_CLAMP);
         gfx::draw(0, 3);
         gfx::unbind_texture(0, gfx::TextureKind::D2);
+    });
+}
+
+/// Draw the colour of each of `textures` side by side along the bottom of
+/// the viewport set, a third of its height each.
+pub fn draw_colours_along_bottom(textures: &[gfx::RawId]) {
+    if textures.is_empty() {
+        return;
+    }
+    let viewport = gfx::viewport();
+    let (x, y) = (viewport.x, viewport.y);
+    let gap = 8;
+    let side = (viewport.height as i32 / 3).max(16);
+    with_overlay(|shader| {
+        shader.set_uniform_1i("mode", 2);
+        for (i, &texture) in textures.iter().enumerate() {
+            gfx::set_viewport(gfx::Rect::new(x + gap + i as i32 * (side + gap), y + gap, side as u32, side as u32));
+            gfx::bind_raw_texture(0, texture, gfx::TextureKind::D2, &gfx::SamplerDesc::LINEAR_CLAMP);
+            gfx::draw(0, 3);
+        }
+        gfx::unbind_texture(0, gfx::TextureKind::D2);
+        gfx::set_viewport(viewport);
     });
 }
 

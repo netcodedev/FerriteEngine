@@ -784,6 +784,26 @@ pub fn buffer_address(buffer: RawId) -> u64 {
 
 // ── Programs and pipelines ─────────────────────────────────────────────
 
+/// What a fragment stage traces rays with, where the device can: the
+/// extensions and `RAY_QUERIES` after its `#version` line, for sources that
+/// ask (`#ifdef RAY_QUERIES`, the lit shaders' reflections). Elsewhere the
+/// source as it is, and that code drops out.
+fn with_ray_queries(fragment: &str) -> std::borrow::Cow<'_, str> {
+    if !fragment.contains("#ifdef RAY_QUERIES") || !ray_tracing_supported() {
+        return std::borrow::Cow::Borrowed(fragment);
+    }
+    let (version, rest) = match fragment.find('\n') {
+        Some(end) if fragment.starts_with("#version") => fragment.split_at(end + 1),
+        _ => ("", fragment),
+    };
+    std::borrow::Cow::Owned(format!(
+        "{version}#extension GL_EXT_ray_query : require\n\
+         #extension GL_EXT_buffer_reference : require\n\
+         #extension GL_EXT_buffer_reference_uvec2 : require\n\
+         #define RAY_QUERIES 1\n{rest}"
+    ))
+}
+
 /// A linked program (vertex + fragment stage).
 pub struct Program {
     raw: RawId,
@@ -803,6 +823,8 @@ impl Program {
     }
 
     pub fn labelled(vertex: &str, fragment: &str, label: &str) -> Option<Self> {
+        let fragment = with_ray_queries(fragment);
+        let fragment = fragment.as_ref();
         dump_program(vertex, fragment, label);
         match device().create_program(vertex, fragment, label) {
             Ok(raw) => Some(Program { raw, serial: next_program_serial(), pipelines: RefCell::new(Vec::new()) }),

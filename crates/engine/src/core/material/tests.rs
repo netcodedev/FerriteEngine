@@ -419,16 +419,18 @@ fn the_wind_of_standard_pbr_is_read_for_ray_traced_shadows() {
 }
 
 #[test]
-fn cutouts_without_an_opacity_texture_are_opaque_to_rays() {
+fn rays_see_cutouts_without_an_opacity_texture_as_drawn() {
     use crate::core::{
-        material::{AlphaMode, Material},
-        renderer::raytracing::opaque_for_rays,
+        material::{standard::params, AlphaMode, Material},
+        renderer::raytracing::{ray_visibility, RayVisibility},
     };
-    let mut glass = Material::standard();
-    assert!(opaque_for_rays(&glass));
-    // Cut out, but no texture set (the pickup's glass): drawn whole, so
-    // the rays see it whole too.
-    glass.alpha = AlphaMode::Cutout(0.5);
-    assert_eq!(glass.opacity_texture().map(|(_, c)| c), None);
-    assert!(opaque_for_rays(&glass));
+    let mut m = Material::standard();
+    assert_eq!(ray_visibility(&m), RayVisibility::Opaque);
+    // Cut out, no texture: the colour's alpha is the opacity everywhere.
+    m.alpha = AlphaMode::Cutout(0.5);
+    assert_eq!(m.opacity_texture().map(|(_, c)| c), None);
+    assert_eq!(ray_visibility(&m), RayVisibility::Opaque);
+    // The pickup's glass: alpha 0.35, cut away when drawn, so rays pass.
+    assert!(m.set_number(params::BASE_COLOR, [0.1, 0.12, 0.13, 0.35]));
+    assert_eq!(ray_visibility(&m), RayVisibility::Hidden);
 }

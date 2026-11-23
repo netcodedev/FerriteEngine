@@ -372,6 +372,10 @@ pub fn draw<'a>(
         ws.set_uniform_1i("sceneColor", SCENE_COLOR_UNIT as i32);
         ws.set_uniform_1i("sceneDepth", SCENE_DEPTH_UNIT as i32);
         ws.set_uniform_1i("hasScene", opaque.is_some() as i32);
+        ws.set_uniform_1i(
+            "screenReflections",
+            (crate::core::graphics::engine().reflections != crate::core::graphics::ReflectionMode::Sky) as i32,
+        );
         if let Some(opaque) = opaque {
             let color = gfx::SamplerDesc::LINEAR_CLAMP;
             let depth = gfx::SamplerDesc::new(gfx::Filter::Nearest, gfx::Wrap::Repeat);

@@ -600,13 +600,14 @@ impl Model {
                 continue;
             }
             let material = self.materials.get(mesh.material_index);
-            let (shadows, opaque) = match material {
-                Some(material) => (material.shadows, raytracing::opaque_for_rays(material)),
-                None => (true, true),
+            let (shadows, visibility) = match material {
+                Some(material) => (material.shadows, raytracing::ray_visibility(material)),
+                None => (true, raytracing::RayVisibility::Opaque),
             };
-            if !shadows {
+            if !shadows || visibility == raytracing::RayVisibility::Hidden {
                 continue;
             }
+            let opaque = visibility == raytracing::RayVisibility::Opaque;
             let Some(geometry) = mesh.vertex_array.as_ref().and_then(|v| v.blas_geometry(opaque)) else {
                 continue;
             };
@@ -621,13 +622,15 @@ impl Model {
                     indices,
                     geometry.count,
                     opaque,
+                    &raytracing::Look::of(material, None),
                     model,
                 );
                 continue;
             }
             let uv_offset = std::mem::offset_of!(ModelMeshVertex, texture_coords) as u32;
             let cutout = material.and_then(|material| raytracing::Cutout::of(material, uv_offset));
-            raytracing::add_mesh(geometry, cutout, model);
+            let look = raytracing::Look::of(material, Some(uv_offset));
+            raytracing::add_mesh(geometry, cutout, &look, model);
         }
     }
 

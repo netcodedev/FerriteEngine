@@ -234,24 +234,19 @@ impl State {
                 })
             })
             .collect();
-        let bytes =
-            std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() * records.len().max(1);
-        let usage = resources::BUFFER_USAGE
-            | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-            | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR;
-        let Some((instance_buffer, instance_allocation)) = self.raw_buffer(
-            bytes as u64,
-            usage,
-            MemoryLocation::CpuToGpu,
-            "acceleration structure instances",
-        ) else {
+        // In host-visible memory of a power of two bytes, so the next frames'
+        // instances (their count changes all the time while driving) reuse
+        // it from `spare` instead of making ever new sizes.
+        let bytes = (std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() * records.len().max(1))
+            .next_power_of_two();
+        let Some((instance_buffer, instance_allocation, ptr)) = self.storage(BufferMemory::Dynamic, bytes) else {
             return tlas;
         };
-        if let Some(ptr) = instance_allocation.mapped_ptr() {
+        if !ptr.is_null() {
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     records.as_ptr() as *const u8,
-                    ptr.as_ptr() as *mut u8,
+                    ptr,
                     std::mem::size_of_val(records.as_slice()),
                 );
             }

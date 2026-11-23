@@ -232,3 +232,16 @@ fn ambient_occlusion_is_a_choice_off_at_low_and_ssao_above() {
     graphics.set(defs::AMBIENT_OCCLUSION, SettingValue::Choice("SSAO".into())).unwrap();
     assert!(graphics.resolved().engine.ssao_samples > 0);
 }
+
+#[test]
+fn reflections_are_a_choice_ssr_at_every_preset() {
+    let mut graphics = Graphics::default();
+    for level in [Level::Low, Level::Medium, Level::High, Level::Ultra] {
+        graphics.set_preset(level);
+        assert_eq!(graphics.resolved().engine.reflections, ReflectionMode::Ssr, "{level:?}");
+    }
+    graphics.set(defs::REFLECTIONS, SettingValue::Choice("RT".into())).unwrap();
+    assert_eq!(graphics.resolved().engine.reflections, ReflectionMode::RayTraced);
+    graphics.set(defs::REFLECTIONS, SettingValue::Choice("Sky".into())).unwrap();
+    assert_eq!(graphics.resolved().engine.reflections, ReflectionMode::Sky);
+}

@@ -223,6 +223,8 @@ struct State {
     retired: Vec<(u64, Retired)>,
     /// Dynamic buffer storage freed, kept for reuse: by size.
     spare: FxHashMap<usize, Vec<(vk::Buffer, Allocation)>>,
+    /// Bytes held in `spare` (at most `SPARE_LIMIT`).
+    spare_bytes: usize,
     next_id: RawId,
     buffers: FxHashMap<RawId, Buf>,
     textures: FxHashMap<RawId, Tex>,
@@ -349,9 +351,15 @@ impl State {
             unsafe {
                 match r {
                     Retired::Buffer(b, a, size) => {
+                        // Kept for the next buffer of this size, within a
+                        // limit: buffers of ever new sizes (the top level
+                        // structures' instances while driving) piled up
+                        // here by the hundred, 16 GB in three minutes.
+                        let fits = self.spare_bytes + size <= resources::SPARE_LIMIT;
                         let spare = self.spare.entry(size).or_default();
-                        if spare.len() < 8 && a.mapped_ptr().is_some() {
+                        if fits && spare.len() < 8 && a.mapped_ptr().is_some() {
                             spare.push((b, a));
+                            self.spare_bytes += size;
                         } else {
                             self.gpu.device.destroy_buffer(b, None);
                             let _ = self.allocator.free(a);
@@ -603,6 +611,7 @@ pub(super) fn create(
         completed: 0,
         retired: Vec::new(),
         spare: FxHashMap::default(),
+        spare_bytes: 0,
         next_id: 0,
         buffers: FxHashMap::default(),
         textures: FxHashMap::default(),

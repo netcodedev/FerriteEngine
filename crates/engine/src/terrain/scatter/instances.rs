@@ -576,13 +576,14 @@ impl ScatterInstances {
                 };
                 for sub in &kind.lods[tier].submeshes {
                     let material = kind.model.material(sub.material_index);
-                    let (shadows, opaque) = match material {
-                        Some(material) => (material.shadows, raytracing::opaque_for_rays(material)),
-                        None => (true, true),
+                    let (shadows, visibility) = match material {
+                        Some(material) => (material.shadows, raytracing::ray_visibility(material)),
+                        None => (true, raytracing::RayVisibility::Opaque),
                     };
-                    if !shadows && !grass {
+                    if (!shadows && !grass) || visibility == raytracing::RayVisibility::Hidden {
                         continue;
                     }
+                    let opaque = visibility == raytracing::RayVisibility::Opaque;
                     let stride = vertex_layout().stride;
                     let geometry = gfx::BlasGeometry {
                         vertices: sub.vertices.raw(),
@@ -596,7 +597,8 @@ impl ScatterInstances {
                     let cutout = material
                         .and_then(|material| raytracing::Cutout::of(material, 24))
                         .map(|cutout| cutout.wind_scaled(self.spec.wind));
-                    raytracing::add_instances(geometry, cutout, transforms.iter().map(|t| parent_transform * t));
+                    let look = raytracing::Look::of(material, Some(24));
+                    raytracing::add_instances(geometry, cutout, &look, transforms.iter().map(|t| parent_transform * t));
                 }
             }
         }

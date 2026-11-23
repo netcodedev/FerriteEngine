@@ -119,6 +119,7 @@
     "stats.debug.ambient_occlusion": (en: "Ambient occlusion", de: "Umgebungsverdeckung"),
     "stats.debug.sun_shadow_maps": (en: "Sun shadow maps", de: "Sonnen-Schattenkarten"),
     "stats.debug.lamp_shadows": (en: "Ray-traced lamp shadows", de: "Raytracing-Lampenschatten"),
+    "stats.debug.ground_maps": (en: "Ground maps (reflections)", de: "Boden-Karten (Reflexionen)"),
     "stats.vram_free": (en: "{amount} free", de: "{amount} frei"),
     "stats.mode.edit": (en: "Edit", de: "Bearbeiten"),
     "stats.mode.play": (en: "Play", de: "Spielen"),
@@ -149,6 +150,7 @@
     "graphics.setting.shadows.raytraced_wind": (en: "Ray-traced shadows in wind", de: "Raytracing-Schatten im Wind"),
     "graphics.setting.shadows.raytraced_lights": (en: "Ray-traced lamp shadows", de: "Raytracing-Lampenschatten"),
     "graphics.setting.effects.ao": (en: "Ambient occlusion", de: "Umgebungsverdeckung"),
+    "graphics.setting.effects.reflections": (en: "Reflections", de: "Reflexionen"),
     "graphics.setting.effects": (en: "Effects", de: "Effekte"),
 
     // ===== Dialogs, commands, launcher =====

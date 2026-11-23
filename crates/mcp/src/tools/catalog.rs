@@ -461,7 +461,8 @@ pub fn catalog() -> Vec<Tool> {
              ambient_occlusion shows the ambient occlusion instead of the scene; sun_shadow_maps \
              shows the sun's shadow cascades along the bottom; lamp_shadows shows the ray traced \
              lamp shadows (the share of the shadow casting lamps' light that arrives, per colour; \
-             white where none reaches) instead of the scene. Returns the switches; \
+             white where none reaches) instead of the scene; ground_maps shows the ground's colour \
+             from above that reflections read (near and far level) along the bottom. Returns the switches; \
              editor_status reports them (debug_views) and what culling drew (performance.culling).",
             json!({
                 "vsync": {"type": "boolean"},
@@ -469,6 +470,7 @@ pub fn catalog() -> Vec<Tool> {
                 "ambient_occlusion": {"type": "boolean"},
                 "sun_shadow_maps": {"type": "boolean"},
                 "lamp_shadows": {"type": "boolean"},
+                "ground_maps": {"type": "boolean"},
             }),
             &[],
         ),

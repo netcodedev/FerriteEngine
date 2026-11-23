@@ -104,6 +104,43 @@ vec3 lampShadowRatio() {
     return texelFetch(rayTracedLightShadows, ivec2(gl_FragCoord.xy) - rayTracedLightShadowOrigin, 0).rgb;
 }
 
+// Ray traced reflections (graphics setting "Reflexionen" RT): 1 while the
+// camera's view is shaded and the scene is built to trace through. The
+// tracing itself (`reflections.glsl`) exists only under `RAY_QUERIES`.
+uniform int useRayTracedReflections;
+// 1 while the ground is drawn for its colour from above (reflections'
+// ground maps): `shadeSurface` hands the albedo back unlit.
+uniform int albedoBake;
+// Surfaces rougher than this reflect the sky alone; below, the traced
+// scene fades in (from `REFLECTION_SHARP` down it is all of it). Wet
+// ground's film (0.32) stays with the sky: tracing all of it cost 6 ms;
+// puddles (0.03), glass and chrome trace.
+const float REFLECTION_ROUGHNESS = 0.3;
+const float REFLECTION_SHARP = 0.1;
+
+vec3 skyLight(vec3 dir);
+#ifdef RAY_QUERIES
+vec4 traceReflection(vec3 origin, vec3 R, float maxDistance);
+#endif
+
+// What a surface at `P` (geometric normal `Ng`) with `roughness` mirrors
+// along `R`: the sky, or the ray traced scene on smooth surfaces.
+vec3 environment(vec3 P, vec3 Ng, vec3 R, float roughness) {
+    vec3 sky = skyLight(R);
+#ifdef RAY_QUERIES
+    if (useRayTracedReflections == 1 && isShadowPass == 0 && roughness < REFLECTION_ROUGHNESS) {
+        // Normal maps may tip the mirror direction under the surface.
+        float under = dot(R, Ng);
+        vec3 dir = under < 0.02 ? normalize(R + Ng * (0.02 - under)) : R;
+        float distanceToEye = length(cameraPosition - P);
+        vec4 traced = traceReflection(P + Ng * (0.02 + distanceToEye * 0.001), dir, 300.0);
+        float sharp = 1.0 - smoothstep(REFLECTION_SHARP, REFLECTION_ROUGHNESS, roughness);
+        return mix(sky, traced.rgb, traced.a * sharp);
+    }
+#endif
+    return sky;
+}
+
 // Share of the sky this pixel sees past the geometry around it, 0..1.
 float screenOcclusion() {
     if (useSsao == 0 || isShadowPass == 1) {
@@ -447,6 +484,10 @@ vec3 localBounce(vec3 P, vec3 N) {
 // darkened by `ao` and by the screen space occlusion.
 vec3 shadeSurface(vec3 worldPos, vec3 N, vec3 Ng, vec3 albedo, float roughness,
                   float metallic, float ao, float sunFactor) {
+    if (albedoBake == 1) {
+        // The ground drawn for its colour (`raytracing::ground`).
+        return albedo;
+    }
     vec3 V = normalize(cameraPosition - worldPos);
     vec3 L = normalize(sunDirection);
     roughness = clamp(roughness, 0.04, 1.0);
@@ -471,7 +512,7 @@ vec3 shadeSurface(vec3 worldPos, vec3 N, vec3 Ng, vec3 albedo, float roughness,
     direct += localLights(worldPos, N, Ng, V, albedo, roughness, metallic, F0);
 
     vec3 ambient = (skyLight(N) + localBounce(worldPos, N)) * albedo * (1.0 - metallic)
-        + skyLight(reflect(-V, N)) * envBrdf(F0, roughness, NdotV);
+        + environment(worldPos, Ng, reflect(-V, N), roughness) * envBrdf(F0, roughness, NdotV);
     return weatherFog(direct + ambient * ao * screenOcclusion(), worldPos);
 }
 

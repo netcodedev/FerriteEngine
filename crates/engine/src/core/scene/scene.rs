@@ -71,6 +71,7 @@ impl Scene {
             ray_traced: RefCell::new(None),
             ray_traced_shadows_origin: Cell::new(None),
             ray_traced_light_shadows_origin: Cell::new(None),
+            ray_traced_reflections: Cell::new(false),
             weather: RefCell::new(None),
             weather_maps: Cell::new(None),
             lights: RefCell::new(None),
@@ -299,6 +300,53 @@ impl Scene {
         self.ray_traced_light_shadows_origin.get()
     }
 
+    /// Whether the camera's view is shaded with ray traced reflections now
+    /// (what they trace through bound, see `pbr::Lighting`).
+    pub fn ray_traced_reflections(&self) -> bool {
+        self.ray_traced_reflections.get()
+    }
+
+    /// Where the ground's colour maps for reflections lie, while the
+    /// camera's view is shaded with ray traced reflections.
+    pub fn ground_maps(&self) -> Option<crate::core::renderer::raytracing::GroundMapPlaces> {
+        if !self.ray_traced_reflections.get() {
+            return None;
+        }
+        self.ray_traced.borrow().as_ref().and_then(RayTracedShadows::ground_places)
+    }
+
+    /// Draw the ground's colour from above for reflections where due (see
+    /// `raytracing::ground`): the terrain alone, with its own program.
+    fn render_ground_maps(&self, window: &Window) {
+        let Some(camera) = self.get_active_camera() else {
+            return;
+        };
+        let eye = camera.get_camera().get_eye_position();
+        let radius = crate::core::graphics::engine().load_distance + 128.0;
+        let ray_traced = self.ray_traced.borrow();
+        let Some(ray_traced) = ray_traced.as_ref() else {
+            return;
+        };
+        let draw = |view_projection: &Matrix4<f32>| {
+            for entity in self.entities.iter() {
+                if let Some(terrain) = entity.get_own_component::<crate::terrain::Terrain>() {
+                    crate::core::entity::component::Component::render(terrain, self, entity, view_projection, &entity.local_transform());
+                }
+            }
+        };
+        if ray_traced.update_ground(eye, radius, &draw) {
+            self.apply_viewport(window);
+        }
+    }
+
+    /// Whether this frame's reflections are ray traced: asked for in the
+    /// settings, the device can, and there is a camera.
+    fn wants_ray_traced_reflections(&self) -> bool {
+        crate::core::graphics::engine().reflections == crate::core::graphics::ReflectionMode::RayTraced
+            && self.get_active_camera().is_some()
+            && self.can_ray_trace()
+    }
+
     /// Whether the device can trace rays for this scene; makes what
     /// tracing needs on first use.
     fn can_ray_trace(&self) -> bool {
@@ -494,6 +542,12 @@ impl Scene {
                 debug_views::draw_colour(texture);
             }
         }
+        if debug_views::ground_maps() {
+            let maps = self.ray_traced.borrow().as_ref().and_then(RayTracedShadows::ground_textures);
+            if let Some(maps) = maps {
+                debug_views::draw_colours_along_bottom(&maps);
+            }
+        }
         if debug_views::sun_shadows() {
             if let Some(shadow_fbo) = &self.shadow_fbo {
                 debug_views::draw_shadow_cascades(shadow_fbo.texture(), SHADOW_CASCADES);
@@ -622,12 +676,16 @@ impl Scene {
         let ray_traced = self.wants_ray_traced_shadows();
         let ray_traced_lamps = self.wants_ray_traced_lamps() && self.light_count.get() > 0;
         let ray_traced_ao = self.wants_ray_traced_ao();
-        if ray_traced || ray_traced_lamps || ray_traced_ao {
+        let ray_traced_reflections = self.wants_ray_traced_reflections();
+        if ray_traced || ray_traced_lamps || ray_traced_ao || ray_traced_reflections {
             self.collect_ray_traced_scene(window);
         }
         if ray_traced {
             // The cascades are drawn anew once ray tracing is switched off.
             self.drawn_cascades.set(None);
+        }
+        if ray_traced_reflections {
+            self.render_ground_maps(window);
         }
         if let (Some(shadow_fbo), false) = (&self.shadow_fbo, ray_traced) {
             if let Some(skylight) = self.get_component::<SkyLight>() {
@@ -704,6 +762,7 @@ impl Scene {
         self.ambient_occlusion_origin.set(None);
         self.ray_traced_shadows_origin.set(None);
         self.ray_traced_light_shadows_origin.set(None);
+        self.ray_traced_reflections.set(false);
         if let Some(camera) = self.get_active_camera() {
             let view_projection = camera.get_view_projection();
             // The camera's passes cull against its view (or the one culling
@@ -871,6 +930,12 @@ impl Scene {
             if let Some(maps) = self.light_shadows.borrow().as_ref() {
                 maps.bind();
             }
+            // What the lit shaders' reflection rays trace through, for the
+            // opaque and the transparent pass (water).
+            if ray_traced_reflections {
+                let bound = self.ray_traced.borrow().as_ref().is_some_and(RayTracedShadows::bind_for_reflections);
+                self.ray_traced_reflections.set(bound);
+            }
             if depth_prepass {
                 gfx::set_pass_overrides(gfx::PassOverrides { depth_less_equal: true, ..gfx::pass_overrides() });
             }
@@ -897,7 +962,8 @@ impl Scene {
             ViewFrustum::end_view();
             self.ambient_occlusion_origin.set(None);
             self.ray_traced_shadows_origin.set(None);
-        self.ray_traced_light_shadows_origin.set(None);
+            self.ray_traced_light_shadows_origin.set(None);
+            self.ray_traced_reflections.set(false);
             profiler::mark(Pass::Post);
             hdr.finish(&hdr_settings);
             self.apply_viewport(window);

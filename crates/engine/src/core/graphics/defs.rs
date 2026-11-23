@@ -23,6 +23,10 @@ pub const RAY_TRACED_LIGHTS: &str = "shadows.raytraced_lights";
 /// Ambient occlusion: off, screen space, or ray traced.
 pub const AMBIENT_OCCLUSION: &str = "effects.ao";
 pub const AO_OPTIONS: [&str; 3] = ["off", "SSAO", "RT-AO"];
+/// Reflections: the sky alone, the scene marched in screen space (water),
+/// or ray traced (every glossy surface).
+pub const REFLECTIONS: &str = "effects.reflections";
+pub const REFLECTION_OPTIONS: [&str; 3] = ["Sky", "SSR", "RT"];
 
 pub const MSAA_OPTIONS: [&str; 4] = ["off", "2x", "4x", "8x"];
 pub const ANISOTROPY_OPTIONS: [&str; 4] = ["1x", "4x", "8x", "16x"];
@@ -54,6 +58,7 @@ pub const TODAY: EngineKnobs = EngineKnobs {
     ray_traced_wind: false,
     ray_traced_lights: false,
     ambient_occlusion: super::AoMode::Ssao,
+    reflections: super::ReflectionMode::Ssr,
     bloom: true,
     cloud_downscale: 2,
     precipitation: 1.0,
@@ -176,6 +181,16 @@ pub fn engine_definitions() -> Vec<SettingDef> {
             },
             description: "Dunkelt Ecken und Spalten ab. SSAO rechnet im Bild; RT-AO per Raytracing, auch mit dem, was außerhalb des Bildes oder dahinter liegt (nur mit Vulkan auf Grafikkarten mit Raytracing, sonst SSAO). Radius und Stärke stellt das Himmelslicht ein.".into(),
         },
+        SettingDef {
+            key: REFLECTIONS.into(),
+            label: "Reflexionen".into(),
+            group: "Licht".into(),
+            kind: SettingKind::Choice {
+                options: REFLECTION_OPTIONS.iter().map(|o| o.to_string()).collect(),
+                per_preset: PerLevel::all("SSR".to_string()),
+            },
+            description: "Was glänzende Flächen spiegeln. Sky: nur den Himmel. SSR: Wasser spiegelt, was im Bild ist. RT: Wasser, Pfützen, Lack, Glas und Metall spiegeln die Szene per Raytracing, auch was außerhalb des Bildes liegt (nur mit Vulkan auf Grafikkarten mit Raytracing, sonst SSR).".into(),
+        },
         level(EFFECTS, "Effekte", "Licht", "Umgebungsverdeckung, Bloom, Wolken und Niederschlag."),
     ]
 }
@@ -249,6 +264,12 @@ pub fn engine_values(resolved: &Resolved) -> EngineKnobs {
         ray_traced_grass: resolved.toggle(RAY_TRACED_GRASS).unwrap_or(t.ray_traced_grass),
         ray_traced_wind: resolved.toggle(RAY_TRACED_WIND).unwrap_or(t.ray_traced_wind),
         ray_traced_lights: resolved.toggle(RAY_TRACED_LIGHTS).unwrap_or(t.ray_traced_lights),
+        reflections: match resolved.choice(REFLECTIONS) {
+            Some("Sky") => super::ReflectionMode::Sky,
+            Some("RT") => super::ReflectionMode::RayTraced,
+            Some(_) => super::ReflectionMode::Ssr,
+            None => t.reflections,
+        },
         ambient_occlusion: match resolved.choice(AMBIENT_OCCLUSION) {
             Some("off") => super::AoMode::Off,
             Some("RT-AO") => super::AoMode::RayTraced,

@@ -272,7 +272,11 @@ impl TerrainChunk {
         };
         let corner = self.position();
         let placed = transform * Matrix4::from_translation(Vector3::new(corner.x, corner.y, corner.z));
-        crate::core::renderer::raytracing::add_mesh(geometry, None, &placed);
+        // The ground's colour follows position and normal (`TerrainVertex`).
+        let look = crate::core::renderer::raytracing::Look::ground(
+            std::mem::offset_of!(super::mesher::TerrainVertex, color) as u32,
+        );
+        crate::core::renderer::raytracing::add_mesh(geometry, None, &look, &placed);
     }
 
     /// The chunk's water and where it is drawn, under `parent_transform`

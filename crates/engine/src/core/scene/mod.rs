@@ -61,6 +61,8 @@ pub struct Scene {
     /// Window position of the ray traced lamp shadows while the camera's
     /// view is shaded with them.
     ray_traced_light_shadows_origin: Cell<Option<[i32; 2]>>,
+    /// Whether the camera's view is shaded with ray traced reflections now.
+    ray_traced_reflections: Cell<bool>,
     /// Rain and snow: the sky exposure map, the snow trails and the falling
     /// drops, made on the first frame with weather.
     weather: RefCell<Option<WeatherTargets>>,

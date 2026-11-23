@@ -296,6 +296,8 @@ pub struct EngineKnobs {
     pub ray_traced_lights: bool,
     /// Which ambient occlusion (`effects.ao`).
     pub ambient_occlusion: AoMode,
+    /// Which reflections (`effects.reflections`).
+    pub reflections: ReflectionMode,
     pub bloom: bool,
     pub cloud_downscale: i32,
     pub precipitation: f32,
@@ -309,6 +311,18 @@ pub enum AoMode {
     Ssao,
     /// Ray traced where the device can (`renderer::raytracing`), SSAO
     /// elsewhere.
+    RayTraced,
+}
+
+/// The reflections the settings ask for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReflectionMode {
+    /// Every surface reflects the sky alone.
+    Sky,
+    /// Water marches the scene in screen space (as before settings).
+    Ssr,
+    /// Glossy surfaces and water trace the scene where the device can
+    /// (`renderer::raytracing`), SSR elsewhere.
     RayTraced,
 }
 

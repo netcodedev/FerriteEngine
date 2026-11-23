@@ -1,8 +1,9 @@
 # Ray tracing
 
-Three graphics settings, independent of each other: the sun's shadows
-(below), the lamps' shadows ("Ray traced lamp shadows") and the ambient
-occlusion ("Ray traced ambient occlusion"). They share one collected
+Four graphics settings, independent of each other: the sun's shadows
+(below), the lamps' shadows ("Ray traced lamp shadows"), the ambient
+occlusion ("Ray traced ambient occlusion") and the reflections ("Ray traced
+reflections"). They share one collected
 scene: one top level structure, one cut-out atlas.
 
 # Ray traced sun shadows
@@ -242,3 +243,90 @@ Each frame, after the depth prepass (`raytracing/ao.rs`):
   Gras"; SSAO darkens under grass from the screen.
 - Water and particles take the occlusion of the surface behind them, as
   with SSAO.
+
+# Ray traced reflections
+
+Status (2026-11-23): built on branch `feat/rt-reflections`, checked in the
+editor (demo, at the pickup at noon, dry and with rain puddles).
+
+## What it does
+
+The graphics setting **"Reflexionen"** (`effects.reflections`, group
+"Licht") is a choice: `Sky` (every surface reflects the sky alone, water
+too), `SSR` (every preset: water marches the scene in screen space, as
+before) or `RT`. With RT, where the device traces rays, every surface
+smoother than roughness 0.3 and the water trace their reflection; from
+0.1 down it is all traced, between 0.1 and 0.3 it fades into the sky. So
+puddles (0.03), glass (0.05) and chrome (0.15) mirror the scene, the wet
+film on ground (0.32) and car paint (0.40) keep the sky (tracing the wet
+film too cost 6 ms in the rain).
+
+Unlike the other stages this is no fullscreen pass: the renderer is
+forward and only the lit shaders know a pixel's roughness and normal, so
+they trace themselves (inline ray queries in `environment`,
+`pbr/lighting.glsl`, and in `water_fragment.glsl`). `gfx::Program` puts
+the ray query extensions and `#define RAY_QUERIES` in front of every
+fragment stage that asks (`#ifdef RAY_QUERIES`) where the device traces
+rays; elsewhere (OpenGL, no ray tracing) that code drops out.
+
+A reflection ray (`traceClosest`, `raytracing/rays.glsl`) finds the
+nearest opaque or solid cut-out triangle within 300 m and works out what
+is there from the instance's **surface record** (every instance has one
+now, `SurfaceRecord`: buffers, cut-out, look): the triangle's normal, the
+colour (a texture from the new **albedo atlas**, 128 layers of 256²
+sRGB, times the material's base colour; the ground's vertex colour;
+skinned meshes their base colour) and the emission. `shadeHit`
+(`pbr/reflections.glsl`) lights it: the sun or moon past what is in the
+way (a second ray), the sky, the lamps without shadow, its emission.
+Where the ray meets nothing, the sky.
+
+Where a ray meets the ground, its colour comes from **ground maps**
+(`raytracing/ground.rs`): the terrain drawn from straight above with its
+own program into a texture, its colour instead of its light
+(`albedoBake`: `shadeSurface` hands back the albedo; the bake counts as a
+view in linear colour). So reflections show the real ground (roads,
+paths, soil, grass, wet and snowy as it is) for any world, whatever its
+program does. Two levels of 2048² (sRGB): a near one 256 m across (12.5 cm
+a texel), used for hits within 60 m of the ray's start, and a far one
+over the loaded ground (about 0.8 m a texel). Each is drawn again when the
+camera has moved an eighth of it, and every 90 or 300 frames for the
+weather and time of day. Past them the ground's vertex colour stands in.
+Debug view: **"Boden-Karten (Reflexionen)"** (MCP `ground_maps`) shows
+both along the bottom. Vertical faces and overhangs (cliffs, caves) are
+not in a map from above: there the colour of the ground above or below
+is used.
+
+How rays see a material follows how it is drawn (`ray_visibility`): an
+opaque one whole, a cut-out with an opacity texture tested against it,
+one without by its colour's alpha (the pickup's glass, alpha 0.35 under
+the cut-off 0.5, is cut away, so rays pass it and the rear-view mirror
+looks through the rear window).
+
+## Measured
+
+Demo, RTX 4070 Ti, 2536×1390: at the pickup in dry weather the opaque
+pass costs about 0.3 ms more than with SSR (chrome and glass trace);
+with wetness and puddles at 1 everywhere about 2.6 ms more.
+
+## Limits
+
+- One sharp ray per pixel, no denoising: surfaces between roughness 0.1
+  and 0.3 get a sharp reflection faded with the sky, not a blurred one.
+- Hits are lit without ambient occlusion and without the lamps'
+  shadows; normal maps and roughness at the hit are not looked at.
+- Textures in the albedo atlas are 256²; a graph that moves the UV in
+  other ways than the standard scale and offset is not followed.
+- Meshes whose materials cast no shadows are not in the scene the rays
+  see, so they do not show in reflections either.
+- Not tested on a lake or river yet (none near the demo's start).
+- The pickup's mirrors (demo, `tools/pickup_model.py`, material
+  `Mirror`: metal, roughness 0.02) are aimed at the `driver_eye` anchor;
+  with "Reflexionen" SSR or Sky they show the sky only.
+
+## Files (reflections)
+
+`pbr/reflections.glsl`, `pbr/lighting.glsl` (`environment`),
+`terrain/shaders/water_fragment.glsl`, `raytracing/rays.glsl`
+(`traceClosest`), `raytracing/albedo.glsl`, `raytracing/mod.rs` (`Look`,
+`SurfaceRecord`, `Atlas`), `gfx/mod.rs` (`with_ray_queries`),
+`raytracing/ground.rs` (ground maps).

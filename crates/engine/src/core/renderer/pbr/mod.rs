@@ -29,6 +29,12 @@ pub const LIGHTING_GLSL: &str = concat!(
     include_str!("../hdr/tonemap.glsl"),
     include_str!("lights.glsl"),
     include_str!("lighting.glsl"),
+    // Ray traced reflections, where the device traces rays (`gfx::Program`
+    // defines `RAY_QUERIES` there).
+    "#ifdef RAY_QUERIES\n",
+    include_str!("../raytracing/rays.glsl"),
+    include_str!("reflections.glsl"),
+    "#endif\n",
     include_str!("../weather/weather_maps.glsl"),
     include_str!("../weather/weather.glsl")
 );
@@ -48,7 +54,7 @@ pub fn fragment_source(body: &str) -> String {
 
 thread_local! {
     /// The lighting each program was last given, by program and pass kind.
-    static APPLIED: std::cell::RefCell<Vec<(u64, (bool, bool, Lighting))>> = const { std::cell::RefCell::new(Vec::new()) };
+    static APPLIED: std::cell::RefCell<Vec<(u64, (bool, bool, bool, Lighting))>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The light a PBR shader is drawn with.
@@ -71,6 +77,11 @@ pub struct Lighting {
     /// `raytracing::RT_LIGHT_SHADOW_UNIT`) while they shade the camera's
     /// view; the lamps' cube maps are not used then.
     pub ray_traced_light_shadows: Option<[i32; 2]>,
+    /// Whether glossy surfaces trace their reflections (the scene's top
+    /// level structure, records and atlases bound for it).
+    pub ray_traced_reflections: bool,
+    /// Where the ground's colour maps lie (reflections), once drawn.
+    pub ground_maps: Option<crate::core::renderer::raytracing::GroundMapPlaces>,
     /// Rain and snow on surfaces.
     pub weather: WeatherShading,
     /// Where the weather's maps lie (bound to `weather::EXPOSURE_UNIT` and
@@ -92,6 +103,8 @@ impl Lighting {
             lighting.ambient_occlusion_origin = scene.ambient_occlusion_origin();
             lighting.ray_traced_shadows = scene.ray_traced_shadows_origin();
             lighting.ray_traced_light_shadows = scene.ray_traced_light_shadows_origin();
+            lighting.ray_traced_reflections = scene.ray_traced_reflections();
+            lighting.ground_maps = scene.ground_maps();
             lighting.weather_maps = scene.weather_maps();
             lighting.light_count = scene.light_count();
             return Some(lighting);
@@ -111,6 +124,8 @@ impl Lighting {
             ambient_occlusion_origin: scene.ambient_occlusion_origin(),
             ray_traced_shadows: scene.ray_traced_shadows_origin(),
             ray_traced_light_shadows: scene.ray_traced_light_shadows_origin(),
+            ray_traced_reflections: scene.ray_traced_reflections(),
+            ground_maps: scene.ground_maps(),
             weather: skylight.weather().shading(),
             weather_maps: scene.weather_maps(),
             indirect: skylight.indirect_shading(),
@@ -128,6 +143,8 @@ impl Lighting {
             ambient_occlusion_origin: None,
             ray_traced_shadows: None,
             ray_traced_light_shadows: None,
+            ray_traced_reflections: false,
+            ground_maps: None,
             weather: WeatherShading::default(),
             weather_maps: None,
             indirect: IndirectShading::preview(sun_direction.normalize()),
@@ -144,7 +161,8 @@ impl Lighting {
         // kinds of pass (the scene's view and an editor picture) must get
         // its uniforms set again on every switch, not keep the other's.
         let program = shader.program().serial();
-        let wanted = (hdr::draws_to_view(), hdr::writes_linear(), *self);
+        let baking = crate::core::renderer::raytracing::baking_ground();
+        let wanted = (hdr::draws_to_view(), hdr::writes_linear(), baking, *self);
         let unchanged = APPLIED.with(|applied| {
             let mut applied = applied.borrow_mut();
             match applied.iter_mut().find(|(k, _)| *k == program) {
@@ -169,8 +187,11 @@ impl Lighting {
         // Shadow maps, depth captures and the selection mask are drawn into
         // framebuffers of their own; the camera's view into the HDR target
         // (linear light) or, for previews, straight into the window.
-        shader.set_uniform_1i("isShadowPass", !hdr::draws_to_view() as i32);
-        shader.set_uniform_1i("hdrOutput", hdr::writes_linear() as i32);
+        // The ground drawn for its colour (reflections) counts as a view,
+        // in linear colour.
+        shader.set_uniform_1i("isShadowPass", !(hdr::draws_to_view() || baking) as i32);
+        shader.set_uniform_1i("hdrOutput", (hdr::writes_linear() || baking) as i32);
+        shader.set_uniform_1i("albedoBake", baking as i32);
         shader.set_uniform_3fv("sunDirection", &self.sun_direction);
         let eye = self.camera_position;
         shader.set_uniform_3f("cameraPosition", eye.x, eye.y, eye.z);
@@ -219,6 +240,12 @@ impl Lighting {
             }
             None => shader.set_uniform_1i("useRayTracedLightShadows", 0),
         }
+        // Like `ssaoMap`: the atlases' units set even when unused.
+        {
+            use crate::core::renderer::raytracing;
+            raytracing::set_ray_uniforms(shader, raytracing::LIT_ATLAS_UNIT, raytracing::LIT_ALBEDO_UNIT, self.ground_maps);
+        }
+        shader.set_uniform_1i("useRayTracedReflections", self.ray_traced_reflections as i32);
         let indirect = &self.indirect;
         shader.set_uniform_3fv("moonDirection", &indirect.moon_direction);
         shader.set_uniform_1f("moonlight", indirect.settings.moonlight);
