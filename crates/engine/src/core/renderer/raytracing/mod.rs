@@ -96,6 +96,10 @@ pub struct Cutout<'a> {
     pub cutoff: f32,
     /// Where in each vertex its UV (two `f32`) starts, in bytes.
     pub uv_offset: u32,
+    /// How the material sways in the wind (strength, flutter, bend
+    /// height, as `Material::wind_sway`), times the draw's wind scale; all
+    /// 0 unless the shadows follow the wind (`shadows.raytraced_wind`).
+    pub wind: [f32; 3],
 }
 
 impl<'a> Cutout<'a> {
@@ -107,18 +111,33 @@ impl<'a> Cutout<'a> {
             return None;
         };
         let (texture, channel) = material.opacity_texture()?;
+        let wind = if crate::core::graphics::engine().ray_traced_wind {
+            material.wind_sway().unwrap_or_default()
+        } else {
+            [0.0; 3]
+        };
         Some(Cutout {
             texture,
             channel,
             cutoff,
             uv_offset,
+            wind,
         })
+    }
+
+    /// With the wind scaled by `scale` (a scatter output's wind; models
+    /// placed as entities sway at 1).
+    pub fn wind_scaled(mut self, scale: f32) -> Self {
+        self.wind[0] *= scale;
+        self.wind[1] *= scale;
+        self
     }
 }
 
 /// One cut-out record for the trace shader (`Cutout` in `trace.glsl`):
 /// vertex and index buffer addresses, vertex stride and UV offset in
-/// words, atlas layer, cut-off, whether indexed.
+/// words, atlas layer, cut-off, whether indexed, the wind's strength,
+/// flutter and bend height.
 type CutoutRecord = [u32; 12];
 
 /// The cut-outs of the frame being collected, and the atlas layers given
@@ -126,7 +145,7 @@ type CutoutRecord = [u32; 12];
 #[derive(Default)]
 struct Cutouts {
     records: Vec<CutoutRecord>,
-    by_key: HashMap<(BlasGeometry, u32, u32), u32>,
+    by_key: HashMap<(BlasGeometry, u32, u32, [u32; 3]), u32>,
     /// Which layer of the opacity atlas (`OpacityAtlas`) holds which
     /// texture. Like the atlas, shared by every scene: a scene made later
     /// (the editor's after play mode) finds the layers drawn already.
@@ -188,7 +207,7 @@ impl Cutouts {
             self.pending
                 .push((cutout.texture.share(), cutout.channel, layer));
         }
-        let key = (*geometry, layer, cutout.cutoff.to_bits());
+        let key = (*geometry, layer, cutout.cutoff.to_bits(), cutout.wind.map(f32::to_bits));
         if let Some(&index) = self.by_key.get(&key) {
             return index;
         }
@@ -208,9 +227,9 @@ impl Cutouts {
             layer,
             cutout.cutoff.to_bits(),
             geometry.indices.is_some() as u32,
-            0,
-            0,
-            0,
+            cutout.wind[0].to_bits(),
+            cutout.wind[1].to_bits(),
+            cutout.wind[2].to_bits(),
         ]);
         self.by_key.insert(key, index);
         index
@@ -675,6 +694,14 @@ impl RayTracedShadows {
         shader.set_uniform_1f("maxDistance", MAX_DISTANCE);
         shader.set_uniform_1f("cutoutCoverage", CUTOUT_COVERAGE);
         shader.set_uniform_1i("frame", self.frame as i32);
+        let (direction, strength) = crate::core::material::wind::WIND;
+        shader.set_uniform_4f(
+            "wind",
+            direction[0],
+            direction[1],
+            strength,
+            crate::core::material::wind::clock(),
+        );
         ATLAS.with(|atlas| {
             let mut atlas = atlas.borrow_mut();
             let atlas = atlas.get_or_insert_with(OpacityAtlas::new);

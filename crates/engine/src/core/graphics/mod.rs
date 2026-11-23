@@ -289,6 +289,8 @@ pub struct EngineKnobs {
     pub ray_traced_shadows: bool,
     /// Detail scatter (grass) near the camera casts ray traced shadows too.
     pub ray_traced_grass: bool,
+    /// The leaves' ray traced shadows follow the wind (`renderer::raytracing`).
+    pub ray_traced_wind: bool,
     pub bloom: bool,
     pub cloud_downscale: i32,
     pub precipitation: f32,

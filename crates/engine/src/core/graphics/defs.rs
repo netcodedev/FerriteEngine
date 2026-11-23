@@ -18,6 +18,7 @@ pub const ANISOTROPY: &str = "display.anisotropy";
 pub const TAA: &str = "display.taa";
 pub const RAY_TRACED_SHADOWS: &str = "shadows.raytraced";
 pub const RAY_TRACED_GRASS: &str = "shadows.raytraced_grass";
+pub const RAY_TRACED_WIND: &str = "shadows.raytraced_wind";
 
 pub const MSAA_OPTIONS: [&str; 4] = ["off", "2x", "4x", "8x"];
 pub const ANISOTROPY_OPTIONS: [&str; 4] = ["1x", "4x", "8x", "16x"];
@@ -46,6 +47,7 @@ pub const TODAY: EngineKnobs = EngineKnobs {
     taa: false,
     ray_traced_shadows: false,
     ray_traced_grass: false,
+    ray_traced_wind: false,
     bloom: true,
     cloud_downscale: 2,
     precipitation: 1.0,
@@ -139,6 +141,13 @@ pub fn engine_definitions() -> Vec<SettingDef> {
             kind: SettingKind::Toggle { per_preset: PerLevel::all(false) },
             description: "Gras in der Nähe wirft Raytracing-Schatten. Kostet bei dichtem Gras viel; nur mit Raytracing-Schatten.".into(),
         },
+        SettingDef {
+            key: RAY_TRACED_WIND.into(),
+            label: "Raytracing-Schatten im Wind".into(),
+            group: "Licht".into(),
+            kind: SettingKind::Toggle { per_preset: PerLevel::all(false) },
+            description: "Die Lichtflecken im Schatten von Laub bewegen sich mit dem Wind (die Umrisse der Kronen bleiben stehen); nur mit Raytracing-Schatten.".into(),
+        },
         level(EFFECTS, "Effekte", "Licht", "Umgebungsverdeckung, Bloom, Wolken und Niederschlag."),
     ]
 }
@@ -210,6 +219,7 @@ pub fn engine_values(resolved: &Resolved) -> EngineKnobs {
         taa: resolved.toggle(TAA).unwrap_or(t.taa),
         ray_traced_shadows: resolved.toggle(RAY_TRACED_SHADOWS).unwrap_or(t.ray_traced_shadows),
         ray_traced_grass: resolved.toggle(RAY_TRACED_GRASS).unwrap_or(t.ray_traced_grass),
+        ray_traced_wind: resolved.toggle(RAY_TRACED_WIND).unwrap_or(t.ray_traced_wind),
         bloom: k("effects.bloom", 1.0) >= 0.5,
         cloud_downscale: (k("effects.cloud_downscale", 2.0).round() as i32).clamp(1, 8),
         precipitation: k("effects.precipitation", 1.0).clamp(0.0, 1.0),

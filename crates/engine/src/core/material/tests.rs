@@ -402,3 +402,18 @@ mod sharing {
         assert!(settings.materials.iter().find(|s| s.name != "concrete").unwrap().unused);
     }
 }
+
+#[test]
+fn the_wind_of_standard_pbr_is_read_for_ray_traced_shadows() {
+    use crate::core::material::{standard::params, Material};
+    let mut m = Material::standard();
+    // Wind is off until a material turns it on.
+    assert_eq!(m.wind_sway(), None);
+    assert!(m.set_number(params::WIND, [0.5; 4]));
+    assert!(m.set_number(params::WIND_FLUTTER, [0.25; 4]));
+    assert!(m.set_number(params::WIND_HEIGHT, [6.0; 4]));
+    assert_eq!(m.wind_sway(), Some([0.5, 0.25, 6.0]));
+    // A mask from the vertex colour varies over the surface: counts as 1.
+    assert!(m.set_number(params::WIND_MASK_VERTEX_COLOR, [1.0; 4]));
+    assert_eq!(m.wind_sway(), Some([0.5, 0.25, 6.0]));
+}

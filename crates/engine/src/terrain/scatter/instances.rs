@@ -593,7 +593,9 @@ impl ScatterInstances {
                         opaque,
                     };
                     // The UV follows position and normal (`vertex_layout`).
-                    let cutout = material.and_then(|material| raytracing::Cutout::of(material, 24));
+                    let cutout = material
+                        .and_then(|material| raytracing::Cutout::of(material, 24))
+                        .map(|cutout| cutout.wind_scaled(self.spec.wind));
                     raytracing::add_instances(geometry, cutout, transforms.iter().map(|t| parent_transform * t));
                 }
             }

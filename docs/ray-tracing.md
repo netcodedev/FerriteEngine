@@ -42,6 +42,16 @@ Each frame:
    when all are taken, a layer unused for 120 frames goes to the next
    texture. A cut-out whose texture is not loaded yet, or finds no free
    layer, lets 45 % of the light through instead.
+   With **"Raytracing-Schatten im Wind"** (`shadows.raytraced_wind`, off
+   at every preset) the light through the leaves moves with them: a
+   cut-out whose material sways (`Material::wind_sway`: the wind node's
+   strength, flutter and bend height where they are fixed numbers, masks
+   that vary counted as 1, times the scatter output's wind) carries them
+   in its record. At a hit the trace works out the wind's offset there as
+   `materialWind` does (the pivot from the instance's transform, the
+   normal from the triangle), moves the point back to where the swayed
+   leaf would be met, and looks up the opacity at that point's UV in the
+   leaf's plane. In the demo about 0.1 ms on an RTX 4070 Ti.
 4. **Denoise**: blended into the frames before, moved with the camera
    (`accumulate.glsl`, history dropped where it showed another surface,
    clamped to the neighbourhood), then a blur within a surface
@@ -65,7 +75,9 @@ Each frame:
 - Water and particles take the shadow of the surface behind them.
 - While terrain streams in, the top level structure is built anew each
   frame. Not measured on a real GPU yet.
-- Vegetation sways in the wind; the rays see it at rest.
+- Vegetation sways in the wind; the rays see it at rest. With the wind
+  setting the pattern inside leaf cards moves, but the cards' outlines,
+  trunks, branches and opaque leaves stay where they stand at rest.
 
 ## Files
 
