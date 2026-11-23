@@ -387,6 +387,10 @@ impl Default for TerrainShaders {
 
 /// A world: where the ground is and what it looks like. See the module.
 pub trait TerrainSource: Send + Sync + 'static {
+    /// What the world keeps in memory (its caches and plans), for the RAM
+    /// map (`core::memory`). Nothing by default.
+    fn memory_report(&self, _report: &mut crate::core::memory::Report) {}
+
     /// The chunks (by their `y`) of the column over chunk square `column`
     /// that may hold any ground or water, in full detail or not (see
     /// `chunk`); the others are not made. `vertical_range_for` helps.

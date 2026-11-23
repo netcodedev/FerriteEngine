@@ -432,6 +432,30 @@ pub fn catalog() -> Vec<Tool> {
             &["active"],
         ),
         tool(
+            "editor_memory_snapshot",
+            "Take a RAM map snapshot of the running editor (Ctrl+Shift+M does the same): resident \
+             memory by kind of mapping, Rust's heap alive and what malloc keeps freed, the GPU \
+             allocator by name, and the engine's holders (chunks, caches, ray tracing structures) \
+             by count and bytes, plus the heap no holder explains. Saved as RON in the log folder's \
+             memory/; compared with the snapshot before (the limit rows that changed most, \
+             default 30), or the largest rows for the first one. Take one, let the game run, take \
+             another: what grows is at the top.",
+            json!({"label": {"type": "string"}, "limit": {"type": "integer"}}),
+            &[],
+        ),
+        tool(
+            "editor_memory_diff",
+            "Compare two saved RAM map snapshots (file names from the memory/ folder, or paths): \
+             the last two when both are left out, the one before `after` when only that is given. \
+             Returns the limit rows that changed most (default 30) and a table.",
+            json!({
+                "before": {"type": "string"},
+                "after": {"type": "string"},
+                "limit": {"type": "integer"},
+            }),
+            &[],
+        ),
+        tool(
             "editor_graphics",
             "Read and change the graphics settings (docs/graphics-settings.md). Without arguments it \
              returns every setting (key, label, group, kind, value, whether changed by hand), the \

@@ -46,6 +46,11 @@ pub trait Component: AsAny {
         short_type_name(std::any::type_name::<Self>())
     }
 
+    /// What the component holds in memory, for the RAM map
+    /// (`core::memory`): counts and estimated bytes of its big parts.
+    /// Nothing by default; every component is counted by type anyway.
+    fn memory_report(&self, _report: &mut crate::core::memory::Report) {}
+
     /// Serializable description used for scene files and play-mode
     /// snapshots. Components that return `None` are either rebuilt by a
     /// prefab (see `ComponentData::Player`) or not persisted at all.

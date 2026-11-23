@@ -59,6 +59,11 @@ pub trait Device {
     fn video_memory(&self) -> Option<(u64, u64)> {
         None
     }
+    /// The backend's own memory, by kind: (name, how many, bytes), for
+    /// the RAM map (`core::memory`). Empty where it does not know.
+    fn memory_items(&self) -> Vec<(String, u64, u64)> {
+        Vec::new()
+    }
 
     fn create_buffer(&self, usage: BufferUsage, memory: BufferMemory, size: usize, data: Option<&[u8]>) -> RawId;
     /// Replace `data.len()` bytes at `offset`. `orphan` hands the driver a

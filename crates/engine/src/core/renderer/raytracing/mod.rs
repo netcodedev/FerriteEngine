@@ -522,6 +522,15 @@ pub fn end_collect() -> Vec<TlasInstance> {
 }
 
 /// Bottom level structures kept now (statistics).
+/// The structures kept between frames (their GPU memory is in the
+/// allocator's rows), and this frame's lists.
+pub fn memory_report(report: &mut crate::core::memory::Report) {
+    use crate::core::memory::vec_bytes;
+    report.add("rays", "mesh structures cached (BLAS)", cached_meshes(), 0);
+    report.add("rays", "skinned meshes posed", SKINNED.with(|s| s.borrow().len()), 0);
+    report.add("rays", "instances this frame", INSTANCES.with(|i| i.borrow().len()), INSTANCES.with(|i| vec_bytes(&i.borrow())));
+}
+
 pub fn cached_meshes() -> usize {
     CACHE.with(|c| c.borrow().len())
 }

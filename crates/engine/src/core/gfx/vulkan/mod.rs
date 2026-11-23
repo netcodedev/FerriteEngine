@@ -356,9 +356,9 @@ impl State {
                         // structures' instances while driving) piled up
                         // here by the hundred, 16 GB in three minutes.
                         let fits = self.spare_bytes + size <= resources::SPARE_LIMIT;
-                        let spare = self.spare.entry(size).or_default();
-                        if fits && spare.len() < 8 && a.mapped_ptr().is_some() {
-                            spare.push((b, a));
+                        let room = self.spare.get(&size).map_or(0, Vec::len) < 8;
+                        if fits && room && a.mapped_ptr().is_some() {
+                            self.spare.entry(size).or_default().push((b, a));
                             self.spare_bytes += size;
                         } else {
                             self.gpu.device.destroy_buffer(b, None);
@@ -693,6 +693,34 @@ impl Device for VkDevice {
 
     fn video_memory(&self) -> Option<(u64, u64)> {
         self.with(|s| s.gpu.memory_budget())
+    }
+
+    /// The allocator's allocations by name, its blocks, and the freed
+    /// buffers kept for reuse (`spare`).
+    fn memory_items(&self) -> Vec<(String, u64, u64)> {
+        self.with(|s| {
+            let report = s.allocator.generate_report();
+            let mut items: Vec<(String, u64, u64)> = Vec::new();
+            for a in &report.allocations {
+                match items.iter_mut().find(|i| i.0 == a.name) {
+                    Some(item) => {
+                        item.1 += 1;
+                        item.2 += a.size;
+                    }
+                    None => items.push((a.name.clone(), 1, a.size)),
+                }
+            }
+            items.sort_by(|a, b| b.2.cmp(&a.2));
+            items.push(("allocator blocks (reserved)".to_owned(), report.blocks.len() as u64, report.total_capacity_bytes));
+            items.push((
+                "allocator blocks: unused part".to_owned(),
+                0,
+                report.total_capacity_bytes.saturating_sub(report.total_allocated_bytes),
+            ));
+            let spare: usize = s.spare.values().map(Vec::len).sum();
+            items.push(("freed buffers kept for reuse".to_owned(), spare as u64, s.spare_bytes as u64));
+            items
+        })
     }
 
     fn create_buffer(&self, usage: BufferUsage, memory: BufferMemory, size: usize, data: Option<&[u8]>) -> RawId {

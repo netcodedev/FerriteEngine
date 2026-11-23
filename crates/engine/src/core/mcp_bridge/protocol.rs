@@ -263,6 +263,26 @@ pub enum BridgeRequest {
         #[serde(default)]
         note: Option<String>,
     },
+    /// Take a RAM map snapshot (`core::memory`), save it and compare it
+    /// with the one saved before.
+    MemorySnapshot {
+        #[serde(default)]
+        label: Option<String>,
+        /// Rows of the comparison returned (default 30).
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    /// Compare two saved snapshots (file names in the snapshot folder, or
+    /// paths); the last two when left out, the one before `after` when only
+    /// that is given.
+    MemoryDiff {
+        #[serde(default)]
+        before: Option<String>,
+        #[serde(default)]
+        after: Option<String>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
     /// Read and change the graphics settings (docs/graphics-settings.md):
     /// all at once, in this order: `preset`, then each of `set` (key to a
     /// level or option name, true/false, or a number), `reset` (back to

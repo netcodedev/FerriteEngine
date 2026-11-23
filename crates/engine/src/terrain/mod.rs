@@ -57,6 +57,13 @@ pub struct ChunkMesh<T: VertexAttributes> {
     vertices: Vec<T>,
 }
 
+impl<T: VertexAttributes> ChunkMesh<T> {
+    /// Bytes of the CPU copy (none once uploaded and released).
+    pub fn cpu_bytes(&self) -> usize {
+        crate::core::memory::vec_bytes(&self.vertices) + self.indices.as_ref().map_or(0, crate::core::memory::vec_bytes)
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
 pub struct ChunkBounds {
     pub min: (i32, i32, i32),

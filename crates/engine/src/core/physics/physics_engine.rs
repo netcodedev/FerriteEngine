@@ -55,6 +55,28 @@ pub struct PhysicsEngine {
 }
 
 impl PhysicsEngine {
+    /// Bodies and colliders, the triangle meshes' geometry (each shape
+    /// once, however many colliders share it), the query index.
+    pub fn memory_report(&self, report: &mut crate::core::memory::Report) {
+        report.add("physics", "rigid bodies", self.rigid_bodies.len(), self.rigid_bodies.len() * 400);
+        report.add("physics", "colliders", self.colliders.len(), self.colliders.len() * 300);
+        let mut seen = std::collections::HashSet::new();
+        let (mut meshes, mut bytes) = (0, 0);
+        for (_, collider) in self.colliders.iter() {
+            let shape = collider.shared_shape();
+            if !seen.insert(std::sync::Arc::as_ptr(&shape.0) as *const u8 as usize) {
+                continue;
+            }
+            if let Some(mesh) = shape.as_trimesh() {
+                meshes += 1;
+                // Vertices and triangles, and about as much again for the BVH.
+                bytes += mesh.vertices().len() * 12 + mesh.indices().len() * 12 * 3;
+            }
+        }
+        report.add("physics", "triangle mesh shapes (estimate with BVH)", meshes, bytes);
+        self.index.memory_report(report);
+    }
+
     pub fn new() -> Self {
         let gravity = Vector::new(0.0, -9.81, 0.0);
         let integration_parameters = IntegrationParameters::default();

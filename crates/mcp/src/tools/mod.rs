@@ -144,6 +144,8 @@ pub fn dispatch(state: &State, name: &str, args: Value) -> Result<Value, String>
         "editor_set_debug_views" => editor_pass(state, args, "set_debug_views"),
         "editor_graphics" => editor_pass(state, args, "graphics"),
         "editor_agent_control" => editor_pass(state, args, "agent_control"),
+        "editor_memory_snapshot" => editor_pass(state, args, "memory_snapshot"),
+        "editor_memory_diff" => editor_pass(state, args, "memory_diff"),
         "viewport_screenshot" => viewport_screenshot(state, args),
         "batch" => batch(state, args),
         other => Err(format!("unknown tool: {other}")),

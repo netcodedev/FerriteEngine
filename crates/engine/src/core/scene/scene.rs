@@ -1628,3 +1628,25 @@ impl Drop for Probe {
         crate::core::spike_probe::add(self.1, self.0);
     }
 }
+
+impl Scene {
+    /// What the scene's long-lived holders keep in memory, for the RAM map
+    /// (`core::memory`): counts and estimated bytes.
+    pub fn memory_report(&self, report: &mut crate::core::memory::Report) {
+        fn walk(entity: &Entity, report: &mut crate::core::memory::Report) {
+            report.add("scene", "entities", 1, 0);
+            for component in entity.components() {
+                report.add("components", &component.display_name(), 1, 0);
+                component.memory_report(report);
+            }
+            for child in entity.get_children() {
+                walk(child, report);
+            }
+        }
+        for entity in &self.entities {
+            walk(entity, report);
+        }
+        self.physics_engine.memory_report(report);
+        raytracing::memory_report(report);
+    }
+}

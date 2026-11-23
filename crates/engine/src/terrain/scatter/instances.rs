@@ -463,6 +463,17 @@ fn pick_lod_index(distance: f32, lod_count: usize) -> usize {
 impl Component for ScatterInstances {
     fn update(&mut self, _: &mut Scene, _: &mut Entity, _: f64) {}
 
+    fn memory_report(&self, report: &mut crate::core::memory::Report) {
+        use crate::core::memory::vec_bytes;
+        let instances: usize = self.instances_by_variant.iter().map(vec_bytes).sum::<usize>()
+            + self.cells_by_variant.iter().map(vec_bytes).sum::<usize>()
+            + vec_bytes(&self.placements)
+            + vec_bytes(&self.colliders);
+        let name = if self.cell.is_some() { "detail cells: instances" } else { "chunk layers: instances" };
+        report.add("scatter", name, 1, instances);
+        report.add("scatter", "instance colliders", self.colliders.len(), 0);
+    }
+
     fn render(
         &self,
         scene: &Scene,

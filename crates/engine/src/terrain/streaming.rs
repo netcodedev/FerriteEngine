@@ -106,6 +106,15 @@ pub struct Streamer<R> {
 }
 
 impl<R: Send + 'static> Streamer<R> {
+    /// Columns asked for and not back yet (their chunks, meshes and
+    /// colliders wait in the channel once made), and columns loaded.
+    pub fn memory_report(&self, report: &mut crate::core::memory::Report) {
+        report.add("terrain", "streaming: columns in flight", self.requested.len(), 0);
+        report.add("terrain", "streaming: columns loaded", self.loaded.len(), 0);
+    }
+}
+
+impl<R: Send + 'static> Streamer<R> {
     /// Start `workers` threads that make columns with `make`.
     pub fn new(
         workers: usize,

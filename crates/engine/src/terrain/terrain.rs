@@ -1042,6 +1042,18 @@ fn camera_eye(scene: &Scene) -> Point3<f32> {
 }
 
 impl Component for Terrain {
+    fn memory_report(&self, report: &mut crate::core::memory::Report) {
+        if let Some(streamer) = &self.streamer {
+            streamer.memory_report(report);
+        }
+        self.planting.memory_report(report);
+        self.scatter.memory_report(report);
+        self.horizon.memory_report(report);
+        if let Some(source) = &self.source {
+            source.memory_report(report);
+        }
+    }
+
     fn update(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {
         match self.wants_world(delta_time) {
             Some(remaining) if remaining > 0.0 => self.reseed_in = Some(remaining),

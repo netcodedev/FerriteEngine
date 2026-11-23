@@ -125,7 +125,34 @@ impl Model {
             pose_revision: next_pose_revision(),
             cull_bounds: None,
             motion: Default::default(),
+            tally: crate::core::memory::Tally::new(&crate::core::memory::tally::MODELS),
         }
+        .tallied()
+    }
+
+    fn tallied(mut self) -> Self {
+        self.count_geometry();
+        self
+    }
+
+    /// Count the CPU copies of the geometry (see `tally`).
+    fn count_geometry(&mut self) {
+        use crate::core::memory::vec_bytes;
+        let v3 = std::mem::size_of::<russimp_ng::Vector3D>();
+        let assimp: usize = self
+            .model
+            .meshes
+            .iter()
+            .map(|m| {
+                (m.vertices.capacity() + m.normals.capacity() + m.tangents.capacity() + m.bitangents.capacity()) * v3
+                    + m.texture_coords.iter().flatten().map(|c| c.capacity() * v3).sum::<usize>()
+                    + m.colors.iter().flatten().map(|c| c.capacity() * 16).sum::<usize>()
+                    + m.faces.iter().map(|f| 24 + f.0.capacity() * 4).sum::<usize>()
+                    + m.bones.iter().map(|b| b.weights.capacity() * 8).sum::<usize>()
+            })
+            .sum();
+        let meshes: usize = self.meshes.iter().map(|(_, m)| vec_bytes(&m.vertices) + vec_bytes(&m.indices)).sum();
+        self.tally.set(assimp + meshes);
     }
 
     pub fn init(&mut self) {
@@ -278,6 +305,7 @@ impl Model {
             self.meshes.push((mesh.name.clone(), model_mesh));
         }
         self.cull_bounds = self.model_space_bounds();
+        self.count_geometry();
     }
 
     /// See `cull_bounds`.

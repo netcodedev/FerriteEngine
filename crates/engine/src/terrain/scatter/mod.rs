@@ -82,6 +82,11 @@ pub struct Scatter {
 }
 
 impl Scatter {
+    /// Instances taken out (felled), kept for chunks loaded again.
+    pub fn memory_report(&self, report: &mut crate::core::memory::Report) {
+        report.add("scatter", "felled instances remembered", self.removed.len(), self.removed.capacity() * 32);
+    }
+
     /// Models are loaded on the first `tick`, on the GL thread; a missing
     /// model is reported in the status property and the log, never fatal.
     pub fn new(layers: Vec<ScatterLayerData>) -> Self {

@@ -15,6 +15,11 @@ pub use ron;
 pub use serde;
 pub use bincode;
 
+/// Counts the heap for the RAM map (`core::memory`). In the engine, so the
+/// editor, its scripts library and exported games share the one counter.
+#[global_allocator]
+static ALLOCATOR: core::memory::heap::Counting = core::memory::heap::Counting;
+
 // Lets `#[derive(Script)]` refer to `::ferrite` inside the engine as well.
 extern crate self as ferrite;
 

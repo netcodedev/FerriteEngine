@@ -61,6 +61,16 @@ fn key(x: f32, z: f32) -> Key {
 }
 
 impl RayIndex {
+    pub(super) fn memory_report(&self, report: &mut crate::core::memory::Report) {
+        use crate::core::memory::vec_bytes;
+        let bytes = self.cells.values().map(vec_bytes).sum::<usize>()
+            + self.cells.capacity() * 40
+            + vec_bytes(&self.loose)
+            + self.placed.capacity() * (std::mem::size_of::<(ColliderHandle, Placed)>() + 8)
+            + vec_bytes(&self.bodies);
+        report.add("physics", "query index (colliders placed)", self.placed.len(), bytes);
+    }
+
     /// Bring the grid in line with `bodies` and `colliders` (whose poses
     /// are propagated already).
     pub(super) fn sync(&mut self, bodies: &RigidBodySet, colliders: &ColliderSet) {

@@ -6,6 +6,7 @@
 use std::{collections::VecDeque, time::Instant};
 
 use ferrite::core::{
+    memory,
     view_frustum::{Culled, ViewFrustum},
     entity::Entity,
     primitives::{Offset, Position, Size},
@@ -120,6 +121,8 @@ pub struct Memory {
     pub system_available: Option<u64>,
     /// `(used, total)` in bytes when the driver exposes it.
     pub gpu: Option<(u64, u64)>,
+    /// Rust's allocations alive (`memory::heap`).
+    pub heap: u64,
 }
 
 #[derive(Default, Clone)]
@@ -139,8 +142,28 @@ pub struct Stats {
     pass_ms: Option<[f32; profiler::PASSES]>,
     pub counts: SceneCounts,
     pub memory: Memory,
+    /// The last RAM map snapshot compared with the one before it (see
+    /// `memory_snapshot`).
+    pub memory_diff: Option<ferrite::core::memory::Diff>,
     pub gl: GlInfo,
     last_slow_refresh: Option<Instant>,
+}
+
+/// Take a RAM map snapshot of `scene`, save it and keep its comparison
+/// with the one before in `stats`: the snapshot's path and that comparison.
+pub fn memory_snapshot(
+    scene: &Scene,
+    stats: &mut Stats,
+    label: &str,
+) -> Result<(std::path::PathBuf, Option<ferrite::core::memory::Diff>), String> {
+    use ferrite::core::memory;
+    let snapshot = memory::Snapshot::take(Some(scene), label);
+    let (path, diff) = memory::save(&snapshot)?;
+    log::info!("memory snapshot: {}", path.display());
+    if diff.is_some() {
+        stats.memory_diff = diff.clone();
+    }
+    Ok((path, diff))
 }
 
 impl Stats {
@@ -154,6 +177,7 @@ impl Stats {
             pass_ms: None,
             counts: SceneCounts::default(),
             memory: Memory::default(),
+            memory_diff: None,
             gl: GlInfo::default(),
             last_slow_refresh: None,
         }
@@ -289,6 +313,7 @@ fn read_memory() -> Memory {
         system_total: read_kib_field(&meminfo, "MemTotal:"),
         system_available: read_kib_field(&meminfo, "MemAvailable:"),
         gpu: read_gpu_memory(),
+        heap: ferrite::core::memory::heap::live().0,
     }
 }
 
@@ -681,6 +706,11 @@ enum Key {
     Virtual,
     System,
     Vram,
+    Heap,
+    /// The resident memory's change between the last two RAM map snapshots.
+    SnapshotChange,
+    /// What grew most between them (index: first, second, third).
+    Growth(usize),
     Entities,
     Components,
     Chunks,
@@ -759,6 +789,11 @@ const SECTIONS: &[(&str, &str, &[Key])] = &[
             Key::Virtual,
             Key::System,
             Key::Vram,
+            Key::Heap,
+            Key::SnapshotChange,
+            Key::Growth(0),
+            Key::Growth(1),
+            Key::Growth(2),
         ],
     ),
     (
@@ -827,6 +862,11 @@ fn row_label(key: Key) -> &'static str {
         Key::Virtual => tr!("stats.row.virtual"),
         Key::System => tr!("stats.row.system"),
         Key::Vram => tr!("stats.row.vram"),
+        Key::Heap => tr!("stats.row.heap"),
+        Key::SnapshotChange => tr!("stats.row.snapshot_change"),
+        Key::Growth(0) => tr!("stats.row.growth_0"),
+        Key::Growth(1) => tr!("stats.row.growth_1"),
+        Key::Growth(2) => tr!("stats.row.growth_2"),
         Key::Entities => tr!("stats.row.entities"),
         Key::Components => tr!("stats.row.components"),
         Key::Chunks => tr!("stats.row.chunks"),
@@ -968,6 +1008,26 @@ impl StatsPanel {
                 Some((used, total)) => format!("{} / {}", bytes(Some(used)), bytes(Some(total))),
                 None => tr!("common.not_available").into(),
             },
+            Key::Heap => bytes(Some(m.heap)),
+            Key::SnapshotChange => match &stats.memory_diff {
+                Some(diff) => {
+                    let resident = diff
+                        .changes
+                        .iter()
+                        .find(|c| c.group == memory::PROCESS && c.name == "resident (RSS)")
+                        .map_or(0, |c| c.delta());
+                    tr!("stats.snapshot_change", change = memory::signed(resident), minutes = diff.seconds / 60).to_string()
+                }
+                None => tr!("stats.snapshot_hint").to_string(),
+            },
+            Key::Growth(index) => stats
+                .memory_diff
+                .as_ref()
+                .and_then(|diff| diff.top_growth(3).nth(index))
+                .map_or_else(
+                    || "-".to_string(),
+                    |c| shorten(&format!("{} {}", memory::signed(c.delta()), c.name), 26),
+                ),
             Key::Entities => c.entities.to_string(),
             Key::Components => c.components.to_string(),
             Key::Chunks => c.transient.to_string(),

@@ -65,6 +65,13 @@ pub(super) struct Planting {
 }
 
 impl Planting {
+    /// Scatter points worked out and not taken yet.
+    pub fn memory_report(&self, report: &mut crate::core::memory::Report) {
+        let bytes: usize = self.ready.values().map(crate::core::memory::vec_bytes).sum();
+        report.add("scatter", "planting: points ready", self.ready.len(), bytes);
+        report.add("scatter", "planting: asked for", self.pending.len(), 0);
+    }
+
     pub(super) fn new() -> Self {
         let (jobs, job_rx) = mpsc::channel::<Job>();
         let (done_tx, done) = mpsc::channel::<Done>();

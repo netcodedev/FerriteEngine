@@ -292,6 +292,12 @@ impl TerrainChunk {
 impl Component for TerrainChunk {
     fn update(&mut self, _: &mut Scene, _: &mut Entity, _: f64) {}
 
+    fn memory_report(&self, report: &mut crate::core::memory::Report) {
+        let cpu: usize = self.meshes.iter().map(ChunkMesh::cpu_bytes).sum::<usize>()
+            + self.water_mesh.as_ref().map_or(0, ChunkMesh::cpu_bytes);
+        report.add("terrain", "chunks: CPU mesh copies (empty once uploaded)", 1, cpu);
+    }
+
     fn render(&self, _: &Scene, _: &Entity, _: &Matrix4<f32>, _: &Matrix4<f32>) {
         // Drawn by the terrain, with the other chunks (see `draw`).
     }

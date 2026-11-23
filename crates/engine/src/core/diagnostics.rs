@@ -126,6 +126,7 @@ pub fn install(app: &str) {
         system: machine_summary(),
     });
     install_panic_hook();
+    super::memory::heap::tune_malloc();
 }
 
 /// Where `app`'s logs and crash reports go: `FERRITE_LOG_DIR` if set, else
@@ -157,6 +158,11 @@ pub fn log_dir(app: &str) -> PathBuf {
             .and_then(|exe| exe.parent().map(|d| d.join("logs")))
     })
     .unwrap_or_else(|| std::env::temp_dir().join(app).join("logs"))
+}
+
+/// This run's log folder, once `install` ran.
+pub fn folder() -> Option<PathBuf> {
+    lock(&STATE).as_ref().map(|s| s.dir.clone())
 }
 
 /// `name` as a folder name every system accepts.
@@ -227,7 +233,7 @@ fn file_stamp(t: SystemTime) -> String {
 }
 
 /// `2026-11-19 21:47:36`.
-fn readable_stamp(t: SystemTime) -> String {
+pub fn readable_stamp(t: SystemTime) -> String {
     let (y, mo, d, h, mi, s) = utc(t);
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
 }

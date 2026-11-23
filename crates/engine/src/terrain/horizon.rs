@@ -459,6 +459,12 @@ pub struct Horizon {
 }
 
 impl Horizon {
+    pub fn memory_report(&self, report: &mut crate::core::memory::Report) {
+        let heights: usize = self.heights.as_ref().map_or(0, |h| h.levels.iter().map(crate::core::memory::vec_bytes).sum());
+        let meshes = self.mesh.as_ref().map_or(0, ChunkMesh::cpu_bytes) + self.water.as_ref().map_or(0, ChunkMesh::cpu_bytes);
+        report.add("terrain", "horizon: heights and CPU meshes", 1, heights + meshes);
+    }
+
     pub fn new() -> Self {
         Self {
             mesh: None,

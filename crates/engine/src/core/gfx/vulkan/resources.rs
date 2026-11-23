@@ -77,6 +77,10 @@ impl State {
         if memory == BufferMemory::Dynamic {
             if let Some((b, a)) = self.spare.get_mut(&size).and_then(|s| s.pop()) {
                 self.spare_bytes = self.spare_bytes.saturating_sub(size);
+                if self.spare.get(&size).is_some_and(Vec::is_empty) {
+                    // Sizes come and go (instance lists while driving).
+                    self.spare.remove(&size);
+                }
                 let ptr = a.mapped_ptr().map_or(std::ptr::null_mut(), |p| p.as_ptr() as *mut u8);
                 return Some((b, a, ptr));
             }
@@ -94,7 +98,11 @@ impl State {
         } else {
             BUFFER_USAGE
         };
-        let (b, a) = self.raw_buffer(size as u64, usage, location, "buffer")?;
+        let name = match memory {
+            BufferMemory::Static => "buffer (GPU)",
+            BufferMemory::Dynamic => "buffer (host-visible, written by the CPU)",
+        };
+        let (b, a) = self.raw_buffer(size as u64, usage, location, name)?;
         let ptr = a.mapped_ptr().map_or(std::ptr::null_mut(), |p| p.as_ptr() as *mut u8);
         Some((b, a, ptr))
     }
@@ -355,8 +363,17 @@ impl State {
                 }
             };
             let requirements = self.gpu.device.get_image_memory_requirements(image);
+            let name = if usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT) {
+                "texture: depth"
+            } else if desc.kind == TextureKind::D3 {
+                "texture: 3D"
+            } else if layers > 1 {
+                "texture: array or cube"
+            } else {
+                "texture: 2D"
+            };
             let allocation = match self.allocator.allocate(&AllocationCreateDesc {
-                name: "texture",
+                name,
                 requirements,
                 location: MemoryLocation::GpuOnly,
                 linear: false,

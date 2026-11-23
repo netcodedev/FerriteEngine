@@ -86,6 +86,8 @@ pub struct Model {
     /// Where each mesh was drawn in the last view, for the motion vectors
     /// of TAA (see `renderer::taa::motion`).
     motion: crate::core::renderer::taa::motion::History,
+    /// Counts the CPU copies of the geometry in the RAM map.
+    tally: crate::core::memory::Tally,
 }
 
 /// Raw per-submesh geometry extracted from a `Model` for callers that need

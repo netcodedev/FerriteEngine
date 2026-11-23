@@ -172,6 +172,27 @@ fn respond(request: BridgeRequest, cx: Context) -> BridgeResponse {
         }
         BridgeRequest::MaterialPreview { asset, shape, wind } => super::material::bridge::preview(state, &asset, shape, wind),
         BridgeRequest::ScatterGraphEdit { asset, ops } => scatter_graph_edit(state, &asset, ops),
+        BridgeRequest::MemorySnapshot { label, limit } => {
+            let label = label.unwrap_or_default();
+            super::stats::memory_snapshot(scene, &mut state.stats, &label).map(|(path, diff)| {
+                let limit = limit.unwrap_or(30);
+                match diff {
+                    Some(diff) => json!({"saved": path.display().to_string(), "compared": diff_json(&diff, limit)}),
+                    None => {
+                        let snapshot = ferrite::core::memory::Snapshot::load(&path).ok();
+                        let mut items = snapshot.map(|s| s.items).unwrap_or_default();
+                        items.sort_by_key(|i| std::cmp::Reverse(i.bytes));
+                        let rows: Vec<_> = items
+                            .iter()
+                            .take(limit)
+                            .map(|i| json!({"group": i.group, "name": i.name, "count": i.count, "bytes": i.bytes, "size": ferrite::core::memory::size(i.bytes as i64)}))
+                            .collect();
+                        json!({"saved": path.display().to_string(), "first": true, "largest": rows})
+                    }
+                }
+            })
+        }
+        BridgeRequest::MemoryDiff { before, after, limit } => memory_diff(before, after, limit.unwrap_or(30)),
         BridgeRequest::AgentControl { active, note } => {
             let now = std::time::Instant::now();
             if active {
@@ -536,6 +557,64 @@ fn component_catalog() -> serde_json::Value {
 
 /// A scene path below the project, as typed by a tool: `main.ron` and
 /// `scenes/main.ron` both name `scenes/main.ron`.
+/// A comparison as the MCP tools return it: the `limit` rows that changed
+/// most, and the same as a table.
+fn diff_json(diff: &ferrite::core::memory::Diff, limit: usize) -> serde_json::Value {
+    use ferrite::core::memory::{signed, size};
+    let rows: Vec<_> = diff
+        .changes
+        .iter()
+        .take(limit)
+        .map(|c| {
+            json!({
+                "group": c.group,
+                "name": c.name,
+                "before": size(c.before as i64),
+                "after": size(c.after as i64),
+                "change": signed(c.delta()),
+                "change_bytes": c.delta(),
+                "count_before": c.count_before,
+                "count_after": c.count_after,
+            })
+        })
+        .collect();
+    json!({"before": diff.before, "after": diff.after, "minutes": diff.seconds / 60, "changes": rows, "table": diff.text(limit)})
+}
+
+/// Compare two saved snapshots (see `BridgeRequest::MemoryDiff`).
+fn memory_diff(before: Option<String>, after: Option<String>, limit: usize) -> Result<serde_json::Value, String> {
+    use ferrite::core::memory::{self, Diff, Snapshot};
+    let saved = memory::saved();
+    let find = |name: &str| -> Result<PathBuf, String> {
+        let path = PathBuf::from(name);
+        if path.is_absolute() {
+            return Ok(path);
+        }
+        saved
+            .iter()
+            .find(|p| p.file_name().is_some_and(|f| f.to_string_lossy() == name) || p.file_stem().is_some_and(|f| f.to_string_lossy() == name))
+            .cloned()
+            .ok_or_else(|| format!("no snapshot named {name} in {}", memory::folder().map(|d| d.display().to_string()).unwrap_or_default()))
+    };
+    let after = match after {
+        Some(name) => find(&name)?,
+        None => saved.last().cloned().ok_or("no snapshots saved yet")?,
+    };
+    let before = match before {
+        Some(name) => find(&name)?,
+        None => saved
+            .iter()
+            .rev()
+            .find(|p| **p < after)
+            .cloned()
+            .ok_or("no snapshot before that one")?,
+    };
+    let diff = Diff::between(&Snapshot::load(&before)?, &Snapshot::load(&after)?);
+    let mut result = diff_json(&diff, limit);
+    result["files"] = json!([before.display().to_string(), after.display().to_string()]);
+    Ok(result)
+}
+
 pub fn scene_file_path(path: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(path.trim_start_matches("./"));
     if path.is_absolute()

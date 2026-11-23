@@ -4,6 +4,7 @@
 use cgmath::{EuclideanSpace, Point3};
 use ferrite::core::{
     assets::{self, AssetId, AssetKind},
+    memory,
     entity::{
         component::{animation_component::AnimationComponent, model_component::ModelComponent},
         EntityHandle,
@@ -291,6 +292,35 @@ impl EditorLayer {
                 if let Some(event) = self.scripts.rebuild() {
                     self.on_script_event(event);
                 }
+            }
+            Command::MemorySnapshot => {
+                let taken = crate::editor::stats::memory_snapshot(&self.scene, &mut self.state.borrow_mut().stats, "");
+                let message = match taken {
+                    Ok((_, Some(diff))) => {
+                        let resident = diff
+                            .changes
+                            .iter()
+                            .find(|c| c.group == memory::PROCESS && c.name == "resident (RSS)")
+                            .map_or(0, |c| c.delta());
+                        let top = diff
+                            .top_growth(1)
+                            .next()
+                            .map(|c| format!("{} {} {}", c.group, c.name, memory::signed(c.delta())))
+                            .unwrap_or_else(|| "-".into());
+                        tr!(
+                            "commands.memory_snapshot_diff",
+                            change = memory::signed(resident),
+                            minutes = diff.seconds / 60,
+                            top = top
+                        )
+                        .to_string()
+                    }
+                    Ok((path, None)) => {
+                        tr!("commands.memory_snapshot_first", path = path.display().to_string()).to_string()
+                    }
+                    Err(error) => tr!("commands.memory_snapshot_failed", error = error).to_string(),
+                };
+                self.state.borrow_mut().set_status(message);
             }
             Command::ExportGame(platform) => {
                 // The export packs what is on disk.
@@ -967,6 +997,7 @@ impl EditorLayer {
         }
         let command = match (key, ctrl, shift) {
             (Key::R, true, _) => Some(Command::ReloadScripts),
+            (Key::M, true, true) => Some(Command::MemorySnapshot),
             (Key::P, true, _) => Some(match mode {
                 Mode::Edit => Command::Play,
                 Mode::Play => Command::Stop,

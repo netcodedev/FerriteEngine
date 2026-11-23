@@ -132,6 +132,9 @@ pub enum Command {
     RefreshAssets,
     /// Build the game's scripts and load them again.
     ReloadScripts,
+    /// Take a RAM map snapshot (`ferrite::core::memory`) and compare it with
+    /// the one before.
+    MemorySnapshot,
     /// Let the user choose a folder and export the game for a platform
     /// into it.
     ExportGame(ferrite::core::export::Platform),
