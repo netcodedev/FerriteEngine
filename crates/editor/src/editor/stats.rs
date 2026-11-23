@@ -411,6 +411,7 @@ pub struct DebugSwitches {
     pub freeze_culling: DataSource<bool>,
     pub ambient_occlusion: DataSource<bool>,
     pub sun_shadow_maps: DataSource<bool>,
+    pub lamp_shadows: DataSource<bool>,
 }
 
 impl Clone for DebugSwitches {
@@ -421,6 +422,7 @@ impl Clone for DebugSwitches {
             freeze_culling: self.freeze_culling.clone(),
             ambient_occlusion: self.ambient_occlusion.clone(),
             sun_shadow_maps: self.sun_shadow_maps.clone(),
+            lamp_shadows: self.lamp_shadows.clone(),
         }
     }
 }
@@ -433,6 +435,7 @@ impl DebugSwitches {
             freeze_culling: DataSource::new(false),
             ambient_occlusion: DataSource::new(false),
             sun_shadow_maps: DataSource::new(false),
+            lamp_shadows: DataSource::new(false),
         }
     }
 
@@ -443,6 +446,7 @@ impl DebugSwitches {
         ViewFrustum::set_frozen(self.freeze_culling.read());
         debug_views::set_ambient_occlusion(self.ambient_occlusion.read());
         debug_views::set_sun_shadows(self.sun_shadow_maps.read());
+        debug_views::set_lamp_shadows(self.lamp_shadows.read());
     }
 
     pub fn to_json(&self) -> serde_json::Value {
@@ -451,6 +455,7 @@ impl DebugSwitches {
             "freeze_culling": self.freeze_culling.read(),
             "ambient_occlusion": self.ambient_occlusion.read(),
             "sun_shadow_maps": self.sun_shadow_maps.read(),
+            "lamp_shadows": self.lamp_shadows.read(),
         })
     }
 }
@@ -895,10 +900,11 @@ impl StatsPanel {
                 }
             }
             if *id == "Debug views" {
-                let rows: [(&str, &DataSource<bool>, fn(bool)); 3] = [
+                let rows: [(&str, &DataSource<bool>, fn(bool)); 4] = [
                     (tr!("stats.debug.freeze_culling"), &self.switches.freeze_culling, ViewFrustum::set_frozen),
                     (tr!("stats.debug.ambient_occlusion"), &self.switches.ambient_occlusion, debug_views::set_ambient_occlusion),
                     (tr!("stats.debug.sun_shadow_maps"), &self.switches.sun_shadow_maps, debug_views::set_sun_shadows),
+                    (tr!("stats.debug.lamp_shadows"), &self.switches.lamp_shadows, debug_views::set_lamp_shadows),
                 ];
                 for (label, on, set) in rows {
                     section.add_child(Box::new(ToggleRow::new(

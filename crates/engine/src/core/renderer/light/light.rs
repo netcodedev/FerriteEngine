@@ -90,9 +90,14 @@ pub struct LightSettings {
     /// 0 lights only what it shines on directly.
     pub bounce: f32,
     pub enabled: bool,
-    /// Point and spot lights: whether things block it (see `shadow`). Only
-    /// the few lights nearest the camera get shadows each frame.
+    /// Point and spot lights: whether things block it. With cube maps
+    /// (`shadow`) only the few lights nearest the camera get shadows each
+    /// frame; ray traced (`shadows.raytraced_lights`) all of them.
     pub shadows: bool,
+    /// Point and spot lights: the lamp's size, in metres (a sphere this
+    /// big). Ray traced shadows (`shadows.raytraced_lights`) soften with
+    /// it; the shadow maps ignore it.
+    pub radius: f32,
     /// How much its brightness wavers, like a flame: 0 steady, 1 a lot.
     pub flicker: f32,
 }
@@ -110,6 +115,7 @@ impl Default for LightSettings {
             bounce: 1.0,
             enabled: true,
             shadows: true,
+            radius: 0.05,
             flicker: 0.0,
         }
     }
@@ -125,6 +131,7 @@ impl LightSettings {
     pub const RANGE_RANGE: (f32, f32) = (0.1, 200.0);
     pub const ANGLE_RANGE: (f32, f32) = (1.0, 89.0);
     pub const BOUNCE_RANGE: (f32, f32) = (0.0, 4.0);
+    pub const RADIUS_RANGE: (f32, f32) = (0.0, 0.5);
 
     pub fn set_color(&mut self, color: [f32; 3]) {
         self.color = color.map(|c| if c.is_finite() { c.clamp(0.0, 1.0) } else { 1.0 });
@@ -154,6 +161,10 @@ impl LightSettings {
         self.bounce = clamp_finite(bounce, Self::BOUNCE_RANGE, 1.0);
     }
 
+    pub fn set_radius(&mut self, radius: f32) {
+        self.radius = clamp_finite(radius, Self::RADIUS_RANGE, 0.05);
+    }
+
     /// Every field through its setter, so out of range values (from a hand
     /// edited scene file) are clamped.
     pub fn sanitized(self) -> Self {
@@ -172,6 +183,7 @@ impl LightSettings {
         s.set_outer_angle(self.outer_angle);
         s.set_inner_angle(self.inner_angle.min(s.outer_angle));
         s.set_bounce(self.bounce);
+        s.set_radius(self.radius);
         s.flicker = clamp_finite(self.flicker, (0.0, 1.0), 0.0);
         s
     }
@@ -279,6 +291,7 @@ impl Light {
             bounce: s.bounce,
             casts_shadows: s.shadows && s.kind != LightKind::Directional,
             shadow_layer: None,
+            radius: s.radius,
         })
     }
 }
@@ -347,6 +360,12 @@ impl Component for Light {
                 LightSettings::BOUNCE_RANGE.0,
                 LightSettings::BOUNCE_RANGE.1,
             ),
+            Property::ranged(
+                "radius",
+                s.radius,
+                LightSettings::RADIUS_RANGE.0,
+                LightSettings::RADIUS_RANGE.1,
+            ),
         ]
     }
 
@@ -386,6 +405,7 @@ impl Component for Light {
             "inner angle" => float.into_iter().for_each(|v| s.set_inner_angle(v)),
             "outer angle" => float.into_iter().for_each(|v| s.set_outer_angle(v)),
             "bounce" => float.into_iter().for_each(|v| s.set_bounce(v)),
+            "radius" => float.into_iter().for_each(|v| s.set_radius(v)),
             "flicker" => float.into_iter().for_each(|v| s.flicker = v.clamp(0.0, 1.0)),
             _ => {}
         }
@@ -409,6 +429,8 @@ pub struct LightSource {
     pub casts_shadows: bool,
     /// Its layer in the light shadow maps this frame, if it got one.
     pub shadow_layer: Option<u32>,
+    /// The lamp's size (metres), for soft ray traced shadows.
+    pub radius: f32,
 }
 
 impl LightSource {
@@ -440,7 +462,12 @@ impl LightSource {
                 self.cos_inner,
                 self.cos_outer,
                 self.shadow_layer.map_or(-1.0, |layer| layer as f32),
-                0.0,
+                // Read by `castsShadows` in `pbr/lights.glsl`.
+                if self.casts_shadows && self.kind != LightKind::Directional {
+                    self.radius.max(0.0)
+                } else {
+                    -1.0
+                },
             ],
         ]
     }
@@ -628,6 +655,7 @@ mod tests {
             bounce: 0.5,
             enabled: true,
             shadows: true,
+            radius: 0.2,
             flicker: 0.0,
         });
         let p = light.source(&at(1.0, 2.0, 3.0)).unwrap().packed();
@@ -635,6 +663,31 @@ mod tests {
         assert_eq!(p[1], [2.0, 2.0, 2.0, 0.5]);
         assert_eq!(p[2][3], 1.0);
         assert!((p[3][0] - 0.5).abs() < 1e-6 && (p[3][1] - 0.5).abs() < 1e-6);
+        // Its radius, read by `castsShadows` in `pbr/lights.glsl`.
+        assert_eq!(p[3][3], 0.2);
+    }
+
+    #[test]
+    fn lights_without_ray_traced_shadows_pack_a_negative_radius() {
+        let mut settings = LightSettings { radius: 0.3, ..LightSettings::default() };
+        settings.shadows = false;
+        let unshadowed = Light::new(settings).source(&at(0.0, 0.0, 0.0)).unwrap().packed();
+        assert_eq!(unshadowed[3][3], -1.0);
+        settings.shadows = true;
+        settings.kind = LightKind::Directional;
+        let sun = Light::new(settings).source(&at(0.0, 0.0, 0.0)).unwrap().packed();
+        assert_eq!(sun[3][3], -1.0);
+    }
+
+    #[test]
+    fn the_radius_is_clamped_and_set_as_a_property() {
+        let s = LightSettings { radius: 7.0, ..LightSettings::default() }.sanitized();
+        assert_eq!(s.radius, LightSettings::RADIUS_RANGE.1);
+        let s = LightSettings { radius: f32::NAN, ..LightSettings::default() }.sanitized();
+        assert_eq!(s.radius, LightSettings::default().radius);
+        let mut light = Light::default();
+        light.set_property("radius", PropertyValue::Float(0.25));
+        assert_eq!(light.settings().radius, 0.25);
     }
 
     #[test]

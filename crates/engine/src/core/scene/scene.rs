@@ -70,6 +70,7 @@ impl Scene {
             ambient_occlusion_origin: Cell::new(None),
             ray_traced: RefCell::new(None),
             ray_traced_shadows_origin: Cell::new(None),
+            ray_traced_light_shadows_origin: Cell::new(None),
             weather: RefCell::new(None),
             weather_maps: Cell::new(None),
             lights: RefCell::new(None),
@@ -292,22 +293,39 @@ impl Scene {
         self.ray_traced_shadows_origin.get()
     }
 
-    /// Whether this frame's sun shadows are ray traced: asked for in the
-    /// settings, the device can, and there is a sun and a camera. Makes
-    /// what tracing needs on first use.
-    fn wants_ray_traced_shadows(&self) -> bool {
-        if !crate::core::graphics::engine().ray_traced_shadows
-            || self.shadow_fbo.is_none()
-            || self.get_component::<SkyLight>().is_none()
-            || self.get_active_camera().is_none()
-        {
-            return false;
-        }
+    /// Window position of the ray traced lamp shadows while the camera's
+    /// view is shaded with them (bound to `raytracing::RT_LIGHT_SHADOW_UNIT`).
+    pub fn ray_traced_light_shadows_origin(&self) -> Option<[i32; 2]> {
+        self.ray_traced_light_shadows_origin.get()
+    }
+
+    /// Whether the device can trace rays for this scene; makes what
+    /// tracing needs on first use.
+    fn can_ray_trace(&self) -> bool {
         let mut ray_traced = self.ray_traced.borrow_mut();
         if ray_traced.is_none() {
             *ray_traced = RayTracedShadows::new();
         }
         ray_traced.is_some()
+    }
+
+    /// Whether this frame's sun shadows are ray traced: asked for in the
+    /// settings, the device can, and there is a sun and a camera.
+    fn wants_ray_traced_shadows(&self) -> bool {
+        crate::core::graphics::engine().ray_traced_shadows
+            && self.shadow_fbo.is_some()
+            && self.get_component::<SkyLight>().is_some()
+            && self.get_active_camera().is_some()
+            && self.can_ray_trace()
+    }
+
+    /// Whether this frame's lamp shadows are ray traced (instead of their
+    /// cube maps): asked for in the settings, the device can, and there is
+    /// a camera.
+    fn wants_ray_traced_lamps(&self) -> bool {
+        crate::core::graphics::engine().ray_traced_lights
+            && self.get_active_camera().is_some()
+            && self.can_ray_trace()
     }
 
     /// Hand the scene's meshes around the camera to the ray traced
@@ -371,7 +389,10 @@ impl Scene {
             return;
         }
         let mut selected = lights::select(found, eye);
-        shadow::assign(&mut selected, eye);
+        // With ray traced lamp shadows no lamp gets a cube map.
+        if !self.wants_ray_traced_lamps() {
+            shadow::assign(&mut selected, eye);
+        }
         let mut buffer = self.lights.borrow_mut();
         buffer.get_or_insert_with(LightBuffer::new).upload(&selected);
         let projection = camera.get_projection();
@@ -452,6 +473,13 @@ impl Scene {
         if debug_views::ambient_occlusion() && depth_prepass {
             if let Some(texture) = self.ambient_occlusion_texture() {
                 debug_views::draw_ambient_occlusion(texture as gfx::RawId);
+            }
+        }
+        // Only while they are traced (the last ones stay otherwise).
+        if debug_views::lamp_shadows() && crate::core::graphics::engine().ray_traced_lights {
+            let lamps = self.ray_traced.borrow().as_ref().and_then(RayTracedShadows::lamp_result_texture);
+            if let Some(texture) = lamps {
+                debug_views::draw_colour(texture);
             }
         }
         if debug_views::sun_shadows() {
@@ -575,8 +603,11 @@ impl Scene {
         // Shadow Pass
         profiler::mark(Pass::SunShadows);
         let ray_traced = self.wants_ray_traced_shadows();
-        if ray_traced {
+        let ray_traced_lamps = self.wants_ray_traced_lamps() && self.light_count.get() > 0;
+        if ray_traced || ray_traced_lamps {
             self.collect_ray_traced_scene(window);
+        }
+        if ray_traced {
             // The cascades are drawn anew once ray tracing is switched off.
             self.drawn_cascades.set(None);
         }
@@ -654,6 +685,7 @@ impl Scene {
         self.apply_viewport(window);
         self.ambient_occlusion_origin.set(None);
         self.ray_traced_shadows_origin.set(None);
+        self.ray_traced_light_shadows_origin.set(None);
         if let Some(camera) = self.get_active_camera() {
             let view_projection = camera.get_view_projection();
             // The camera's passes cull against its view (or the one culling
@@ -685,7 +717,10 @@ impl Scene {
                 .map(|skylight| *skylight.ambient_occlusion())
                 .filter(|settings| settings.enabled && knobs.ssao_samples > 0);
             // The ray traced shadows need the same depth.
-            let depth_prepass = match (ambient_occlusion.is_some() || ray_traced, hdr.view_target()) {
+            let depth_prepass = match (
+                ambient_occlusion.is_some() || ray_traced || ray_traced_lamps,
+                hdr.view_target(),
+            ) {
                 (true, Some((target, width, height))) => {
                     let mut ssao = self.ssao.borrow_mut();
                     let ssao = ssao.get_or_insert_with(Ssao::new);
@@ -723,6 +758,22 @@ impl Scene {
                                 height,
                             });
                             self.ray_traced_shadows_origin.set(Some([0, 0]));
+                        }
+                    }
+                    if let (true, Some(depth)) = (ray_traced_lamps, ssao.depth_texture()) {
+                        if let Some(ray_traced) = self.ray_traced.borrow_mut().as_mut() {
+                            ray_traced.trace_lamps(
+                                &ShadowView {
+                                    view_projection,
+                                    eye: camera.get_camera().get_eye_position(),
+                                    to_light: Vector3::unit_y(),
+                                    depth,
+                                    width,
+                                    height,
+                                },
+                                self.light_count.get(),
+                            );
+                            self.ray_traced_light_shadows_origin.set(Some([0, 0]));
                         }
                     }
                     true
@@ -801,6 +852,7 @@ impl Scene {
             ViewFrustum::end_view();
             self.ambient_occlusion_origin.set(None);
             self.ray_traced_shadows_origin.set(None);
+        self.ray_traced_light_shadows_origin.set(None);
             profiler::mark(Pass::Post);
             hdr.finish(&hdr_settings);
             self.apply_viewport(window);

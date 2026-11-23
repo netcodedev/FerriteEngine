@@ -19,6 +19,10 @@
 //!    another surface), then blurred a little where the depth agrees.
 //! 4. The lit shaders read the result per pixel (`sunShadow` in
 //!    `pbr/lighting.glsl`) instead of the cascades.
+//!
+//! The lamps' shadows (`shadows.raytraced_lights`) are traced through the
+//! same collected scene, with ReSTIR choosing the lamp each pixel's ray
+//! goes to (`lamps`).
 
 use std::{
     cell::{Cell, RefCell},
@@ -28,13 +32,43 @@ use std::{
 
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 
+mod lamps;
+
 use super::{shader::Shader, taa, texture::Texture};
+pub use lamps::RT_LIGHT_SHADOW_UNIT;
 use crate::core::gfx::{
     self, BlasGeometry, Format, SamplerDesc, TextureDesc, TextureKind, TlasInstance,
 };
 
 /// Texture unit the lit shaders read the shadows from.
 pub const RT_SHADOW_UNIT: u32 = 25;
+
+/// The extensions a pass that traces rays needs, after `#version`.
+const RAY_EXTENSIONS: &str = "#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+";
+
+/// A fragment shader of a fullscreen pass over the camera's view: the
+/// surface helpers (`surface.glsl`), then with `rays` the ray helpers
+/// (`rays.glsl`), with `lamps` the scene's lights and the lamp reservoirs
+/// (`pbr/lights.glsl`, `lamps.glsl`), then `body`.
+fn pass_source(rays: bool, lamps: bool, body: &str) -> String {
+    let mut source = String::from("#version 460 core\n");
+    if rays {
+        source.push_str(RAY_EXTENSIONS);
+    }
+    source.push_str(include_str!("surface.glsl"));
+    if rays {
+        source.push_str(include_str!("rays.glsl"));
+    }
+    if lamps {
+        source.push_str(super::pbr::LIGHTS_GLSL);
+        source.push_str(include_str!("lamps.glsl"));
+    }
+    source.push_str(body);
+    source
+}
 /// Slot of the scene's top level structure in the trace program.
 const SCENE_SLOT: u32 = 0;
 /// Frames a bottom level structure is kept without being used.
@@ -489,6 +523,8 @@ pub struct RayTracedShadows {
     pub instance_count: usize,
     /// This frame's cut-out records.
     cutouts: gfx::Buffer,
+    /// The lamps' shadows, made when first traced.
+    lamps: Option<lamps::LampShadows>,
 }
 
 /// The fullscreen strip, no depth, no blending.
@@ -579,7 +615,7 @@ impl RayTracedShadows {
         let vertex = include_str!("../hdr/vertex.glsl");
         let vertices: [f32; 8] = [-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
         Some(Self {
-            trace_shader: Shader::new(vertex, include_str!("trace.glsl")),
+            trace_shader: Shader::new(vertex, &pass_source(true, false, include_str!("trace.glsl"))),
             accumulate_shader: Shader::new(vertex, include_str!("accumulate.glsl")),
             filter_shader: Shader::new(vertex, include_str!("filter.glsl")),
             quad: gfx::Buffer::from_slice(
@@ -599,6 +635,7 @@ impl RayTracedShadows {
                 gfx::BufferMemory::Dynamic,
                 std::mem::size_of::<CutoutRecord>(),
             ),
+            lamps: None,
         })
     }
 
@@ -680,35 +717,12 @@ impl RayTracedShadows {
         );
         let shader = &self.trace_shader;
         gfx::set_pipeline(shader.pipeline(&fullscreen()));
-        gfx::bind_accel(SCENE_SLOT, &self.tlas);
-        gfx::bind_raw_texture(0, view.depth, gfx::TextureKind::D2, &depth_sampler);
-        shader.set_uniform_1i("sceneDepth", 0);
-        shader.set_uniform_mat4(
-            "inverseRelative",
-            &inverse_relative(&view.view_projection, view.eye),
-        );
-        shader.set_uniform_3f("eye", view.eye.x, view.eye.y, view.eye.z);
+        bind_surface(shader, view, self.frame);
+        self.bind_rays(shader);
         let l = view.to_light.normalize();
         shader.set_uniform_3f("toLight", l.x, l.y, l.z);
         shader.set_uniform_1f("lightRadius", SUN_RADIUS);
         shader.set_uniform_1f("maxDistance", MAX_DISTANCE);
-        shader.set_uniform_1f("cutoutCoverage", CUTOUT_COVERAGE);
-        shader.set_uniform_1i("frame", self.frame as i32);
-        let (direction, strength) = crate::core::material::wind::WIND;
-        shader.set_uniform_4f(
-            "wind",
-            direction[0],
-            direction[1],
-            strength,
-            crate::core::material::wind::clock(),
-        );
-        ATLAS.with(|atlas| {
-            let mut atlas = atlas.borrow_mut();
-            let atlas = atlas.get_or_insert_with(OpacityAtlas::new);
-            gfx::bind_texture(ATLAS_UNIT, &atlas.texture, &SamplerDesc::LINEAR_REPEAT);
-        });
-        shader.set_uniform_1i("opacityAtlas", ATLAS_UNIT as i32);
-        gfx::bind_storage_buffer(CUTOUT_SLOT, &self.cutouts);
         self.draw_quad();
         gfx::end_pass();
 
@@ -774,16 +788,71 @@ impl RayTracedShadows {
         );
     }
 
+    /// Bind what `rays.glsl` traces through for `shader` (bound): the top
+    /// level structure, the cut-out records and their atlas, the wind.
+    fn bind_rays(&self, shader: &Shader) {
+        gfx::bind_accel(SCENE_SLOT, &self.tlas);
+        shader.set_uniform_1f("cutoutCoverage", CUTOUT_COVERAGE);
+        let (direction, strength) = crate::core::material::wind::WIND;
+        shader.set_uniform_4f(
+            "wind",
+            direction[0],
+            direction[1],
+            strength,
+            crate::core::material::wind::clock(),
+        );
+        ATLAS.with(|atlas| {
+            let mut atlas = atlas.borrow_mut();
+            let atlas = atlas.get_or_insert_with(OpacityAtlas::new);
+            gfx::bind_texture(ATLAS_UNIT, &atlas.texture, &SamplerDesc::LINEAR_REPEAT);
+        });
+        shader.set_uniform_1i("opacityAtlas", ATLAS_UNIT as i32);
+        gfx::bind_storage_buffer(CUTOUT_SLOT, &self.cutouts);
+    }
+
+    /// Trace and denoise the lamps' shadows of `view` with ReSTIR, for the
+    /// `light_count` lights of this frame's light buffer, and bind them to
+    /// `RT_LIGHT_SHADOW_UNIT` for the shading pass.
+    pub fn trace_lamps(&mut self, view: &ShadowView, light_count: usize) {
+        if !self.tlas.is_built() {
+            return;
+        }
+        let mut lamps = self.lamps.take().unwrap_or_else(lamps::LampShadows::new);
+        lamps.trace(self, view, light_count);
+        self.lamps = Some(lamps);
+    }
+
     /// Forget the history (a cut).
     pub fn reset(&mut self) {
         self.history_valid = false;
         self.previous = None;
+        if let Some(lamps) = &mut self.lamps {
+            lamps.reset();
+        }
+    }
+
+    /// Raw id of the lamps' denoised shadows, for debug views.
+    pub fn lamp_result_texture(&self) -> Option<gfx::RawId> {
+        self.lamps.as_ref().and_then(lamps::LampShadows::result_texture)
     }
 
     /// Raw id of the denoised shadows, for debug views.
     pub fn result_texture(&self) -> Option<gfx::RawId> {
         self.targets.as_ref().map(|t| t.filtered.raw())
     }
+}
+
+/// Set what `surface.glsl` reads for `shader` (bound): the depth (on unit
+/// 0), where the pixels are, the frame for the noise.
+fn bind_surface(shader: &Shader, view: &ShadowView, frame: u32) {
+    gfx::bind_raw_texture(0, view.depth, gfx::TextureKind::D2, &SamplerDesc::NEAREST_CLAMP);
+    shader.set_uniform_1i("sceneDepth", 0);
+    shader.set_uniform_mat4(
+        "inverseRelative",
+        &inverse_relative(&view.view_projection, view.eye),
+    );
+    shader.set_uniform_3f("eye", view.eye.x, view.eye.y, view.eye.z);
+    shader.set_uniform_1i("frame", frame as i32);
 }
 
 /// How many pixels (of a view `height` tall) a metre spans one metre in
@@ -804,6 +873,53 @@ pub fn is_cut(eye: Point3<f32>, last: Option<Point3<f32>>) -> bool {
 mod tests {
     use super::*;
     use cgmath::Vector4;
+
+    /// The fragment shaders of the ray traced passes, rewritten for Vulkan
+    /// and compiled with `glslc` (skipped where it is not installed).
+    #[test]
+    fn the_passes_compile_for_vulkan() {
+        let Ok(version) = std::process::Command::new("glslc").arg("--version").output() else {
+            eprintln!("glslc not installed: skipped");
+            return;
+        };
+        assert!(version.status.success());
+        let vertex = include_str!("../hdr/vertex.glsl");
+        let passes = [
+            ("trace", pass_source(true, false, include_str!("trace.glsl"))),
+            ("restir_initial", pass_source(false, true, include_str!("restir_initial.glsl"))),
+            ("restir_spatial", pass_source(false, true, include_str!("restir_spatial.glsl"))),
+            ("light_trace", pass_source(true, true, include_str!("light_trace.glsl"))),
+            ("light_accumulate", include_str!("light_accumulate.glsl").to_string()),
+            ("light_filter", include_str!("light_filter.glsl").to_string()),
+            ("accumulate", include_str!("accumulate.glsl").to_string()),
+            ("filter", include_str!("filter.glsl").to_string()),
+        ];
+        let out = std::env::temp_dir().join(format!("ferrite-rt-passes-{}", std::process::id()));
+        std::fs::create_dir_all(&out).unwrap();
+        let mut failures = Vec::new();
+        for (name, fragment) in passes {
+            let program = match crate::core::gfx::glsl::to_vulkan(vertex, &fragment) {
+                Ok(program) => program,
+                Err(e) => {
+                    failures.push(format!("{name}: {e}"));
+                    continue;
+                }
+            };
+            let file = out.join(format!("{name}.frag"));
+            std::fs::write(&file, &program.fragment).unwrap();
+            let result = std::process::Command::new("glslc")
+                .args(["--target-env=vulkan1.3", "-fauto-map-locations", "-o"])
+                .arg(out.join(format!("{name}.spv")))
+                .arg(&file)
+                .output()
+                .unwrap();
+            if !result.status.success() {
+                failures.push(format!("{name}:\n{}", String::from_utf8_lossy(&result.stderr)));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&out);
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
 
     #[test]
     fn camera_relative_positions_come_back_far_from_the_origin() {

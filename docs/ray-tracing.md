@@ -1,3 +1,10 @@
+# Ray tracing
+
+Two graphics settings, both off at every preset and independent of each
+other: the sun's shadows (below) and the lamps' shadows ("Ray traced lamp
+shadows"). They share one collected scene: one top level structure, one
+cut-out atlas.
+
 # Ray traced sun shadows
 
 Status (2026-11-22): built on branch `feat/rt-shadows` (PR #82), off by
@@ -86,3 +93,107 @@ Each frame:
 (collecting, trace, denoise), `core/scene/scene.rs` (order of the passes),
 `collect_for_ray_tracing` in `model/model.rs`, `terrain/chunk.rs`,
 `terrain/scatter/instances.rs`.
+
+# Ray traced lamp shadows (ReSTIR DI)
+
+Status (2026-11-23): built on branch `feat/rt-light-shadows`, off by
+default.
+
+## What it does
+
+The graphics setting **"Raytracing-Lampenschatten"**
+(`shadows.raytraced_lights`, group "Licht", off at every preset) replaces
+the point and spot lights' shadow cube maps with ray traced shadows where
+the device can trace rays (as for the sun). The cube maps are then not
+drawn at all, and every lamp with "shadows" on gets them, not only the
+eight nearest. Lamps have a size now, **radius** (metres, 0–0.5, default
+0.05, saved in scenes; older scenes get the default): the shadows soften
+with it. The cube maps ignore it.
+
+The lit shaders loop over the lights per fragment, so a fullscreen pass
+cannot give them one visibility per lamp. It gives them a share per pixel
+instead (Heitz et al. 2018, "Combining analytic direct illumination and
+stochastic shadows"): the light of the shadow casting lamps that gets past
+what is in the way, divided by what would arrive with nothing in the way,
+per colour (a red lamp in shadow next to a blue one in the open keeps its
+colours). `localLights` (`pbr/lighting.glsl`) sums those lamps without
+shadow and multiplies the sum by it; lamps without shadows are added as
+before.
+
+Each frame, after the depth prepass, five fullscreen passes (RGBA16F,
+`raytracing/lamps.rs`):
+
+1. **Candidates + temporal** (`restir_initial.glsl`): position and normal
+   from depth. 4 lamps drawn uniformly from the pixel's cluster list
+   (`lightsAt`), one kept by weighted reservoir sampling in proportion to
+   the light it would give there (`lampTarget`: luminance of radiance ×
+   range fade ÷ d² × cone × N·L, 0 for lights without ray traced shadows).
+   Last frame's reservoir at the reprojected pixel (same surface by
+   distance) is merged in, its M capped at 20 × the candidates, its lamp's
+   light looked at anew here. A reservoir: lamp index, W, M, distance.
+2. **Spatial** (`restir_spatial.glsl`): 4 neighbours within 16 px on the
+   same surface merged in (M capped at 16 each). Also next frame's
+   history.
+3. **Trace** (`light_trace.glsl`): one ray toward a random point on the
+   chosen lamp's disc (its radius), ending 5 cm short of it (its own bulb
+   or glass does not count); opaque geometry and alpha-tested cut-outs
+   stop it as for the sun (`rays.glsl`). Share = that lamp's light ×
+   visibility × W ÷ all shadow casting lamps' light here.
+4. **Accumulate** (`light_accumulate.glsl`): blended into the frames before
+   (12 % this frame), clamped to the neighbourhood widened by 0.1.
+5. **Filter** (`light_filter.glsl`): 5×5 blur within a surface, clamped to
+   0–1, bound to unit 26 for the lit shaders.
+
+Debug view: **"Raytracing-Lampenschatten"** in the Performance panel
+(MCP: `editor_set_debug_views` `lamp_shadows`) shows the share over the
+view: white where all the lamps' light arrives (and where none reaches),
+black in full shadow, coloured where lamps of different colours are
+blocked differently.
+
+Shared code: `pbr/lights.glsl` (the light struct, the buffers, clusters,
+`rangeFade`, `spotCone`, `castsShadows`) is part of the lit shaders and
+of the ReSTIR passes; `raytracing/surface.glsl` (positions and normals
+from depth, noise, random numbers) and `raytracing/rays.glsl` (cut-out
+records, alpha test, `traceShadow`) are shared with the sun's trace.
+Light packing: `cone.w` is the lamp's radius when its shadows are ray
+traced, −1 otherwise.
+
+## Measured
+
+Demo, RTX 4070 Ti, 2536×1390 viewport, campfire and one test lamp at
+night: the five passes cost about 1.1 ms GPU (the cube maps they replace
+0.2–0.6 ms there). Their cost hardly grows with the number of lamps (one
+ray per pixel); the cube maps' grows with every lamp, up to eight. A
+lamp 4 m above the pickup throws the same shadow outline as with cube
+maps; with a radius of 0.4 its edges soften.
+
+## Limits
+
+- The share approximates: diffuse and specular light share one share per
+  pixel, and the normal it is worked out with comes from depth.
+- Water takes the share of the surface behind it. Particles, rain and
+  snow get the lamps' light unshadowed (`localLightAt`): with the share of
+  the ground behind, smoke over a campfire went dark against the meadow.
+- Grass casts lamp shadows only with "Raytracing-Schatten von Gras", as
+  for the sun. Landscape scatter (tufts) does cast them: a lamp low over
+  a meadow throws long streaks of tuft shadows, as it should.
+- With many lamps reaching one pixel, a moving shadow takes a few frames
+  to settle (temporal accumulation); one lamp's moving shadow is sharp
+  only after the history catches up.
+- The passes run at full resolution even where no lamp reaches; half
+  resolution or skipping empty tiles would save most of the 1.1 ms.
+- Editor pictures (thumbnails, impostor bakes) drawn while the setting is
+  on see no lamp shadows (there are no cube maps then).
+- Not tested on OpenGL or with `FERRITE_NO_RAY_TRACING=1` in the editor;
+  there the setting is skipped and the cube maps are used (same check as
+  for the sun).
+
+## Files (lamps)
+
+`core/renderer/raytracing/lamps.rs`, `restir_initial.glsl`,
+`restir_spatial.glsl`, `light_trace.glsl`, `light_accumulate.glsl`,
+`light_filter.glsl`, `lamps.glsl`, `surface.glsl`, `rays.glsl`;
+`pbr/lights.glsl`, `pbr/lighting.glsl` (`rayTracedLamp`,
+`lampShadowRatio`); `light/light.rs` (radius, packing);
+`scene/scene.rs` (`wants_ray_traced_lamps`, the order of the passes);
+`renderer/debug_views.rs`.

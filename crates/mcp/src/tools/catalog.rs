@@ -459,13 +459,16 @@ pub fn catalog() -> Vec<Tool> {
              what is left out stays. freeze_culling keeps culling the camera's view as it is \
              (drawn as yellow lines) while the camera moves on, to see what culling leaves out; \
              ambient_occlusion shows the ambient occlusion instead of the scene; sun_shadow_maps \
-             shows the sun's shadow cascades along the bottom. Returns the switches; \
+             shows the sun's shadow cascades along the bottom; lamp_shadows shows the ray traced \
+             lamp shadows (the share of the shadow casting lamps' light that arrives, per colour; \
+             white where none reaches) instead of the scene. Returns the switches; \
              editor_status reports them (debug_views) and what culling drew (performance.culling).",
             json!({
                 "vsync": {"type": "boolean"},
                 "freeze_culling": {"type": "boolean"},
                 "ambient_occlusion": {"type": "boolean"},
                 "sun_shadow_maps": {"type": "boolean"},
+                "lamp_shadows": {"type": "boolean"},
             }),
             &[],
         ),

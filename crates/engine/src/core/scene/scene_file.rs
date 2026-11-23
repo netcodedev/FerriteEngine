@@ -148,6 +148,9 @@ pub enum ComponentData {
         shadows: bool,
         #[serde(default)]
         flicker: f32,
+        /// The lamp's size (metres), for soft ray traced shadows.
+        #[serde(default = "light_default::radius")]
+        radius: f32,
     },
     /// Particles (fire, smoke, dust, ...); every field of the effect may be
     /// left out (see `ParticleEffect`).
@@ -236,6 +239,10 @@ mod light_default {
     }
     pub fn shadows() -> bool {
         LightSettings::default().shadows
+    }
+
+    pub fn radius() -> f32 {
+        LightSettings::default().radius
     }
 }
 
@@ -380,6 +387,7 @@ impl ComponentData {
             enabled,
             shadows,
             flicker,
+            radius,
         } = settings;
         ComponentData::Light {
             kind,
@@ -392,6 +400,7 @@ impl ComponentData {
             enabled,
             shadows,
             flicker,
+            radius,
         }
     }
 
@@ -409,6 +418,7 @@ impl ComponentData {
                 enabled,
                 shadows,
                 flicker,
+                radius,
             } => Some(LightSettings {
                 kind,
                 color,
@@ -420,6 +430,7 @@ impl ComponentData {
                 enabled,
                 shadows,
                 flicker,
+                radius,
             }),
             _ => None,
         }
@@ -959,6 +970,7 @@ mod tests {
             enabled: false,
             shadows: false,
             flicker: 0.25,
+            radius: 0.3,
         });
         let text = ron::to_string(&data).unwrap();
         assert!(text.starts_with("Light("), "{text}");
@@ -971,6 +983,8 @@ mod tests {
         assert_eq!(short.kind, LightKind::Spot);
         assert_eq!(short.color, [1.0, 0.0, 0.0]);
         assert_eq!(short.range, LightSettings::default().range);
+        // Scenes saved before lamps had a size get the default.
+        assert_eq!(short.radius, LightSettings::default().radius);
         assert!(short.enabled);
         assert_eq!(
             ron::from_str::<ComponentData>("Light()").unwrap().light_settings(),

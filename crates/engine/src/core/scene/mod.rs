@@ -58,6 +58,9 @@ pub struct Scene {
     /// Window position of the ray traced shadows while the camera's view
     /// is shaded with them, `None` otherwise (see `pbr::Lighting`).
     ray_traced_shadows_origin: Cell<Option<[i32; 2]>>,
+    /// Window position of the ray traced lamp shadows while the camera's
+    /// view is shaded with them.
+    ray_traced_light_shadows_origin: Cell<Option<[i32; 2]>>,
     /// Rain and snow: the sky exposure map, the snow trails and the falling
     /// drops, made on the first frame with weather.
     weather: RefCell<Option<WeatherTargets>>,

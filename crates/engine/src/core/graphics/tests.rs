@@ -196,3 +196,19 @@ fn player_file_path_is_in_the_config_folder() {
     let path = player_file_path("My/Game").unwrap();
     assert!(path.ends_with("ferrite/My_Game/graphics.ron"), "{}", path.display());
 }
+
+#[test]
+fn ray_traced_lamp_shadows_are_off_at_every_preset_and_switch_on() {
+    let mut graphics = Graphics::default();
+    for level in [Level::Low, Level::Medium, Level::High, Level::Ultra] {
+        graphics.set_preset(level);
+        assert!(!graphics.resolved().engine.ray_traced_lights, "{level:?}");
+    }
+    graphics
+        .set(defs::RAY_TRACED_LIGHTS, SettingValue::Toggle(true))
+        .unwrap();
+    let on = graphics.resolved();
+    assert!(on.engine.ray_traced_lights);
+    // Independent of the sun's.
+    assert!(!on.engine.ray_traced_shadows);
+}

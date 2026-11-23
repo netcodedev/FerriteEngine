@@ -118,6 +118,7 @@
     "stats.debug.freeze_culling": (en: "Freeze culling", de: "Culling einfrieren"),
     "stats.debug.ambient_occlusion": (en: "Ambient occlusion", de: "Umgebungsverdeckung"),
     "stats.debug.sun_shadow_maps": (en: "Sun shadow maps", de: "Sonnen-Schattenkarten"),
+    "stats.debug.lamp_shadows": (en: "Ray-traced lamp shadows", de: "Raytracing-Lampenschatten"),
     "stats.vram_free": (en: "{amount} free", de: "{amount} frei"),
     "stats.mode.edit": (en: "Edit", de: "Bearbeiten"),
     "stats.mode.play": (en: "Play", de: "Spielen"),
@@ -146,6 +147,7 @@
     "graphics.setting.shadows.raytraced": (en: "Ray-traced shadows", de: "Raytracing-Schatten"),
     "graphics.setting.shadows.raytraced_grass": (en: "Ray-traced grass shadows", de: "Raytracing-Schatten von Gras"),
     "graphics.setting.shadows.raytraced_wind": (en: "Ray-traced shadows in wind", de: "Raytracing-Schatten im Wind"),
+    "graphics.setting.shadows.raytraced_lights": (en: "Ray-traced lamp shadows", de: "Raytracing-Lampenschatten"),
     "graphics.setting.effects": (en: "Effects", de: "Effekte"),
 
     // ===== Dialogs, commands, launcher =====

@@ -19,6 +19,7 @@ pub const TAA: &str = "display.taa";
 pub const RAY_TRACED_SHADOWS: &str = "shadows.raytraced";
 pub const RAY_TRACED_GRASS: &str = "shadows.raytraced_grass";
 pub const RAY_TRACED_WIND: &str = "shadows.raytraced_wind";
+pub const RAY_TRACED_LIGHTS: &str = "shadows.raytraced_lights";
 
 pub const MSAA_OPTIONS: [&str; 4] = ["off", "2x", "4x", "8x"];
 pub const ANISOTROPY_OPTIONS: [&str; 4] = ["1x", "4x", "8x", "16x"];
@@ -48,6 +49,7 @@ pub const TODAY: EngineKnobs = EngineKnobs {
     ray_traced_shadows: false,
     ray_traced_grass: false,
     ray_traced_wind: false,
+    ray_traced_lights: false,
     bloom: true,
     cloud_downscale: 2,
     precipitation: 1.0,
@@ -148,6 +150,13 @@ pub fn engine_definitions() -> Vec<SettingDef> {
             kind: SettingKind::Toggle { per_preset: PerLevel::all(false) },
             description: "Die Lichtflecken im Schatten von Laub bewegen sich mit dem Wind (die Umrisse der Kronen bleiben stehen); nur mit Raytracing-Schatten.".into(),
         },
+        SettingDef {
+            key: RAY_TRACED_LIGHTS.into(),
+            label: "Raytracing-Lampenschatten".into(),
+            group: "Licht".into(),
+            kind: SettingKind::Toggle { per_preset: PerLevel::all(false) },
+            description: "Schatten von Lampen per Raytracing (ReSTIR) statt Schattenwürfeln: weich, für jede Lampe mit Schatten, nicht nur die acht nächsten. Nur mit Vulkan auf Grafikkarten mit Raytracing.".into(),
+        },
         level(EFFECTS, "Effekte", "Licht", "Umgebungsverdeckung, Bloom, Wolken und Niederschlag."),
     ]
 }
@@ -220,6 +229,7 @@ pub fn engine_values(resolved: &Resolved) -> EngineKnobs {
         ray_traced_shadows: resolved.toggle(RAY_TRACED_SHADOWS).unwrap_or(t.ray_traced_shadows),
         ray_traced_grass: resolved.toggle(RAY_TRACED_GRASS).unwrap_or(t.ray_traced_grass),
         ray_traced_wind: resolved.toggle(RAY_TRACED_WIND).unwrap_or(t.ray_traced_wind),
+        ray_traced_lights: resolved.toggle(RAY_TRACED_LIGHTS).unwrap_or(t.ray_traced_lights),
         bloom: k("effects.bloom", 1.0) >= 0.5,
         cloud_downscale: (k("effects.cloud_downscale", 2.0).round() as i32).clamp(1, 8),
         precipitation: k("effects.precipitation", 1.0).clamp(0.0, 1.0),

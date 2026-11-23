@@ -256,6 +256,7 @@ mod tests {
             bounce: 0.0,
             casts_shadows: false,
             shadow_layer: None,
+            radius: 0.0,
         }
     }
 

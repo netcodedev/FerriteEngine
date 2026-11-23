@@ -294,6 +294,8 @@ pub enum BridgeRequest {
         ambient_occlusion: Option<bool>,
         #[serde(default)]
         sun_shadow_maps: Option<bool>,
+        #[serde(default)]
+        lamp_shadows: Option<bool>,
     },
     /// Change one property of one component on one entity. The value is
     /// converted to the property's own kind (a number for a float, say).

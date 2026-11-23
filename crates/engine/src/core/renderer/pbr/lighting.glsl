@@ -50,79 +50,8 @@ uniform float nightSky;        // night sky light scale
 uniform float lightBounce;     // lamp light bounce scale
 uniform int moonShadows;       // 1: the shadow map is cast from the moon
 
-// The scene's lights, uploaded once a frame (`light::LightBuffer`). Must
-// match `MAX_LIGHTS` and `LIGHTS_BINDING` in `light/light.rs`.
-const int MAX_LIGHTS = 64;
-const int LIGHT_POINT = 0;
-const int LIGHT_SPOT = 1;
-const int LIGHT_DIRECTIONAL = 2;
-struct Light {
-    vec4 positionRange;  // xyz world position, w range
-    vec4 radianceBounce; // rgb linear colour × intensity, w bounce
-    vec4 directionKind;  // xyz direction it shines, w kind
-    vec4 cone;           // x cos inner angle, y cos outer angle,
-                         // z shadow layer (-1: no shadow)
-};
-layout(std140, binding = 1) uniform Lights {
-    Light lights[MAX_LIGHTS];
-};
-uniform int lightCount;        // 0 while no light buffer is meant
-
-// Clustered lighting (`light::clusters`): the lights that can reach each
-// cluster of the camera's view. Must match the bindings and the grid there.
-layout(std140, binding = 2) uniform LightClusterGrid {
-    mat4 clusterView;          // world to the camera's view space
-    vec4 clusterProjection;    // x, y: projection scale, z: near, w: ln(far/near)
-    ivec4 clusterDims;         // tiles across, tiles up, slices, 1: in use
-};
-layout(std430, binding = 3) readonly buffer LightClusterRanges {
-    uvec2 clusterRanges[];     // first index, count
-};
-layout(std430, binding = 4) readonly buffer LightClusterIndices {
-    uint clusterLights[];
-};
-
-// The lights to go through at `P`: `count` of them, from `first` in
-// `clusterLights`, or (first < 0) the first `count` of `lights`.
-//
-// Hardened against a non-finite `P` (a NaN from a broken transform): every
-// test below is written so that NaN takes the safe branch, the cell is
-// clamped into the grid and the count to `MAX_LIGHTS`. Without that, an
-// undefined cell index read a count from outside the buffer and the light
-// loops ran for billions of steps, long enough for Windows to reset the
-// GPU driver (TDR).
-ivec2 lightsAt(vec3 P) {
-    ivec2 all = ivec2(-1, clamp(lightCount, 0, MAX_LIGHTS));
-    if (lightCount <= 0 || clusterDims.w != 1) {
-        return all;
-    }
-    vec3 v = (clusterView * vec4(P, 1.0)).xyz;
-    float depth = -v.z;
-    if (!(depth > 0.0)) {
-        return all;
-    }
-    vec2 ndc = clusterProjection.xy * v.xy / depth;
-    float slice = log(max(depth, clusterProjection.z) / clusterProjection.z) / clusterProjection.w;
-    if (!(abs(ndc.x) <= 1.0 && abs(ndc.y) <= 1.0 && slice <= 1.0)) {
-        return all;
-    }
-    ivec3 dims = max(clusterDims.xyz, ivec3(1));
-    ivec3 cell = clamp(ivec3(vec3(ndc * 0.5 + 0.5, slice) * vec3(dims)), ivec3(0), dims - 1);
-    int index = (cell.z * dims.y + cell.y) * dims.x + cell.x;
-    if (index < 0 || index >= clusterRanges.length()) {
-        return all;
-    }
-    uvec2 range = clusterRanges[index];
-    int first = int(min(range.x, uint(clusterLights.length())));
-    int count = int(min(range.y, uint(MAX_LIGHTS)));
-    return ivec2(first, min(count, clusterLights.length() - first));
-}
-
-// The `k`th light of what `lightsAt` gave, as an index into `lights`
-// (callers skip one at or past `lightCount`).
-int lightAt(ivec2 list, int k) {
-    return list.x < 0 ? k : int(min(clusterLights[list.x + k], uint(MAX_LIGHTS)));
-}
+// The scene's lights and the clusters they are listed in, `rangeFade` and
+// `spotCone`: `lights.glsl`, which comes before this.
 
 // Shadow cube maps of point and spot lights (`light::shadow`), one cube
 // per layer, with hardware depth comparison. Must match `SHADOW_NEAR`.
@@ -153,6 +82,27 @@ uniform ivec2 ssaoOrigin;
 uniform int useRayTracedShadows;
 uniform sampler2D rayTracedShadows;
 uniform ivec2 rayTracedShadowOrigin;
+
+// Ray traced shadows of the shadow casting lamps (`renderer/raytracing`,
+// `LampShadows`), one texel per pixel of the viewport from
+// `rayTracedLightShadowOrigin`: per colour, the share of those lamps'
+// light that arrives past what is in the way. Used instead of the cube
+// maps when on.
+uniform int useRayTracedLightShadows;
+uniform sampler2D rayTracedLightShadows;
+uniform ivec2 rayTracedLightShadowOrigin;
+
+// Whether light `l` is shadowed by the ray traced ratio instead of its
+// own shadow lookup.
+bool rayTracedLamp(Light l) {
+    return useRayTracedLightShadows == 1 && isShadowPass == 0 && castsShadows(l);
+}
+
+// The share of the shadow casting lamps' light that arrives here (ray
+// traced for the surface this pixel shows).
+vec3 lampShadowRatio() {
+    return texelFetch(rayTracedLightShadows, ivec2(gl_FragCoord.xy) - rayTracedLightShadowOrigin, 0).rgb;
+}
 
 // Share of the sky this pixel sees past the geometry around it, 0..1.
 float screenOcclusion() {
@@ -347,26 +297,13 @@ float lightShadow(Light l, vec3 P, vec3 Ng, vec3 L) {
     return lit * 0.25;
 }
 
-// Smooth fade to nothing at `range` (the inverse square law alone never
-// reaches 0).
-float rangeFade(float d, float range) {
-    float x = d / range;
-    float w = clamp(1.0 - x * x * x * x, 0.0, 1.0);
-    return w * w;
-}
-
-// 0 outside a spot light's cone, 1 inside its core, smooth in between.
-float spotCone(Light l, vec3 L) {
-    float c = dot(-L, l.directionKind.xyz);
-    float t = clamp((c - l.cone.y) / max(l.cone.x - l.cone.y, 1e-4), 0.0, 1.0);
-    return t * t;
-}
-
 // Direct light of the scene's lights reflected toward `V`, with their
 // shadows (`Ng`: the geometric normal).
 vec3 localLights(vec3 P, vec3 N, vec3 Ng, vec3 V, vec3 albedo, float roughness, float metallic,
                  vec3 F0) {
     vec3 sum = vec3(0.0);
+    // The ray traced lamps, without shadow: shadowed together at the end.
+    vec3 traced = vec3(0.0);
     ivec2 list = lightsAt(P);
     for (int k = 0; k < list.y; ++k) {
         int i = lightAt(list, k);
@@ -396,8 +333,16 @@ vec3 localLights(vec3 P, vec3 N, vec3 Ng, vec3 V, vec3 albedo, float roughness, 
         if (attenuation <= 0.0 || dot(N, L) <= 0.0) {
             continue;
         }
+        vec3 light = brdf(N, V, L, albedo, roughness, metallic, F0) * l.radianceBounce.rgb;
+        if (rayTracedLamp(l)) {
+            traced += light * attenuation;
+            continue;
+        }
         attenuation *= lightShadow(l, P, Ng, L);
-        sum += brdf(N, V, L, albedo, roughness, metallic, F0) * l.radianceBounce.rgb * attenuation;
+        sum += light * attenuation;
+    }
+    if (dot(traced, traced) > 0.0) {
+        sum += traced * lampShadowRatio();
     }
     return sum;
 }
@@ -428,6 +373,13 @@ vec3 localLightAt(vec3 P) {
         float attenuation = rangeFade(d, range) / max(d2, 0.01);
         if (kind == LIGHT_SPOT) {
             attenuation *= spotCone(l, toLight / max(d, 1e-4));
+        }
+        if (rayTracedLamp(l)) {
+            // Not the share of the surface behind: smoke over a campfire
+            // stands in the fire's light while the ground behind it may
+            // be in shadow (it went dark against the ground). Unshadowed.
+            sum += l.radianceBounce.rgb * attenuation;
+            continue;
         }
         if (attenuation > 0.0) {
             attenuation *= lightShadow(l, P, vec3(0.0), toLight / max(d, 1e-4));

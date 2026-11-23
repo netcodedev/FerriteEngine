@@ -27,10 +27,14 @@ use crate::core::{
 /// right after a fragment shader's `#version` line.
 pub const LIGHTING_GLSL: &str = concat!(
     include_str!("../hdr/tonemap.glsl"),
+    include_str!("lights.glsl"),
     include_str!("lighting.glsl"),
     include_str!("../weather/weather_maps.glsl"),
     include_str!("../weather/weather.glsl")
 );
+/// The scene's lights and clusters alone (part of `LIGHTING_GLSL`), for
+/// passes that look at the lights without shading (`renderer::raytracing`).
+pub const LIGHTS_GLSL: &str = include_str!("lights.glsl");
 pub const MATERIAL_GLSL: &str = include_str!("material.glsl");
 
 /// Texture unit the scene binds the sun's shadow map to.
@@ -63,6 +67,10 @@ pub struct Lighting {
     /// `raytracing::RT_SHADOW_UNIT`) while they shade the camera's view;
     /// the shadow cascades are not used then.
     pub ray_traced_shadows: Option<[i32; 2]>,
+    /// Window position of the ray traced lamp shadows (bound to
+    /// `raytracing::RT_LIGHT_SHADOW_UNIT`) while they shade the camera's
+    /// view; the lamps' cube maps are not used then.
+    pub ray_traced_light_shadows: Option<[i32; 2]>,
     /// Rain and snow on surfaces.
     pub weather: WeatherShading,
     /// Where the weather's maps lie (bound to `weather::EXPOSURE_UNIT` and
@@ -83,6 +91,7 @@ impl Lighting {
         if let Some(mut lighting) = scene.frame_lighting() {
             lighting.ambient_occlusion_origin = scene.ambient_occlusion_origin();
             lighting.ray_traced_shadows = scene.ray_traced_shadows_origin();
+            lighting.ray_traced_light_shadows = scene.ray_traced_light_shadows_origin();
             lighting.weather_maps = scene.weather_maps();
             lighting.light_count = scene.light_count();
             return Some(lighting);
@@ -101,6 +110,7 @@ impl Lighting {
                 .map(|_| *skylight.shadow_cascades()),
             ambient_occlusion_origin: scene.ambient_occlusion_origin(),
             ray_traced_shadows: scene.ray_traced_shadows_origin(),
+            ray_traced_light_shadows: scene.ray_traced_light_shadows_origin(),
             weather: skylight.weather().shading(),
             weather_maps: scene.weather_maps(),
             indirect: skylight.indirect_shading(),
@@ -117,6 +127,7 @@ impl Lighting {
             shadow_cascades: None,
             ambient_occlusion_origin: None,
             ray_traced_shadows: None,
+            ray_traced_light_shadows: None,
             weather: WeatherShading::default(),
             weather_maps: None,
             indirect: IndirectShading::preview(sun_direction.normalize()),
@@ -196,6 +207,17 @@ impl Lighting {
                 shader.set_uniform_2i("rayTracedShadowOrigin", x, y);
             }
             None => shader.set_uniform_1i("useRayTracedShadows", 0),
+        }
+        shader.set_uniform_1i(
+            "rayTracedLightShadows",
+            crate::core::renderer::raytracing::RT_LIGHT_SHADOW_UNIT as i32,
+        );
+        match self.ray_traced_light_shadows {
+            Some([x, y]) => {
+                shader.set_uniform_1i("useRayTracedLightShadows", 1);
+                shader.set_uniform_2i("rayTracedLightShadowOrigin", x, y);
+            }
+            None => shader.set_uniform_1i("useRayTracedLightShadows", 0),
         }
         let indirect = &self.indirect;
         shader.set_uniform_3fv("moonDirection", &indirect.moon_direction);

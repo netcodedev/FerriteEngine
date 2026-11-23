@@ -291,6 +291,9 @@ pub struct EngineKnobs {
     pub ray_traced_grass: bool,
     /// The leaves' ray traced shadows follow the wind (`renderer::raytracing`).
     pub ray_traced_wind: bool,
+    /// Shadows of point and spot lights ray traced (ReSTIR) instead of
+    /// their cube maps, where the device can (`renderer::raytracing`).
+    pub ray_traced_lights: bool,
     pub bloom: bool,
     pub cloud_downscale: i32,
     pub precipitation: f32,
