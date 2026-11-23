@@ -171,6 +171,18 @@ impl<'a> Cutout<'a> {
     }
 }
 
+/// Whether rays treat `material` as opaque: opaque materials, and cut-outs
+/// whose opacity comes from no texture they could test (the pickup's
+/// glass: drawn whole, as the shadow maps draw it). Before, those let a
+/// share of the light through like leaves still loading, and shadows under
+/// a car looked as if cast by something half transparent.
+pub fn opaque_for_rays(material: &crate::core::material::Material) -> bool {
+    match material.alpha {
+        crate::core::material::AlphaMode::Opaque => true,
+        crate::core::material::AlphaMode::Cutout(_) => material.opacity_texture().is_none(),
+    }
+}
+
 /// One cut-out record for the trace shader (`Cutout` in `trace.glsl`):
 /// vertex and index buffer addresses, vertex stride and UV offset in
 /// words, atlas layer, cut-off, whether indexed, the wind's strength,

@@ -417,3 +417,18 @@ fn the_wind_of_standard_pbr_is_read_for_ray_traced_shadows() {
     assert!(m.set_number(params::WIND_MASK_VERTEX_COLOR, [1.0; 4]));
     assert_eq!(m.wind_sway(), Some([0.5, 0.25, 6.0]));
 }
+
+#[test]
+fn cutouts_without_an_opacity_texture_are_opaque_to_rays() {
+    use crate::core::{
+        material::{AlphaMode, Material},
+        renderer::raytracing::opaque_for_rays,
+    };
+    let mut glass = Material::standard();
+    assert!(opaque_for_rays(&glass));
+    // Cut out, but no texture set (the pickup's glass): drawn whole, so
+    // the rays see it whole too.
+    glass.alpha = AlphaMode::Cutout(0.5);
+    assert_eq!(glass.opacity_texture().map(|(_, c)| c), None);
+    assert!(opaque_for_rays(&glass));
+}

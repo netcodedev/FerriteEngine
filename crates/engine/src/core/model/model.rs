@@ -601,7 +601,7 @@ impl Model {
             }
             let material = self.materials.get(mesh.material_index);
             let (shadows, opaque) = match material {
-                Some(material) => (material.shadows, material.alpha == crate::core::material::AlphaMode::Opaque),
+                Some(material) => (material.shadows, raytracing::opaque_for_rays(material)),
                 None => (true, true),
             };
             if !shadows {
