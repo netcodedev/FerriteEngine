@@ -486,7 +486,9 @@ impl Component for ScatterInstances {
         // take a coarser tier: their texels are bigger than the detail.
         let in_view = crate::core::renderer::hdr::draws_to_view()
             || crate::core::renderer::ssao::in_depth_pass();
-        if !in_view && !self.spec.shadows {
+        // Collecting for ray tracing decides for itself (grass may cast
+        // ray traced shadows).
+        if !in_view && !self.spec.shadows && !crate::core::renderer::raytracing::collecting() {
             return;
         }
         let lod = LodChoice::PerCell {
@@ -502,6 +504,9 @@ impl Component for ScatterInstances {
         self.remove_colliders(physics);
     }
 }
+
+/// How far from the camera grass casts ray traced shadows (metres).
+const RAY_TRACED_GRASS_DISTANCE: f32 = 40.0;
 
 impl ScatterInstances {
     /// A new pass begins (the terrain calls this before its chunks are
@@ -521,6 +526,82 @@ impl ScatterInstances {
         self.draw_lit(view_projection, parent_transform, lighting, lod, false);
     }
 
+    /// Hand the instances to the ray traced shadows' scene: landscape
+    /// instances that cast shadows (trees, rocks), each cell at the detail
+    /// tier its shadow would take. Detail scatter (grass) only with its own
+    /// setting, and only near the camera: many instances for what its
+    /// shadows add; then it casts them whatever its layer says (its shadow
+    /// maps would have been too coarse for it).
+    fn collect_for_ray_tracing(&self, view_projection: &Matrix4<f32>, parent_transform: &Matrix4<f32>, eye: Point3<f32>) {
+        use crate::core::renderer::raytracing;
+        let grass = match self.spec.range {
+            ScatterRange::Landscape if self.spec.shadows => false,
+            ScatterRange::Detail { .. } if crate::core::graphics::engine().ray_traced_grass => true,
+            _ => return,
+        };
+        self.ensure_gpu();
+        let gpu_borrow = self.gpu.borrow();
+        let gpu = gpu_borrow.as_ref().expect("gpu just initialized");
+        let r = &*self.spec.model;
+        let planes = ViewFrustum::planes(view_projection);
+        for (variant_idx, variant_gpu) in gpu.variants.iter().enumerate() {
+            if variant_gpu.is_none() {
+                continue;
+            }
+            let kind = &r.variants[variant_idx];
+            let tiers = kind.lods.len();
+            if tiers == 0 {
+                continue;
+            }
+            let Some(placed) = self.instances_by_variant.get(variant_idx) else {
+                continue;
+            };
+            // (tier, first instance, instances).
+            let runs: Vec<(usize, usize, usize)> = match self.cells_by_variant.get(variant_idx) {
+                Some(cells) if !cells.is_empty() => cells
+                    .iter()
+                    .filter(|cell| ViewFrustum::is_sphere_visible(&planes, cell.center, cell.radius))
+                    .filter(|cell| !grass || (cell.center - eye).magnitude() - cell.radius < RAY_TRACED_GRASS_DISTANCE)
+                    .map(|cell| {
+                        let tier = shadow_lod_index((cell.center - eye).magnitude(), tiers);
+                        (tier, cell.start as usize, cell.count as usize)
+                    })
+                    .collect(),
+                _ if grass && (self.center - eye).magnitude() > RAY_TRACED_GRASS_DISTANCE => Vec::new(),
+                _ => vec![(shadow_lod_index((self.center - eye).magnitude(), tiers), 0, placed.len())],
+            };
+            for (tier, start, count) in runs {
+                let Some(transforms) = placed.get(start..start + count) else {
+                    continue;
+                };
+                for sub in &kind.lods[tier].submeshes {
+                    let material = kind.model.material(sub.material_index);
+                    let (shadows, opaque) = match material {
+                        Some(material) => (material.shadows, material.alpha == crate::core::material::AlphaMode::Opaque),
+                        None => (true, true),
+                    };
+                    if !shadows && !grass {
+                        continue;
+                    }
+                    let stride = vertex_layout().stride;
+                    let geometry = gfx::BlasGeometry {
+                        vertices: sub.vertices.raw(),
+                        stride,
+                        vertex_count: (sub.vertices.size() / stride as usize) as u32,
+                        indices: Some(sub.indices.raw()),
+                        count: sub.index_count,
+                        opaque,
+                    };
+                    // The UV follows position and normal (`vertex_layout`).
+                    let cutout = material
+                        .and_then(|material| raytracing::Cutout::of(material, 24))
+                        .map(|cutout| cutout.wind_scaled(self.spec.wind));
+                    raytracing::add_instances(geometry, cutout, transforms.iter().map(|t| parent_transform * t));
+                }
+            }
+        }
+    }
+
     /// `draw`; with `in_pass`, `lighting` is the scene's for this pass and
     /// is set on the program only if it was not yet in this pass.
     fn draw_lit(
@@ -532,6 +613,10 @@ impl ScatterInstances {
         in_pass: bool,
     ) {
         if self.is_empty() {
+            return;
+        }
+        if crate::core::renderer::raytracing::collecting() {
+            self.collect_for_ray_tracing(view_projection, parent_transform, lighting.camera_position);
             return;
         }
         self.ensure_gpu();

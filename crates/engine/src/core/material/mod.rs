@@ -6,7 +6,7 @@
 //! kind of program (`programs`) and the parameters are uniforms.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     rc::Rc,
 };
@@ -196,6 +196,9 @@ pub struct Material {
     /// Programs looked up already, by pipeline and cut-out (a model draws
     /// each material every pass: no global lookup per mesh).
     programs: RefCell<Vec<(Pipeline, bool, Rc<Shader>)>>,
+    /// `wind_sway` as last worked out, and the graphics settings'
+    /// generation it holds for (asked for every collected mesh each frame).
+    wind: Cell<Option<(u64, Option<[f32; 3]>)>>,
 }
 
 impl Clone for Material {
@@ -209,6 +212,7 @@ impl Clone for Material {
             foliage: self.foliage,
             shadows: self.shadows,
             programs: RefCell::new(self.programs.borrow().clone()),
+            wind: Cell::new(None),
         }
     }
 }
@@ -232,12 +236,119 @@ impl Material {
             foliage: false,
             shadows: true,
             programs: RefCell::new(Vec::new()),
+            wind: Cell::new(None),
         }
     }
 
     /// Standard PBR, plain white.
     pub fn standard() -> Self {
         Material::new(standard_graph())
+    }
+
+    /// How the graph's wind node sways the material, for ray traced
+    /// shadows that follow the wind: strength, flutter and bend height
+    /// (`materialWind` in `vertex_prelude.glsl`), with each mask folded
+    /// in where it is a fixed number (a mask that varies over the surface,
+    /// such as a vertex colour, counts as 1). `None` without a wind node,
+    /// or when it neither sways nor flutters.
+    pub fn wind_sway(&self) -> Option<[f32; 3]> {
+        let generation = graphics::generation();
+        if let Some((at, wind)) = self.wind.get() {
+            if at == generation {
+                return wind;
+            }
+        }
+        let wind = self.find_wind_sway();
+        self.wind.set(Some((generation, wind)));
+        wind
+    }
+
+    fn find_wind_sway(&self) -> Option<[f32; 3]> {
+        use graph::NodeKind;
+        let graph = &self.graph.graph;
+        let node = graph.nodes.iter().find(|n| n.kind == NodeKind::WindSway)?;
+        let pin = |pin: u8, unknown: f32| self.constant_input(node.id, pin).unwrap_or(unknown);
+        let amount = pin(0, 0.0) * pin(1, 1.0);
+        let flutter = pin(2, 0.0) * pin(3, 1.0);
+        let height = pin(4, 1.0);
+        (amount > 0.0 || flutter > 0.0).then_some([amount, flutter, height])
+    }
+
+    /// The first number of input `pin` of `node` where it is the same
+    /// everywhere: a wire from a parameter, a constant, or a blend of such;
+    /// without a wire the pin's own value. `None` where it varies.
+    fn constant_input(&self, node: graph::NodeId, pin: u8) -> Option<f32> {
+        use graph::{MathOp, NodeKind};
+        let graph = &self.graph.graph;
+        let Some(wire) = graph.wire_into(node, pin) else {
+            let n = graph.node(node)?;
+            return n
+                .values
+                .get(&pin)
+                .map(|v| v[0])
+                .or_else(|| n.kind.inputs().get(pin as usize).map(|p| p.default[0]));
+        };
+        let from = graph.node(wire.from.node)?;
+        match &from.kind {
+            NodeKind::Parameter(name) => match self.value(name)? {
+                v @ ParamValue::Number(..) => Some(v.numbers()[0]),
+                ParamValue::Texture(_) => None,
+            },
+            NodeKind::Constant { value, .. } => Some(value[0]),
+            NodeKind::Math(MathOp::Lerp) => {
+                // An end the blend does not reach may vary.
+                let t = self.constant_input(from.id, 2)?;
+                let a = if t < 1.0 { self.constant_input(from.id, 0)? } else { 0.0 };
+                let b = if t > 0.0 { self.constant_input(from.id, 1)? } else { 0.0 };
+                Some(a + (b - a) * t)
+            }
+            NodeKind::Math(MathOp::Multiply) => {
+                Some(self.constant_input(from.id, 0)? * self.constant_input(from.id, 1)?)
+            }
+            _ => None,
+        }
+    }
+
+    /// The texture a cut-out material's opacity is read from, and its
+    /// channel (0 to 3), followed upstream from the output's opacity: for
+    /// ray traced shadows, which test leaves against it. `None` when the
+    /// opacity comes from no texture, or the texture is not set.
+    pub fn opacity_texture(&self) -> Option<(&Texture, u32)> {
+        use graph::NodeKind;
+        let graph = &self.graph.graph;
+        let output = graph.output_node()?;
+        let wire = graph.wire_into(output.id, graph::output::OPACITY)?;
+        // Straight from a texture's R, G, B or A pin: that channel; through
+        // other nodes: the first texture upstream, its alpha.
+        let mut channel = match (graph.node(wire.from.node).map(|n| &n.kind), wire.from.pin) {
+            (Some(NodeKind::SampleTexture), 2..=5) => Some(u32::from(wire.from.pin) - 2),
+            _ => None,
+        };
+        let mut stack = vec![wire.from.node];
+        let mut seen = Vec::new();
+        while let Some(id) = stack.pop() {
+            if seen.contains(&id) {
+                continue;
+            }
+            seen.push(id);
+            let Some(node) = graph.node(id) else {
+                continue;
+            };
+            if node.kind == NodeKind::SampleTexture {
+                let param = graph.wire_into(id, 0).and_then(|w| graph.node(w.from.node)).and_then(|n| match &n.kind {
+                    NodeKind::Parameter(name) => Some(name.clone()),
+                    _ => None,
+                });
+                let index = param.and_then(|name| graph.params.iter().position(|p| p.name == name));
+                if let Some(ParamValue::Texture(Some(texture))) = index.and_then(|i| self.values.get(i)) {
+                    return Some((texture, channel.take().unwrap_or(3)));
+                }
+                continue;
+            }
+            channel = None;
+            stack.extend(graph.wires.iter().filter(|w| w.to.node == id).map(|w| w.from.node));
+        }
+        None
     }
 
     pub fn graph(&self) -> &Rc<CompiledGraph> {
@@ -248,6 +359,7 @@ impl Material {
     /// values.
     pub fn set_graph(&mut self, graph: Rc<CompiledGraph>) {
         self.programs.borrow_mut().clear();
+        self.wind.set(None);
         let old = std::mem::replace(&mut self.graph, graph);
         let mut old_values: HashMap<String, ParamValue> = old
             .graph
@@ -293,6 +405,7 @@ impl Material {
         let mut value = value;
         value[0] = param.high();
         self.values[i] = ParamValue::Number(param, value);
+        self.wind.set(None);
         true
     }
 

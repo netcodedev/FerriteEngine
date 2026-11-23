@@ -212,6 +212,20 @@ impl<T: VertexAttributes + Clone> DynamicVertexArray<T> {
         Some((vertices.raw(), self.indices.as_ref().map(gfx::Buffer::raw)))
     }
 
+    /// The triangles for a ray tracing structure (`T` must start with its
+    /// position, three `f32`); `opaque`: no cut-out to test.
+    pub fn blas_geometry(&self, opaque: bool) -> Option<gfx::BlasGeometry> {
+        let (vertices, indices) = self.raw_buffers()?;
+        Some(gfx::BlasGeometry {
+            vertices,
+            stride: std::mem::size_of::<T>() as u32,
+            vertex_count: self.vertex_count as u32,
+            indices,
+            count: self.get_element_count() as u32,
+            opaque,
+        })
+    }
+
     pub fn get_element_count(&self) -> usize {
         self.index_count.unwrap_or(self.vertex_count)
     }

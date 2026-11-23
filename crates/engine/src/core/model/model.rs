@@ -18,6 +18,7 @@ use crate::core::{
         depth_pass,
         hdr,
         pbr::Lighting,
+        raytracing,
         shader::DynamicVertexArray,
         ssao,
         taa::motion,
@@ -429,6 +430,12 @@ impl Model {
                 return;
             }
         }
+        if raytracing::collecting() {
+            if tint.is_none() {
+                self.collect_for_ray_tracing(only, &model_transform);
+            }
+            return;
+        }
         // A tinted model writes no depth: nothing to draw in a depth pass.
         let depth_only = depth_pass::is_active();
         if depth_only && tint.is_some() {
@@ -536,29 +543,10 @@ impl Model {
                 shader.set_uniform_mat4("viewProjection", camera_projection);
                 wind::apply(shader, 1.0);
             }
-            if let Some(root_bone) = &mesh.root_bone {
+            if mesh.root_bone.is_some() {
                 let collapse = draws_to_screen && !self.hidden_bones.is_empty();
-                let mut cache = self.bone_cache[collapse as usize].borrow_mut();
-                if !cache.contains_key(&index) {
-                    let hidden: &[String] = if collapse { &self.hidden_bones } else { &[] };
-                    let bone_transforms = Model::get_bone_transformations(
-                        root_bone,
-                        Matrix4::identity(),
-                        hidden,
-                        None,
-                    );
-                    let max_id = bone_transforms.iter().map(|(id, _)| *id).max().unwrap_or(0);
-                    let array_size = std::cmp::min(max_id + 1, MAX_BONES);
-                    let mut sorted = vec![Matrix4::identity(); array_size];
-                    for (id, transform) in bone_transforms {
-                        if id < sorted.len() {
-                            sorted[id] = transform;
-                        }
-                    }
-                    cache.insert(index, sorted);
-                }
-                shader
-                    .set_uniform_mat4_array("boneTransforms", &cache[&index]);
+                let bones = self.bones(index, mesh, collapse);
+                shader.set_uniform_mat4_array("boneTransforms", &bones);
             } else {
                 // Unskinned mesh: vertices were authored with bone slot 0 + full
                 // weight (see ModelMesh::new), so feed the shader an identity at
@@ -572,6 +560,74 @@ impl Model {
                 self.record_motion(index, mesh, material.two_sided, placed * Matrix4::from_scale(self.scale));
             }
             mesh.render(shader, placed, Some(self.scale));
+        }
+    }
+
+    /// The skinning matrices of mesh `index` in the current pose (with the
+    /// hidden bones collapsed: `collapse`), worked out once per pose.
+    fn bones(&self, index: usize, mesh: &ModelMesh, collapse: bool) -> std::cell::Ref<'_, Vec<Matrix4<f32>>> {
+        let cell = &self.bone_cache[collapse as usize];
+        if !cell.borrow().contains_key(&index) {
+            let hidden: &[String] = if collapse { &self.hidden_bones } else { &[] };
+            let bone_transforms = match &mesh.root_bone {
+                Some(root_bone) => Model::get_bone_transformations(root_bone, Matrix4::identity(), hidden, None),
+                None => Vec::new(),
+            };
+            let max_id = bone_transforms.iter().map(|(id, _)| *id).max().unwrap_or(0);
+            let array_size = std::cmp::min(max_id + 1, MAX_BONES);
+            let mut sorted = vec![Matrix4::identity(); array_size];
+            for (id, transform) in bone_transforms {
+                if id < sorted.len() {
+                    sorted[id] = transform;
+                }
+            }
+            cell.borrow_mut().insert(index, sorted);
+        }
+        std::cell::Ref::map(cell.borrow(), |cache| &cache[&index])
+    }
+
+    /// Hand the meshes that cast shadows to the ray traced shadows' scene,
+    /// placed at `model`. Skinned meshes go in posed as now (skinned here,
+    /// once per pose), with every bone: like a shadow map, the shadow
+    /// keeps what the camera hides (a first-person player's head).
+    fn collect_for_ray_tracing(&self, only: Option<&std::collections::HashSet<String>>, model: &Matrix4<f32>) {
+        for (index, (name, mesh)) in self.meshes.iter().enumerate() {
+            let shown = match only {
+                Some(only) => only.contains(name),
+                None => self.visible.as_ref().is_none_or(|visible| visible.contains(name)),
+            };
+            if !shown {
+                continue;
+            }
+            let material = self.materials.get(mesh.material_index);
+            let (shadows, opaque) = match material {
+                Some(material) => (material.shadows, material.alpha == crate::core::material::AlphaMode::Opaque),
+                None => (true, true),
+            };
+            if !shadows {
+                continue;
+            }
+            let Some(geometry) = mesh.vertex_array.as_ref().and_then(|v| v.blas_geometry(opaque)) else {
+                continue;
+            };
+            if mesh.root_bone.is_some() {
+                let Some((_, indices)) = mesh.vertex_array.as_ref().and_then(|v| v.raw_buffers()) else {
+                    continue;
+                };
+                let bones = self.bones(index, mesh, false);
+                raytracing::add_skinned(
+                    (self.pose_revision, index),
+                    || skin_positions(&mesh.vertices, &bones),
+                    indices,
+                    geometry.count,
+                    opaque,
+                    model,
+                );
+                continue;
+            }
+            let uv_offset = std::mem::offset_of!(ModelMeshVertex, texture_coords) as u32;
+            let cutout = material.and_then(|material| raytracing::Cutout::of(material, uv_offset));
+            raytracing::add_mesh(geometry, cutout, model);
         }
     }
 
@@ -861,5 +917,61 @@ mod tests {
         let down = Vector3::new(0.0, 0.0, -1.0);
         assert_eq!(ray_triangle(Point3::new(3.0, 0.0, 5.0), down, a, b, c), None);
         assert_eq!(ray_triangle(Point3::new(0.0, 0.0, -5.0), down, a, b, c), None);
+    }
+}
+
+/// The positions of `vertices` posed by `bones`, as `model/vertex.glsl`
+/// poses them (up to four weights, stopping at the first zero after the
+/// first).
+fn skin_positions(vertices: &[ModelMeshVertex], bones: &[Matrix4<f32>]) -> Vec<[f32; 3]> {
+    vertices
+        .iter()
+        .map(|v| {
+            let ids = [v.bone_ids.0, v.bone_ids.1, v.bone_ids.2, v.bone_ids.3];
+            let weights = [v.bone_weights.0, v.bone_weights.1, v.bone_weights.2, v.bone_weights.3];
+            // Bones past the uploaded ones read as zero in the shader.
+            let bone = |i: usize| bones.get(ids[i] as usize).copied().unwrap_or(Matrix4::from_scale(0.0));
+            let mut transform = bone(0) * weights[0];
+            for i in 1..4 {
+                if weights[i] == 0.0 {
+                    break;
+                }
+                transform = transform + bone(i) * weights[i];
+            }
+            let p = transform * cgmath::Vector4::new(v.position.0, v.position.1, v.position.2, 1.0);
+            [p.x, p.y, p.z]
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod skin_tests {
+    use super::*;
+    use cgmath::Vector3;
+
+    fn vertex(position: (f32, f32, f32), ids: (u32, u32, u32, u32), weights: (f32, f32, f32, f32)) -> ModelMeshVertex {
+        ModelMeshVertex {
+            position,
+            normal: (0.0, 1.0, 0.0),
+            texture_coords: (0.0, 0.0),
+            bone_ids: ids,
+            bone_weights: weights,
+            color: 0,
+        }
+    }
+
+    #[test]
+    fn skinning_blends_the_bones_as_the_vertex_shader_does() {
+        let bones = [Matrix4::from_translation(Vector3::new(0.0, 1.0, 0.0)), Matrix4::from_translation(Vector3::new(2.0, 0.0, 0.0))];
+        let vertices = [
+            vertex((1.0, 0.0, 0.0), (0, 0, 0, 0), (1.0, 0.0, 0.0, 0.0)),
+            vertex((0.0, 0.0, 1.0), (0, 1, 0, 0), (0.5, 0.5, 0.0, 0.0)),
+            // A bone past the uploaded ones counts as nothing.
+            vertex((0.0, 0.0, 0.0), (0, 7, 0, 0), (0.5, 0.5, 0.0, 0.0)),
+        ];
+        let posed = skin_positions(&vertices, &bones);
+        assert_eq!(posed[0], [1.0, 1.0, 0.0]);
+        assert_eq!(posed[1], [1.0, 0.5, 1.0]);
+        assert_eq!(posed[2], [0.0, 0.5, 0.0]);
     }
 }

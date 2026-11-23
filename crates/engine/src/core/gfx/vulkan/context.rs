@@ -29,6 +29,12 @@ pub struct Gpu {
     pub memory_budget: bool,
     /// `VK_EXT_sample_locations`: multisampling uses GL's sample positions.
     pub sample_locations: bool,
+    /// Ray queries through acceleration structures (`VK_KHR_ray_query`,
+    /// `VK_KHR_acceleration_structure`, buffer device addresses), where
+    /// the device has them and `FERRITE_NO_RAY_TRACING` does not say no.
+    pub accel_fn: Option<ash::khr::acceleration_structure::Device>,
+    /// Alignment of acceleration structure build scratch memory.
+    pub scratch_alignment: u64,
     pub driver: String,
 }
 
@@ -230,11 +236,48 @@ pub fn create(
         if sample_locations {
             device_extensions.push(ash::ext::sample_locations::NAME.as_ptr());
         }
+        // Ray tracing, where everything it needs is there.
+        let has = |name: &CStr| available.iter().any(|a| a.extension_name_as_c_str() == Ok(name));
+        let ray_extensions = [
+            ash::khr::acceleration_structure::NAME,
+            ash::khr::ray_query::NAME,
+            ash::khr::deferred_host_operations::NAME,
+        ];
+        let ray_tracing = {
+            let mut accel = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
+            let mut query = vk::PhysicalDeviceRayQueryFeaturesKHR::default();
+            let mut v12 = vk::PhysicalDeviceVulkan12Features::default();
+            let mut features2 =
+                vk::PhysicalDeviceFeatures2::default().push_next(&mut accel).push_next(&mut query).push_next(&mut v12);
+            instance.get_physical_device_features2(physical, &mut features2);
+            let wanted = !std::env::var("FERRITE_NO_RAY_TRACING").is_ok_and(|v| v == "1" || v == "true");
+            wanted
+                && ray_extensions.iter().all(|e| has(e))
+                && accel.acceleration_structure == vk::TRUE
+                && query.ray_query == vk::TRUE
+                && v12.buffer_device_address == vk::TRUE
+        };
+        if ray_tracing {
+            device_extensions.extend(ray_extensions.iter().map(|e| e.as_ptr()));
+        }
+        let scratch_alignment = if ray_tracing {
+            let mut accel_props = vk::PhysicalDeviceAccelerationStructurePropertiesKHR::default();
+            let mut props2 = vk::PhysicalDeviceProperties2::default().push_next(&mut accel_props);
+            instance.get_physical_device_properties2(physical, &mut props2);
+            (accel_props.min_acceleration_structure_scratch_offset_alignment as u64).max(1)
+        } else {
+            1
+        };
         let features = vk::PhysicalDeviceFeatures::default()
             .sampler_anisotropy(true)
             .image_cube_array(true)
             .fill_mode_non_solid(true);
-        let mut features12 = vk::PhysicalDeviceVulkan12Features::default().host_query_reset(true);
+        let mut features12 = vk::PhysicalDeviceVulkan12Features::default()
+            .host_query_reset(true)
+            .buffer_device_address(ray_tracing);
+        let mut accel_features =
+            vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default().acceleration_structure(true);
+        let mut query_features = vk::PhysicalDeviceRayQueryFeaturesKHR::default().ray_query(true);
         let mut features13 = vk::PhysicalDeviceVulkan13Features::default()
             .dynamic_rendering(true)
             .synchronization2(true)
@@ -243,19 +286,21 @@ pub fn create(
         let mut depth_clip = vk::PhysicalDeviceDepthClipControlFeaturesEXT::default().depth_clip_control(true);
         let priorities = [1.0f32];
         let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&priorities)];
-        let device = instance
-            .create_device(
-                physical,
-                &vk::DeviceCreateInfo::default()
-                    .queue_create_infos(&queues)
-                    .enabled_extension_names(&device_extensions)
-                    .enabled_features(&features)
-                    .push_next(&mut features12)
-                    .push_next(&mut features13)
-                    .push_next(&mut depth_clip),
-                None,
-            )
-            .map_err(|e| format!("vkCreateDevice: {e}"))?;
+        let mut create = vk::DeviceCreateInfo::default()
+            .queue_create_infos(&queues)
+            .enabled_extension_names(&device_extensions)
+            .enabled_features(&features)
+            .push_next(&mut features12)
+            .push_next(&mut features13)
+            .push_next(&mut depth_clip);
+        if ray_tracing {
+            create = create.push_next(&mut accel_features).push_next(&mut query_features);
+        }
+        let device = instance.create_device(physical, &create, None).map_err(|e| format!("vkCreateDevice: {e}"))?;
+        let accel_fn = ray_tracing.then(|| ash::khr::acceleration_structure::Device::new(&instance, &device));
+        if ray_tracing {
+            log::info!("Vulkan: ray tracing (ray queries) available");
+        }
         let queue = device.get_device_queue(family, 0);
         let swapchain_fn = ash::khr::swapchain::Device::new(&instance, &device);
         let push_fn = ash::khr::push_descriptor::Device::new(&instance, &device);
@@ -293,6 +338,8 @@ pub fn create(
             window_samples,
             memory_budget,
             sample_locations,
+            accel_fn,
+            scratch_alignment,
             driver,
         })
     }

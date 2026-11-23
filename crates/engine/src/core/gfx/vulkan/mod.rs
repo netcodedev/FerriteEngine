@@ -21,6 +21,7 @@
 //! before every transfer, together with the image layout changes. Finer
 //! barriers are a later optimisation.
 
+mod accel;
 mod context;
 mod convert;
 mod pipeline;
@@ -59,6 +60,7 @@ enum Retired {
     /// Params descriptor sets (from `params_pool`).
     Sets(Vec<vk::DescriptorSet>),
     Queries(vk::QueryPool),
+    Accel(vk::AccelerationStructureKHR),
 }
 
 /// A piece of per-frame host-visible memory: staging data and uniform
@@ -287,6 +289,10 @@ struct State {
     last_params: Option<(vk::PipelineLayout, vk::DescriptorSet, [u32; MAX_PARAM_BLOCKS])>,
     /// Pixels on their way back from the GPU (`read_pixels_later`).
     readbacks: FxHashMap<u64, Readback>,
+    /// Acceleration structures (ray tracing), and which top level one is
+    /// bound at each slot.
+    accels: FxHashMap<RawId, accel::Accel>,
+    bound_accels: FxHashMap<u32, RawId>,
 }
 
 /// A copy of pixels into host memory, recorded at `serial`.
@@ -366,6 +372,11 @@ impl State {
                         self.gpu.device.destroy_pipeline_layout(l, None);
                     }
                     Retired::Queries(q) => self.gpu.device.destroy_query_pool(q, None),
+                    Retired::Accel(a) => {
+                        if let Some(accel_fn) = &self.gpu.accel_fn {
+                            accel_fn.destroy_acceleration_structure(a, None);
+                        }
+                    }
                     Retired::SetLayout(l) => self.gpu.device.destroy_descriptor_set_layout(l, None),
                     Retired::Sets(sets) => {
                         let _ = self.gpu.device.free_descriptor_sets(self.params_pool, &sets);
@@ -514,7 +525,7 @@ pub(super) fn create(
         device: gpu.device.clone(),
         physical_device: gpu.physical,
         debug_settings: Default::default(),
-        buffer_device_address: false,
+        buffer_device_address: gpu.accel_fn.is_some(),
         allocation_sizes: Default::default(),
     })
     .map_err(|e| format!("allocator: {e}"))?;
@@ -637,6 +648,8 @@ pub(super) fn create(
         last_params: None,
         readbacks: FxHashMap::default(),
         params_pool,
+        accels: FxHashMap::default(),
+        bound_accels: FxHashMap::default(),
     };
     state.begin_commands();
     state.create_dummies();
@@ -763,6 +776,31 @@ impl Device for VkDevice {
 
     fn destroy(&self, raw: Raw) {
         self.with(|s| s.destroy(raw))
+    }
+
+    fn ray_tracing(&self) -> bool {
+        self.with(|s| s.gpu.accel_fn.is_some())
+    }
+
+    fn create_blas(&self, geometries: &[BlasGeometry]) -> RawId {
+        self.with(|s| s.create_blas(geometries))
+    }
+
+    fn build_tlas(&self, tlas: RawId, instances: &[TlasInstance], refit: bool) -> RawId {
+        self.with(|s| s.build_tlas(tlas, instances, refit))
+    }
+
+    fn bind_accel(&self, slot: u32, accel: RawId) {
+        self.with(|s| {
+            s.bound_accels.insert(slot, accel);
+        })
+    }
+
+    fn buffer_address(&self, buffer: RawId) -> u64 {
+        self.with(|s| match (s.gpu.accel_fn.is_some(), s.use_buffer(buffer)) {
+            (true, Some((b, _))) => s.buffer_address(b),
+            _ => 0,
+        })
     }
 
     fn begin_pass(&self, target: TargetRef, size: (u32, u32), color: Load, depth: Load) {

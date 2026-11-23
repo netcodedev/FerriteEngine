@@ -46,6 +46,8 @@ pub enum Raw {
     Program(RawId),
     Pipeline(RawId),
     Queries(RawId),
+    /// A ray tracing acceleration structure (bottom or top level).
+    Accel(RawId),
 }
 
 /// The backend interface. Every method is called on the render thread.
@@ -98,6 +100,33 @@ pub trait Device {
     fn read_timestamps(&self, queries: RawId, count: u32) -> Option<Vec<u64>>;
 
     fn destroy(&self, raw: Raw);
+
+    /// Whether the device traces rays from shaders (`GL_EXT_ray_query`)
+    /// through acceleration structures. Without, the calls below do
+    /// nothing and return 0.
+    fn ray_tracing(&self) -> bool {
+        false
+    }
+    /// A bottom level acceleration structure of `geometries` (built on
+    /// the GPU before this frame's draws).
+    fn create_blas(&self, _geometries: &[BlasGeometry]) -> RawId {
+        0
+    }
+    /// (Re)build top level structure `tlas` (0: a new one) from
+    /// `instances`, now in the frame's commands; returns its id.
+    /// With `refit`, `tlas` is updated in place: `instances` are the ones
+    /// it was built from, only their transforms changed.
+    fn build_tlas(&self, _tlas: RawId, _instances: &[TlasInstance], _refit: bool) -> RawId {
+        0
+    }
+    /// Bind `accel` (a top level structure) at `slot` for the draws that
+    /// follow (`layout(binding = slot) uniform accelerationStructureEXT`).
+    fn bind_accel(&self, _slot: u32, _accel: RawId) {}
+    /// The device address of `buffer` (for shaders that read it through
+    /// a pointer); 0 where there are none.
+    fn buffer_address(&self, _buffer: RawId) -> u64 {
+        0
+    }
 
     fn begin_pass(&self, target: TargetRef, size: (u32, u32), color: Load, depth: Load);
     /// Re-enter `target` after a nested pass ended (contents kept).
@@ -624,6 +653,133 @@ impl Drop for RenderTarget {
             release(Raw::Target(self.raw));
         }
     }
+}
+
+// ── Ray tracing ────────────────────────────────────────────────────────
+
+/// Whether the device can trace rays (see `Device::ray_tracing`).
+pub fn ray_tracing_supported() -> bool {
+    device().ray_tracing()
+}
+
+/// A bottom level acceleration structure: triangles in their own space.
+pub struct Blas {
+    raw: RawId,
+}
+
+impl Blas {
+    /// Built from `geometries`; `None` where the device cannot trace rays.
+    pub fn new(geometries: &[BlasGeometry]) -> Option<Self> {
+        let raw = device().create_blas(geometries);
+        (raw != 0).then_some(Blas { raw })
+    }
+
+    pub fn raw(&self) -> RawId {
+        self.raw
+    }
+}
+
+impl Drop for Blas {
+    fn drop(&mut self) {
+        if self.raw != 0 {
+            release(Raw::Accel(self.raw));
+        }
+    }
+}
+
+/// A top level acceleration structure: instances of bottom level ones,
+/// built anew each frame.
+#[derive(Default)]
+pub struct Tlas {
+    raw: RawId,
+    /// The instances it was last built or refit from.
+    instances: Vec<TlasInstance>,
+    /// Refits since it was last built anew.
+    refits: u32,
+}
+
+/// Refits in a row before a top level structure is built anew: a refit
+/// keeps the old tree, which fits worse the more things moved.
+const MAX_REFITS: u32 = 30;
+
+impl Tlas {
+    pub fn new() -> Self {
+        Tlas { raw: 0, instances: Vec::new(), refits: 0 }
+    }
+
+    /// Bring it up to `instances` now (in the frame's commands, before
+    /// what is drawn after): nothing to do when nothing changed, a refit
+    /// when only transforms did, else built anew.
+    pub fn build(&mut self, instances: &[TlasInstance]) {
+        match self.change(instances) {
+            Change::None => return,
+            Change::Moved if self.refits < MAX_REFITS => {
+                self.raw = device().build_tlas(self.raw, instances, true);
+                self.refits += 1;
+            }
+            _ => {
+                self.raw = device().build_tlas(self.raw, instances, false);
+                self.refits = 0;
+            }
+        }
+        self.instances.clear();
+        self.instances.extend_from_slice(instances);
+    }
+
+    fn change(&self, instances: &[TlasInstance]) -> Change {
+        if self.raw == 0 || self.instances.len() != instances.len() {
+            return Change::Other;
+        }
+        let mut moved = false;
+        for (a, b) in self.instances.iter().zip(instances) {
+            if (a.blas, a.mask, a.custom) != (b.blas, b.mask, b.custom) {
+                return Change::Other;
+            }
+            moved |= a.transform != b.transform;
+        }
+        if moved {
+            Change::Moved
+        } else {
+            Change::None
+        }
+    }
+
+    /// Built at least once.
+    pub fn is_built(&self) -> bool {
+        self.raw != 0
+    }
+
+    pub fn raw(&self) -> RawId {
+        self.raw
+    }
+}
+
+/// How a top level structure's instances changed since it was built.
+#[derive(Debug, PartialEq)]
+enum Change {
+    None,
+    /// Only transforms.
+    Moved,
+    Other,
+}
+
+impl Drop for Tlas {
+    fn drop(&mut self) {
+        if self.raw != 0 {
+            release(Raw::Accel(self.raw));
+        }
+    }
+}
+
+/// Bind `tlas` at `slot` for the draws that follow.
+pub fn bind_accel(slot: u32, tlas: &Tlas) {
+    device().bind_accel(slot, tlas.raw);
+}
+
+/// The device address of `buffer` (made with `BufferUsage::RAY_TRACING_INPUT`
+/// where ray tracing is supported), 0 where there are none.
+pub fn buffer_address(buffer: RawId) -> u64 {
+    device().buffer_address(buffer)
 }
 
 // ── Programs and pipelines ─────────────────────────────────────────────

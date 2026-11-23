@@ -693,6 +693,8 @@ impl Device for GlDevice {
                         names.clear();
                     }
                 }
+                // GL traces no rays: there are none.
+                Raw::Accel(_) => {}
             }
         }
     }

@@ -147,6 +147,13 @@ uniform int useSsao;
 uniform sampler2D ssaoMap;
 uniform ivec2 ssaoOrigin;
 
+// Ray traced sun shadows of the camera's view (`renderer/raytracing`),
+// one texel per pixel of the viewport, which starts at
+// `rayTracedShadowOrigin`. Used instead of the cascades when on.
+uniform int useRayTracedShadows;
+uniform sampler2D rayTracedShadows;
+uniform ivec2 rayTracedShadowOrigin;
+
 // Share of the sky this pixel sees past the geometry around it, 0..1.
 float screenOcclusion() {
     if (useSsao == 0 || isShadowPass == 1) {
@@ -186,6 +193,11 @@ float cascadeShadow(int cascade, vec3 worldPos, vec3 geometryNormal, vec3 L) {
 // that covers it, faded into the next one at its border. Beyond the last
 // cascade everything is lit.
 float sunShadow(vec3 worldPos, vec3 geometryNormal, vec3 L) {
+    if (useRayTracedShadows == 1 && isShadowPass == 0) {
+        // Traced for the surface this pixel shows; what is drawn over it
+        // (water, particles) takes the same.
+        return texelFetch(rayTracedShadows, ivec2(gl_FragCoord.xy) - rayTracedShadowOrigin, 0).r;
+    }
     if (useShadowMap == 0) {
         return 1.0;
     }

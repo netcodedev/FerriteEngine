@@ -262,6 +262,19 @@ impl TerrainChunk {
         }
     }
 
+    /// Hand the mesh `draw` would draw to the ray traced shadows' scene.
+    pub fn collect_for_ray_tracing(&self, transform: &Matrix4<f32>, distance: f32) {
+        let Some(mesh) = self.meshes.get(Self::lod_at(distance)).or(self.meshes.last()) else {
+            return;
+        };
+        let Some(geometry) = mesh.blas_geometry() else {
+            return;
+        };
+        let corner = self.position();
+        let placed = transform * Matrix4::from_translation(Vector3::new(corner.x, corner.y, corner.z));
+        crate::core::renderer::raytracing::add_mesh(geometry, None, &placed);
+    }
+
     /// The chunk's water and where it is drawn, under `parent_transform`
     /// (see `water::draw`).
     pub fn water(&self, parent_transform: &Matrix4<f32>) -> Option<(&ChunkMesh<WaterVertex>, Matrix4<f32>)> {

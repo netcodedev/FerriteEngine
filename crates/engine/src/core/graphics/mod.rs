@@ -284,6 +284,13 @@ pub struct EngineKnobs {
     pub ssao_samples: u32,
     /// Temporal anti-aliasing instead of MSAA (`renderer::taa`).
     pub taa: bool,
+    /// Sun shadows ray traced instead of the cascades, where the device
+    /// can (`renderer::raytracing`).
+    pub ray_traced_shadows: bool,
+    /// Detail scatter (grass) near the camera casts ray traced shadows too.
+    pub ray_traced_grass: bool,
+    /// The leaves' ray traced shadows follow the wind (`renderer::raytracing`).
+    pub ray_traced_wind: bool,
     pub bloom: bool,
     pub cloud_downscale: i32,
     pub precipitation: f32,

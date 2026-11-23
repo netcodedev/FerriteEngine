@@ -16,7 +16,7 @@ pub const CHUNK_SIZE: u64 = 8 << 20;
 /// and waited for (loading a scene uploads far more than a frame does).
 const STAGING_LIMIT: u64 = 256 << 20;
 
-const BUFFER_USAGE: vk::BufferUsageFlags = vk::BufferUsageFlags::from_raw(
+pub(super) const BUFFER_USAGE: vk::BufferUsageFlags = vk::BufferUsageFlags::from_raw(
     vk::BufferUsageFlags::VERTEX_BUFFER.as_raw()
         | vk::BufferUsageFlags::INDEX_BUFFER.as_raw()
         | vk::BufferUsageFlags::UNIFORM_BUFFER.as_raw()
@@ -81,7 +81,16 @@ impl State {
             BufferMemory::Static => MemoryLocation::GpuOnly,
             BufferMemory::Dynamic => MemoryLocation::CpuToGpu,
         };
-        let (b, a) = self.raw_buffer(size as u64, BUFFER_USAGE, location, "buffer")?;
+        // With ray tracing, meshes may be built into acceleration
+        // structures: by their device address.
+        let usage = if self.gpu.accel_fn.is_some() {
+            BUFFER_USAGE
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
+        } else {
+            BUFFER_USAGE
+        };
+        let (b, a) = self.raw_buffer(size as u64, usage, location, "buffer")?;
         let ptr = a.mapped_ptr().map_or(std::ptr::null_mut(), |p| p.as_ptr() as *mut u8);
         Some((b, a, ptr))
     }
@@ -884,6 +893,7 @@ impl State {
                     self.retire(Retired::Queries(q.pool));
                 }
             }
+            Raw::Accel(id) => self.destroy_accel(id),
         }
     }
 }
