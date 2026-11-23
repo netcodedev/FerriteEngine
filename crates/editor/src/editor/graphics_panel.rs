@@ -1,7 +1,9 @@
-//! The "Grafik" section of the Performance panel: the graphics settings
+//! The "Graphics" section of the Performance panel: the graphics settings
 //! (docs/graphics-settings.md) with the frame time right above them. What
 //! is set here is this machine's choice, saved like a player's
 //! (`graphics::save`); the project's starting preset is set here too.
+
+use std::collections::BTreeMap;
 
 use ferrite::core::{
     graphics::{self, Level, SettingDef, SettingKind, SettingValue},
@@ -9,19 +11,65 @@ use ferrite::core::{
     utils::DataSource,
 };
 use ferrite_ui::ui::{
-    elements::{dropdown::Dropdown, label::Label},
+    elements::{dropdown::Dropdown, label::Label, section::Section},
     theme, UIElement, UI,
 };
 
 use super::field_row::FieldRow;
+use crate::i18n;
 
 /// Width of the labels' column: the settings' names are long.
 const LABEL: f32 = 140.0;
 /// Width of a slider's value beside it.
 const VALUE: f32 = 56.0;
 
-const PRESET_LABELS: [&str; 5] = ["Niedrig", "Mittel", "Hoch", "Ultra", "Eigene"];
-const PREVIEW_LABELS: [&str; 5] = ["Aus", "Niedrig", "Mittel", "Hoch", "Ultra"];
+/// A level's name in the user's language (the engine's `Level::label`
+/// is German, for games).
+fn level_label(level: Level) -> &'static str {
+    match level {
+        Level::Low => tr!("graphics.level.low"),
+        Level::Medium => tr!("graphics.level.medium"),
+        Level::High => tr!("graphics.level.high"),
+        Level::Ultra => tr!("graphics.level.ultra"),
+    }
+}
+
+/// The presets' names; with `custom`, "Custom" for settings changed one
+/// by one.
+fn preset_labels(custom: bool) -> Vec<String> {
+    let mut labels: Vec<String> = Level::ALL.iter().map(|l| level_label(*l).to_string()).collect();
+    if custom {
+        labels.push(tr!("graphics.custom").to_string());
+    }
+    labels
+}
+
+/// The preview levels: off, then each level.
+fn preview_labels() -> Vec<String> {
+    std::iter::once(tr!("common.off").to_string())
+        .chain(Level::ALL.iter().map(|l| level_label(*l).to_string()))
+        .collect()
+}
+
+/// A setting's name: the editor's text for the engine's settings, the
+/// project's own label for the project's.
+fn setting_label(def: &SettingDef) -> &str {
+    i18n::lookup(&format!("graphics.setting.{}", def.key)).unwrap_or(&def.label)
+}
+
+/// A group's name, the same way (groups are named by their German title).
+fn group_label(group: &str) -> String {
+    i18n::lookup(&format!("graphics.group.{}", group.to_lowercase()))
+        .map_or_else(|| group.to_string(), str::to_string)
+}
+
+/// A choice's option as shown (`"off"` translated, `"4x"` as it is).
+fn option_label(option: &str) -> String {
+    match option {
+        "off" => tr!("common.off").to_string(),
+        option => option.to_string(),
+    }
+}
 
 fn level_index(level: Level) -> u32 {
     Level::ALL.iter().position(|l| *l == level).unwrap_or(2) as u32
@@ -73,61 +121,82 @@ impl GraphicsRows {
         graphics::definitions() != self.built_for
     }
 
-    /// Make the rows, for a column `width` wide.
-    pub fn build(&mut self, width: f32) -> Vec<Box<dyn UIElement>> {
+    /// Make the rows, for a column `width` wide: the presets on top, then
+    /// one foldable section per group of settings, folded as `open` says
+    /// (by group id; groups not in it start open and are added).
+    pub fn build(&mut self, width: f32, open: &mut BTreeMap<String, DataSource<bool>>) -> Vec<Box<dyn UIElement>> {
         self.rows.clear();
         self.built_for = graphics::definitions();
-        let value_w = (width - LABEL - 12.0).max(80.0);
         let settings = graphics::current();
         let mut widgets: Vec<Box<dyn UIElement>> = Vec::new();
 
-        let dropdown = |rows: &mut Vec<Row>, widgets: &mut Vec<Box<dyn UIElement>>, label: &str, options: Vec<String>, index: u32, target: Target| {
+        let dropdown = |rows: &mut Vec<Row>, width: f32, label: &str, options: Vec<String>, index: u32, target: Target| -> Box<dyn UIElement> {
+            let value_w = (width - LABEL - 12.0).max(80.0);
             let source = Source::index(index);
             let Source::Index(data, _) = &source else { unreachable!() };
             let dropdown = Dropdown::new(Position::default(), Size::new(value_w, 24.0), options, data.clone());
             rows.push(Row { target, source });
-            widgets.push(Box::new(FieldRow::with_label_width(label, LABEL, vec![Box::new(dropdown)])));
+            Box::new(FieldRow::with_label_width(label, LABEL, vec![Box::new(dropdown)]))
         };
-        let strings = |labels: &[&str]| labels.iter().map(|l| l.to_string()).collect::<Vec<_>>();
         let preset = if settings.custom { 4 } else { level_index(settings.preset) };
-        dropdown(&mut self.rows, &mut widgets, "Voreinstellung", strings(&PRESET_LABELS), preset, Target::Preset);
+        widgets.push(dropdown(&mut self.rows, width, tr!("graphics.preset"), preset_labels(true), preset, Target::Preset));
         let preview = settings.preview.map_or(0, |level| level_index(level) + 1);
-        dropdown(&mut self.rows, &mut widgets, "Vorschau-Stufe", strings(&PREVIEW_LABELS), preview, Target::Preview);
+        widgets.push(dropdown(&mut self.rows, width, tr!("graphics.preview"), preview_labels(), preview, Target::Preview));
         let project = level_index(graphics::project_settings().default_preset);
-        dropdown(&mut self.rows, &mut widgets, "Projekt startet mit", strings(&PRESET_LABELS[..4]), project, Target::ProjectPreset);
+        widgets.push(dropdown(&mut self.rows, width, tr!("graphics.project_preset"), preset_labels(false), project, Target::ProjectPreset));
 
+        // The groups in the order their first setting comes.
+        let mut groups: Vec<(String, Vec<SettingDef>)> = Vec::new();
         for def in self.built_for.clone() {
-            let value = settings.value(&def.key).cloned();
-            match (&def.kind, value) {
-                (SettingKind::Level, Some(SettingValue::Level(level))) => {
-                    let labels: Vec<String> = Level::ALL.iter().map(|l| l.label().to_string()).collect();
-                    dropdown(&mut self.rows, &mut widgets, &def.label, labels, level_index(level), Target::Setting(def.clone()));
-                }
-                (SettingKind::Choice { options, .. }, Some(SettingValue::Choice(choice))) => {
-                    let index = options.iter().position(|o| *o == choice).unwrap_or(0) as u32;
-                    dropdown(&mut self.rows, &mut widgets, &def.label, options.clone(), index, Target::Setting(def.clone()));
-                }
-                (SettingKind::Toggle { .. }, Some(SettingValue::Toggle(on))) => {
-                    let data = DataSource::new(on);
-                    widgets.push(Box::new(FieldRow::with_label_width(&def.label, LABEL, vec![UI::checkbox(data.clone())])));
-                    self.rows.push(Row { target: Target::Setting(def.clone()), source: Source::Bool(data, on) });
-                }
-                (SettingKind::Number { min, max, unit, .. }, Some(SettingValue::Number(n))) => {
-                    // A slider and its value: a typed number would be set
-                    // (and clamped) on every key.
-                    let data = DataSource::new(n);
-                    let shown = DataSource::new(number_text(n, unit));
-                    let mut value = Label::bound(shown.clone(), theme::FONT_SIZE_SMALL);
-                    value.set_color(theme::TEXT_MUTED);
-                    let fields: Vec<Box<dyn UIElement>> = vec![
-                        UI::slider_sized(data.clone(), *min, *max, Size::new((value_w - VALUE - 4.0).max(40.0), 20.0)),
-                        Box::new(value),
-                    ];
-                    widgets.push(Box::new(FieldRow::with_label_width(&def.label, LABEL, fields)));
-                    self.rows.push(Row { target: Target::Setting(def.clone()), source: Source::Number(data, n, shown) });
-                }
-                _ => {}
+            match groups.iter_mut().find(|(group, _)| *group == def.group) {
+                Some((_, defs)) => defs.push(def),
+                None => groups.push((def.group.clone(), vec![def])),
             }
+        }
+        // The sections' rows are set in a little.
+        let inner = width - 8.0;
+        for (group, defs) in groups {
+            let mut section = Section::new(&group_label(&group), None, width);
+            section.bind_open(open.entry(group.clone()).or_insert_with(|| DataSource::new(true)).clone());
+            for def in defs {
+                let value = settings.value(&def.key).cloned();
+                let label = setting_label(&def);
+                let value_w = (inner - LABEL - 12.0).max(80.0);
+                match (&def.kind, value) {
+                    (SettingKind::Level, Some(SettingValue::Level(level))) => {
+                        let labels = Level::ALL.iter().map(|l| level_label(*l).to_string()).collect();
+                        section.add_child(dropdown(&mut self.rows, inner, label, labels, level_index(level), Target::Setting(def.clone())));
+                    }
+                    (SettingKind::Choice { options, .. }, Some(SettingValue::Choice(choice))) => {
+                        let index = options.iter().position(|o| *o == choice).unwrap_or(0) as u32;
+                        let shown = options.iter().map(|o| option_label(o)).collect();
+                        section.add_child(dropdown(&mut self.rows, inner, label, shown, index, Target::Setting(def.clone())));
+                    }
+                    (SettingKind::Toggle { .. }, Some(SettingValue::Toggle(on))) => {
+                        let data = DataSource::new(on);
+                        // A checkbox is small: its label gets the rest of the row.
+                        let label_w = (inner - 30.0).max(LABEL);
+                        section.add_child(Box::new(FieldRow::with_label_width(label, label_w, vec![UI::checkbox(data.clone())])));
+                        self.rows.push(Row { target: Target::Setting(def.clone()), source: Source::Bool(data, on) });
+                    }
+                    (SettingKind::Number { min, max, unit, .. }, Some(SettingValue::Number(n))) => {
+                        // A slider and its value: a typed number would be set
+                        // (and clamped) on every key.
+                        let data = DataSource::new(n);
+                        let shown = DataSource::new(number_text(n, unit));
+                        let mut value = Label::bound(shown.clone(), theme::FONT_SIZE_SMALL);
+                        value.set_color(theme::TEXT_MUTED);
+                        let fields: Vec<Box<dyn UIElement>> = vec![
+                            UI::slider_sized(data.clone(), *min, *max, Size::new((value_w - VALUE - 4.0).max(40.0), 20.0)),
+                            Box::new(value),
+                        ];
+                        section.add_child(Box::new(FieldRow::with_label_width(label, LABEL, fields)));
+                        self.rows.push(Row { target: Target::Setting(def.clone()), source: Source::Number(data, n, shown) });
+                    }
+                    _ => {}
+                }
+            }
+            widgets.push(Box::new(section));
         }
         widgets
     }
@@ -259,7 +328,7 @@ fn snapped(kind: &SettingKind, value: f32) -> f32 {
 /// the slider's knob reaches past its end).
 fn number_text(value: f32, unit: &str) -> String {
     let text = match unit {
-        "fps" if value == 0.0 => "aus".into(),
+        "fps" if value == 0.0 => tr!("graphics.no_limit").into(),
         "%" => format!("{value:.0} %"),
         unit => format!("{} {unit}", (value * 10.0).round() / 10.0),
     };
@@ -270,5 +339,18 @@ fn set_index(data: &DataSource<u32>, last: &mut u32, index: u32) {
     if index != *last {
         *last = index;
         data.write(index);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_engine_setting_and_group_has_a_text() {
+        for def in ferrite::core::graphics::engine_definitions() {
+            assert!(i18n::lookup(&format!("graphics.setting.{}", def.key)).is_some(), "no text for {}", def.key);
+            assert!(i18n::lookup(&format!("graphics.group.{}", def.group.to_lowercase())).is_some(), "no text for group {}", def.group);
+        }
     }
 }

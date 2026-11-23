@@ -156,46 +156,46 @@ impl Timeline {
     pub fn new(state: Shared) -> Self {
         let play = request_button(
             &state,
-            "Play",
+            tr!("clip_editor.timeline.play"),
             icons::PLAY,
-            "Play the clip (Space)",
+            tr!("clip_editor.timeline.play_tip"),
             ClipRequest::TogglePlay,
         );
         let looping = request_button(
             &state,
-            "Loop",
+            tr!("clip_editor.timeline.loop"),
             icons::ROTATE_CW,
-            "Start over at the end",
+            tr!("clip_editor.timeline.loop_tip"),
             ClipRequest::ToggleLoop,
         );
         let start = request_button(
             &state,
             "",
             icons::ARROW_LEFT,
-            "Back to the start (Home)",
+            tr!("clip_editor.timeline.to_start_tip"),
             ClipRequest::ToStart,
         );
         let mut key = request_button(
             &state,
-            "Key",
+            tr!("clip_editor.timeline.key"),
             icons::PLUS,
-            "Key the selected bone and the posed bones at the playhead (K)",
+            tr!("clip_editor.timeline.key_tip"),
             ClipRequest::Key,
         );
         key.set_style(ButtonStyle::Primary);
         let mut delete = request_button(
             &state,
-            "Delete key",
+            tr!("clip_editor.timeline.delete_key"),
             icons::TRASH,
-            "Remove the selected bone's key at the playhead, or all keys there (Delete)",
+            tr!("clip_editor.timeline.delete_key_tip"),
             ClipRequest::DeleteKey,
         );
         delete.set_style(ButtonStyle::Danger);
         let auto_key = request_button(
             &state,
-            "Auto key",
+            tr!("clip_editor.timeline.auto_key"),
             icons::ZAP,
-            "Key bones as soon as they are posed",
+            tr!("clip_editor.timeline.auto_key_tip"),
             ClipRequest::ToggleAutoKey,
         );
         Self {
@@ -313,7 +313,7 @@ impl Timeline {
         self.toolbar.set_size(Size::new(rect.w, TOOLBAR_H));
 
         self.play
-            .set_label(if self.view.playing { "Pause" } else { "Play" });
+            .set_label(if self.view.playing { tr!("anim.preview.pause") } else { tr!("clip_editor.timeline.play") });
         self.play.set_icon(if self.view.playing {
             icons::SQUARE
         } else {
@@ -377,7 +377,7 @@ impl Timeline {
         self.selected_row.set_size(Size::new(0.0, 0.0));
         for i in 0..shown {
             let label = if i == 0 {
-                Some(("All keys".to_string(), false))
+                Some((tr!("clip_editor.timeline.all_keys").to_string(), false))
             } else {
                 self.view.rows.get(self.scroll + i - 1).map(|(bone, _)| {
                     let name = ferrite::core::model::ik::base_name(bone).to_string();

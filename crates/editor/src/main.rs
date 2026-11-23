@@ -2,11 +2,15 @@
 #[allow(unused_imports)]
 use ferrite_dylib;
 
+// First: the other modules use its `tr!`.
+#[macro_use]
+mod i18n;
 mod editor;
 mod editor_layer;
 mod launcher;
 mod loading;
 mod new_script;
+mod preferences;
 mod project_lock;
 
 use std::path::{Path, PathBuf};
@@ -22,6 +26,8 @@ use launcher::Launcher;
 use loading::{Loading, Progress};
 
 fn main() {
+    // The user's language, before anything is shown.
+    preferences::load();
     // The editor draws its own title bar.
     let mut application = Application::with_decorations(1280, 720, "Ferrite Editor", false);
     application.set_clear_color(ferrite_ui::ui::theme::BG_APP);
@@ -50,11 +56,11 @@ fn project_to_open() -> Result<Option<PathBuf>, String> {
 fn find_project(given: &Path) -> Result<PathBuf, String> {
     if given.is_dir() {
         Project::find_in(given)
-            .ok_or_else(|| format!("no project (.fp file) in {}", given.display()))
+            .ok_or_else(|| tr!("main.no_project", path = given.display()))
     } else if given.is_file() {
         Ok(given.to_path_buf())
     } else {
-        Err(format!("{} does not exist", given.display()))
+        Err(tr!("main.not_exist", path = given.display()))
     }
 }
 

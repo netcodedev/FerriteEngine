@@ -67,27 +67,27 @@ impl CanvasDoc for ScatterEdit {
     }
 
     fn heading(&self) -> String {
-        format!("Scatter graph  \u{b7}  {}{}", self.name, if self.dirty() { "  \u{25cf}" } else { "" })
+        tr!("scatter.canvas.heading", name = self.name, dirty = if self.dirty() { "  \u{25cf}" } else { "" })
     }
 
     fn footer(&self) -> (String, theme::Color) {
         if self.changed_on_disk {
             return (
-                "The file was changed elsewhere; saving would overwrite that. Revert to take it up.".to_string(),
+                tr!("scatter.canvas.changed_elsewhere").to_string(),
                 theme::WARNING,
             );
         }
         if let Some(problem) = self.graph.problems().first() {
-            return (format!("The graph cannot be worked out: {problem}"), theme::DANGER);
+            return (tr!("scatter.canvas.cannot_work_out", problem = problem), theme::DANGER);
         }
         let counts = match &self.counts {
-            Counts::None => "no terrain to count points on".to_string(),
-            Counts::Working => "counting points…".to_string(),
-            Counts::Done(_) => "points counted on the 32 m cell under the camera".to_string(),
-            Counts::Failed(e) => format!("counting failed: {e}"),
+            Counts::None => tr!("scatter.canvas.counts_none").to_string(),
+            Counts::Working => tr!("scatter.canvas.counts_working").to_string(),
+            Counts::Done(_) => tr!("scatter.canvas.counts_done").to_string(),
+            Counts::Failed(e) => tr!("scatter.canvas.counts_failed", error = e),
         };
         (
-            format!("{counts}  \u{b7}  right-click or Space: add  \u{b7}  drag from an output to an input to wire  \u{b7}  Shift-drag: select"),
+            tr!("scatter.canvas.footer", counts = counts),
             theme::TEXT_DIM,
         )
     }
@@ -103,7 +103,7 @@ impl CanvasDoc for ScatterEdit {
             .map(|n| {
                 let note = match &self.counts {
                     Counts::Done(counts) => (
-                        counts.get(&n.id).map_or("—".to_string(), |c| format!("{c} points")),
+                        counts.get(&n.id).map_or("—".to_string(), |c| tr!("scatter.canvas.points", count = c)),
                         theme::SUCCESS,
                     ),
                     Counts::Working => ("…".to_string(), theme::TEXT_DIM),
@@ -220,44 +220,44 @@ fn summary(kind: &NodeKind) -> String {
         ferrite::core::graphics::Param::ByLevel { values, .. } => format!("{}–{}", n(values.low), n(values.ultra)),
     };
     match kind {
-        NodeKind::SurfacePoints { spacing, jitter, .. } => format!("every {} m, jitter {}", p(spacing), n(*jitter)),
-        NodeKind::RandomPoints { per_hectare, .. } => format!("{} per hectare", p(per_hectare)),
+        NodeKind::SurfacePoints { spacing, jitter, .. } => tr!("scatter.summary.surface_points", spacing = p(spacing), jitter = n(*jitter)),
+        NodeKind::RandomPoints { per_hectare, .. } => tr!("scatter.summary.random_points", count = p(per_hectare)),
         NodeKind::Slope { min, max, .. } => format!("{}–{}°", n(*min), n(*max)),
         NodeKind::Height { min, max, .. } => format!("{}–{} m", n(*min), n(*max)),
-        NodeKind::Clearance { feature, distance, .. } => format!("{} m from {}", n(*distance), if feature.is_empty() { "?" } else { feature }),
-        NodeKind::Biome { biome } if biome.is_empty() => "no biome chosen".into(),
+        NodeKind::Clearance { feature, distance, .. } => tr!("scatter.summary.clearance", distance = n(*distance), feature = if feature.is_empty() { "?" } else { feature }),
+        NodeKind::Biome { biome } if biome.is_empty() => tr!("scatter.summary.no_biome").into(),
         NodeKind::Biome { biome } => biome.clone(),
-        NodeKind::WorldChance { tag } if tag.is_empty() => "untagged".into(),
-        NodeKind::WorldChance { tag } => format!("tag \"{tag}\""),
-        NodeKind::Noise { wavelength, threshold, .. } => format!("{} m patches, {} kept", n(*wavelength), n(1.0 - threshold)),
-        NodeKind::DensityCut { multiplier } if *multiplier == 1.0 => "keep by density".into(),
-        NodeKind::DensityCut { multiplier } => format!("keep by density ×{}", n(*multiplier)),
+        NodeKind::WorldChance { tag } if tag.is_empty() => tr!("scatter.summary.untagged").into(),
+        NodeKind::WorldChance { tag } => tr!("scatter.summary.tag", tag = tag),
+        NodeKind::Noise { wavelength, threshold, .. } => tr!("scatter.summary.noise", wavelength = n(*wavelength), kept = n(1.0 - threshold)),
+        NodeKind::DensityCut { multiplier } if *multiplier == 1.0 => tr!("scatter.summary.density_cut").into(),
+        NodeKind::DensityCut { multiplier } => tr!("scatter.summary.density_cut_factor", factor = n(*multiplier)),
         NodeKind::KeepAwayFrom { radius } => format!("{} m", n(*radius)),
         NodeKind::Rotate { yaw_min, yaw_max, align, tilt } => {
-            format!("yaw {}–{}°, align {}, tilt {}°", n(*yaw_min), n(*yaw_max), n(*align), n(*tilt))
+            tr!("scatter.summary.rotate", min = n(*yaw_min), max = n(*yaw_max), align = n(*align), tilt = n(*tilt))
         }
         NodeKind::Scale { min, max, .. } => format!("×{}–{}", n(*min), n(*max)),
-        NodeKind::Offset { min, max } => format!("{}–{} m up", n(*min), n(*max)),
-        NodeKind::Merge => "all inputs".into(),
-        NodeKind::Split { by, threshold } => format!(
-            "{} at {}",
-            match by {
-                SplitBy::Density => "density",
-                SplitBy::Random => "random",
+        NodeKind::Offset { min, max } => tr!("scatter.summary.offset", min = n(*min), max = n(*max)),
+        NodeKind::Merge => tr!("scatter.summary.merge").into(),
+        NodeKind::Split { by, threshold } => tr!(
+            "scatter.summary.split",
+            by = match by {
+                SplitBy::Density => tr!("scatter.summary.split_density"),
+                SplitBy::Random => tr!("scatter.summary.split_random"),
             },
-            n(*threshold)
+            threshold = n(*threshold)
         ),
         NodeKind::SpawnMesh(spawn) => {
             let model = match (&spawn.asset, spawn.model.trim()) {
                 (Some(asset), _) => ferrite::core::assets::database()
                     .display_name(asset)
-                    .unwrap_or_else(|| "missing model".into()),
-                (None, "") => "no model".into(),
+                    .unwrap_or_else(|| tr!("scatter.summary.missing_model").into()),
+                (None, "") => tr!("scatter.no_model").into(),
                 (None, file) => file.to_string(),
             };
             match &spawn.range {
-                SpawnRange::Landscape => format!("{model}, landscape"),
-                SpawnRange::Detail { distance } => format!("{model}, {} m", p(distance)),
+                SpawnRange::Landscape => tr!("scatter.summary.landscape", model = model),
+                SpawnRange::Detail { distance } => tr!("scatter.summary.detail", model = model, distance = p(distance)),
             }
         }
     }

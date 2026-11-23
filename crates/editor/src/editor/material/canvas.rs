@@ -69,8 +69,8 @@ fn summary(graph: &MaterialGraph, node: &graph::GraphNode) -> String {
         NodeKind::Parameter(name) => graph
             .param(name)
             .map(|p| p.ty.label().to_string())
-            .unwrap_or_else(|| "missing".into()),
-        NodeKind::Output => "the material's channels".into(),
+            .unwrap_or_else(|| tr!("material.canvas.param_missing").into()),
+        NodeKind::Output => tr!("material.canvas.output_channels").into(),
         _ => shown.join(", "),
     }
 }
@@ -106,21 +106,21 @@ impl CanvasDoc for MaterialEdit {
     }
 
     fn heading(&self) -> String {
-        format!("Material graph  \u{b7}  {}{}", self.name, if self.dirty() { "  \u{25cf}" } else { "" })
+        tr!("material.canvas.heading", name = self.name, dirty = if self.dirty() { "  \u{25cf}" } else { "" })
     }
 
     fn footer(&self) -> (String, theme::Color) {
         if self.changed_on_disk {
             return (
-                "The file was changed elsewhere; saving would overwrite that. Revert to take it up.".into(),
+                tr!("scatter.canvas.changed_elsewhere").into(),
                 theme::WARNING,
             );
         }
         if let Some(problem) = self.problems().first() {
-            return (format!("The graph cannot be compiled (drawn magenta): {problem}"), theme::DANGER);
+            return (tr!("material.canvas.cannot_compile", problem = problem), theme::DANGER);
         }
         (
-            "right-click or Space: add  \u{b7}  drag from an output to an input to wire  \u{b7}  Shift-drag: select  \u{b7}  nothing selected: the graph's parameters in the inspector".into(),
+            tr!("material.canvas.footer").into(),
             theme::TEXT_DIM,
         )
     }

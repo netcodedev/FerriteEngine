@@ -154,7 +154,7 @@ impl AssetEdit {
         let database = assets::database();
         let entry = database
             .get(id)
-            .ok_or_else(|| format!("asset {id} does not exist"))?;
+            .ok_or_else(|| tr!("asset_editor.error.missing", id = id))?;
         let variant = variant
             .and_then(|name| {
                 entry
@@ -386,7 +386,7 @@ impl AssetEdit {
         let saved = assets::database()
             .get(self.meta.id)
             .map(|entry| entry.meta.clone())
-            .ok_or_else(|| format!("asset {} does not exist any more", self.meta.id))?;
+            .ok_or_else(|| tr!("asset_editor.error.gone", id = self.meta.id))?;
         self.meta = saved;
         self.others.clear();
         self.anchor = None;

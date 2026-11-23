@@ -127,9 +127,9 @@ impl ScatterEdit {
     pub fn open(id: AssetId) -> Result<Self, String> {
         let (name, path) = {
             let database = assets::database();
-            let entry = database.get(id).ok_or_else(|| format!("asset {id} does not exist"))?;
+            let entry = database.get(id).ok_or_else(|| tr!("scatter.asset_missing", id = id))?;
             if !matches!(entry.meta.kind, AssetKind::ScatterGraph(_)) {
-                return Err(format!("'{}' is not a scatter graph", entry.meta.name));
+                return Err(tr!("scatter.not_a_scatter_graph", name = entry.meta.name));
             }
             (entry.meta.name.clone(), entry.source_path())
         };
@@ -275,7 +275,7 @@ impl ScatterEdit {
         let meta = assets::database()
             .get(self.asset)
             .map(|entry| entry.meta.clone())
-            .ok_or_else(|| format!("asset {} does not exist", self.asset))?;
+            .ok_or_else(|| tr!("scatter.asset_missing", id = self.asset))?;
         assets::database().update(meta).map_err(|e| e.to_string())?;
         self.saved = self.graph.clone();
         self.file_time = file_time(&self.path);
@@ -346,7 +346,7 @@ impl ScatterEdit {
                 Err(TryRecvError::Empty) => return,
                 Err(TryRecvError::Disconnected) => {
                     self.counting = None;
-                    self.counts = Counts::Failed("working out the points failed".into());
+                    self.counts = Counts::Failed(tr!("scatter.points_failed").into());
                 }
             }
         }
@@ -430,7 +430,7 @@ impl ScatterEdit {
                         .asset
                         .as_ref()
                         .and_then(|a| assets::database().display_name(a))
-                        .unwrap_or_else(|| "no model".into());
+                        .unwrap_or_else(|| tr!("scatter.no_model").into());
                     group(format!("#{} {model}", id.0), PALETTE[i % PALETTE.len()], pin(id, 0))
                 })
                 .collect();
@@ -453,12 +453,12 @@ impl ScatterEdit {
                     .into_iter()
                     .map(|[x, _, z, density]| ([x.to_bits(), z.to_bits()], density))
                     .collect();
-                let what = if matches!(node.kind, NodeKind::WorldChance { .. }) { "chance" } else { "kept" };
+                let what = if matches!(node.kind, NodeKind::WorldChance { .. }) { tr!("scatter.legend.chance") } else { tr!("scatter.legend.kept") };
                 let mut groups: Vec<PointGroup> = FADE
                     .iter()
                     .map(|(low, high, color)| match low {
-                        None => group(format!("{what} 0 (dropped)"), *color, Vec::new()),
-                        Some(low) => group(format!("{what} {low:.2}–{high:.2}"), *color, Vec::new()),
+                        None => group(tr!("scatter.legend.zero_dropped", what = what), *color, Vec::new()),
+                        Some(low) => group(tr!("scatter.legend.range", what = what, low = format!("{low:.2}"), high = format!("{high:.2}")), *color, Vec::new()),
                     })
                     .collect();
                 for [x, y, z, density] in into_traced(id, 0) {
@@ -481,9 +481,9 @@ impl ScatterEdit {
                     .into_iter()
                     .filter(|p| !kept_at.contains(&[p[0].to_bits(), p[2].to_bits()]))
                     .collect();
-                let mut groups = vec![group("kept".into(), KEPT, kept), group("dropped".into(), DROPPED, dropped)];
+                let mut groups = vec![group(tr!("scatter.legend.kept").into(), KEPT, kept), group(tr!("scatter.legend.dropped").into(), DROPPED, dropped)];
                 if matches!(kind, NodeKind::KeepAwayFrom { .. }) {
-                    groups.push(group("kept away from".into(), AWAY_FROM, into(id, 1)));
+                    groups.push(group(tr!("scatter.legend.kept_away_from").into(), AWAY_FROM, into(id, 1)));
                 }
                 groups
             }
@@ -493,11 +493,11 @@ impl ScatterEdit {
                 .enumerate()
                 .map(|(i, w)| {
                     let from = self.graph.node(w.from.node).map_or("?", |n| n.kind.label());
-                    group(format!("from #{} {from}", w.from.node.0), PALETTE[i % PALETTE.len()], pin(w.from.node, w.from.pin))
+                    group(tr!("scatter.legend.from_node", id = w.from.node.0, node = from), PALETTE[i % PALETTE.len()], pin(w.from.node, w.from.pin))
                 })
                 .collect(),
             (NodeKind::Split { .. }, _) => {
-                vec![group("above".into(), KEPT, pin(id, 0)), group("below".into(), PALETTE[1], pin(id, 1))]
+                vec![group(tr!("scatter.legend.above").into(), KEPT, pin(id, 0)), group(tr!("scatter.legend.below").into(), PALETTE[1], pin(id, 1))]
             }
             (kind, _) => vec![group(kind.label().into(), PALETTE[0], pin(id, 0))],
         }

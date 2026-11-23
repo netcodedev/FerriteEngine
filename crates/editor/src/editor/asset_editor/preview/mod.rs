@@ -181,7 +181,7 @@ pub struct AssetPreview {
 
 impl AssetPreview {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Preview".into(), Position::default(), Size::new(600.0, 400.0));
+        let mut panel = Panel::new(tr!("asset_editor.preview.title").into(), Position::default(), Size::new(600.0, 400.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
@@ -189,29 +189,29 @@ impl AssetPreview {
         let reset_pose = DataSource::new(false);
         let skeleton_flag = show_skeleton.clone();
         let mut skeleton_button = header_button(
-            "Skeleton",
+            tr!("asset_editor.preview.skeleton"),
             icons::EYE,
             ButtonStyle::Secondary,
             Box::new(move |_| skeleton_flag.write(!skeleton_flag.read())),
         );
-        skeleton_button.set_tooltip("Show the bones and the handles to pose them with");
+        skeleton_button.set_tooltip(tr!("asset_editor.preview.skeleton_tooltip"));
         let reset_flag = reset_pose.clone();
         let mut reset_button = header_button(
-            "Reset pose",
+            tr!("asset_editor.preview.reset_pose"),
             icons::ROTATE_CW,
             ButtonStyle::Secondary,
             Box::new(move |_| reset_flag.write(true)),
         );
-        reset_button.set_tooltip("Put every bone back where the file has it");
+        reset_button.set_tooltip(tr!("asset_editor.preview.reset_pose_tooltip"));
         let frame_request = DataSource::new(false);
         let frame_flag = frame_request.clone();
         let mut frame_button = header_button(
-            "Center view",
+            tr!("asset_editor.preview.center_view"),
             icons::SCAN,
             ButtonStyle::Secondary,
             Box::new(move |_| frame_flag.write(true)),
         );
-        frame_button.set_tooltip("Look at the model again (right or middle mouse button moves the view)");
+        frame_button.set_tooltip(tr!("asset_editor.preview.center_view_tooltip"));
         let timeline = Timeline::new(state.clone());
         Self {
             handle: UIElementHandle::new(),
@@ -250,7 +250,7 @@ impl AssetPreview {
             pending_since: None,
             message: theme::text("", theme::FONT_SIZE, theme::TEXT_MUTED),
             hint: theme::text(
-                "Drag to orbit, right or middle mouse to move the view, scroll to zoom",
+                tr!("asset_editor.preview.hint_orbit"),
                 theme::FONT_SIZE_SMALL,
                 theme::TEXT_DIM,
             ),
@@ -339,15 +339,15 @@ impl AssetPreview {
                     None => Shown::Texture(image),
                 }
             }
-            AssetKind::ScatterGraph(_) => Shown::Note("A scatter graph. It is edited in the node editor (to come).".into()),
+            AssetKind::ScatterGraph(_) => Shown::Note(tr!("asset_editor.preview.note_scatter").into()),
             AssetKind::Material(_) | AssetKind::MaterialGraph(_) => {
-                Shown::Note("A material. It is edited in the material workspace.".into())
+                Shown::Note(tr!("asset_editor.preview.note_material").into())
             }
-            AssetKind::Animation(animation) => Shown::Note(format!(
-                "{} animation clip{}. Use them in an animation graph to see them play.",
-                animation.clips.len(),
-                if animation.clips.len() == 1 { "" } else { "s" }
-            )),
+            AssetKind::Animation(animation) => Shown::Note(if animation.clips.len() == 1 {
+                tr!("asset_editor.preview.note_animation_one").to_string()
+            } else {
+                tr!("asset_editor.preview.note_animation_many", n = animation.clips.len())
+            }),
             // Files that bring animation clips are drawn skinned when they
             // turn out to have bones.
             AssetKind::Model(model) if !model.clips.is_empty() => match Rigged::load(&edit.source_path(), model, edit.variant) {
@@ -362,12 +362,12 @@ impl AssetPreview {
         self.hovered = None;
         self.hint.set_content(match self.shown {
             Shown::Rigged(_) => {
-                "Drag a handle to pose, elsewhere to orbit; right or middle mouse moves the view, scroll zooms"
+                tr!("asset_editor.preview.hint_rigged")
             }
             Shown::Held(_) => {
-                "Drag the model to move it in the hand, the blue diamond for the other hand; elsewhere to orbit"
+                tr!("asset_editor.preview.hint_held")
             }
-            _ => "Drag to orbit, right or middle mouse to move the view, scroll to zoom",
+            _ => tr!("asset_editor.preview.hint_orbit"),
         });
     }
 
@@ -387,10 +387,10 @@ impl AssetPreview {
         self.ik_drag = None;
         self.hovered = None;
         self.shown = match model {
-            None => Shown::Failed("the model this clip is posed on does not exist".into()),
+            None => Shown::Failed(tr!("asset_editor.preview.clip_model_missing").into()),
             Some((source, settings)) => match Rigged::load(&source, &settings, 0) {
                 Ok(Some(rigged)) => Shown::Rigged(Box::new(rigged)),
-                Ok(None) => Shown::Failed("the clip's model has no bones".into()),
+                Ok(None) => Shown::Failed(tr!("asset_editor.preview.clip_model_no_bones").into()),
                 Err(e) => Shown::Failed(e),
             },
         };
@@ -425,9 +425,7 @@ impl AssetPreview {
                 clip.selection += 1;
             }
         }
-        self.hint.set_content(
-            "Drag a handle or ring to pose, click a joint to select it. Click a reference or an anchor, then drag its arrows, diamond or rings, or Shift+drag the model. Drag to orbit, right or middle mouse moves the view",
-        );
+        self.hint.set_content(tr!("asset_editor.preview.hint_clip"));
         true
     }
 
@@ -634,7 +632,7 @@ impl AssetPreview {
                     if poses.is_empty() {
                         self.state
                             .borrow_mut()
-                            .set_status("Select a bone or pose one to key it");
+                            .set_status(tr!("asset_editor.preview.select_bone"));
                     }
                     self.key_poses(&poses);
                 }

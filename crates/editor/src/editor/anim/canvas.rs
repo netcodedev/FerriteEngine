@@ -99,7 +99,7 @@ impl NodeCanvas {
     pub fn new(state: Shared) -> Self {
         let add_state = state.clone();
         let add_button = header_button(
-            "Add state",
+            tr!("anim.canvas.add_state"),
             icons::PLUS,
             ButtonStyle::Secondary,
             Box::new(move |_| {
@@ -124,24 +124,24 @@ impl NodeCanvas {
             }),
         );
         let mut fit_button = header_button("", icons::SCAN, ButtonStyle::Ghost, Box::new(|_| {}));
-        fit_button.set_tooltip("Fit graph to view");
+        fit_button.set_tooltip(tr!("anim.canvas.fit_graph"));
         let back_state = state.clone();
         let back_button = header_button(
-            "Back to scene",
+            tr!("anim.canvas.back_to_scene"),
             icons::ARROW_LEFT,
             ButtonStyle::Ghost,
             Box::new(move |_| send(&back_state, Command::CloseGraphEditor)),
         );
         let revert_state = state.clone();
         let revert_button = header_button(
-            "Revert",
+            tr!("common.revert"),
             icons::ROTATE_CW,
             ButtonStyle::Ghost,
             Box::new(move |_| send(&revert_state, Command::RevertGraph)),
         );
         let save_state = state.clone();
         let save_button = header_button(
-            "Save",
+            tr!("common.save"),
             icons::SAVE,
             ButtonStyle::Primary,
             Box::new(move |_| send(&save_state, Command::SaveGraph)),
@@ -163,7 +163,7 @@ impl NodeCanvas {
                 .build(),
             title: theme::heading("", theme::FONT_SIZE, theme::TEXT),
             hint: theme::text(
-                "Drag a node to move it  \u{b7}  drag its handle onto another node to add a transition  \u{b7}  double-click to add a state  \u{b7}  scroll to zoom",
+                tr!("anim.canvas.hint"),
                 theme::FONT_SIZE_SMALL,
                 theme::TEXT_DIM,
             ),
@@ -458,7 +458,7 @@ impl UIElement for NodeCanvas {
             .set_size(Size::new(rect.w + 2.0, HEADER_HEIGHT));
         let by = rect.y + ((HEADER_HEIGHT - 28.0) * 0.5).round();
         self.back_button.set_offset(Offset { x: rect.x + 8.0, y: by });
-        let title = format!("Animation graph  \u{b7}  {}", self.state.borrow().anim.file_name());
+        let title = tr!("anim.canvas.title", file = self.state.borrow().anim.file_name());
         self.title.set_content(&title);
         let ty = theme::center_y(&self.title, HEADER_HEIGHT);
         let title_x = rect.x + 8.0 + self.back_button.get_size().width + 12.0;
@@ -560,7 +560,7 @@ impl UIElement for NodeCanvas {
             node.title.set_content(&def.name);
             node.title.set_color(if selected { theme::ACCENT_TEXT } else { theme::TEXT });
             let clips = if def.clips.is_empty() {
-                "no clips".to_owned()
+                tr!("anim.canvas.no_clips").to_owned()
             } else {
                 let database = ferrite::core::assets::database();
                 def.clips
@@ -576,9 +576,9 @@ impl UIElement for NodeCanvas {
             node.subtitle
                 .prepare_render_at(Position::new(r.x + pad, r.y + 31.0 * zoom, Z + 4.0));
             node.badge.set_content(if is_default {
-                "default"
+                tr!("anim.canvas.badge_default")
             } else if active {
-                "active"
+                tr!("anim.canvas.badge_active")
             } else {
                 ""
             });

@@ -43,7 +43,7 @@ impl Exporter {
     /// open). `None` if cancelled.
     pub fn pick_folder() -> Option<PathBuf> {
         rfd::FileDialog::new()
-            .set_title("Export the game into")
+            .set_title(tr!("export.pick_folder"))
             .pick_folder()
     }
 
@@ -63,7 +63,7 @@ impl Exporter {
             let _ = send.send(Event::Done(result));
         });
         self.running = Some(receive);
-        self.step = "Exporting...".into();
+        self.step = tr!("export.running").into();
     }
 
     /// The status to show, while exporting and once when it ends. Call
@@ -76,14 +76,14 @@ impl Exporter {
                 Ok(Event::Done(result)) => {
                     self.running = None;
                     return Some(match result {
-                        Ok(dir) => format!("Exported to {}", dir.display()),
-                        Err(e) => format!("Export failed: {e}"),
+                        Ok(dir) => tr!("export.done", path = dir.display()),
+                        Err(e) => tr!("export.failed", error = e),
                     });
                 }
                 Err(mpsc::TryRecvError::Empty) => return Some(self.step.clone()),
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.running = None;
-                    return Some("Export failed: it stopped".into());
+                    return Some(tr!("export.stopped").into());
                 }
             }
         }

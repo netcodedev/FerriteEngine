@@ -158,7 +158,7 @@ fn param_rows(edit: &MaterialEdit) -> Rows {
     let types: Vec<String> = ParamType::ALL.iter().map(|t| edit::param_type_name(*t).to_string()).collect();
     let mut rows = Vec::new();
     for (index, p) in graph.params.iter().enumerate() {
-        let section = format!("Parameter {}: {}", index + 1, p.display());
+        let section = tr!("material.inspector.parameter", index = index + 1, name = p.display());
         let key = |field: &str| format!("param:{index}:{field}");
         rows.push((section.clone(), prop(key("name"), PropertyValue::Text(p.name.clone()), None), Extra::RemoveParam(p.name.clone())));
         rows.push((
@@ -248,7 +248,7 @@ fn apply(edit: &mut MaterialEdit, name: &str, value: &PropertyValue) -> Result<(
 
 impl MaterialInspector {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Material".into(), Position::default(), Size::new(330.0, 400.0));
+        let mut panel = Panel::new(tr!("material.inspector.title").into(), Position::default(), Size::new(330.0, 400.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
@@ -311,18 +311,18 @@ impl MaterialInspector {
         };
         // Header buttons: save, revert, back.
         let header: Vec<Box<dyn UIElement>> = vec![
-            self.button(icons::SAVE, "Save", "Save (Ctrl+S)", Command::SaveMaterial),
-            self.button(icons::ROTATE_CW, "Revert", "Back to the saved file", Command::RevertMaterial),
-            self.button(icons::ARROW_LEFT, "Back", "Back to the scene", Command::CloseMaterialEditor),
+            self.button(icons::SAVE, tr!("common.save"), tr!("graph_canvas.save_tip"), Command::SaveMaterial),
+            self.button(icons::ROTATE_CW, tr!("common.revert"), tr!("material.inspector.revert_tip"), Command::RevertMaterial),
+            self.button(icons::ARROW_LEFT, tr!("common.back"), tr!("material.inspector.back_tip"), Command::CloseMaterialEditor),
         ];
         self.body.add_child(Box::new(FieldRow::with_label_width("", 0.0, header)));
         if saved_note {
-            let mut label = Label::new("The file was changed elsewhere; Revert takes it up.", theme::FONT_SIZE_SMALL);
+            let mut label = Label::new(tr!("material.inspector.changed_elsewhere"), theme::FONT_SIZE_SMALL);
             label.set_color(theme::WARNING);
             self.body.add_child(Box::new(label));
         }
         if is_graph && selected > 1 {
-            self.body.add_child(Box::new(Label::muted(&format!("{selected} nodes selected. Select one to edit it."), theme::FONT_SIZE)));
+            self.body.add_child(Box::new(Label::muted(&tr!("material.inspector.nodes_selected", count = selected), theme::FONT_SIZE)));
         }
         let mut section: Option<Section> = None;
         let mut section_title = String::new();
@@ -344,9 +344,9 @@ impl MaterialInspector {
             self.body.add_child(Box::new(done));
         }
         if is_graph && selected == 0 {
-            let add = self.button(icons::PLUS, "Add parameter", "A new parameter materials set", Command::MaterialAddParam);
+            let add = self.button(icons::PLUS, tr!("material.inspector.add_param"), tr!("material.inspector.add_param_tip"), Command::MaterialAddParam);
             self.body.add_child(Box::new(FieldRow::with_label_width("", 0.0, vec![add])));
-            self.body.add_child(Box::new(Label::muted("Select a node to edit it; right-click the canvas to add one.", theme::FONT_SIZE_SMALL)));
+            self.body.add_child(Box::new(Label::muted(tr!("material.inspector.select_node"), theme::FONT_SIZE_SMALL)));
         }
         for problem in problems {
             let mut label = Label::new(&problem, theme::FONT_SIZE_SMALL);
@@ -446,19 +446,19 @@ impl MaterialInspector {
             Extra::Texture(param) => widgets.push(self.button(
                 icons::LAYOUT_GRID,
                 "",
-                "Choose a texture (or drop one here): automatic, none, or a texture asset",
+                tr!("material.inspector.texture_tip"),
                 Command::PickMaterialTexture { param: param.clone() },
             )),
             Extra::OpenGraph(id) => widgets.push(self.button(
                 icons::PENCIL,
                 "",
-                "Edit this graph",
+                tr!("material.inspector.edit_graph_tip"),
                 Command::EditAsset { id: *id, variant: None },
             )),
             Extra::RemoveParam(name) => widgets.push(self.button(
                 icons::TRASH,
                 "",
-                "Remove this parameter (nodes reading it then show a problem)",
+                tr!("material.inspector.remove_param_tip"),
                 Command::MaterialRemoveParam(name.clone()),
             )),
         }

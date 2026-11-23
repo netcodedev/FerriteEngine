@@ -67,10 +67,10 @@ pub struct Toolbar {
 /// Window menu entries, checked while the panel is shown.
 fn window_items(stats: bool, widgets: bool, assets: bool, console: bool) -> Vec<MenuItem> {
     vec![
-        MenuItem::new("Performance").icon(icons::ACTIVITY).checked(stats),
-        MenuItem::new("Widget showcase").icon(icons::COMPONENT).checked(widgets),
-        MenuItem::new("Assets").icon(icons::PACKAGE).checked(assets),
-        MenuItem::new("Console").icon(icons::TERMINAL).checked(console),
+        MenuItem::new(tr!("toolbar.window.performance")).icon(icons::ACTIVITY).checked(stats),
+        MenuItem::new(tr!("toolbar.window.widgets")).icon(icons::COMPONENT).checked(widgets),
+        MenuItem::new(tr!("toolbar.window.assets")).icon(icons::PACKAGE).checked(assets),
+        MenuItem::new(tr!("toolbar.window.console")).icon(icons::TERMINAL).checked(console),
     ]
 }
 
@@ -87,17 +87,18 @@ impl Toolbar {
     pub fn new(state: Shared) -> Self {
         let file_state = state.clone();
         let file_menu = MenuButton::with_items(
-            "File",
+            tr!("toolbar.file"),
             None,
             vec![
-                MenuItem::new("New scene").icon(icons::FILE_PLUS).shortcut("Ctrl+N"),
-                MenuItem::new("Open...").icon(icons::FOLDER_OPEN).shortcut("Ctrl+O"),
-                MenuItem::new("Save").icon(icons::SAVE).shortcut("Ctrl+S"),
-                MenuItem::new("Save as...").icon(icons::SAVE).shortcut("Ctrl+Shift+S"),
-                MenuItem::new("New script...").icon(icons::FILE_CODE),
-                MenuItem::new("Reload scripts").icon(icons::ROTATE_CW).shortcut("Ctrl+R"),
-                MenuItem::new("Export for Linux...").icon(icons::PACKAGE),
-                MenuItem::new("Export for Windows...").icon(icons::PACKAGE),
+                MenuItem::new(tr!("toolbar.file.new_scene")).icon(icons::FILE_PLUS).shortcut("Ctrl+N"),
+                MenuItem::new(tr!("toolbar.file.open")).icon(icons::FOLDER_OPEN).shortcut("Ctrl+O"),
+                MenuItem::new(tr!("toolbar.file.save")).icon(icons::SAVE).shortcut("Ctrl+S"),
+                MenuItem::new(tr!("toolbar.file.save_as")).icon(icons::SAVE).shortcut("Ctrl+Shift+S"),
+                MenuItem::new(tr!("toolbar.file.new_script")).icon(icons::FILE_CODE),
+                MenuItem::new(tr!("toolbar.file.reload_scripts")).icon(icons::ROTATE_CW).shortcut("Ctrl+R"),
+                MenuItem::new(tr!("toolbar.file.export_linux")).icon(icons::PACKAGE),
+                MenuItem::new(tr!("toolbar.file.export_windows")).icon(icons::PACKAGE),
+                MenuItem::new(tr!("toolbar.file.settings")).icon(icons::SETTINGS),
             ],
             Box::new(move |index, _scene| {
                 let command = match index {
@@ -108,7 +109,8 @@ impl Toolbar {
                     4 => Command::NewScriptDialog,
                     5 => Command::ReloadScripts,
                     6 => Command::ExportGame(Platform::Linux),
-                    _ => Command::ExportGame(Platform::Windows),
+                    7 => Command::ExportGame(Platform::Windows),
+                    _ => Command::SettingsDialog,
                 };
                 send(&file_state, command);
             }),
@@ -116,7 +118,7 @@ impl Toolbar {
 
         let window_state = state.clone();
         let window_menu = MenuButton::with_items(
-            "Window",
+            tr!("toolbar.window"),
             None,
             window_items(true, false, true, true),
             Box::new(move |index, _scene| {
@@ -133,19 +135,19 @@ impl Toolbar {
 
         let move_state = state.clone();
         let move_button = tool_button(
-            "Move",
+            tr!("toolbar.move"),
             icons::MOVE_3D,
             Box::new(move |_| move_state.borrow_mut().gizmo = GizmoMode::Translate),
         );
         let rotate_state = state.clone();
         let rotate_button = tool_button(
-            "Rotate",
+            tr!("toolbar.rotate"),
             icons::ROTATE_3D,
             Box::new(move |_| rotate_state.borrow_mut().gizmo = GizmoMode::Rotate),
         );
         let scale_state = state.clone();
         let scale_button = tool_button(
-            "Scale",
+            tr!("toolbar.scale"),
             icons::SCALE_3D,
             Box::new(move |_| scale_state.borrow_mut().gizmo = GizmoMode::Scale),
         );
@@ -167,7 +169,7 @@ impl Toolbar {
         );
         play_button.set_style(ButtonStyle::Primary);
         play_button.set_icon(icons::PLAY);
-        play_button.set_label("Play");
+        play_button.set_label(tr!("toolbar.play"));
 
         Self {
             handle: UIElementHandle::new(),
@@ -314,7 +316,7 @@ impl UIElement for Toolbar {
 
         // Play/stop sits over the centre of the viewport.
         self.play_button.set_icon(if editing { icons::PLAY } else { icons::SQUARE });
-        self.play_button.set_label(if editing { "Play" } else { "Stop" });
+        self.play_button.set_label(if editing { tr!("toolbar.play") } else { tr!("toolbar.stop") });
         self.play_button
             .set_style(if editing { ButtonStyle::Primary } else { ButtonStyle::Danger });
         self.play_button.set_active(!editing);
@@ -328,11 +330,11 @@ impl UIElement for Toolbar {
             let mut state = self.state.borrow_mut();
             if state.agent.as_ref().is_some_and(|a| a.last_seen.elapsed() > super::AGENT_TIMEOUT) {
                 state.agent = None;
-                state.set_status("The agent's control ended: no word from it for a minute");
+                state.set_status(tr!("toolbar.agent_timed_out"));
             }
             state.agent.as_ref().map(|a| match &a.note {
-                Some(note) => format!("Agent at the controls - please don't touch  ·  {note}"),
-                None => "Agent at the controls - please don't touch".to_string(),
+                Some(note) => format!("{}  ·  {note}", tr!("toolbar.agent_at_controls")),
+                None => tr!("toolbar.agent_at_controls").to_string(),
             })
         };
         self.agent_shown = agent.is_some();
@@ -371,7 +373,7 @@ impl UIElement for Toolbar {
             .and_then(|terrain| terrain.loading_status());
         self.spinning = status.is_none() && loading.is_some();
         let status = status.or(loading).unwrap_or_else(|| match mode {
-            Mode::Play => "Playing  -  Esc frees the mouse, Ctrl+P stops".into(),
+            Mode::Play => tr!("toolbar.playing_hint").into(),
             Mode::Edit => String::new(),
         });
         self.status.set_content(&status);

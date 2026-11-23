@@ -46,11 +46,10 @@ impl LockError {
     /// What to tell the user about project `name`.
     pub fn message(&self, name: &str) -> String {
         match self {
-            LockError::Held { pid } => format!(
-                "{name} is already open in another editor (process {pid}). Close it there \
-                 first. If that editor is gone, delete {LOCK_FILE} in the project folder."
-            ),
-            LockError::Io(e) => format!("could not lock {name}: {e}"),
+            LockError::Held { pid } => {
+                tr!("project_lock.held", name = name, pid = pid, file = LOCK_FILE)
+            }
+            LockError::Io(e) => tr!("project_lock.io", name = name, error = e),
         }
     }
 }

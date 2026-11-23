@@ -95,8 +95,8 @@ impl MaterialPreview {
             }),
         );
         wind.set_icon(icons::ACTIVITY);
-        wind.set_label("Wind");
-        wind.set_tooltip("Let the wind blow (shows the material's World Offset)");
+        wind.set_label(tr!("material.preview.wind"));
+        wind.set_tooltip(tr!("material.preview.wind_tip"));
         wind.fit(24.0);
         Self {
             handle: UIElementHandle::new(),
@@ -104,8 +104,8 @@ impl MaterialPreview {
             offset: Offset::default(),
             size: Size::default(),
             header: PlaneBuilder::new().color(theme::BG_PANEL).border_color(theme::BORDER).border_thickness(1.0).build(),
-            title: theme::heading("Vorschau", theme::FONT_SIZE, theme::TEXT),
-            note: theme::text("Drag to turn, scroll to zoom", theme::FONT_SIZE_SMALL, theme::TEXT_DIM),
+            title: theme::heading(tr!("material.preview.title"), theme::FONT_SIZE, theme::TEXT),
+            note: theme::text(tr!("material.preview.note"), theme::FONT_SIZE_SMALL, theme::TEXT_DIM),
             shapes,
             wind,
             yaw: 35.0,
@@ -168,7 +168,7 @@ impl UIElement for MaterialPreview {
             self.shown = Some((shape, wind_on));
         }
         let note = self.state.borrow().material.as_ref().map(|e| e.auto_note()).unwrap_or_default();
-        let note = if note.is_empty() { "Drag to turn, scroll to zoom".to_string() } else { format!("Drag to turn, scroll to zoom  \u{b7}  {note}") };
+        let note = if note.is_empty() { tr!("material.preview.note").to_string() } else { tr!("material.preview.note_with", note = note) };
         self.note.set_content(&note);
         let v = self.view_rect();
         self.note.prepare_render_at(Position::new(v.x + 8.0, v.y + v.h + 3.0, Z + 1.0));

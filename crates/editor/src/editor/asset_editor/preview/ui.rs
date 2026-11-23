@@ -94,16 +94,16 @@ impl UIElement for AssetPreview {
         }
         let view = self.view_rect();
         let message = match &self.shown {
-            Shown::Nothing => "No asset is open.".to_string(),
-            Shown::Failed(error) => format!("The asset could not be loaded: {error}"),
+            Shown::Nothing => tr!("asset_editor.preview.no_asset").to_string(),
+            Shown::Failed(error) => tr!("asset_editor.preview.load_failed", error = error),
             Shown::Note(note) => note.clone(),
             Shown::Texture(image) => image
                 .natural_size()
-                .map(|(w, h)| format!("{w} x {h} px"))
+                .map(|(w, h)| tr!("asset_editor.preview.pixels", w = w, h = h))
                 .unwrap_or_default(),
             Shown::Model { .. } | Shown::Held(_) => String::new(),
             Shown::Rigged(rigged) if rigged.chains.is_empty() => {
-                "No feet, hands or head found among the bones to pose.".to_string()
+                tr!("asset_editor.preview.no_chains").to_string()
             }
             Shown::Rigged(_) => String::new(),
         };

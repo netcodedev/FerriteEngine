@@ -152,7 +152,7 @@ fn component_icon(name: &str) -> &'static str {
 
 impl InspectorPanel {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Inspector".into(), Position::default(), Size::new(330.0, 400.0));
+        let mut panel = Panel::new(tr!("inspector.title").into(), Position::default(), Size::new(330.0, 400.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
@@ -223,11 +223,11 @@ impl InspectorPanel {
         let Some(id) = signature.entity else {
             let _ = width;
             self.body.add_child(Box::new(Label::muted(
-                "Select an entity in the hierarchy",
+                tr!("inspector.select_entity"),
                 theme::FONT_SIZE,
             )));
             self.body.add_child(Box::new(Label::muted(
-                "or click one in the viewport.",
+                tr!("inspector.or_click_viewport"),
                 theme::FONT_SIZE,
             )));
             return;
@@ -238,9 +238,9 @@ impl InspectorPanel {
 
         // Entity name.
         let name = entity.get_name_ref();
-        let mut header = self.section("Entity", entity_icon(entity), width);
+        let mut header = self.section(tr!("inspector.entity"), entity_icon(entity), width);
         header.add_child(Box::new(FieldRow::new(
-            "Name",
+            tr!("common.name"),
             vec![UI::input_sized(name.clone(), Size::new(width - LABEL_COLUMN - 16.0, 24.0))],
         )));
         self.body.add_child(Box::new(header));
@@ -250,17 +250,17 @@ impl InspectorPanel {
         let rotation: [DataSource<f32>; 3] = std::array::from_fn(|_| DataSource::new(0.0));
         let scale: [DataSource<f32>; 3] = std::array::from_fn(|_| DataSource::new(1.0));
         let field_w = ((width - LABEL_COLUMN - 16.0 - 8.0) / 3.0).floor();
-        let mut transform = self.section("Transform", icons::AXIS_3D, width);
+        let mut transform = self.section(tr!("inspector.transform"), icons::AXIS_3D, width);
         transform.add_child(Box::new(FieldRow::new(
-            "Position",
+            tr!("inspector.position"),
             position.iter().map(|s| number_input(s, field_w)).collect(),
         )));
         transform.add_child(Box::new(FieldRow::new(
-            "Rotation",
+            tr!("inspector.rotation"),
             rotation.iter().map(|s| number_input(s, field_w)).collect(),
         )));
         transform.add_child(Box::new(FieldRow::new(
-            "Scale",
+            tr!("inspector.scale"),
             scale.iter().map(|s| number_input(s, field_w)).collect(),
         )));
         self.body.add_child(Box::new(transform));
@@ -295,11 +295,11 @@ impl InspectorPanel {
             );
             remove.set_style(ButtonStyle::Danger);
             remove.set_icon(icons::TRASH);
-            remove.set_tooltip("Remove component");
+            remove.set_tooltip(tr!("inspector.remove_component"));
             section.set_accessory(Box::new(remove));
             let properties = component.properties();
             if properties.is_empty() {
-                section.add_child(Box::new(Label::muted("No editable properties", theme::FONT_SIZE_SMALL)));
+                section.add_child(Box::new(Label::muted(tr!("inspector.no_properties"), theme::FONT_SIZE_SMALL)));
             }
             for property in properties {
                 // A terrain's scatter graphs get a chooser and a remove
@@ -342,8 +342,8 @@ impl InspectorPanel {
                 );
                 add.set_style(ButtonStyle::Secondary);
                 add.set_icon(icons::PLUS);
-                add.set_label("Add scatter graph");
-                add.set_tooltip("Scatter another model over the terrain");
+                add.set_label(tr!("inspector.add_scatter"));
+                add.set_tooltip(tr!("inspector.add_scatter_tooltip"));
                 add.fit(26.0);
                 let row = Box::new(FieldRow::new("", vec![Box::new(add)]));
                 self.scatter_rows.push((*row.get_handle(), id, None));
@@ -358,7 +358,7 @@ impl InspectorPanel {
                 );
                 edit.set_style(ButtonStyle::Primary);
                 edit.set_icon(icons::PENCIL);
-                edit.set_label("Edit graph");
+                edit.set_label(tr!("inspector.edit_graph"));
                 edit.fit(26.0);
                 section.add_child(Box::new(FieldRow::new("", vec![Box::new(edit)])));
             }
@@ -373,10 +373,10 @@ impl InspectorPanel {
             .collect();
         // Not in the catalog: these are picked from what the project has.
         items.push(MenuItem::new("Model").icon(component_icon("Model")));
-        items.push(MenuItem::new("Script...").icon(icons::FILE_CODE));
+        items.push(MenuItem::new(tr!("inspector.script_item")).icon(icons::FILE_CODE));
         let catalog_len = ComponentData::catalog().len();
         let mut add = MenuButton::with_items(
-            "Add component",
+            tr!("inspector.add_component"),
             Some(icons::PLUS),
             items,
             Box::new(move |index, _scene| {
@@ -460,7 +460,7 @@ impl InspectorPanel {
         );
         pick.set_style(ButtonStyle::Secondary);
         pick.set_icon(icons::PACKAGE);
-        pick.set_tooltip("Choose a model asset");
+        pick.set_tooltip(tr!("inspector.choose_model"));
         Box::new(pick)
     }
 
@@ -482,7 +482,7 @@ impl InspectorPanel {
         );
         browse.set_style(ButtonStyle::Secondary);
         browse.set_icon(icons::PACKAGE);
-        browse.set_tooltip("Choose a scatter graph");
+        browse.set_tooltip(tr!("inspector.choose_scatter"));
 
         let remove_state = self.state.clone();
         let mut remove = Button::new(
@@ -492,7 +492,7 @@ impl InspectorPanel {
         );
         remove.set_style(ButtonStyle::Danger);
         remove.set_icon(icons::X);
-        remove.set_tooltip("Remove this scatter graph");
+        remove.set_tooltip(tr!("inspector.remove_scatter"));
         vec![Box::new(browse), Box::new(remove)]
     }
 
@@ -787,7 +787,7 @@ fn display_value(value: &PropertyValue) -> String {
     match value {
         PropertyValue::Float(v) => format!("{v:.3}"),
         PropertyValue::Int(v) => v.to_string(),
-        PropertyValue::Bool(v) => if *v { "yes" } else { "no" }.into(),
+        PropertyValue::Bool(v) => if *v { tr!("common.yes") } else { tr!("common.no") }.into(),
         PropertyValue::Text(v) => v.clone(),
     }
 }

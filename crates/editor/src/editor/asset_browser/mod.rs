@@ -42,6 +42,7 @@ use super::{
 };
 use thumbnails::Thumbnails;
 use view::{Card, CardKind, Category};
+pub use view::kind_label;
 
 const SIDEBAR_WIDTH: f32 = 170.0;
 const SIDE_ROW: f32 = 28.0;
@@ -182,7 +183,7 @@ pub struct AssetBrowser {
 
 impl AssetBrowser {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Assets".into(), Position::default(), Size::new(600.0, 200.0));
+        let mut panel = Panel::new(tr!("asset_browser.title").into(), Position::default(), Size::new(600.0, 200.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
@@ -190,7 +191,7 @@ impl AssetBrowser {
         let mut up = Button::new(Position::default(), Size::new(26.0, 26.0), Box::new(|_| {}));
         up.set_style(ButtonStyle::Ghost);
         up.set_icon(icons::ARROW_LEFT);
-        up.set_tooltip("Up to the folder above");
+        up.set_tooltip(tr!("asset_browser.up_tooltip"));
 
         let search_text = DataSource::new(String::new());
         let search = Input::new(Position::default(), Size::new(SEARCH_WIDTH, 24.0), String::new(), Some(search_text.clone()));
@@ -198,8 +199,8 @@ impl AssetBrowser {
         let mut new_button = Button::new(Position::default(), Size::new(10.0, 26.0), Box::new(|_| {}));
         new_button.set_style(ButtonStyle::Secondary);
         new_button.set_icon(icons::PLUS);
-        new_button.set_label("New");
-        new_button.set_tooltip("Make a new folder, material, material graph or scatter graph here");
+        new_button.set_label(tr!("asset_browser.new"));
+        new_button.set_tooltip(tr!("asset_browser.new_tooltip"));
         new_button.fit(26.0);
 
         let import_state = state.clone();
@@ -210,8 +211,8 @@ impl AssetBrowser {
         );
         import.set_style(ButtonStyle::Ghost);
         import.set_icon(icons::ARROW_DOWN_TO_LINE);
-        import.set_label("Import");
-        import.set_tooltip("Import models or textures into the project");
+        import.set_label(tr!("asset_browser.import"));
+        import.set_tooltip(tr!("asset_browser.import_tooltip"));
         import.fit(26.0);
 
         let refresh_state = state.clone();
@@ -222,7 +223,7 @@ impl AssetBrowser {
         );
         refresh.set_style(ButtonStyle::Ghost);
         refresh.set_icon(icons::ROTATE_CW);
-        refresh.set_tooltip("Scan the assets folder again");
+        refresh.set_tooltip(tr!("asset_browser.refresh_tooltip"));
 
         let side_rows = Category::ALL
             .iter()
@@ -248,7 +249,7 @@ impl AssetBrowser {
             crumbs: Vec::new(),
             search,
             search_text,
-            search_hint: theme::text("Search…", theme::FONT_SIZE_SMALL + 0.5, theme::TEXT_DIM),
+            search_hint: theme::text(tr!("asset_browser.search_hint"), theme::FONT_SIZE_SMALL + 0.5, theme::TEXT_DIM),
             new_button,
             import,
             refresh,
@@ -465,11 +466,11 @@ impl AssetBrowser {
             .map(|(name, path)| (theme::text(&name, theme::FONT_SIZE, theme::TEXT_MUTED), Region::default(), path))
             .collect();
         self.empty.set_content(if !search.is_empty() {
-            "Nothing found."
+            tr!("asset_browser.nothing_found")
         } else if database.is_empty() {
-            "No assets yet. Import a model or texture, or right-click to make one."
+            tr!("asset_browser.empty_project")
         } else {
-            "This folder is empty. Right-click to make something here."
+            tr!("asset_browser.empty_folder_hint")
         });
         self.clamp_scroll();
     }
@@ -483,18 +484,18 @@ impl AssetBrowser {
                 };
                 let part = asset.part.as_deref().unwrap_or("");
                 if let Some(clip) = entry.meta.clips().iter().find(|c| c.name == part) {
-                    return format!("{part}  ·  clip of {}  ·  {:.2} s", entry.meta.name, clip.duration);
+                    return tr!("asset_browser.details.clip", part = part, name = entry.meta.name, duration = format!("{:.2}", clip.duration));
                 }
                 let lods = entry.meta.as_model().and_then(|m| m.variant(part)).map_or(0, |v| v.lods.len());
-                format!("{part}  ·  variant of {}  ·  {}", entry.meta.name, count(lods, "LOD"))
+                tr!("asset_browser.details.variant", part = part, name = entry.meta.name, lods = view::count_of(lods, "lod"))
             }
             Some(CardKind::Folder(path)) => {
                 let n = database.assets_in(path).len();
-                format!("{}  ·  folder  ·  {}  ·  {}", file_name(path), count(n, "asset"), relative(&self.project, path))
+                tr!("asset_browser.details.folder", name = file_name(path), assets = view::count_of(n, "asset"), path = relative(&self.project, path))
             }
             None => {
                 let index = Category::ALL.iter().position(|c| *c == self.category).unwrap_or(0);
-                format!("{}  ·  {}", self.category.label(), count(self.counts.get(index).copied().unwrap_or(0), "asset"))
+                tr!("asset_browser.details.category", category = self.category.label(), assets = view::count_of(self.counts.get(index).copied().unwrap_or(0), "asset"))
             }
         }
     }
@@ -644,31 +645,31 @@ impl AssetBrowser {
 
     /// The menu for a card.
     fn card_menu(&self, card: &Card) -> Vec<(ContextEntry, MenuAction)> {
-        let open = (ContextEntry::item(icons::PENCIL, "Open"), MenuAction::Open(card.clone()));
+        let open = (ContextEntry::item(icons::PENCIL, tr!("common.open")), MenuAction::Open(card.clone()));
         let path_of = |id: AssetId| assets::database().get(id).map(|e| e.source_path());
         match &card.kind {
             CardKind::Folder(path) => vec![
                 open,
-                (ContextEntry::item(icons::FILE_TEXT, "Rename…"), MenuAction::RenameFolder(path.clone())),
-                (ContextEntry::item(icons::FOLDER_OPEN, "Show in file manager"), MenuAction::Reveal(path.clone())),
+                (ContextEntry::item(icons::FILE_TEXT, tr!("asset_browser.menu.rename")), MenuAction::RenameFolder(path.clone())),
+                (ContextEntry::item(icons::FOLDER_OPEN, tr!("asset_browser.menu.reveal")), MenuAction::Reveal(path.clone())),
                 (ContextEntry::Separator, MenuAction::Nothing),
-                (ContextEntry::danger(icons::TRASH, "Delete…"), MenuAction::DeleteFolder(path.clone())),
+                (ContextEntry::danger(icons::TRASH, tr!("asset_browser.menu.delete")), MenuAction::DeleteFolder(path.clone())),
             ],
             CardKind::Asset(id) => {
                 let source = path_of(*id).unwrap_or_default();
                 vec![
                     open,
-                    (ContextEntry::item(icons::FILE_TEXT, "Rename…"), MenuAction::Rename(*id)),
-                    (ContextEntry::item(icons::COPY_PLUS, "Duplicate"), MenuAction::Duplicate(*id)),
-                    (ContextEntry::item(icons::COPY, "Copy path"), MenuAction::CopyPath(source.clone())),
-                    (ContextEntry::item(icons::FOLDER_OPEN, "Show in file manager"), MenuAction::Reveal(source)),
+                    (ContextEntry::item(icons::FILE_TEXT, tr!("asset_browser.menu.rename")), MenuAction::Rename(*id)),
+                    (ContextEntry::item(icons::COPY_PLUS, tr!("common.duplicate")), MenuAction::Duplicate(*id)),
+                    (ContextEntry::item(icons::COPY, tr!("asset_browser.menu.copy_path")), MenuAction::CopyPath(source.clone())),
+                    (ContextEntry::item(icons::FOLDER_OPEN, tr!("asset_browser.menu.reveal")), MenuAction::Reveal(source)),
                     (ContextEntry::Separator, MenuAction::Nothing),
-                    (ContextEntry::danger(icons::TRASH, "Delete…"), MenuAction::Delete(*id)),
+                    (ContextEntry::danger(icons::TRASH, tr!("asset_browser.menu.delete")), MenuAction::Delete(*id)),
                 ]
             }
             CardKind::Part(asset) => {
                 let source = path_of(asset.id).unwrap_or_default();
-                vec![open, (ContextEntry::item(icons::COPY, "Copy path"), MenuAction::CopyPath(source))]
+                vec![open, (ContextEntry::item(icons::COPY, tr!("asset_browser.menu.copy_path")), MenuAction::CopyPath(source))]
             }
         }
     }
@@ -686,8 +687,8 @@ impl AssetBrowser {
             NewAsset::ScatterGraph => icons::LIST_TREE,
         };
         let mut entries: Vec<(ContextEntry, MenuAction)> =
-            kinds.into_iter().map(|k| (ContextEntry::item(icon(k), format!("New {}…", k.label().to_lowercase())), MenuAction::New(k))).collect();
-        entries.push((ContextEntry::item(icons::FOLDER_OPEN, "New folder…"), MenuAction::NewFolder));
+            kinds.into_iter().map(|k| (ContextEntry::item(icon(k), new_label(k)), MenuAction::New(k))).collect();
+        entries.push((ContextEntry::item(icons::FOLDER_OPEN, tr!("asset_browser.menu.new_folder")), MenuAction::NewFolder));
         entries
     }
 
@@ -695,9 +696,9 @@ impl AssetBrowser {
     fn folder_menu(&self) -> Vec<(ContextEntry, MenuAction)> {
         let mut entries = self.new_entries();
         entries.push((ContextEntry::Separator, MenuAction::Nothing));
-        entries.push((ContextEntry::item(icons::ARROW_DOWN_TO_LINE, "Import…"), MenuAction::Import));
-        entries.push((ContextEntry::item(icons::ROTATE_CW, "Scan again"), MenuAction::Rescan));
-        entries.push((ContextEntry::item(icons::FOLDER_OPEN, "Show in file manager"), MenuAction::Reveal(self.folder.clone())));
+        entries.push((ContextEntry::item(icons::ARROW_DOWN_TO_LINE, tr!("asset_browser.menu.import")), MenuAction::Import));
+        entries.push((ContextEntry::item(icons::ROTATE_CW, tr!("asset_browser.menu.rescan")), MenuAction::Rescan));
+        entries.push((ContextEntry::item(icons::FOLDER_OPEN, tr!("asset_browser.menu.reveal")), MenuAction::Reveal(self.folder.clone())));
         entries
     }
 
@@ -728,7 +729,7 @@ impl AssetBrowser {
             MenuAction::CopyPath(path) => {
                 let text = relative(&self.project, &path);
                 window.set_clipboard_string(&text);
-                self.state.borrow_mut().set_status(format!("Copied {text}"));
+                self.state.borrow_mut().set_status(tr!("asset_browser.copied", text = text));
             }
             MenuAction::Reveal(path) => reveal_in_file_manager(&path),
             MenuAction::Delete(id) => send(&self.state, Command::DeleteAssetDialog(id)),
@@ -847,11 +848,12 @@ fn reveal_in_file_manager(path: &Path) {
     }
 }
 
-fn count(n: usize, noun: &str) -> String {
-    if n == 1 {
-        format!("1 {noun}")
-    } else {
-        format!("{n} {noun}s")
+/// The "New …" entry's text for a kind of new asset.
+fn new_label(kind: NewAsset) -> &'static str {
+    match kind {
+        NewAsset::Material => tr!("asset_browser.menu.new_material"),
+        NewAsset::MaterialGraph => tr!("asset_browser.menu.new_material_graph"),
+        NewAsset::ScatterGraph => tr!("asset_browser.menu.new_scatter_graph"),
     }
 }
 
@@ -859,16 +861,22 @@ fn count(n: usize, noun: &str) -> String {
 fn describe(entry: &AssetEntry) -> String {
     let source = entry.source_path().to_string_lossy().replace('\\', "/");
     match &entry.meta.kind {
-        AssetKind::Model(model) => format!(
-            "{}  ·  Model  ·  {}  ·  {}  ·  {source}",
-            entry.meta.name,
-            count(model.variants.len(), "variant"),
-            count(model.materials.iter().filter(|m| !m.unused).count(), "material"),
+        AssetKind::Model(model) => tr!(
+            "asset_browser.details.model",
+            name = entry.meta.name,
+            variants = view::count_of(model.variants.len(), "variant"),
+            materials = view::count_of(model.materials.iter().filter(|m| !m.unused).count(), "material"),
+            source = source,
         ),
         AssetKind::Animation(animation) => {
-            format!("{}  ·  Animation  ·  {}  ·  {source}", entry.meta.name, count(animation.clips.len(), "clip"))
+            tr!(
+                "asset_browser.details.animation",
+                name = entry.meta.name,
+                clips = view::count_of(animation.clips.len(), "clip"),
+                source = source,
+            )
         }
-        kind => format!("{}  ·  {}  ·  {source}", entry.meta.name, kind.label()),
+        kind => tr!("asset_browser.details.other", name = entry.meta.name, kind = view::kind_label(kind), source = source),
     }
 }
 

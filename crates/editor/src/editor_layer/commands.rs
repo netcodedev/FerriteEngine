@@ -83,7 +83,7 @@ impl EditorLayer {
         if mode == Mode::Play && edits_scene {
             self.state
                 .borrow_mut()
-                .set_status("Stop play mode first (Ctrl+P)");
+                .set_status(tr!("commands.stop_play_first"));
             return;
         }
 
@@ -109,9 +109,9 @@ impl EditorLayer {
                     state.scene_path = None;
                     state.dirty = false;
                     state.select(None);
-                    state.set_status("New scene");
+                    state.set_status(tr!("commands.new_scene"));
                 }
-                Err(e) => self.state.borrow_mut().set_status(format!("New scene failed: {e}")),
+                Err(e) => self.state.borrow_mut().set_status(tr!("commands.new_scene_failed", error = e)),
             },
             Command::OpenDialog => dialogs::open(&self.state),
             Command::Open(path) => match Scene::load_from_path(&path) {
@@ -120,7 +120,7 @@ impl EditorLayer {
                     self.remember_scene(&path);
                     {
                         let mut state = self.state.borrow_mut();
-                        state.set_status(format!("Opened {}", path.display()));
+                        state.set_status(tr!("commands.opened", path = path.display()));
                         state.scene_path = Some(path);
                         state.dirty = false;
                         state.select(None);
@@ -130,7 +130,7 @@ impl EditorLayer {
                 Err(e) => self
                     .state
                     .borrow_mut()
-                    .set_status(format!("Could not open {}: {e}", path.display())),
+                    .set_status(tr!("commands.open_failed", path = path.display(), error = e)),
             },
             // The scene in play mode is the game's, not the one to save.
             Command::Save | Command::SaveAsDialog | Command::SaveAs { .. } | Command::SaveFirst(_)
@@ -138,7 +138,7 @@ impl EditorLayer {
             {
                 self.state
                     .borrow_mut()
-                    .set_status("Stop play mode before saving");
+                    .set_status(tr!("commands.stop_play_before_saving"));
             }
             Command::Save => {
                 let path = self.state.borrow().scene_path.clone();
@@ -223,10 +223,7 @@ impl EditorLayer {
                 self.state.borrow_mut().mode = Mode::Play;
                 self.pending_cursor = Some(CursorMode::Disabled);
                 if self.scene.get_active_camera().is_none() {
-                    self.state.borrow_mut().set_status(
-                        "Nothing to see: the scene has no camera. Add a Camera component \
-                         (with \"free fly\" on, it flies with WASD and the mouse).",
-                    );
+                    self.state.borrow_mut().set_status(tr!("commands.no_camera"));
                 }
             }
             Command::Stop => {
@@ -245,7 +242,7 @@ impl EditorLayer {
                         Err(e) => self
                             .state
                             .borrow_mut()
-                            .set_status(format!("Restoring the scene failed: {e}")),
+                            .set_status(tr!("commands.restore_failed", error = e)),
                     }
                 }
                 self.scene.set_physics_enabled(false);
@@ -270,7 +267,7 @@ impl EditorLayer {
                     Err(e) => self
                         .state
                         .borrow_mut()
-                        .set_status(format!("Could not create entity: {e}")),
+                        .set_status(tr!("commands.create_entity_failed", error = e)),
                 }
             }
             Command::AddComponent(id, data) => {
@@ -303,7 +300,7 @@ impl EditorLayer {
                         &self.state,
                         Command::ExportGame(platform),
                         unsaved,
-                        Some(("Export anyway", Command::ExportAnyway(platform))),
+                        Some((tr!("commands.export_anyway"), Command::ExportAnyway(platform))),
                     );
                 } else {
                     self.run(Command::ExportAnyway(platform));
@@ -311,13 +308,10 @@ impl EditorLayer {
             }
             Command::ExportAnyway(platform) => {
                 if self.exporter.is_running() {
-                    self.state.borrow_mut().set_status("An export is already running");
+                    self.state.borrow_mut().set_status(tr!("commands.export_running"));
                 } else if let Some(out) = Exporter::pick_folder() {
                     match export::copied_folder_containing(self.project.dir(), &out) {
-                        Some(folder) => self.state.borrow_mut().set_status(format!(
-                            "Export into a folder outside the project's {folder}/: \
-                             the export copies that folder"
-                        )),
+                        Some(folder) => self.state.borrow_mut().set_status(tr!("commands.export_into_copied", folder = folder)),
                         None => self.exporter.start(self.project.clone(), out, platform),
                     }
                 }
@@ -333,8 +327,8 @@ impl EditorLayer {
                 };
                 let mut state = self.state.borrow_mut();
                 match problems.first() {
-                    Some(problem) => state.set_status(format!("Assets: {problem}")),
-                    None => state.set_status(format!("{count} assets")),
+                    Some(problem) => state.set_status(tr!("commands.assets_problem", problem = problem)),
+                    None => state.set_status(tr!("commands.assets_count", count = count)),
                 }
             }
             Command::PickScatterAsset { entity, layer } => {
@@ -349,7 +343,7 @@ impl EditorLayer {
                 if !Self::is_scatter_graph(asset.id) {
                     self.state
                         .borrow_mut()
-                        .set_status("A terrain scatters scatter graphs only: make one in the asset browser");
+                        .set_status(tr!("commands.scatter_graphs_only"));
                     return;
                 }
                 if let Some(terrain) = self.terrain_mut(&entity) {
@@ -365,8 +359,8 @@ impl EditorLayer {
             Command::NewScriptDialog => dialogs::new_script(&self.state),
             Command::NewScript(name) => {
                 let message = match new_script_file(self.scripts.folder(), &name) {
-                    Ok(file) => format!("Created scripts/{file}; it is built now"),
-                    Err(e) => format!("Could not create the script: {e}"),
+                    Ok(file) => tr!("commands.script_created", file = file),
+                    Err(e) => tr!("commands.script_failed", error = e),
                 };
                 self.state.borrow_mut().set_status(message);
             }
@@ -385,7 +379,7 @@ impl EditorLayer {
                 let mut state = self.state.borrow_mut();
                 match result {
                     Ok(()) => state.dirty = true,
-                    Err(e) => state.set_status(format!("Could not load the model: {e}")),
+                    Err(e) => state.set_status(tr!("commands.model_load_failed", error = e)),
                 }
             }
             Command::SpawnModel(asset) => {
@@ -413,7 +407,7 @@ impl EditorLayer {
                     Err(e) => self
                         .state
                         .borrow_mut()
-                        .set_status(format!("Could not create entity: {e}")),
+                        .set_status(tr!("commands.create_entity_failed", error = e)),
                 }
             }
             Command::RemoveScatterModel(entity, layer) => {
@@ -450,16 +444,17 @@ impl EditorLayer {
                     Err(e) => self
                         .state
                         .borrow_mut()
-                        .set_status(format!("Could not duplicate: {e}")),
+                        .set_status(tr!("commands.duplicate_failed", error = e)),
                 }
             }
             Command::Focus(id) => self.viewport.focus(&self.scene, id),
             Command::Quit => self.pending_quit = true,
+            Command::SettingsDialog => crate::editor::settings_dialog::show(&self.state),
             Command::SetWorkspace(workspace) => {
                 if mode == Mode::Play && workspace == Workspace::Animation {
                     self.state
                         .borrow_mut()
-                        .set_status("Stop play mode before editing animations");
+                        .set_status(tr!("commands.stop_play_before_anim"));
                     return;
                 }
                 let mut state = self.state.borrow_mut();
@@ -482,8 +477,8 @@ impl EditorLayer {
             Command::SaveScatter => {
                 let result = self.state.borrow_mut().scatter.as_mut().map(|edit| edit.save().map(|_| edit.name.clone()));
                 let message = match result {
-                    Some(Ok(name)) => format!("Saved scatter graph '{name}'"),
-                    Some(Err(e)) => format!("Could not save the scatter graph: {e}"),
+                    Some(Ok(name)) => tr!("commands.scatter_saved", name = name),
+                    Some(Err(e)) => tr!("commands.scatter_save_failed", error = e),
                     None => return,
                 };
                 self.state.borrow_mut().set_status(message);
@@ -542,7 +537,7 @@ impl EditorLayer {
                         .filter(|edit| edit.dirty())
                         .map(|edit| edit.name.clone());
                     if let Some(name) = unsaved {
-                        self.state.borrow_mut().set_status(format!("Save or revert '{name}' first"));
+                        self.state.borrow_mut().set_status(tr!("commands.save_or_revert_first", name = name));
                         self.run(Command::SetWorkspace(Workspace::Material));
                         return;
                     }
@@ -560,8 +555,8 @@ impl EditorLayer {
             Command::SaveMaterial => {
                 let result = self.state.borrow_mut().material.as_mut().map(|edit| edit.save().map(|_| edit.name.clone()));
                 let message = match result {
-                    Some(Ok(name)) => format!("Saved material '{name}'"),
-                    Some(Err(e)) => format!("Could not save the material: {e}"),
+                    Some(Ok(name)) => tr!("commands.material_saved", name = name),
+                    Some(Err(e)) => tr!("commands.material_save_failed", error = e),
                     None => return,
                 };
                 self.state.borrow_mut().set_status(message);
@@ -640,7 +635,7 @@ impl EditorLayer {
                     if let Some(name) = unsaved {
                         self.state
                             .borrow_mut()
-                            .set_status(format!("Save or revert '{name}' first"));
+                            .set_status(tr!("commands.save_or_revert_first", name = name));
                         self.run(Command::SetWorkspace(Workspace::ScatterGraph));
                         return;
                     }
@@ -671,7 +666,7 @@ impl EditorLayer {
                 if let Some(name) = unsaved {
                     self.state
                         .borrow_mut()
-                        .set_status(format!("Save or revert '{name}' first"));
+                        .set_status(tr!("commands.save_or_revert_first", name = name));
                     self.run(Command::SetWorkspace(Workspace::Asset));
                     return;
                 }
@@ -714,8 +709,8 @@ impl EditorLayer {
                     .as_mut()
                     .map(|edit| edit.save().map(|()| edit.meta.name.clone()));
                 match result {
-                    Some(Ok(name)) => state.set_status(format!("Saved asset '{name}'")),
-                    Some(Err(e)) => state.set_status(format!("Could not save the asset: {e}")),
+                    Some(Ok(name)) => state.set_status(tr!("commands.asset_saved", name = name)),
+                    Some(Err(e)) => state.set_status(tr!("commands.asset_save_failed", error = e)),
                     None => {}
                 }
             }
@@ -723,7 +718,7 @@ impl EditorLayer {
                 let mut state = self.state.borrow_mut();
                 let result = state.asset_edit.as_mut().map(|edit| edit.revert());
                 match result {
-                    Some(Ok(())) => state.set_status("Asset reverted"),
+                    Some(Ok(())) => state.set_status(tr!("commands.asset_reverted")),
                     Some(Err(e)) => state.set_status(e),
                     None => {}
                 }
@@ -734,13 +729,13 @@ impl EditorLayer {
                 Ok(id) => {
                     self.state
                         .borrow_mut()
-                        .set_status(format!("Made the clip '{name}'"));
+                        .set_status(tr!("commands.clip_made", name = name));
                     self.run(Command::EditAsset { id, variant: None });
                 }
                 Err(e) => self
                     .state
                     .borrow_mut()
-                    .set_status(format!("Could not make the clip: {e}")),
+                    .set_status(tr!("commands.clip_failed", error = e)),
             },
             Command::Clip(request) => {
                 if let Some(clip) = self
@@ -763,28 +758,25 @@ impl EditorLayer {
                             &path.to_string_lossy(),
                         );
                         let message = match applied {
-                            Ok(0) => format!("Saved {}", path.display()),
-                            Ok(n) => format!(
-                                "Saved {} and applied it to {n} entit{}",
-                                path.display(),
-                                if n == 1 { "y" } else { "ies" }
-                            ),
-                            Err(e) => format!("Saved {}, but applying it failed: {e}", path.display()),
+                            Ok(0) => tr!("commands.graph_saved", path = path.display()),
+                            Ok(1) => tr!("commands.graph_saved_applied_one", path = path.display()),
+                            Ok(n) => tr!("commands.graph_saved_applied", path = path.display(), count = n),
+                            Err(e) => tr!("commands.graph_saved_apply_failed", path = path.display(), error = e),
                         };
                         self.state.borrow_mut().set_status(message);
                     }
                     Err(e) => self
                         .state
                         .borrow_mut()
-                        .set_status(format!("Could not save the animation graph: {e}")),
+                        .set_status(tr!("commands.graph_save_failed", error = e)),
                 }
             }
             Command::RevertGraph => {
                 let result = self.state.borrow_mut().anim.reload();
                 let mut state = self.state.borrow_mut();
                 match result {
-                    Ok(()) => state.set_status("Animation graph reverted"),
-                    Err(e) => state.set_status(format!("Could not reload the graph: {e}")),
+                    Ok(()) => state.set_status(tr!("commands.graph_reverted")),
+                    Err(e) => state.set_status(tr!("commands.graph_reload_failed", error = e)),
                 }
             }
             Command::EditAnimationGraph(id) => {
@@ -807,7 +799,7 @@ impl EditorLayer {
                     if let Err(e) = opened {
                         self.state
                             .borrow_mut()
-                            .set_status(format!("Could not open {path}: {e}"));
+                            .set_status(tr!("commands.graph_open_failed", path = path, error = e));
                         return;
                     }
                 }

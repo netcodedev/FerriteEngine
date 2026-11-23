@@ -35,6 +35,7 @@ pub mod outline;
 pub mod project_settings;
 pub mod scatter;
 pub mod scripts;
+pub mod settings_dialog;
 pub mod showcase;
 pub mod splitter;
 pub mod stats;
@@ -87,6 +88,17 @@ impl EntityTemplate {
         ("Terrain", EntityTemplate::Terrain),
         ("Player", EntityTemplate::Player),
     ];
+
+    /// Its name in the Add menu.
+    pub fn label(self) -> &'static str {
+        match self {
+            EntityTemplate::Empty => tr!("entity_template.empty"),
+            EntityTemplate::Camera => tr!("entity_template.camera"),
+            EntityTemplate::SkyLight => tr!("entity_template.sky_light"),
+            EntityTemplate::Terrain => tr!("entity_template.terrain"),
+            EntityTemplate::Player => tr!("entity_template.player"),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -190,6 +202,8 @@ pub enum Command {
     Focus(EntityHandle),
     /// Close the editor window.
     Quit,
+    /// Show the editor's settings (File > Settings).
+    SettingsDialog,
     SetWorkspace(Workspace),
     /// Save the animation graph and apply it to players in the scene.
     SaveGraph,
@@ -340,6 +354,8 @@ pub struct EditorState {
     /// Which sections of the Performance panel are open (in
     /// `stats::SECTIONS`'s order), kept in the project file.
     pub stats_open: Vec<DataSource<bool>>,
+    /// Open/closed per group of graphics settings, by group id.
+    pub graphics_groups_open: std::collections::BTreeMap<String, DataSource<bool>>,
     /// The switches of the Performance panel, shared with the MCP bridge.
     pub debug: stats::DebugSwitches,
     /// Asset browser below the viewport.
@@ -421,6 +437,7 @@ impl EditorState {
             show_widgets: DataSource::new(false),
             show_stats: DataSource::new(true),
             stats_open: stats::section_titles().map(|_| DataSource::new(true)).collect(),
+            graphics_groups_open: Default::default(),
             debug: stats::DebugSwitches::new(),
             show_assets: DataSource::new(true),
             show_console: DataSource::new(true),
@@ -478,7 +495,7 @@ impl EditorState {
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "untitled".into());
+            .unwrap_or_else(|| tr!("editor.untitled").into());
         let name = if self.project_name.is_empty() {
             name
         } else {

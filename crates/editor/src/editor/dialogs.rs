@@ -22,9 +22,9 @@ pub const SCENE_DIR: &str = "scenes";
 pub fn pick_import_files() -> Vec<PathBuf> {
     let extensions = AssetDatabase::importable_extensions();
     rfd::FileDialog::new()
-        .set_title("Import assets")
-        .add_filter("Models and textures", &extensions)
-        .add_filter("All files", &["*"])
+        .set_title(tr!("dialogs.import.title"))
+        .add_filter(tr!("dialogs.import.filter_models"), &extensions)
+        .add_filter(tr!("dialogs.import.filter_all"), &["*"])
         .pick_files()
         .unwrap_or_default()
 }
@@ -43,7 +43,7 @@ fn model_choices() -> Vec<(String, AssetRef)> {
         let id = entry.meta.id;
         if model.variants.len() > 1 {
             choices.push((
-                format!("{} (all {} variants)", entry.meta.name, model.variants.len()),
+                tr!("dialogs.model_all_variants", name = entry.meta.name, count = model.variants.len()),
                 AssetRef::whole(id),
             ));
             for variant in &model.variants {
@@ -77,14 +77,14 @@ pub fn pick_script(state: &Shared, entity: EntityHandle) {
     let cancel_open = open_flag.clone();
     if names.is_empty() {
         let children: Vec<Box<dyn UIElement>> = vec![
-            UI::label("The project has no scripts yet.", 14.0),
-            UI::label("Create one with File > New script.", 14.0),
+            UI::label(tr!("dialogs.add_script.none"), 14.0),
+            UI::label(tr!("dialogs.add_script.none_hint"), 14.0),
             button_row(vec![UI::button(
-                "Close",
+                tr!("common.close"),
                 Box::new(move |_| cancel_open.write(false)),
             )]),
         ];
-        show(state, "Add a script", open_flag, children);
+        show(state, tr!("dialogs.add_script.title"), open_flag, children);
         return;
     }
     let selected = DataSource::new(0u32);
@@ -94,11 +94,11 @@ pub fn pick_script(state: &Shared, entity: EntityHandle) {
     let use_selected = selected.clone();
     let choices = names.clone();
     let children: Vec<Box<dyn UIElement>> = vec![
-        UI::label("Scripts of the project:", 14.0),
+        UI::label(tr!("dialogs.add_script.heading"), 14.0),
         UI::list(names, selected, Size::new(380.0, height)),
         button_row(vec![
             UI::button(
-                "Add",
+                tr!("common.add"),
                 Box::new(move |_| {
                     if let Some(name) = choices.get(use_selected.read() as usize) {
                         send(
@@ -109,10 +109,10 @@ pub fn pick_script(state: &Shared, entity: EntityHandle) {
                     }
                 }),
             ),
-            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+            UI::button(tr!("common.cancel"), Box::new(move |_| cancel_open.write(false))),
         ]),
     ];
-    show(state, "Add a script", open_flag, children);
+    show(state, tr!("dialogs.add_script.title"), open_flag, children);
 }
 
 /// Ask for the name of a new script.
@@ -124,11 +124,11 @@ pub fn new_script(state: &Shared) {
     let create_open = open_flag.clone();
     let cancel_open = open_flag.clone();
     let children: Vec<Box<dyn UIElement>> = vec![
-        UI::label("Name of the script (e.g. Rotator):", 14.0),
+        UI::label(tr!("dialogs.new_script.prompt"), 14.0),
         UI::input_sized(name, Size::new(380.0, 22.0)),
         button_row(vec![
             UI::button(
-                "Create",
+                tr!("common.create"),
                 Box::new(move |_| {
                     let name = create_name.read().trim().to_owned();
                     if name.is_empty() {
@@ -138,10 +138,10 @@ pub fn new_script(state: &Shared) {
                     create_open.write(false);
                 }),
             ),
-            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+            UI::button(tr!("common.cancel"), Box::new(move |_| cancel_open.write(false))),
         ]),
     ];
-    show(state, "New script", open_flag, children);
+    show(state, tr!("dialogs.new_script.title"), open_flag, children);
 }
 
 /// Ask for the name of a new animation clip posed on `model`.
@@ -153,11 +153,11 @@ pub fn new_clip(state: &Shared, model: AssetId) {
     let create_open = open_flag.clone();
     let cancel_open = open_flag.clone();
     let children: Vec<Box<dyn UIElement>> = vec![
-        UI::label("Name of the clip (e.g. Axe Swing):", 14.0),
+        UI::label(tr!("dialogs.new_clip.prompt"), 14.0),
         UI::input_sized(name, Size::new(380.0, 22.0)),
         button_row(vec![
             UI::button(
-                "Create",
+                tr!("common.create"),
                 Box::new(move |_| {
                     let name = create_name.read().trim().to_owned();
                     if name.is_empty() {
@@ -167,10 +167,10 @@ pub fn new_clip(state: &Shared, model: AssetId) {
                     create_open.write(false);
                 }),
             ),
-            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+            UI::button(tr!("common.cancel"), Box::new(move |_| cancel_open.write(false))),
         ]),
     ];
-    show(state, "New animation clip", open_flag, children);
+    show(state, tr!("dialogs.new_clip.title"), open_flag, children);
 }
 
 /// Ask which model asset `entity` should show.
@@ -195,7 +195,7 @@ fn scatter_graph_choices() -> Vec<(String, AssetRef)> {
     let mut graphs: Vec<(String, AssetRef)> = database
         .iter()
         .filter(|entry| matches!(entry.meta.kind, AssetKind::ScatterGraph(_)))
-        .map(|entry| (format!("{} (scatter graph)", entry.meta.name), AssetRef::whole(entry.meta.id)))
+        .map(|entry| (tr!("dialogs.scatter_graph_choice", name = entry.meta.name), AssetRef::whole(entry.meta.id)))
         .collect();
     graphs.sort_by_key(|(name, _)| name.to_lowercase());
     graphs
@@ -206,14 +206,14 @@ fn pick_asset_of(state: &Shared, choices: Vec<(String, AssetRef)>, then: impl Fn
     let cancel_open = open_flag.clone();
     if choices.is_empty() {
         let children: Vec<Box<dyn UIElement>> = vec![
-            UI::label("There are no model assets yet.", 14.0),
-            UI::label("Use Import in the Assets panel to add one.", 14.0),
+            UI::label(tr!("dialogs.choose_model.none"), 14.0),
+            UI::label(tr!("dialogs.choose_model.none_hint"), 14.0),
             button_row(vec![UI::button(
-                "Close",
+                tr!("common.close"),
                 Box::new(move |_| cancel_open.write(false)),
             )]),
         ];
-        show(state, "Choose a model", open_flag, children);
+        show(state, tr!("dialogs.choose_model.title"), open_flag, children);
         return;
     }
 
@@ -224,11 +224,11 @@ fn pick_asset_of(state: &Shared, choices: Vec<(String, AssetRef)>, then: impl Fn
     let use_open = open_flag.clone();
     let use_selected = selected.clone();
     let children: Vec<Box<dyn UIElement>> = vec![
-        UI::label("Model assets:", 14.0),
+        UI::label(tr!("dialogs.choose_model.heading"), 14.0),
         UI::list(labels, selected, Size::new(380.0, height)),
         button_row(vec![
             UI::button(
-                "Use",
+                tr!("dialogs.use"),
                 Box::new(move |_| {
                     if let Some((_, asset)) = choices.get(use_selected.read() as usize) {
                         send(&use_state, then(asset.clone()));
@@ -236,10 +236,10 @@ fn pick_asset_of(state: &Shared, choices: Vec<(String, AssetRef)>, then: impl Fn
                     }
                 }),
             ),
-            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+            UI::button(tr!("common.cancel"), Box::new(move |_| cancel_open.write(false))),
         ]),
     ];
-    show(state, "Choose a model", open_flag, children);
+    show(state, tr!("dialogs.choose_model.title"), open_flag, children);
 }
 
 /// A list to choose one of `choices` from; `then` gets the chosen value.
@@ -268,7 +268,7 @@ fn pick_from<T: Clone + 'static>(
     }
     children.push(button_row(vec![
         UI::button(
-            "Use",
+            tr!("dialogs.use"),
             Box::new(move |_| {
                 if let Some((_, value)) = choices.get(use_selected.read() as usize) {
                     send(&use_state, then(value.clone()));
@@ -276,7 +276,7 @@ fn pick_from<T: Clone + 'static>(
                 }
             }),
         ),
-        UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+        UI::button(tr!("common.cancel"), Box::new(move |_| cancel_open.write(false))),
     ]));
     show(state, title, open_flag, children);
 }
@@ -296,10 +296,10 @@ fn assets_of(kind: impl Fn(&AssetKind) -> bool) -> Vec<(String, AssetId)> {
 /// Ask which material asset a material slot of the edited model asset is
 /// drawn with. The first choice goes back to the file's own material.
 pub fn pick_model_material(state: &Shared, material: usize) {
-    let mut choices: Vec<(String, Option<AssetId>)> = vec![("from the file".to_string(), None)];
+    let mut choices: Vec<(String, Option<AssetId>)> = vec![(tr!("dialogs.material.from_file").to_string(), None)];
     choices.extend(assets_of(|k| matches!(k, AssetKind::Material(_))).into_iter().map(|(n, id)| (n, Some(id))));
-    let empty = (choices.len() == 1).then_some("No material assets yet.");
-    pick_from(state, "Choose a material", "Material assets:", empty, choices, move |asset| {
+    let empty = (choices.len() == 1).then_some(tr!("dialogs.material.none"));
+    pick_from(state, tr!("dialogs.material.title"), tr!("dialogs.material.heading"), empty, choices, move |asset| {
         Command::SetModelMaterial { material, asset }
     });
 }
@@ -308,15 +308,15 @@ pub fn pick_model_material(state: &Shared, material: usize) {
 /// uses: automatic (what the model loader finds), none, or a texture asset.
 pub fn pick_material_texture(state: &Shared, param: String) {
     let mut choices: Vec<(String, TextureSetting)> = vec![
-        ("automatic (from the model)".to_string(), TextureSetting::Auto),
-        ("none".to_string(), TextureSetting::None),
+        (tr!("dialogs.texture.auto").to_string(), TextureSetting::Auto),
+        (tr!("dialogs.texture.none").to_string(), TextureSetting::None),
     ];
     choices.extend(
         assets_of(|k| matches!(k, AssetKind::Texture(_))).into_iter().map(|(n, id)| (n, TextureSetting::Asset(id))),
     );
-    let empty = (choices.len() == 2).then_some("No texture assets yet. Import images in the Assets panel.");
-    let heading = format!("Texture for {param}:");
-    pick_from(state, "Choose a texture", &heading, empty, choices, move |texture| {
+    let empty = (choices.len() == 2).then_some(tr!("dialogs.texture.none_yet"));
+    let heading = tr!("dialogs.texture.heading", param = param);
+    pick_from(state, tr!("dialogs.texture.title"), &heading, empty, choices, move |texture| {
         Command::SetMaterialTexture { param: param.clone(), texture }
     });
 }
@@ -358,11 +358,11 @@ pub fn save_as(state: &Shared, then: Option<Command>) {
     let save_open = open_flag.clone();
     let cancel_open = open_flag.clone();
     let children: Vec<Box<dyn UIElement>> = vec![
-        UI::label("File path (relative to the project root):", 14.0),
+        UI::label(tr!("dialogs.save_as.prompt"), 14.0),
         UI::input_sized(path, Size::new(380.0, 22.0)),
         button_row(vec![
             UI::button(
-                "Save",
+                tr!("common.save"),
                 Box::new(move |_| {
                     let mut text = save_path.read().trim().to_owned();
                     if text.is_empty() {
@@ -385,10 +385,10 @@ pub fn save_as(state: &Shared, then: Option<Command>) {
                     }
                 }),
             ),
-            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+            UI::button(tr!("common.cancel"), Box::new(move |_| cancel_open.write(false))),
         ]),
     ];
-    show(state, "Save scene as", open_flag, children);
+    show(state, tr!("dialogs.save_as.title"), open_flag, children);
 }
 
 pub fn open(state: &Shared) {
@@ -399,9 +399,9 @@ pub fn open(state: &Shared) {
 
     let mut children: Vec<Box<dyn UIElement>> = Vec::new();
     if files.is_empty() {
-        children.push(UI::label(&format!("No .ron files in {SCENE_DIR}/ yet."), 14.0));
+        children.push(UI::label(&tr!("dialogs.open.none", dir = SCENE_DIR), 14.0));
     } else {
-        children.push(UI::label(&format!("Scenes in {SCENE_DIR}/:"), 14.0));
+        children.push(UI::label(&tr!("dialogs.open.heading", dir = SCENE_DIR), 14.0));
         let labels = files
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
@@ -409,7 +409,7 @@ pub fn open(state: &Shared) {
         let height = (files.len().min(8) as f32) * 20.0 + 4.0;
         children.push(UI::list(labels, selected.clone(), Size::new(380.0, height)));
     }
-    children.push(UI::label("Or type a path:", 14.0));
+    children.push(UI::label(tr!("dialogs.open.type_path"), 14.0));
     children.push(UI::input_sized(typed.clone(), Size::new(380.0, 22.0)));
 
     let open_state = state.clone();
@@ -417,7 +417,7 @@ pub fn open(state: &Shared) {
     let cancel_open = open_flag.clone();
     children.push(button_row(vec![
         UI::button(
-            "Open",
+            tr!("common.open"),
             Box::new(move |_| {
                 let typed = typed.read().trim().to_owned();
                 let path = if !typed.is_empty() {
@@ -431,9 +431,9 @@ pub fn open(state: &Shared) {
                 }
             }),
         ),
-        UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+        UI::button(tr!("common.cancel"), Box::new(move |_| cancel_open.write(false))),
     ]));
-    show(state, "Open scene", open_flag, children);
+    show(state, tr!("dialogs.open.title"), open_flag, children);
 }
 
 /// Whether two paths name the same file (`a` may be relative, `b` absolute).
@@ -452,11 +452,11 @@ fn confirm_overwrite(state: &Shared, path: PathBuf, then: Option<Box<Command>>) 
     let replace_open = open_flag.clone();
     let cancel_open = open_flag.clone();
     let children: Vec<Box<dyn UIElement>> = vec![
-        UI::label(&format!("{} exists already.", path.display()), 14.0),
-        UI::label("Replace it with this scene?", 14.0),
+        UI::label(&tr!("dialogs.replace.exists", path = path.display()), 14.0),
+        UI::label(tr!("dialogs.replace.question"), 14.0),
         button_row(vec![
             UI::button(
-                "Replace",
+                tr!("dialogs.replace.button"),
                 Box::new(move |_| {
                     send(
                         &replace_state,
@@ -468,10 +468,10 @@ fn confirm_overwrite(state: &Shared, path: PathBuf, then: Option<Box<Command>>) 
                     replace_open.write(false);
                 }),
             ),
-            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+            UI::button(tr!("common.cancel"), Box::new(move |_| cancel_open.write(false))),
         ]),
     ];
-    show(state, "Replace scene?", open_flag, children);
+    show(state, tr!("dialogs.replace.title"), open_flag, children);
 }
 
 /// What has not been saved yet.
@@ -489,19 +489,19 @@ impl Unsaved {
 
     fn describe(&self) -> String {
         let parts: Vec<&str> = [
-            (self.scene, "the scene"),
-            (self.graph, "the animation graph"),
-            (self.asset, "the edited asset"),
+            (self.scene, tr!("dialogs.unsaved.the_scene")),
+            (self.graph, tr!("dialogs.unsaved.the_graph")),
+            (self.asset, tr!("dialogs.unsaved.the_asset")),
         ]
         .into_iter()
         .filter_map(|(unsaved, what)| unsaved.then_some(what))
         .collect();
         let list = match parts.as_slice() {
-            [] => "nothing".to_string(),
+            [] => tr!("dialogs.unsaved.nothing").to_string(),
             [one] => one.to_string(),
-            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+            [rest @ .., last] => tr!("dialogs.unsaved.and", rest = rest.join(", "), last = last),
         };
-        format!("There are unsaved changes in {list}.")
+        tr!("dialogs.unsaved.changes_in", list = list)
     }
 }
 
@@ -530,7 +530,7 @@ pub fn confirm_discard(
             }),
         ),
         None => UI::button(
-            "Discard",
+            tr!("dialogs.discard"),
             Box::new(move |_| {
                 other_state.borrow_mut().dirty = false;
                 send(&other_state, then.clone());
@@ -542,7 +542,7 @@ pub fn confirm_discard(
         UI::label(&unsaved.describe(), 14.0),
         button_row(vec![
             UI::button(
-                "Save first",
+                tr!("dialogs.save_first"),
                 Box::new(move |_| {
                     // Runs `then` only once everything is saved.
                     send(&save_state, Command::SaveFirst(Box::new(save_then.clone())));
@@ -550,10 +550,10 @@ pub fn confirm_discard(
                 }),
             ),
             other,
-            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+            UI::button(tr!("common.cancel"), Box::new(move |_| cancel_open.write(false))),
         ]),
     ];
-    show(state, "Unsaved changes", open_flag, children);
+    show(state, tr!("dialogs.unsaved.title"), open_flag, children);
 }
 
 /// The open graph has unsaved edits and another graph should be opened.
@@ -563,10 +563,10 @@ pub fn confirm_graph_switch(state: &Shared, current: &str, then: Command) {
     let (discard_state, discard_open) = (state.clone(), open_flag.clone());
     let cancel_open = open_flag.clone();
     let children: Vec<Box<dyn UIElement>> = vec![
-        UI::label(&format!("{current} has unsaved changes."), 14.0),
+        UI::label(&tr!("dialogs.graph_switch.message", name = current), 14.0),
         button_row(vec![
             UI::button(
-                "Save first",
+                tr!("dialogs.save_first"),
                 Box::new(move |_| {
                     // Switches only once the graph is saved.
                     send(&save_state, Command::SaveFirst(Box::new(save_then.clone())));
@@ -574,17 +574,17 @@ pub fn confirm_graph_switch(state: &Shared, current: &str, then: Command) {
                 }),
             ),
             UI::button(
-                "Discard",
+                tr!("dialogs.discard"),
                 Box::new(move |_| {
                     discard_state.borrow_mut().anim.dirty = false;
                     send(&discard_state, then.clone());
                     discard_open.write(false);
                 }),
             ),
-            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+            UI::button(tr!("common.cancel"), Box::new(move |_| cancel_open.write(false))),
         ]),
     ];
-    show(state, "Unsaved animation graph", open_flag, children);
+    show(state, tr!("dialogs.graph_switch.title"), open_flag, children);
 }
 
 fn scene_files() -> Vec<PathBuf> {
@@ -733,7 +733,7 @@ fn ask_name(state: &Shared, title: &str, prompt: &str, initial: &str, action: &s
                     ok_open.write(false);
                 }),
             ),
-            UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+            UI::button(tr!("common.cancel"), Box::new(move |_| cancel_open.write(false))),
         ]),
     ];
     show(state, title, open_flag, children);
@@ -744,23 +744,23 @@ pub fn new_asset(state: &Shared, kind: NewAsset, folder: Option<PathBuf>) {
     let root = assets::database().root().to_path_buf();
     let target = folder.clone().unwrap_or_else(|| root.join(kind.default_folder()));
     let suggestion = (1..)
-        .map(|n| format!("New {} {n}", kind.label().to_lowercase()))
+        .map(|n| tr!("dialogs.new_asset.suggestion", kind = kind_in_sentence(new_asset_kind(kind)), n = n))
         .find(|n| !target.join(format!("{n}{}", kind.suffix())).exists())
         .expect("a free name");
     let place = target.strip_prefix(root.parent().unwrap_or(&root)).unwrap_or(&target).to_string_lossy().replace('\\', "/");
     ask_name(
         state,
-        &format!("New {}", kind.label().to_lowercase()),
-        &format!("Name of the new {} (in {place}):", kind.label().to_lowercase()),
+        &tr!("dialogs.new_asset.title", kind = kind_in_sentence(new_asset_kind(kind))),
+        &tr!("dialogs.new_asset.prompt", kind = kind_in_sentence(new_asset_kind(kind)), place = place),
         &suggestion,
-        "Create",
+        tr!("common.create"),
         move |name| Command::NewAsset { kind, folder: folder.clone(), name: Some(name) },
     );
 }
 
 /// Ask for the name of a new folder inside `parent`.
 pub fn new_folder(state: &Shared, parent: PathBuf) {
-    ask_name(state, "New folder", "Name of the new folder:", "New folder", "Create", move |name| Command::NewFolder {
+    ask_name(state, tr!("dialogs.new_folder.title"), tr!("dialogs.new_folder.prompt"), tr!("dialogs.new_folder.default"), tr!("common.create"), move |name| Command::NewFolder {
         parent: parent.clone(),
         name,
     });
@@ -770,10 +770,10 @@ pub fn new_folder(state: &Shared, parent: PathBuf) {
 pub fn rename_asset(state: &Shared, id: AssetId, current: &str) {
     ask_name(
         state,
-        "Rename asset",
-        "New name (the file is renamed too; references stay intact):",
+        tr!("dialogs.rename_asset.title"),
+        tr!("dialogs.rename_asset.prompt"),
         current,
-        "Rename",
+        tr!("common.rename"),
         move |name| Command::RenameAsset { id, name },
     );
 }
@@ -781,7 +781,7 @@ pub fn rename_asset(state: &Shared, id: AssetId, current: &str) {
 /// Ask for a folder's new name.
 pub fn rename_folder(state: &Shared, path: PathBuf) {
     let current = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    ask_name(state, "Rename folder", "New name of the folder:", &current, "Rename", move |name| Command::RenameFolder {
+    ask_name(state, tr!("dialogs.rename_folder.title"), tr!("dialogs.rename_folder.prompt"), &current, tr!("common.rename"), move |name| Command::RenameFolder {
         path: path.clone(),
         name,
     });
@@ -800,15 +800,24 @@ fn reference_lines(database: &AssetDatabase, references: &[assets::Reference]) -
         .map(|r| {
             let path = r.file.strip_prefix(&project).unwrap_or(&r.file).to_string_lossy().replace('\\', "/");
             match r.asset.and_then(|id| database.get(id)) {
-                Some(entry) => format!("  ·  {} ({})", entry.meta.name, entry.meta.kind.label().to_lowercase()),
+                Some(entry) => format!("  ·  {} ({})", entry.meta.name, kind_in_sentence(super::asset_browser::kind_label(&entry.meta.kind))),
                 None => format!("  ·  {}", path.trim_start_matches("./")),
             }
         })
         .collect();
     if references.len() > LISTED_REFERENCES {
-        lines.push(format!("  ·  and {} more", references.len() - LISTED_REFERENCES));
+        lines.push(tr!("dialogs.references.more", count = references.len() - LISTED_REFERENCES));
     }
     lines
+}
+
+/// "1 file" / "n files".
+fn file_count(count: usize) -> String {
+    if count == 1 {
+        tr!("dialogs.references.one_file").to_string()
+    } else {
+        tr!("dialogs.references.n_files", count = count)
+    }
 }
 
 /// Ask before moving an asset to the trash, saying what still refers to it.
@@ -822,24 +831,21 @@ pub fn delete_asset(state: &Shared, id: AssetId) {
         let source = entry.source_path();
         let path = source.strip_prefix(&project).unwrap_or(&source).to_string_lossy().replace('\\', "/");
         let mut lines = vec![
-            format!("Move {} '{}' to the trash?", entry.meta.kind.label().to_lowercase(), entry.meta.name),
-            format!("{}  (and its .asset.ron)", path.trim_start_matches("./")),
+            tr!("dialogs.delete_asset.question", kind = kind_in_sentence(super::asset_browser::kind_label(&entry.meta.kind)), name = entry.meta.name),
+            tr!("dialogs.delete_asset.with_meta", path = path.trim_start_matches("./")),
         ];
         let references = database.references_to(id);
         let warning = !references.is_empty();
         if warning {
             lines.push(String::new());
-            lines.push(format!(
-                "Still used by {} — they will miss it:",
-                if references.len() == 1 { "1 file".to_string() } else { format!("{} files", references.len()) }
-            ));
+            lines.push(tr!("dialogs.delete_asset.still_used", files = file_count(references.len())));
             lines.extend(reference_lines(&database, &references));
         } else {
-            lines.push("Nothing in the project refers to it.".into());
+            lines.push(tr!("dialogs.delete_asset.unused").into());
         }
         (lines, warning)
     };
-    confirm_delete(state, if warning { "Delete asset (in use)" } else { "Delete asset" }, lines, Command::DeleteAsset(id));
+    confirm_delete(state, if warning { tr!("dialogs.delete_asset.title_in_use") } else { tr!("dialogs.delete_asset.title") }, lines, Command::DeleteAsset(id));
 }
 
 /// Ask before moving a folder and all assets in it to the trash.
@@ -849,22 +855,22 @@ pub fn delete_folder(state: &Shared, path: PathBuf) {
         let inside = database.assets_in(&path);
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let mut lines = vec![
-            format!("Move folder '{name}' to the trash?"),
+            tr!("dialogs.delete_folder.question", name = name),
             match inside.len() {
-                0 => "It holds no assets.".to_string(),
-                1 => "It holds 1 asset.".to_string(),
-                n => format!("It holds {n} assets."),
+                0 => tr!("dialogs.delete_folder.holds_none").to_string(),
+                1 => tr!("dialogs.delete_folder.holds_one").to_string(),
+                n => tr!("dialogs.delete_folder.holds_many", count = n),
             },
         ];
         let references = database.references_into(&path);
         if !references.is_empty() {
             lines.push(String::new());
-            lines.push(format!("{} outside refer to assets in it:", if references.len() == 1 { "1 file".to_string() } else { format!("{} files", references.len()) }));
+            lines.push(tr!("dialogs.delete_folder.referenced", files = file_count(references.len())));
             lines.extend(reference_lines(&database, &references));
         }
         lines
     };
-    confirm_delete(state, "Delete folder", lines, Command::DeleteFolder(path));
+    confirm_delete(state, tr!("dialogs.delete_folder.title"), lines, Command::DeleteFolder(path));
 }
 
 fn confirm_delete(state: &Shared, title: &str, lines: Vec<String>, then: Command) {
@@ -874,13 +880,31 @@ fn confirm_delete(state: &Shared, title: &str, lines: Vec<String>, then: Command
     let mut children: Vec<Box<dyn UIElement>> = lines.iter().map(|line| UI::label(line, 14.0) as Box<dyn UIElement>).collect();
     children.push(button_row(vec![
         UI::button(
-            "Move to trash",
+            tr!("dialogs.move_to_trash"),
             Box::new(move |_| {
                 send(&ok_state, then.clone());
                 ok_open.write(false);
             }),
         ),
-        UI::button("Cancel", Box::new(move |_| cancel_open.write(false))),
+        UI::button(tr!("common.cancel"), Box::new(move |_| cancel_open.write(false))),
     ]));
     show(state, title, open_flag, children);
+}
+
+/// The shown name of a kind of new asset.
+pub fn new_asset_kind(kind: NewAsset) -> &'static str {
+    match kind {
+        NewAsset::Material => tr!("asset_browser.kind.material"),
+        NewAsset::MaterialGraph => tr!("asset_browser.kind.material_graph"),
+        NewAsset::ScatterGraph => tr!("asset_browser.kind.scatter_graph"),
+    }
+}
+
+/// A kind's name inside a sentence: lower case in English, as it is in
+/// German (nouns keep their capital).
+pub fn kind_in_sentence(label: &str) -> String {
+    match crate::i18n::language() {
+        crate::i18n::Language::English => label.to_lowercase(),
+        _ => label.to_string(),
+    }
 }

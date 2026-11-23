@@ -69,7 +69,7 @@ pub fn template_icon(template: EntityTemplate) -> &'static str {
 
 impl HierarchyPanel {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Hierarchy".into(), Position::default(), Size::new(260.0, 400.0));
+        let mut panel = Panel::new(tr!("hierarchy.title").into(), Position::default(), Size::new(260.0, 400.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
@@ -80,11 +80,11 @@ impl HierarchyPanel {
         let add_state = state.clone();
         let mut items: Vec<MenuItem> = EntityTemplate::ALL
             .iter()
-            .map(|(name, template)| MenuItem::new(*name).icon(template_icon(*template)))
+            .map(|(_, template)| MenuItem::new(template.label()).icon(template_icon(*template)))
             .collect();
-        items.push(MenuItem::new("Empty child of selected").icon(icons::LIST_TREE));
+        items.push(MenuItem::new(tr!("hierarchy.empty_child")).icon(icons::LIST_TREE));
         let add_menu = MenuButton::with_items(
-            "Add",
+            tr!("common.add"),
             Some(icons::PLUS),
             items,
             Box::new(move |index, _scene| {
@@ -96,7 +96,7 @@ impl HierarchyPanel {
                 if index >= EntityTemplate::ALL.len() && parent.is_none() {
                     add_state
                         .borrow_mut()
-                        .set_status("Select an entity to add a child to it");
+                        .set_status(tr!("hierarchy.select_parent"));
                     return;
                 }
                 send(&add_state, Command::AddEntity { parent, template });
@@ -117,7 +117,7 @@ impl HierarchyPanel {
         );
         duplicate.set_style(ButtonStyle::Ghost);
         duplicate.set_icon(icons::COPY_PLUS);
-        duplicate.set_tooltip("Duplicate selected (Ctrl+D)");
+        duplicate.set_tooltip(tr!("hierarchy.duplicate_tooltip"));
         let del_state = state.clone();
         let mut delete = Button::new(
             Position::default(),
@@ -132,7 +132,7 @@ impl HierarchyPanel {
         );
         delete.set_style(ButtonStyle::Danger);
         delete.set_icon(icons::TRASH);
-        delete.set_tooltip("Delete selected (Del)");
+        delete.set_tooltip(tr!("hierarchy.delete_tooltip"));
 
         Self {
             handle: UIElementHandle::new(),

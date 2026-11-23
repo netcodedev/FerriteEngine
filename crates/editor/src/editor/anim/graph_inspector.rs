@@ -79,7 +79,7 @@ fn action_button(label: &str, icon: &str, style: ButtonStyle, on_click: Box<dyn 
 
 impl GraphInspector {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Inspector".into(), Position::default(), Size::new(330.0, 400.0));
+        let mut panel = Panel::new(tr!("anim.inspector.title").into(), Position::default(), Size::new(330.0, 400.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
@@ -105,11 +105,11 @@ impl GraphInspector {
         match selection {
             AnimSelection::None => {
                 self.body.add_child(Box::new(Label::muted(
-                    "Select a state or a transition",
+                    tr!("anim.inspector.select_hint_1"),
                     theme::FONT_SIZE,
                 )));
                 self.body.add_child(Box::new(Label::muted(
-                    "in the graph to edit it.",
+                    tr!("anim.inspector.select_hint_2"),
                     theme::FONT_SIZE,
                 )));
             }
@@ -138,10 +138,10 @@ impl GraphInspector {
         };
         let value_w = width - 96.0 - 16.0;
 
-        let mut section = Section::new("State", Some(icons::BOX), width);
+        let mut section = Section::new(tr!("anim.inspector.state"), Some(icons::BOX), width);
         let name_source = DataSource::new(def.name.clone());
         section.add_child(Box::new(FieldRow::new(
-            "Name",
+            tr!("common.name"),
             vec![UI::input_sized(name_source.clone(), Size::new(value_w, 24.0))],
         )));
         self.bindings.push(Binding::StateName {
@@ -149,13 +149,13 @@ impl GraphInspector {
             last: def.name.clone(),
         });
         let sync = DataSource::new(def.sync);
-        section.add_child(Box::new(FieldRow::new("Sync clips", vec![UI::checkbox(sync.clone())])));
+        section.add_child(Box::new(FieldRow::new(tr!("anim.inspector.sync_clips"), vec![UI::checkbox(sync.clone())])));
         self.bindings.push(Binding::Sync { source: sync, last: def.sync });
         let root_rotation = DataSource::new(def.root_rotation);
         // The clips' turn of the hips turns the body instead of the model
         // (turning on the spot); see `StateDef::root_rotation`.
         section.add_child(Box::new(FieldRow::new(
-            "Turns body",
+            tr!("anim.inspector.turns_body"),
             vec![UI::checkbox(root_rotation.clone())],
         )));
         self.bindings.push(Binding::RootRotation {
@@ -164,16 +164,16 @@ impl GraphInspector {
         });
         if is_default {
             section.add_child(Box::new(FieldRow::new(
-                "Default",
-                vec![Box::new(Label::muted("Entry state of the graph", theme::FONT_SIZE_SMALL + 0.5))],
+                tr!("anim.inspector.default"),
+                vec![Box::new(Label::muted(tr!("anim.inspector.entry_state"), theme::FONT_SIZE_SMALL + 0.5))],
             )));
         } else {
             let default_state = self.state.clone();
             let default_name = def.name.clone();
             section.add_child(Box::new(FieldRow::new(
-                "Default",
+                tr!("anim.inspector.default"),
                 vec![action_button(
-                    "Make default",
+                    tr!("anim.inspector.make_default"),
                     icons::CHECK_MARK,
                     ButtonStyle::Secondary,
                     Box::new(move |_| {
@@ -188,9 +188,9 @@ impl GraphInspector {
 
         // Clips.
         let choices = clip_choices();
-        let mut clips = Section::new("Clips", Some(icons::PACKAGE), width);
+        let mut clips = Section::new(tr!("anim.inspector.clips"), Some(icons::PACKAGE), width);
         if def.clips.is_empty() {
-            clips.add_child(Box::new(Label::muted("No clips: the state plays nothing.", theme::FONT_SIZE_SMALL + 0.5)));
+            clips.add_child(Box::new(Label::muted(tr!("anim.inspector.no_clips"), theme::FONT_SIZE_SMALL + 0.5)));
         }
         for (i, clip) in def.clips.iter().enumerate() {
             // What the clip plays now is always on offer, even a raw file or
@@ -246,7 +246,7 @@ impl GraphInspector {
         let state_name = def.name.clone();
         let first_choice = choices.first().cloned();
         clips.add_child(action_button(
-            "Add clip",
+            tr!("anim.inspector.add_clip"),
             icons::PLUS,
             ButtonStyle::Ghost,
             Box::new(move |_| {
@@ -265,19 +265,20 @@ impl GraphInspector {
         self.body.add_child(Box::new(clips));
 
         // Outgoing transitions.
-        let mut transitions = Section::new("Transitions", Some(icons::ACTIVITY), width);
+        let mut transitions = Section::new(tr!("anim.inspector.transitions"), Some(icons::ACTIVITY), width);
         if outgoing.is_empty() {
             transitions.add_child(Box::new(Label::muted(
-                "Drag the node's handle onto another state.",
+                tr!("anim.inspector.drag_handle_hint"),
                 theme::FONT_SIZE_SMALL + 0.5,
             )));
         }
         for (index, to, conditions) in outgoing {
             let select_state = self.state.clone();
-            let label = format!(
-                "to {to}   ({conditions} condition{})",
-                if conditions == 1 { "" } else { "s" }
-            );
+            let label = if conditions == 1 {
+                tr!("anim.inspector.transition_to_one", to = to)
+            } else {
+                tr!("anim.inspector.transition_to_many", to = to, count = conditions)
+            };
             transitions.add_child(action_button(
                 &label,
                 icons::CHEVRON_RIGHT,
@@ -291,7 +292,7 @@ impl GraphInspector {
 
         let delete_state = self.state.clone();
         self.body.add_child(action_button(
-            "Delete state",
+            tr!("anim.inspector.delete_state"),
             icons::TRASH,
             ButtonStyle::Danger,
             Box::new(move |_| send(&delete_state, Command::DeleteGraphSelection)),
@@ -308,14 +309,14 @@ impl GraphInspector {
             (t, inputs)
         };
 
-        let mut section = Section::new("Transition", Some(icons::ACTIVITY), width);
+        let mut section = Section::new(tr!("anim.inspector.transition"), Some(icons::ACTIVITY), width);
         let mut route = Label::new(format!("{}  \u{2192}  {}", t.from, t.to), theme::FONT_SIZE);
         route.set_font(ferrite::core::renderer::text::Fonts::InterSemiBold, theme::FONT_SIZE);
         section.add_child(Box::new(route));
         let blend = DataSource::new((t.blend * 1000.0).round() / 1000.0);
         let value_w = width - 96.0 - 16.0;
         section.add_child(Box::new(FieldRow::new(
-            "Blend (s)",
+            tr!("anim.inspector.blend"),
             vec![
                 UI::slider_sized(blend.clone(), 0.0, 2.0, Size::new(value_w - 70.0, 20.0)),
                 UI::input_sized(blend.clone(), Size::new(64.0, 24.0)),
@@ -328,10 +329,10 @@ impl GraphInspector {
         self.body.add_child(Box::new(section));
 
         // Conditions: input [+|-] input <op> value.
-        let mut conditions = Section::new("Conditions (all must hold)", Some(icons::SLIDERS), width);
+        let mut conditions = Section::new(tr!("anim.inspector.conditions"), Some(icons::SLIDERS), width);
         if t.conditions.is_empty() {
             conditions.add_child(Box::new(Label::muted(
-                "No conditions: taken immediately.",
+                tr!("anim.inspector.no_conditions"),
                 theme::FONT_SIZE_SMALL + 0.5,
             )));
         }
@@ -349,7 +350,7 @@ impl GraphInspector {
             conditions.add_child(Box::new(header));
             if c.terms.len() > 2 {
                 conditions.add_child(Box::new(Label::muted(
-                    "More than two inputs: edit in the .ron file.",
+                    tr!("anim.inspector.many_inputs"),
                     theme::FONT_SIZE_SMALL,
                 )));
                 continue;
@@ -418,7 +419,7 @@ impl GraphInspector {
         let add_state = self.state.clone();
         let first_input = inputs.first().cloned();
         conditions.add_child(action_button(
-            "Add condition",
+            tr!("anim.inspector.add_condition"),
             icons::PLUS,
             ButtonStyle::Ghost,
             Box::new(move |_| {
@@ -443,7 +444,7 @@ impl GraphInspector {
 
         let delete_state = self.state.clone();
         self.body.add_child(action_button(
-            "Delete transition",
+            tr!("anim.inspector.delete_transition"),
             icons::TRASH,
             ButtonStyle::Danger,
             Box::new(move |_| send(&delete_state, Command::DeleteGraphSelection)),

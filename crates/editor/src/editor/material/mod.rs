@@ -92,11 +92,11 @@ impl MaterialEdit {
     pub fn open(id: AssetId) -> Result<Self, String> {
         let (name, path, graph) = {
             let database = assets::database();
-            let entry = database.get(id).ok_or_else(|| format!("asset {id} does not exist"))?;
+            let entry = database.get(id).ok_or_else(|| tr!("material.asset_missing", id = id))?;
             let graph = match entry.meta.kind {
                 AssetKind::Material(_) => false,
                 AssetKind::MaterialGraph(_) => true,
-                _ => return Err(format!("'{}' is not a material", entry.meta.name)),
+                _ => return Err(tr!("material.not_a_material", name = entry.meta.name)),
             };
             (entry.meta.name.clone(), entry.source_path(), graph)
         };
@@ -348,7 +348,7 @@ impl MaterialEdit {
         let meta = assets::database()
             .get(self.asset)
             .map(|entry| entry.meta.clone())
-            .ok_or_else(|| format!("asset {} does not exist", self.asset))?;
+            .ok_or_else(|| tr!("material.asset_missing", id = self.asset))?;
         assets::database().update(meta).map_err(|e| e.to_string())?;
         self.saved = self.doc.clone();
         self.file_time = file_time(&self.path);
@@ -438,9 +438,9 @@ impl MaterialEdit {
                     .file_material(*index)
                     .map(|m| ["base_color_map", "normal_map", "roughness_map"].iter().filter(|p| m.texture(p).is_some()).count())
                     .unwrap_or(0);
-                format!("Automatic textures from the model that uses it ({maps} maps found)")
+                tr!("material.auto_textures_from_model", maps = maps)
             }
-            Some(None) => "No model uses it: automatic textures stay empty".into(),
+            Some(None) => tr!("material.auto_textures_empty").into(),
             None => String::new(),
         }
     }

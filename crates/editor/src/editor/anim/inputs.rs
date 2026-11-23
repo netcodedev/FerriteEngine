@@ -40,7 +40,7 @@ pub struct InputsPanel {
 
 impl InputsPanel {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Inputs".into(), Position::default(), Size::new(330.0, 300.0));
+        let mut panel = Panel::new(tr!("anim.inputs.title").into(), Position::default(), Size::new(330.0, 300.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
@@ -59,7 +59,7 @@ impl InputsPanel {
         );
         add.set_style(ButtonStyle::Ghost);
         add.set_icon(icons::PLUS);
-        add.set_label("Add");
+        add.set_label(tr!("common.add"));
         add.fit(24.0);
         Self {
             handle: UIElementHandle::new(),
@@ -81,7 +81,7 @@ impl InputsPanel {
         };
         if inputs.is_empty() {
             self.body
-                .add_child(Box::new(Label::muted("No inputs yet.", theme::FONT_SIZE)));
+                .add_child(Box::new(Label::muted(tr!("anim.inputs.empty"), theme::FONT_SIZE)));
         }
         let name_w = (width - 24.0 - 70.0 - 26.0 - 16.0).max(80.0);
         for (index, input) in inputs.iter().enumerate() {

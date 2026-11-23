@@ -85,7 +85,7 @@ impl Viewport {
             yaw: Rad::from(Deg(45.0)),
             pitch: Rad::from(Deg(-30.0)),
             fov: Deg(64.0),
-            speed: 20.0,
+            speed: crate::preferences::get().fly_speed,
             flying: false,
             last_cursor: None,
             keys: [false; 6],
@@ -112,6 +112,8 @@ impl Viewport {
 
     /// Move the fly camera and push it into the scene as the editor camera.
     pub fn update(&mut self, scene: &mut Scene, rect: Rect, delta_time: f64) {
+        let preferences = crate::preferences::get();
+        self.fov = Deg(preferences.field_of_view);
         if self.flying {
             let forward = self.forward();
             let right = forward.cross(Vector3::unit_y()).normalize();
@@ -121,7 +123,7 @@ impl Viewport {
             motion += right * (axis(self.keys[3]) - axis(self.keys[2]));
             motion += Vector3::unit_y() * (axis(self.keys[4]) - axis(self.keys[5]));
             if motion.magnitude2() > 0.0 {
-                let speed = self.speed * if self.fast { 4.0 } else { 1.0 };
+                let speed = self.speed * if self.fast { preferences.fast_factor } else { 1.0 };
                 self.position += motion.normalize() * speed * delta_time as f32;
             }
         }
@@ -149,6 +151,7 @@ impl Viewport {
             camera.set_position(self.position);
             camera.set_yaw_pitch(self.yaw, self.pitch);
             editor_camera.get_projection_mut().set_aspect(aspect);
+            editor_camera.get_projection_mut().set_fovy(self.fov);
         }
     }
 
@@ -316,9 +319,11 @@ impl Viewport {
             WindowEvent::CursorPos(x, y) => {
                 if self.flying {
                     if let Some((lx, ly)) = self.last_cursor {
-                        let sensitivity = 0.003;
+                        let preferences = crate::preferences::get();
+                        let sensitivity = 0.003 * preferences.mouse_sensitivity;
+                        let vertical = if preferences.invert_y { -sensitivity } else { sensitivity };
                         self.yaw += Rad((*x - lx) as f32 * sensitivity);
-                        let pitch = self.pitch.0 - (*y - ly) as f32 * sensitivity;
+                        let pitch = self.pitch.0 - (*y - ly) as f32 * vertical;
                         self.pitch = Rad(pitch.clamp(-1.55, 1.55));
                     }
                     self.last_cursor = Some((*x, *y));

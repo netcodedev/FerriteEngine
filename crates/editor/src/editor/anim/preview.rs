@@ -85,7 +85,7 @@ fn button(label: &str, icon: &str, on_click: Box<dyn Fn(&mut Scene)>) -> Button 
 
 impl PreviewPanel {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Preview".into(), Position::default(), Size::new(360.0, 400.0));
+        let mut panel = Panel::new(tr!("anim.preview.title").into(), Position::default(), Size::new(360.0, 400.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
@@ -100,9 +100,9 @@ impl PreviewPanel {
             state,
             panel,
             controls,
-            reset: button("Reset", icons::ROTATE_CW, Box::new(move |_| reset_flag.write(true))),
+            reset: button(tr!("common.reset"), icons::ROTATE_CW, Box::new(move |_| reset_flag.write(true))),
             pause: button(
-                "Pause",
+                tr!("anim.preview.pause"),
                 icons::SQUARE,
                 Box::new(move |_| pause_flag.write(!pause_flag.read())),
             ),
@@ -155,7 +155,7 @@ impl PreviewPanel {
         match load_player_model(None) {
             Ok(model) => self.model = Some(model.into_model()),
             Err(e) => {
-                self.model_error = Some(format!("Could not load {PLAYER_MODEL_FILE}: {e}"))
+                self.model_error = Some(tr!("anim.preview.model_load_failed", file = PLAYER_MODEL_FILE, error = e))
             }
         }
     }
@@ -215,7 +215,7 @@ impl PreviewPanel {
         self.input_order.clear();
         let slider_w = (width - 16.0 - 96.0 - 64.0 - 24.0).max(60.0);
         self.controls.add_child(Box::new(Label::muted(
-            "Inputs drive the graph like the game would.",
+            tr!("anim.preview.inputs_hint"),
             theme::FONT_SIZE_SMALL + 0.5,
         )));
         for input in &inputs {
@@ -307,18 +307,19 @@ impl UIElement for PreviewPanel {
         let view = self.view_rect();
         let preview = self.state.borrow().anim.preview.clone();
         let (headline, detail) = if let Some(error) = &self.model_error {
-            ("Preview unavailable".to_owned(), error.clone())
+            (tr!("anim.preview.unavailable").to_owned(), error.clone())
         } else if let Some(error) = &preview.error {
-            ("Graph error".to_owned(), error.clone())
+            (tr!("anim.preview.graph_error").to_owned(), error.clone())
         } else {
             (
-                format!("State: {}", preview.current),
+                tr!("anim.preview.state", state = preview.current),
                 match &preview.previous {
-                    Some(previous) => format!(
-                        "Blending from {previous}  {:.0}%",
-                        preview.progress.clamp(0.0, 1.0) * 100.0
+                    Some(previous) => tr!(
+                        "anim.preview.blending",
+                        from = previous,
+                        percent = format!("{:.0}", preview.progress.clamp(0.0, 1.0) * 100.0)
                     ),
-                    None => if paused { "Paused".into() } else { "Playing".into() },
+                    None => if paused { tr!("anim.preview.paused").into() } else { tr!("anim.preview.playing").into() },
                 },
             )
         };
@@ -329,7 +330,7 @@ impl UIElement for PreviewPanel {
             .prepare_render_at(Position::new(view.x + 2.0, y, 3.0));
         self.status_detail
             .prepare_render_at(Position::new(view.x + 2.0, y + 22.0, 3.0));
-        self.pause.set_label(if paused { "Play" } else { "Pause" });
+        self.pause.set_label(if paused { tr!("anim.preview.play") } else { tr!("anim.preview.pause") });
         self.pause.set_icon(if paused { icons::PLAY } else { icons::SQUARE });
         self.pause.fit(26.0);
         let mut bx = view.x + view.w;

@@ -81,7 +81,7 @@ impl ScatterPreview {
     pub fn new(state: Shared) -> Self {
         let points = UI::checkbox(state.borrow().scatter_show_points.clone());
         let view_3d = toggle("3D", icons::BOX, &state, true);
-        let view_map = toggle("Map", icons::LAYOUT_GRID, &state, false);
+        let view_map = toggle(tr!("scatter.preview.map"), icons::LAYOUT_GRID, &state, false);
         Self {
             handle: UIElementHandle::new(),
             state,
@@ -94,12 +94,12 @@ impl ScatterPreview {
                 .border_thickness(1.0)
                 .build(),
             map_bg: PlaneBuilder::new().color((0.067, 0.071, 0.086, 1.0)).build(),
-            title: theme::heading("Preview", theme::FONT_SIZE, theme::TEXT),
+            title: theme::heading(tr!("scatter.preview.title"), theme::FONT_SIZE, theme::TEXT),
             note: theme::text("", theme::FONT_SIZE_SMALL, theme::TEXT_DIM),
             view_3d,
             view_map,
             points,
-            points_label: theme::text("Points", theme::FONT_SIZE_SMALL, theme::TEXT),
+            points_label: theme::text(tr!("scatter.preview.points"), theme::FONT_SIZE_SMALL, theme::TEXT),
             legend: (0..LEGEND_ROWS).map(|_| theme::text("", theme::FONT_SIZE_SMALL, theme::TEXT)).collect(),
             showing_3d: None,
         }
@@ -187,9 +187,9 @@ impl UIElement for ScatterPreview {
             y += 18.0;
         }
         let note = if showing_3d {
-            "Right mouse + WASD: fly. Points: the cell under the camera"
+            tr!("scatter.preview.note_3d")
         } else {
-            "The 32 m cell under the camera (x)"
+            tr!("scatter.preview.note_map")
         };
         self.note.set_content(note);
         self.note.prepare_render_at(Position::new(view.x, y + 4.0, Z + 1.0));

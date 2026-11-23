@@ -49,11 +49,11 @@ pub(super) fn header_button(
 /// Name of a texture asset for a slot row.
 fn material_name(material: Option<AssetId>) -> String {
     match material {
-        None => "from the file".into(),
+        None => tr!("asset_editor.inspector.from_file").into(),
         Some(id) => assets::database()
             .get(id)
             .map(|entry| entry.meta.name.clone())
-            .unwrap_or_else(|| format!("missing ({id})")),
+            .unwrap_or_else(|| tr!("asset_editor.inspector.missing", id = id)),
     }
 }
 
@@ -146,7 +146,7 @@ const ACTIONS_HEIGHT: f32 = 34.0;
 
 impl AssetInspector {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Asset".into(), Position::default(), Size::new(330.0, 600.0));
+        let mut panel = Panel::new(tr!("asset_editor.inspector.title").into(), Position::default(), Size::new(330.0, 600.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
@@ -155,23 +155,23 @@ impl AssetInspector {
 
         let save_state = state.clone();
         let mut save = header_button(
-            "Save",
+            tr!("common.save"),
             icons::SAVE,
             ButtonStyle::Primary,
             Box::new(move |_| send(&save_state, Command::SaveAsset)),
         );
-        save.set_tooltip("Save the asset (Ctrl+S)");
+        save.set_tooltip(tr!("asset_editor.inspector.save_tooltip"));
         let revert_state = state.clone();
         let mut revert = header_button(
-            "Revert",
+            tr!("common.revert"),
             icons::ROTATE_CW,
             ButtonStyle::Secondary,
             Box::new(move |_| send(&revert_state, Command::RevertAsset)),
         );
-        revert.set_tooltip("Discard the unsaved changes");
+        revert.set_tooltip(tr!("asset_editor.inspector.revert_tooltip"));
         let back_state = state.clone();
         let back = header_button(
-            "Back to scene",
+            tr!("asset_editor.inspector.back"),
             icons::ARROW_LEFT,
             ButtonStyle::Ghost,
             Box::new(move |_| send(&back_state, Command::CloseAssetEditor)),
@@ -218,17 +218,17 @@ impl AssetInspector {
 
         // What it is.
         let name = DataSource::new(edit.meta.name.clone());
-        let mut general = Section::new("Asset", Some(icons::PACKAGE), width);
+        let mut general = Section::new(tr!("asset_editor.inspector.section_asset"), Some(icons::PACKAGE), width);
         general.add_child(Box::new(FieldRow::new(
-            "Name",
+            tr!("common.name"),
             vec![UI::input_sized(name.clone(), Size::new(value_w, 24.0))],
         )));
         general.add_child(Box::new(FieldRow::new(
-            "Kind",
-            vec![muted(edit.meta.kind.label().to_string())],
+            tr!("asset_editor.inspector.kind"),
+            vec![muted(super::super::asset_browser::kind_label(&edit.meta.kind).to_string())],
         )));
         general.add_child(Box::new(FieldRow::new(
-            "File",
+            tr!("asset_editor.inspector.file"),
             vec![muted(edit.source_path().to_string_lossy().replace('\\', "/"))],
         )));
         self.body.add_child(Box::new(general));
@@ -247,20 +247,20 @@ impl AssetInspector {
 
         if let Some(clip) = &edit.clip {
             let length = DataSource::new(clip.duration());
-            let mut section = Section::new("Clip", Some(icons::ACTIVITY), width);
+            let mut section = Section::new(tr!("asset_editor.inspector.section_clip"), Some(icons::ACTIVITY), width);
             section.add_child(Box::new(FieldRow::new(
-                "Length (s)",
+                tr!("asset_editor.inspector.length"),
                 vec![UI::input_sized(length.clone(), Size::new(value_w.min(140.0), 24.0))],
             )));
             let model = clip
                 .file
                 .model
                 .and_then(|id| assets::database().get(id).map(|e| e.meta.name.clone()))
-                .unwrap_or_else(|| "player model".into());
-            section.add_child(Box::new(FieldRow::new("Model", vec![muted(model)])));
+                .unwrap_or_else(|| tr!("asset_editor.inspector.player_model").into());
+            section.add_child(Box::new(FieldRow::new(tr!("asset_editor.inspector.model"), vec![muted(model)])));
             let opacity = DataSource::new(clip.file.model_opacity);
             section.add_child(Box::new(FieldRow::new(
-                "Opacity",
+                tr!("asset_editor.inspector.opacity"),
                 vec![UI::slider_sized(opacity.clone(), 0.0, 1.0, Size::new(value_w, 24.0))],
             )));
             bindings.model_opacity = Some(opacity);
@@ -268,12 +268,9 @@ impl AssetInspector {
                 .selected
                 .as_deref()
                 .map(|bone| ferrite::core::model::ik::base_name(bone).to_string())
-                .unwrap_or_else(|| "none (click a joint)".into());
-            section.add_child(Box::new(FieldRow::new("Bone", vec![muted(selected)])));
-            section.add_child(muted(
-                "Space: play, K: key, Delete: remove key"
-                    .to_string(),
-            ));
+                .unwrap_or_else(|| tr!("asset_editor.inspector.no_bone").into());
+            section.add_child(Box::new(FieldRow::new(tr!("asset_editor.inspector.bone"), vec![muted(selected)])));
+            section.add_child(muted(tr!("asset_editor.inspector.clip_keys").to_string()));
             self.body.add_child(Box::new(section));
             bindings.length = Some(length);
 
@@ -287,7 +284,7 @@ impl AssetInspector {
             self.body.add_child(Box::new(section));
             bindings.anchor = anchor;
 
-            let mut bones = Section::new("Bones", Some(icons::LIST_TREE), width);
+            let mut bones = Section::new(tr!("asset_editor.inspector.section_bones"), Some(icons::LIST_TREE), width);
             for bone in &clip.bones {
                 let keyed = clip.file.track(bone).is_some();
                 let state = self.state.clone();
@@ -319,14 +316,14 @@ impl AssetInspector {
             if !model.clips.is_empty() {
                 let id = edit.meta.id;
                 let state = self.state.clone();
-                let mut section = Section::new("Animation", Some(icons::ACTIVITY), width);
+                let mut section = Section::new(tr!("asset_editor.inspector.section_animation"), Some(icons::ACTIVITY), width);
                 let mut button = header_button(
-                    "New clip",
+                    tr!("asset_editor.inspector.new_clip"),
                     icons::PLUS,
                     ButtonStyle::Primary,
                     Box::new(move |_| send(&state, Command::NewClipDialog(id))),
                 );
-                button.set_tooltip("Make a new animation clip posed on this model");
+                button.set_tooltip(tr!("asset_editor.inspector.new_clip_tooltip"));
                 section.add_child(Box::new(button));
                 self.body.add_child(Box::new(section));
             }
@@ -334,9 +331,9 @@ impl AssetInspector {
 
         if let AssetKind::Model(model) = &edit.meta.kind {
             bindings.scale.write(model.scale);
-            let mut settings = Section::new("Model", Some(icons::BOX), width);
+            let mut settings = Section::new(tr!("asset_editor.inspector.section_model"), Some(icons::BOX), width);
             settings.add_child(Box::new(FieldRow::new(
-                "Scale",
+                tr!("asset_editor.inspector.scale"),
                 vec![UI::input_sized(
                     bindings.scale.clone(),
                     Size::new(value_w.min(140.0), 24.0),
@@ -347,10 +344,10 @@ impl AssetInspector {
             // How it is held, for models that are no characters.
             if model.clips.is_empty() {
                 let held = DataSource::new(model.grip.is_some());
-                let mut section = Section::new("Grip", Some(icons::POINTER), width);
+                let mut section = Section::new(tr!("asset_editor.inspector.section_grip"), Some(icons::POINTER), width);
                 section.add_child(Box::new(FieldRow::new(
-                    "Can be held",
-                    vec![UI::checkbox(held.clone()), muted("in a character's hand".to_string())],
+                    tr!("asset_editor.inspector.can_be_held"),
+                    vec![UI::checkbox(held.clone()), muted(tr!("asset_editor.inspector.in_hand").to_string())],
                 )));
                 let grip = model.grip.clone().unwrap_or_else(|| Grip::at([0.0; 3]));
                 let axes: Vec<String> = GRIP_AXES.iter().map(|(_, name)| name.to_string()).collect();
@@ -376,14 +373,14 @@ impl AssetInspector {
                     },
                 };
                 if model.grip.is_some() {
-                    let mut poses = vec!["Rest pose".to_string()];
+                    let mut poses = vec![tr!("asset_editor.inspector.rest_pose").to_string()];
                     poses.extend(edit.hold_poses.iter().map(|pose| pose.label.clone()));
                     section.add_child(Box::new(FieldRow::new(
-                        "Show in hand",
+                        tr!("asset_editor.inspector.show_in_hand"),
                         vec![UI::checkbox(bindings_grip.holding.clone())],
                     )));
                     section.add_child(Box::new(FieldRow::new(
-                        "Pose",
+                        tr!("asset_editor.inspector.pose"),
                         vec![Box::new(Dropdown::new(
                             Position::default(),
                             Size::new(value_w, 24.0),
@@ -392,7 +389,7 @@ impl AssetInspector {
                         ))],
                     )));
                     section.add_child(Box::new(FieldRow::new(
-                        "Head towards",
+                        tr!("asset_editor.inspector.head_towards"),
                         vec![Box::new(Dropdown::new(
                             Position::default(),
                             Size::new(value_w.min(90.0), 24.0),
@@ -401,7 +398,7 @@ impl AssetInspector {
                         ))],
                     )));
                     section.add_child(Box::new(FieldRow::new(
-                        "Edge towards",
+                        tr!("asset_editor.inspector.edge_towards"),
                         vec![Box::new(Dropdown::new(
                             Position::default(),
                             Size::new(value_w.min(90.0), 24.0),
@@ -410,30 +407,27 @@ impl AssetInspector {
                         ))],
                     )));
                     section.add_child(Box::new(FieldRow::new(
-                        "Roll (°)",
+                        tr!("asset_editor.inspector.roll"),
                         vec![UI::input_sized(
                             bindings_grip.roll.clone(),
                             Size::new(value_w.min(90.0), 24.0),
                         )],
                     )));
                     section.add_child(Box::new(FieldRow::new(
-                        "Hand at",
+                        tr!("asset_editor.inspector.hand_at"),
                         xyz_fields(&bindings_grip.point, value_w),
                     )));
                     section.add_child(Box::new(FieldRow::new(
-                        "Both hands",
+                        tr!("asset_editor.inspector.both_hands"),
                         vec![UI::checkbox(bindings_grip.both.clone())],
                     )));
                     if grip.other_hand.is_some() {
                         section.add_child(Box::new(FieldRow::new(
-                            "Other hand at",
+                            tr!("asset_editor.inspector.other_hand_at"),
                             xyz_fields(&bindings_grip.other, value_w),
                         )));
                     }
-                    section.add_child(muted(
-                        "In the preview: drag the model to move it in the hand, the blue diamond for the other hand."
-                            .to_string(),
-                    ));
+                    section.add_child(muted(tr!("asset_editor.inspector.grip_hint").to_string()));
                 }
                 let mut bindings_grip = bindings_grip;
                 bindings_grip.seen = bindings_grip.values();
@@ -447,14 +441,14 @@ impl AssetInspector {
             bindings.anchor = anchor;
 
             // What the preview shows.
-            let mut preview = Section::new("Preview", Some(icons::EYE), width);
+            let mut preview = Section::new(tr!("asset_editor.inspector.section_preview"), Some(icons::EYE), width);
             let variants: Vec<String> = model.variants.iter().map(|v| v.name.clone()).collect();
-            let mut lods = vec!["automatic".to_string()];
+            let mut lods = vec![tr!("asset_editor.inspector.lod_auto").to_string()];
             if let Some(variant) = model.variants.get(edit.variant) {
                 lods.extend(variant.lods.iter().cloned());
             }
             preview.add_child(Box::new(FieldRow::new(
-                "Variant",
+                tr!("asset_editor.inspector.variant"),
                 vec![Box::new(Dropdown::new(
                     Position::default(),
                     Size::new(value_w, 24.0),
@@ -463,7 +457,7 @@ impl AssetInspector {
                 ))],
             )));
             preview.add_child(Box::new(FieldRow::new(
-                "LOD",
+                tr!("asset_editor.inspector.lod"),
                 vec![Box::new(Dropdown::new(
                     Position::default(),
                     Size::new(value_w, 24.0),
@@ -480,9 +474,9 @@ impl AssetInspector {
                     continue;
                 }
                 let title = if material.name.is_empty() {
-                    format!("Material {}", index + 1)
+                    tr!("asset_editor.inspector.material_n", n = index + 1)
                 } else {
-                    format!("Material: {}", material.name)
+                    tr!("asset_editor.inspector.material_named", name = material.name)
                 };
                 let mut section = Section::new(&title, Some(icons::LAYERS), width);
                 let pick_state = self.state.clone();
@@ -493,7 +487,7 @@ impl AssetInspector {
                 );
                 pick.set_style(ButtonStyle::Secondary);
                 pick.set_icon(icons::LAYOUT_GRID);
-                pick.set_tooltip("Choose a material asset (or drop one here)");
+                pick.set_tooltip(tr!("asset_editor.inspector.pick_material_tooltip"));
                 let mut row_widgets: Vec<Box<dyn UIElement>> = vec![Box::new(pick)];
                 if let Some(id) = material.material {
                     let open_state = self.state.clone();
@@ -504,11 +498,11 @@ impl AssetInspector {
                     );
                     open.set_style(ButtonStyle::Secondary);
                     open.set_icon(icons::PENCIL);
-                    open.set_tooltip("Edit this material");
+                    open.set_tooltip(tr!("asset_editor.inspector.edit_material_tooltip"));
                     row_widgets.push(Box::new(open));
                 }
                 row_widgets.push(muted(material_name(material.material)));
-                let row = Box::new(FieldRow::new("Material", row_widgets));
+                let row = Box::new(FieldRow::new(tr!("asset_editor.inspector.material"), row_widgets));
                 self.slot_rows.push((*row.get_handle(), index));
                 section.add_child(row);
                 self.body.add_child(Box::new(section));
@@ -517,11 +511,11 @@ impl AssetInspector {
         // The clips of an animation file, or those a model brings along.
         let clips = edit.meta.clips();
         if !clips.is_empty() && edit.clip.is_none() {
-            let mut section = Section::new("Clips", Some(icons::ACTIVITY), width);
+            let mut section = Section::new(tr!("asset_editor.inspector.section_clips"), Some(icons::ACTIVITY), width);
             for clip in clips {
                 section.add_child(Box::new(FieldRow::new(
                     &clip.name,
-                    vec![muted(format!("{:.2} s", clip.duration))],
+                    vec![muted(tr!("asset_editor.inspector.seconds", value = format!("{:.2}", clip.duration)))],
                 )));
             }
             self.body.add_child(Box::new(section));

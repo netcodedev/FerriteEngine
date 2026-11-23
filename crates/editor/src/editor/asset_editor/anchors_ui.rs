@@ -70,11 +70,21 @@ fn muted(text: impl Into<String>) -> Box<dyn UIElement> {
     Box::new(Label::muted(text.into(), theme::FONT_SIZE_SMALL + 0.5))
 }
 
+/// The shown name of how a reference is linked.
+fn link_label(link: ReferenceLink) -> &'static str {
+    match link {
+        ReferenceLink::Held(ferrite::core::model::grip::Hand::Right) => tr!("asset_editor.anchors.link_right_hand"),
+        ReferenceLink::Held(ferrite::core::model::grip::Hand::Left) => tr!("asset_editor.anchors.link_left_hand"),
+        ReferenceLink::Follows => tr!("asset_editor.anchors.link_follows"),
+        ReferenceLink::Carries => tr!("asset_editor.anchors.link_carries"),
+    }
+}
+
 fn asset_name(id: AssetId) -> String {
     assets::database()
         .get(id)
         .map(|entry| entry.meta.name.clone())
-        .unwrap_or_else(|| format!("missing ({id})"))
+        .unwrap_or_else(|| tr!("asset_editor.inspector.missing", id = id))
 }
 
 fn small_button(label: &str, icon: &str, style: ButtonStyle, on_click: Box<dyn Fn(&mut ferrite::core::scene::Scene)>) -> Button {
@@ -130,12 +140,12 @@ pub(super) fn references_section(
     let models = model_assets();
     let model_names: Vec<String> = models.iter().map(|(_, name)| name.clone()).collect();
     let model_ids: Vec<AssetId> = models.iter().map(|(id, _)| *id).collect();
-    let links: Vec<String> = ReferenceLink::ALL.iter().map(|l| l.label().to_string()).collect();
+    let links: Vec<String> = ReferenceLink::ALL.iter().map(|l| link_label(*l).to_string()).collect();
     let model_anchors: Vec<String> = clip_model
         .map(|id| edit.anchors(id).into_iter().map(|a| a.name).collect())
         .unwrap_or_default();
     let with_origin = |names: &[String]| {
-        let mut out = vec!["origin".to_string()];
+        let mut out = vec![tr!("asset_editor.anchors.origin").to_string()];
         out.extend(names.iter().cloned());
         out
     };
@@ -144,7 +154,7 @@ pub(super) fn references_section(
             .map_or(0, |at| at as u32 + 1)
     };
 
-    let mut section = Section::new("References", Some(icons::BOXES), width);
+    let mut section = Section::new(tr!("asset_editor.anchors.section_references"), Some(icons::BOXES), width);
     let mut bindings = Vec::new();
     for (index, reference) in clip.file.references.iter().enumerate() {
         let anchors: Vec<String> = edit.anchors(reference.model).into_iter().map(|a| a.name).collect();
@@ -176,9 +186,9 @@ pub(super) fn references_section(
                 })
             }),
         );
-        remove.set_tooltip("Stop showing this model with the clip");
+        remove.set_tooltip(tr!("asset_editor.anchors.remove_reference_tooltip"));
         section.add_child(Box::new(FieldRow::new(
-            &format!("Model {}", index + 1),
+            &tr!("asset_editor.anchors.model_n", n = index + 1),
             vec![
                 Box::new(Dropdown::new(
                     Position::default(),
@@ -190,7 +200,7 @@ pub(super) fn references_section(
             ],
         )));
         section.add_child(Box::new(FieldRow::new(
-            "Link",
+            tr!("asset_editor.anchors.link"),
             vec![Box::new(Dropdown::new(
                 Position::default(),
                 Size::new(value_w, 24.0),
@@ -200,7 +210,7 @@ pub(super) fn references_section(
         )));
         if reference.link.uses_anchors() {
             section.add_child(Box::new(FieldRow::new(
-                "Its anchor",
+                tr!("asset_editor.anchors.its_anchor"),
                 vec![Box::new(Dropdown::new(
                     Position::default(),
                     Size::new(value_w, 24.0),
@@ -209,7 +219,7 @@ pub(super) fn references_section(
                 ))],
             )));
             section.add_child(Box::new(FieldRow::new(
-                "On the model's",
+                tr!("asset_editor.anchors.on_model_anchor"),
                 vec![Box::new(Dropdown::new(
                     Position::default(),
                     Size::new(value_w, 24.0),
@@ -219,19 +229,19 @@ pub(super) fn references_section(
             )));
         }
         section.add_child(Box::new(FieldRow::new(
-            "Opacity",
+            tr!("asset_editor.inspector.opacity"),
             vec![UI::slider_sized(b.opacity.clone(), 0.0, 1.0, Size::new(value_w, 24.0))],
         )));
         if !reference.link.uses_anchors() && edit.grip_of(reference.model).is_none() {
             section.add_child(muted(
-                "This model has no grip yet: give it one in its asset settings (Grip).",
+                tr!("asset_editor.anchors.no_grip"),
             ));
         }
         bindings.push(b);
     }
     let add_state = state.clone();
     let mut add = small_button(
-        "Add reference",
+        tr!("asset_editor.anchors.add_reference"),
         icons::PLUS,
         ButtonStyle::Secondary,
         Box::new(move |_| {
@@ -245,11 +255,11 @@ pub(super) fn references_section(
             })
         }),
     );
-    add.set_tooltip("Show another model with the clip: an item in the hand, a seat to sit on");
+    add.set_tooltip(tr!("asset_editor.anchors.add_reference_tooltip"));
     section.add_child(Box::new(add));
     if clip.file.references.is_empty() {
         section.add_child(muted(
-            "Other models to animate against. They are saved with the clip and only shown in the editor.",
+            tr!("asset_editor.anchors.references_hint"),
         ));
     }
     Some((section, bindings))
@@ -332,10 +342,10 @@ pub(super) fn anchors_section(
         (Some(_), None) => {}
         (None, _) => models.push(edit.meta.id),
     }
-    let mut section = Section::new("Anchors", Some(icons::AXIS_3D), width);
+    let mut section = Section::new(tr!("asset_editor.anchors.section_anchors"), Some(icons::AXIS_3D), width);
     for &model in &models {
         let anchors = edit.anchors(model);
-        let name = if model == edit.meta.id { "This model".to_string() } else { asset_name(model) };
+        let name = if model == edit.meta.id { tr!("asset_editor.anchors.this_model").to_string() } else { asset_name(model) };
         section.add_child(muted(name));
         for anchor in &anchors {
             let pick = AnchorPick { asset: model, name: anchor.name.clone() };
@@ -355,7 +365,7 @@ pub(super) fn anchors_section(
                 }),
             );
             button.set_style(ButtonStyle::Ghost);
-            let on = anchor.bone.as_deref().map(base_name).unwrap_or("model");
+            let on = anchor.bone.as_deref().map(base_name).unwrap_or(tr!("asset_editor.anchors.on_model"));
             button.set_label(&format!("{}  ({on})", anchor.name));
             button.set_active(selected);
             section.add_child(Box::new(button));
@@ -365,8 +375,8 @@ pub(super) fn anchors_section(
             .then(|| edit.clip.as_ref().and_then(|clip| clip.selected.clone()))
             .flatten();
         let label = match &bone {
-            Some(bone) => format!("Add on {}", base_name(bone)),
-            None => "Add anchor".to_string(),
+            Some(bone) => tr!("asset_editor.anchors.add_on_bone", bone = base_name(bone)),
+            None => tr!("asset_editor.anchors.add_anchor").to_string(),
         };
         let add_state = state.clone();
         let mut add = small_button(
@@ -384,16 +394,16 @@ pub(super) fn anchors_section(
             }),
         );
         add.set_tooltip(if Some(model) == clip_model {
-            "Add an anchor on the selected bone (on the model without one)"
+            tr!("asset_editor.anchors.add_tooltip_bone")
         } else {
-            "Add an anchor at this model's origin"
+            tr!("asset_editor.anchors.add_tooltip_origin")
         });
         section.add_child(Box::new(add));
     }
 
     let Some(pick) = edit.anchor.clone().filter(|pick| models.contains(&pick.asset)) else {
         section.add_child(muted(
-            "Click an anchor's diamond or a reference's model in the preview, or pick one here. Then drag its arrows or diamond to move it (Shift+drag a selected model anywhere), its rings to turn it.",
+            tr!("asset_editor.anchors.hint"),
         ));
         return (section, None);
     };
@@ -418,11 +428,11 @@ pub(super) fn anchors_section(
     };
     b.seen = b.now();
     section.add_child(Box::new(FieldRow::new(
-        "Name",
+        tr!("common.name"),
         vec![UI::input_sized(b.name.clone(), Size::new(value_w, 24.0))],
     )));
     section.add_child(Box::new(FieldRow::new(
-        "Bone",
+        tr!("asset_editor.inspector.bone"),
         vec![UI::input_sized(b.bone.clone(), Size::new(value_w, 24.0))],
     )));
     let each = ((value_w - 8.0) / 3.0).max(30.0);
@@ -431,22 +441,19 @@ pub(super) fn anchors_section(
             .map(|i| -> Box<dyn UIElement> { UI::input_sized(b.values[i].clone(), Size::new(each, 24.0)) })
             .collect()
     };
-    section.add_child(Box::new(FieldRow::new("Position (m)", fields(0..3))));
-    section.add_child(Box::new(FieldRow::new("Rotation (°)", fields(3..6))));
+    section.add_child(Box::new(FieldRow::new(tr!("asset_editor.anchors.position"), fields(0..3))));
+    section.add_child(Box::new(FieldRow::new(tr!("asset_editor.anchors.rotation"), fields(3..6))));
     let remove_state = state.clone();
     let mut remove = small_button(
-        "Remove anchor",
+        tr!("asset_editor.anchors.remove_anchor"),
         icons::TRASH,
         ButtonStyle::Danger,
         Box::new(move |_| with_edit(&remove_state, |edit| edit.remove_anchor())),
     );
-    remove.set_tooltip("Remove the selected anchor from its model");
+    remove.set_tooltip(tr!("asset_editor.anchors.remove_anchor_tooltip"));
     section.add_child(Box::new(remove));
     if pick.asset != edit.meta.id {
-        section.add_child(muted(format!(
-            "Belongs to {}: saved with the clip.",
-            asset_name(pick.asset)
-        )));
+        section.add_child(muted(tr!("asset_editor.anchors.belongs_to", name = asset_name(pick.asset))));
     }
     (section, Some(b))
 }

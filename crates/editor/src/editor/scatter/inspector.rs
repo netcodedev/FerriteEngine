@@ -75,7 +75,7 @@ fn round3(v: f32) -> f32 {
 
 impl ScatterInspector {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Node".into(), Position::default(), Size::new(330.0, 400.0));
+        let mut panel = Panel::new(tr!("scatter.inspector.title").into(), Position::default(), Size::new(330.0, 400.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
@@ -111,9 +111,9 @@ impl ScatterInspector {
                 s.scatter.as_ref().map_or((0, Vec::new()), |e| (e.selection.len(), e.graph.problems()))
             };
             let lines: Vec<String> = if selected > 1 {
-                vec![format!("{selected} nodes selected."), "Select one to edit it.".into()]
+                vec![tr!("scatter.inspector.nodes_selected", count = selected), tr!("scatter.inspector.select_one").into()]
             } else {
-                vec!["Select a node to edit it.".into(), "Right-click the canvas to add one.".into()]
+                vec![tr!("scatter.inspector.select_node").into(), tr!("scatter.inspector.right_click_add").into()]
             };
             for line in lines {
                 self.body.add_child(Box::new(Label::muted(&line, theme::FONT_SIZE)));
@@ -140,8 +140,8 @@ impl ScatterInspector {
                 );
                 button.set_style(ButtonStyle::Secondary);
                 button.set_icon(icons::PACKAGE);
-                button.set_label("Choose");
-                button.set_tooltip("Choose the model to plant");
+                button.set_label(tr!("scatter.inspector.choose"));
+                button.set_tooltip(tr!("scatter.inspector.choose_tip"));
                 button.fit(24.0);
                 extra.push(Box::new(button));
             }
@@ -159,7 +159,7 @@ impl ScatterInspector {
         };
         if ignored {
             let mut label = Label::new(
-                "Feeds a landscape output: graphics settings are ignored here, it uses High.",
+                tr!("scatter.inspector.landscape_ignored"),
                 theme::FONT_SIZE_SMALL,
             );
             label.set_color(theme::WARNING);
@@ -333,7 +333,7 @@ fn display(value: &PropertyValue) -> String {
     match value {
         PropertyValue::Float(v) => format!("{v:.3}"),
         PropertyValue::Int(v) => v.to_string(),
-        PropertyValue::Bool(v) => if *v { "yes" } else { "no" }.into(),
+        PropertyValue::Bool(v) => if *v { tr!("common.yes") } else { tr!("common.no") }.into(),
         PropertyValue::Text(v) => v.clone(),
     }
 }

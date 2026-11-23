@@ -62,7 +62,7 @@ pub struct Loading {
 
 impl Loading {
     pub fn new(project: Project) -> Self {
-        let step = Arc::new(Mutex::new("Opening the project".to_string()));
+        let step = Arc::new(Mutex::new(tr!("loading.opening_project").to_string()));
         let (send, receive) = mpsc::channel();
         let thread_project = project.clone();
         let thread_step = step.clone();
@@ -79,7 +79,7 @@ impl Loading {
             })
             .collect();
         Self {
-            title: theme::heading(&format!("Opening {}", project.name()), 20.0, theme::TEXT),
+            title: theme::heading(&tr!("loading.opening", name = project.name()), 20.0, theme::TEXT),
             step_text: theme::text("", theme::FONT_SIZE, theme::TEXT_DIM),
             project: Some(project),
             stage: Stage::Preparing(receive),
@@ -101,14 +101,14 @@ impl Loading {
         match &mut self.stage {
             Stage::Preparing(receive) => match receive.try_recv() {
                 Ok(Ok(prepared)) => {
-                    *self.step.lock().unwrap() = "Loading the scene".to_string();
+                    *self.step.lock().unwrap() = tr!("loading.loading_scene").to_string();
                     self.stage = Stage::BuildingEditor(Some(prepared));
                     Progress::Working
                 }
                 Ok(Err(e)) => Progress::Failed(e),
                 Err(mpsc::TryRecvError::Empty) => Progress::Working,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    Progress::Failed("opening the project stopped".into())
+                    Progress::Failed(tr!("loading.stopped").into())
                 }
             },
             Stage::BuildingEditor(prepared) => match (self.project.take(), prepared.take()) {
@@ -153,21 +153,21 @@ impl Loading {
 /// The work that needs no GL, on the background thread.
 fn prepare(project: &Project, step: &Mutex<String>) -> Result<Prepared, String> {
     let set = |text: &str| *step.lock().unwrap() = text.to_string();
-    set("Scanning the assets");
+    set(tr!("loading.scanning"));
     project.enter()?;
     // Files that were put into the asset folder by hand become assets, so
     // everything in there can be referred to the same way.
-    set("Registering new assets");
+    set(tr!("loading.registering"));
     let (registered, mut asset_problems) = assets::database().register_new_files();
     // Models from before material assets get theirs (docs/materials.md):
     // a material asset per material slot, next to the model.
-    set("Giving models their materials");
+    set(tr!("loading.materials"));
     let (made, problems) = ferrite::core::material::asset::ensure_all_model_materials(&mut assets::database());
     if made > 0 {
         log::info!("assets: made {made} material assets for models that had none");
     }
     asset_problems.extend(problems);
-    set("Building the scripts");
+    set(tr!("loading.scripts"));
     let scripts = project.scripts().build();
     Ok(Prepared {
         registered,

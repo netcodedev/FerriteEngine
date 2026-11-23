@@ -342,7 +342,7 @@ impl AddMenu {
         let r = self.rect();
         self.background.set_position(Position::new(r.x, r.y, OVERLAY_Z));
         self.background.set_size(Size::new(r.w, r.h));
-        let typed = if self.filter.is_empty() { "Type to search".to_string() } else { self.filter.clone() };
+        let typed = if self.filter.is_empty() { tr!("graph_canvas.type_to_search").to_string() } else { self.filter.clone() };
         self.filter_text.set_content(&typed);
         self.filter_text
             .set_color(if self.filter.is_empty() { theme::TEXT_DIM } else { theme::TEXT });
@@ -439,13 +439,13 @@ impl GraphCanvas {
             Box::new(move |_: &mut Scene| send(&state, command())) as Box<dyn Fn(&mut Scene)>
         };
         let buttons = vec![
-            header_button("Back to scene", icons::ARROW_LEFT, ButtonStyle::Ghost, "", command(&state, host.close)),
-            header_button("Add", icons::PLUS, ButtonStyle::Secondary, "Add a node (Space)", command(&state, host.add_menu)),
-            header_button("", icons::SCAN, ButtonStyle::Ghost, "Fit graph to view", command(&state, host.fit)),
-            header_button("Undo", "", ButtonStyle::Ghost, "Undo (Ctrl+Z)", command(&state, host.undo)),
-            header_button("Redo", "", ButtonStyle::Ghost, "Redo (Ctrl+Y)", command(&state, host.redo)),
-            header_button("Revert", icons::ROTATE_CW, ButtonStyle::Ghost, "Back to the saved graph", command(&state, host.revert)),
-            header_button("Save", icons::SAVE, ButtonStyle::Primary, "Save (Ctrl+S)", command(&state, host.save)),
+            header_button(tr!("graph_canvas.back_to_scene"), icons::ARROW_LEFT, ButtonStyle::Ghost, "", command(&state, host.close)),
+            header_button(tr!("common.add"), icons::PLUS, ButtonStyle::Secondary, tr!("graph_canvas.add_tip"), command(&state, host.add_menu)),
+            header_button("", icons::SCAN, ButtonStyle::Ghost, tr!("graph_canvas.fit_tip"), command(&state, host.fit)),
+            header_button(tr!("graph_canvas.undo"), "", ButtonStyle::Ghost, tr!("graph_canvas.undo_tip"), command(&state, host.undo)),
+            header_button(tr!("graph_canvas.redo"), "", ButtonStyle::Ghost, tr!("graph_canvas.redo_tip"), command(&state, host.redo)),
+            header_button(tr!("common.revert"), icons::ROTATE_CW, ButtonStyle::Ghost, tr!("graph_canvas.revert_tip"), command(&state, host.revert)),
+            header_button(tr!("common.save"), icons::SAVE, ButtonStyle::Primary, tr!("graph_canvas.save_tip"), command(&state, host.save)),
         ];
         Self {
             handle: UIElementHandle::new(),
@@ -1219,7 +1219,7 @@ impl UIElement for GraphCanvas {
                             let to = PinRef { node, pin };
                             let result = self.with_edit_mut(|e| e.wire(from, to));
                             if let Some(Err(e)) = result {
-                                self.state.borrow_mut().set_status(format!("Cannot wire: {e}"));
+                                self.state.borrow_mut().set_status(tr!("graph_canvas.cannot_wire", error = e));
                             }
                         }
                     }

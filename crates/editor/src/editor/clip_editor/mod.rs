@@ -240,7 +240,7 @@ pub fn create_clip(name: &str, model: AssetId) -> Result<AssetId, String> {
         .collect();
     let name = name.trim();
     if name.is_empty() {
-        return Err("the clip needs a name".into());
+        return Err(tr!("clip_editor.needs_name").into());
     }
     let mut database = assets::database();
     let folder = database.root().join(CLIP_FOLDER);
@@ -249,7 +249,7 @@ pub fn create_clip(name: &str, model: AssetId) -> Result<AssetId, String> {
         ferrite::core::model::clip_file::CLIP_SUFFIX
     ));
     if path.exists() {
-        return Err(format!("{} exists already", path.display()));
+        return Err(tr!("clip_editor.exists_already", path = path.display()));
     }
     ClipFile::new(Some(model), NEW_CLIP_DURATION)
         .save(&path)

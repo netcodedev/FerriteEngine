@@ -21,12 +21,12 @@ impl EditorLayer {
                     Ok(id) => {
                         let mut state = self.state.borrow_mut();
                         state.asset_reveal = Some(id);
-                        state.set_status(format!("Made {} '{}'", kind.label().to_lowercase(), name_of(id)));
+                        state.set_status(tr!("asset_commands.made", kind = dialogs::kind_in_sentence(dialogs::new_asset_kind(*kind)), name = name_of(id)));
                     }
                     Err(e) => self
                         .state
                         .borrow_mut()
-                        .set_status(format!("Could not make the {}: {e}", kind.label().to_lowercase())),
+                        .set_status(tr!("asset_commands.make_failed", kind = dialogs::kind_in_sentence(dialogs::new_asset_kind(*kind)), error = e)),
                 }
             }
             Command::NewFolderDialog(parent) => dialogs::new_folder(&self.state, parent.clone()),
@@ -36,9 +36,9 @@ impl EditorLayer {
                 match made {
                     Ok(path) => {
                         state.asset_folder_reveal = Some(path);
-                        state.set_status(format!("Made folder '{name}'"));
+                        state.set_status(tr!("asset_commands.made_folder", name = name));
                     }
-                    Err(e) => state.set_status(format!("Could not make the folder: {e}")),
+                    Err(e) => state.set_status(tr!("asset_commands.make_folder_failed", error = e)),
                 }
             }
             Command::RenameAssetDialog(id) => {
@@ -55,9 +55,9 @@ impl EditorLayer {
                 match renamed {
                     Ok(()) => {
                         self.state.borrow_mut().asset_reveal = Some(*id);
-                        self.state.borrow_mut().set_status(format!("Renamed to '{name}'"));
+                        self.state.borrow_mut().set_status(tr!("asset_commands.renamed", name = name));
                     }
-                    Err(e) => self.state.borrow_mut().set_status(format!("Could not rename: {e}")),
+                    Err(e) => self.state.borrow_mut().set_status(tr!("asset_commands.rename_failed", error = e)),
                 }
                 if let Some(workspace) = reopen {
                     self.run(Command::EditAsset { id: *id, variant: None });
@@ -75,9 +75,9 @@ impl EditorLayer {
                 match renamed {
                     Ok(to) => {
                         state.asset_folder_reveal = Some(to);
-                        state.set_status(format!("Renamed folder to '{name}'"));
+                        state.set_status(tr!("asset_commands.renamed_folder", name = name));
                     }
-                    Err(e) => state.set_status(format!("Could not rename the folder: {e}")),
+                    Err(e) => state.set_status(tr!("asset_commands.rename_folder_failed", error = e)),
                 }
             }
             Command::DuplicateAsset(id) => {
@@ -86,9 +86,9 @@ impl EditorLayer {
                 match made {
                     Ok(copy) => {
                         state.asset_reveal = Some(copy);
-                        state.set_status(format!("Made '{}'", name_of(copy)));
+                        state.set_status(tr!("asset_commands.duplicated", name = name_of(copy)));
                     }
-                    Err(e) => state.set_status(format!("Could not duplicate: {e}")),
+                    Err(e) => state.set_status(tr!("asset_commands.duplicate_failed", error = e)),
                 }
             }
             Command::DeleteAssetDialog(id) => dialogs::delete_asset(&self.state, *id),
@@ -104,9 +104,9 @@ impl EditorLayer {
                         if state.asset_selection.as_ref().is_some_and(|s| s.id == *id) {
                             state.asset_selection = None;
                         }
-                        state.set_status(format!("Moved '{name}' to the trash"));
+                        state.set_status(tr!("asset_commands.trashed", name = name));
                     }
-                    Err(e) => state.set_status(format!("Could not delete '{name}': {e}")),
+                    Err(e) => state.set_status(tr!("asset_commands.delete_failed", name = name, error = e)),
                 }
             }
             Command::DeleteFolderDialog(path) => dialogs::delete_folder(&self.state, path.clone()),
@@ -122,9 +122,9 @@ impl EditorLayer {
                         if state.asset_selection.as_ref().is_some_and(|s| inside.contains(&s.id)) {
                             state.asset_selection = None;
                         }
-                        state.set_status(format!("Moved folder '{}' to the trash", folder_name(path)));
+                        state.set_status(tr!("asset_commands.trashed_folder", name = folder_name(path)));
                     }
-                    Err(e) => state.set_status(format!("Could not delete the folder: {e}")),
+                    Err(e) => state.set_status(tr!("asset_commands.delete_folder_failed", error = e)),
                 }
             }
             _ => return false,
@@ -146,7 +146,7 @@ impl EditorLayer {
             .or_else(|| state.material.as_ref().filter(|e| ids.contains(&e.asset) && e.dirty()).map(|e| e.name.clone()))
             .or_else(|| state.scatter.as_ref().filter(|e| ids.contains(&e.asset) && e.dirty()).map(|e| e.name.clone()));
         if let Some(name) = unsaved {
-            state.set_status(format!("'{name}' has unsaved changes: save or revert them first"));
+            state.set_status(tr!("asset_commands.unsaved", name = name));
             return None;
         }
         let mut closed = Vec::new();

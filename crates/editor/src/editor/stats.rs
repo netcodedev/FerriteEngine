@@ -309,7 +309,7 @@ fn read_gl_info() -> GlInfo {
 
 fn bytes(value: Option<u64>) -> String {
     match value {
-        None => "n/a".into(),
+        None => tr!("common.not_available").into(),
         Some(b) if b >= 1 << 30 => format!("{:.2} GB", b as f64 / (1u64 << 30) as f64),
         Some(b) => format!("{:.0} MB", b as f64 / (1u64 << 20) as f64),
     }
@@ -455,7 +455,7 @@ impl DebugSwitches {
     }
 }
 
-/// The titles of the panel's sections, in order.
+/// The ids of the panel's sections, in order (see `section_title`).
 pub fn section_titles() -> impl Iterator<Item = &'static str> {
     SECTIONS.iter().map(|(title, _, _)| *title)
 }
@@ -687,14 +687,16 @@ enum Key {
     Culled(usize),
 }
 
-const SECTIONS: &[(&str, &str, &[(Key, &str)])] = &[
+/// The sections: their ids (saved in the project when folded; shown
+/// through `section_title`), icons and rows.
+const SECTIONS: &[(&str, &str, &[Key])] = &[
     (
         "Frame rate",
         icons::GAUGE,
         &[
-            (Key::Fps, "Frames per second"),
-            (Key::FrameTime, "Frame time (avg)"),
-            (Key::FrameMinMax, "Min / max"),
+            Key::Fps,
+            Key::FrameTime,
+            Key::FrameMinMax,
         ],
     ),
     // The graphics settings, under the frame time they change (see
@@ -704,34 +706,34 @@ const SECTIONS: &[(&str, &str, &[(Key, &str)])] = &[
         "Timings",
         icons::TIMER,
         &[
-            (Key::Update, "Scene update"),
-            (Key::Render, "Scene render (CPU)"),
-            (Key::Gpu, "Scene render (GPU)"),
-            (Key::Ui, "UI update + render"),
-            (Key::CpuTotal, "Frame CPU total"),
+            Key::Update,
+            Key::Render,
+            Key::Gpu,
+            Key::Ui,
+            Key::CpuTotal,
         ],
     ),
     (
         "GPU passes",
         icons::TIMER,
         &[
-            (Key::Pass(0), "Weather maps"),
-            (Key::Pass(1), "Sun shadows"),
-            (Key::Pass(2), "Light shadows"),
-            (Key::Pass(3), "Depth prepass + AO"),
-            (Key::Pass(4), "Sky + clouds"),
-            (Key::Pass(5), "Opaque"),
-            (Key::Pass(6), "Transparent + weather"),
-            (Key::Pass(7), "HDR + post"),
+            Key::Pass(0),
+            Key::Pass(1),
+            Key::Pass(2),
+            Key::Pass(3),
+            Key::Pass(4),
+            Key::Pass(5),
+            Key::Pass(6),
+            Key::Pass(7),
         ],
     ),
     (
         "Culling (drawn / in reach)",
         icons::SCAN,
         &[
-            (Key::Culled(0), "Terrain chunks"),
-            (Key::Culled(1), "Tree and rock groups"),
-            (Key::Culled(2), "Models"),
+            Key::Culled(0),
+            Key::Culled(1),
+            Key::Culled(2),
         ],
     ),
     (
@@ -743,35 +745,91 @@ const SECTIONS: &[(&str, &str, &[(Key, &str)])] = &[
         "Memory",
         icons::MEMORY_STICK,
         &[
-            (Key::Rss, "Process (RSS)"),
-            (Key::Virtual, "Process (virtual)"),
-            (Key::System, "System in use"),
-            (Key::Vram, "GPU memory"),
+            Key::Rss,
+            Key::Virtual,
+            Key::System,
+            Key::Vram,
         ],
     ),
     (
         "Scene",
         icons::LAYERS,
         &[
-            (Key::Entities, "Entities"),
-            (Key::Components, "Components"),
-            (Key::Chunks, "Terrain chunks"),
-            (Key::Bodies, "Rigid bodies"),
-            (Key::Colliders, "Colliders"),
+            Key::Entities,
+            Key::Components,
+            Key::Chunks,
+            Key::Bodies,
+            Key::Colliders,
         ],
     ),
     (
         "Renderer",
         icons::MONITOR,
         &[
-            (Key::GpuName, "GPU"),
-            (Key::GlVersion, "Graphics API"),
-            (Key::Window, "Window"),
-            (Key::Viewport, "Viewport"),
-            (Key::Mode, "Mode"),
+            Key::GpuName,
+            Key::GlVersion,
+            Key::Window,
+            Key::Viewport,
+            Key::Mode,
         ],
     ),
 ];
+
+/// A section's title in the user's language.
+fn section_title(id: &str) -> &'static str {
+    match id {
+        "Frame rate" => tr!("stats.section.frame_rate"),
+        "Grafik" => tr!("stats.section.graphics"),
+        "Timings" => tr!("stats.section.timings"),
+        "GPU passes" => tr!("stats.section.gpu_passes"),
+        "Culling (drawn / in reach)" => tr!("stats.section.culling"),
+        "Debug views" => tr!("stats.section.debug_views"),
+        "Memory" => tr!("stats.section.memory"),
+        "Scene" => tr!("stats.section.scene"),
+        "Renderer" => tr!("stats.section.renderer"),
+        _ => "?",
+    }
+}
+
+/// A row's label in the user's language.
+fn row_label(key: Key) -> &'static str {
+    match key {
+        Key::Fps => tr!("stats.row.fps"),
+        Key::FrameTime => tr!("stats.row.frame_time"),
+        Key::FrameMinMax => tr!("stats.row.frame_min_max"),
+        Key::Update => tr!("stats.row.update"),
+        Key::Render => tr!("stats.row.render"),
+        Key::Gpu => tr!("stats.row.gpu"),
+        Key::Ui => tr!("stats.row.ui"),
+        Key::CpuTotal => tr!("stats.row.cpu_total"),
+        Key::Pass(0) => tr!("stats.row.pass_0"),
+        Key::Pass(1) => tr!("stats.row.pass_1"),
+        Key::Pass(2) => tr!("stats.row.pass_2"),
+        Key::Pass(3) => tr!("stats.row.pass_3"),
+        Key::Pass(4) => tr!("stats.row.pass_4"),
+        Key::Pass(5) => tr!("stats.row.pass_5"),
+        Key::Pass(6) => tr!("stats.row.pass_6"),
+        Key::Pass(7) => tr!("stats.row.pass_7"),
+        Key::Culled(0) => tr!("stats.row.culled_0"),
+        Key::Culled(1) => tr!("stats.row.culled_1"),
+        Key::Culled(2) => tr!("stats.row.culled_2"),
+        Key::Rss => tr!("stats.row.rss"),
+        Key::Virtual => tr!("stats.row.virtual"),
+        Key::System => tr!("stats.row.system"),
+        Key::Vram => tr!("stats.row.vram"),
+        Key::Entities => tr!("stats.row.entities"),
+        Key::Components => tr!("stats.row.components"),
+        Key::Chunks => tr!("stats.row.chunks"),
+        Key::Bodies => tr!("stats.row.bodies"),
+        Key::Colliders => tr!("stats.row.colliders"),
+        Key::GpuName => tr!("stats.row.gpu_name"),
+        Key::GlVersion => tr!("stats.row.gl_version"),
+        Key::Window => tr!("stats.row.window"),
+        Key::Viewport => tr!("stats.row.viewport"),
+        Key::Mode => tr!("stats.row.mode"),
+        _ => "?",
+    }
+}
 
 const GRAPHICS_SECTION: &str = "Grafik";
 
@@ -793,7 +851,7 @@ pub struct StatsPanel {
 
 impl StatsPanel {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Performance".into(), Position::default(), Size::new(300.0, 400.0));
+        let mut panel = Panel::new(tr!("toolbar.window.performance").into(), Position::default(), Size::new(300.0, 400.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
@@ -822,28 +880,25 @@ impl StatsPanel {
         self.body.clear();
         self.values.clear();
         let content = (width - 24.0).max(160.0);
-        for (index, (title, icon, rows)) in SECTIONS.iter().enumerate() {
-            let mut section = Section::new(title, Some(icon), content);
+        for (index, (id, icon, rows)) in SECTIONS.iter().enumerate() {
+            let mut section = Section::new(section_title(id), Some(icon), content);
             section.bind_open(self.open[index].clone());
             if index == 0 {
                 section.add_child(Box::new(FrameGraph::new(self.state.clone(), content - 8.0)));
-                section.add_child(Box::new(ToggleRow::new(
-                    "VSync",
-                    self.switches.vsync.clone(),
-                    content - 8.0,
-                    Box::new(|on, _| set_vsync(on)),
-                )));
             }
-            if *title == GRAPHICS_SECTION {
-                for row in self.graphics.build(content - 8.0) {
+            if *id == GRAPHICS_SECTION {
+                let mut groups = std::mem::take(&mut self.state.borrow_mut().graphics_groups_open);
+                let rows = self.graphics.build(content - 8.0, &mut groups);
+                self.state.borrow_mut().graphics_groups_open = groups;
+                for row in rows {
                     section.add_child(row);
                 }
             }
-            if *title == "Debug views" {
+            if *id == "Debug views" {
                 let rows: [(&str, &DataSource<bool>, fn(bool)); 3] = [
-                    ("Freeze culling", &self.switches.freeze_culling, ViewFrustum::set_frozen),
-                    ("Ambient occlusion", &self.switches.ambient_occlusion, debug_views::set_ambient_occlusion),
-                    ("Sun shadow maps", &self.switches.sun_shadow_maps, debug_views::set_sun_shadows),
+                    (tr!("stats.debug.freeze_culling"), &self.switches.freeze_culling, ViewFrustum::set_frozen),
+                    (tr!("stats.debug.ambient_occlusion"), &self.switches.ambient_occlusion, debug_views::set_ambient_occlusion),
+                    (tr!("stats.debug.sun_shadow_maps"), &self.switches.sun_shadow_maps, debug_views::set_sun_shadows),
                 ];
                 for (label, on, set) in rows {
                     section.add_child(Box::new(ToggleRow::new(
@@ -854,9 +909,9 @@ impl StatsPanel {
                     )));
                 }
             }
-            for (key, label) in rows.iter() {
+            for key in rows.iter() {
                 let source = DataSource::new(String::from("-"));
-                section.add_child(Box::new(StatRow::new(label, source.clone(), content - 8.0)));
+                section.add_child(Box::new(StatRow::new(row_label(*key), source.clone(), content - 8.0)));
                 self.values.push((*key, source));
             }
             self.body.add_child(Box::new(section));
@@ -881,7 +936,7 @@ impl StatsPanel {
                 if stats.gpu_ms.0 > 0.0 {
                     ms(stats.gpu_ms.0)
                 } else {
-                    "n/a".into()
+                    tr!("common.not_available").into()
                 }
             }
             Key::Ui => ms(stats.ui_ms.0),
@@ -894,12 +949,12 @@ impl StatsPanel {
                     bytes(Some(total.saturating_sub(available))),
                     bytes(Some(total))
                 ),
-                _ => "n/a".into(),
+                _ => tr!("common.not_available").into(),
             },
             Key::Vram => match m.gpu {
-                Some((0, free)) => format!("{} free", bytes(Some(free))),
+                Some((0, free)) => tr!("stats.vram_free", amount = bytes(Some(free))),
                 Some((used, total)) => format!("{} / {}", bytes(Some(used)), bytes(Some(total))),
-                None => "n/a".into(),
+                None => tr!("common.not_available").into(),
             },
             Key::Entities => c.entities.to_string(),
             Key::Components => c.components.to_string(),
@@ -916,11 +971,11 @@ impl StatsPanel {
             }
             Key::Pass(index) => match stats.pass_ms {
                 Some(passes) => ms(passes[index]),
-                None => "n/a".into(),
+                None => tr!("common.not_available").into(),
             },
             Key::Mode => match mode {
-                Mode::Edit => "Edit".into(),
-                Mode::Play => "Play".into(),
+                Mode::Edit => tr!("stats.mode.edit").into(),
+                Mode::Play => tr!("stats.mode.play").into(),
             },
         }
     }

@@ -75,9 +75,9 @@ impl Held {
                 .and_then(|entry| Some((entry.source_path(), entry.meta.as_model()?.clone())))
         };
         let (source, player_settings) =
-            player.ok_or("there is no player model to hold it (models/Mannequin.fbx)")?;
+            player.ok_or_else(|| tr!("asset_editor.rig.no_player_model", file = "models/Mannequin.fbx"))?;
         let player = Rigged::load(&source, &player_settings, 0)?
-            .ok_or("the player model has no bones")?;
+            .ok_or_else(|| tr!("asset_editor.rig.no_bones"))?;
         let item = load_model(&edit.source_path(), settings, edit.variant)?;
         // Between the body and the right hand, close enough to see the grip.
         let hand = player

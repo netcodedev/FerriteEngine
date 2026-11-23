@@ -39,11 +39,11 @@ impl RefModel {
     pub(super) fn load(edit: &AssetEdit, id: AssetId) -> Result<RefModel, String> {
         let settings = edit
             .model_settings(id)
-            .ok_or_else(|| format!("model {id} does not exist"))?;
+            .ok_or_else(|| tr!("asset_editor.preview.model_missing", id = id))?;
         let source = ferrite::core::assets::database()
             .get(id)
             .map(|entry| entry.source_path())
-            .ok_or_else(|| format!("model {id} does not exist"))?;
+            .ok_or_else(|| tr!("asset_editor.preview.model_missing", id = id))?;
         let model = load_model(&source, &settings, 0)?;
         let rest = model.skeleton();
         let root = model.root_transform(&Matrix4::identity());
@@ -402,7 +402,7 @@ impl AssetPreview {
                 if let Some(clip) = edit.clip.as_mut() {
                     clip.set_reference(index, linked);
                 }
-                state.set_status(format!("Gave the model an anchor '{name}' at its origin to move it by"));
+                state.set_status(tr!("asset_editor.preview.gave_anchor", name = name));
                 let Some(edit) = state.asset_edit.as_mut() else { return };
                 edit.structure += 1;
                 name

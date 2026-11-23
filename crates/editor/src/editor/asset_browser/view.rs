@@ -37,13 +37,13 @@ impl Category {
 
     pub fn label(self) -> &'static str {
         match self {
-            Category::All => "All assets",
-            Category::Models => "Models",
-            Category::Textures => "Textures",
-            Category::Materials => "Materials",
-            Category::MaterialGraphs => "Material graphs",
-            Category::Animations => "Animations",
-            Category::ScatterGraphs => "Scatter graphs",
+            Category::All => tr!("asset_browser.category.all"),
+            Category::Models => tr!("asset_browser.category.models"),
+            Category::Textures => tr!("asset_browser.category.textures"),
+            Category::Materials => tr!("asset_browser.category.materials"),
+            Category::MaterialGraphs => tr!("asset_browser.category.material_graphs"),
+            Category::Animations => tr!("asset_browser.category.animations"),
+            Category::ScatterGraphs => tr!("asset_browser.category.scatter_graphs"),
         }
     }
 
@@ -174,11 +174,32 @@ pub fn parts_of(entry: &AssetEntry) -> Vec<String> {
     }
 }
 
-fn plural(n: usize, one: &str, many: &str) -> String {
-    if n == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{n} {many}")
+/// "3 assets", "1 clip": `noun` is the unit's id (asset, clip, variant,
+/// lod, material).
+pub fn count_of(n: usize, noun: &str) -> String {
+    match (noun, n == 1) {
+        ("asset", true) => tr!("asset_browser.count.asset.one", n = n),
+        ("asset", false) => tr!("asset_browser.count.asset.other", n = n),
+        ("clip", true) => tr!("asset_browser.count.clip.one", n = n),
+        ("clip", false) => tr!("asset_browser.count.clip.other", n = n),
+        ("variant", true) => tr!("asset_browser.count.variant.one", n = n),
+        ("variant", false) => tr!("asset_browser.count.variant.other", n = n),
+        ("lod", true) => tr!("asset_browser.count.lod.one", n = n),
+        ("lod", false) => tr!("asset_browser.count.lod.other", n = n),
+        ("material", true) => tr!("asset_browser.count.material.one", n = n),
+        _ => tr!("asset_browser.count.material.other", n = n),
+    }
+}
+
+/// The shown name of an asset kind.
+pub fn kind_label(kind: &AssetKind) -> &'static str {
+    match kind {
+        AssetKind::Model(_) => tr!("asset_browser.kind.model"),
+        AssetKind::Texture(_) => tr!("asset_browser.kind.texture"),
+        AssetKind::Animation(_) => tr!("asset_browser.kind.animation"),
+        AssetKind::ScatterGraph(_) => tr!("asset_browser.kind.scatter_graph"),
+        AssetKind::Material(_) => tr!("asset_browser.kind.material"),
+        AssetKind::MaterialGraph(_) => tr!("asset_browser.kind.material_graph"),
     }
 }
 
@@ -225,8 +246,8 @@ fn asset_card(entry: &AssetEntry, detail: String, expanded: &HashSet<AssetId>) -
     let open = !parts.is_empty() && expanded.contains(&entry.meta.id);
     let detail = match (&entry.meta.kind, parts.len()) {
         (_, 0) => detail,
-        (AssetKind::Animation(_), n) => plural(n, "clip", "clips"),
-        (_, n) => plural(n, "variant", "variants"),
+        (AssetKind::Animation(_), n) => count_of(n, "clip"),
+        (_, n) => count_of(n, "variant"),
     };
     let mut cards = vec![Card {
         kind: CardKind::Asset(entry.meta.id),
@@ -237,14 +258,16 @@ fn asset_card(entry: &AssetEntry, detail: String, expanded: &HashSet<AssetId>) -
         expanded: open,
     }];
     if open {
-        let (icon, word) = match entry.meta.kind {
-            AssetKind::Animation(_) => (icons::ACTIVITY, "Clip"),
-            _ => (icons::BOX, "Variant"),
-        };
+        let animation = matches!(entry.meta.kind, AssetKind::Animation(_));
+        let icon = if animation { icons::ACTIVITY } else { icons::BOX };
         cards.extend(parts.into_iter().map(|part| Card {
             kind: CardKind::Part(AssetRef::part(entry.meta.id, &part)),
             label: part,
-            detail: format!("{word} of {}", entry.meta.name),
+            detail: if animation {
+                tr!("asset_browser.clip_of", name = entry.meta.name)
+            } else {
+                tr!("asset_browser.variant_of", name = entry.meta.name)
+            },
             icon,
             parts: 0,
             expanded: false,
@@ -275,7 +298,7 @@ pub fn cards(
         sort_entries(&mut hits);
         for entry in hits {
             let place = entry.dir.strip_prefix(database.root()).unwrap_or(&entry.dir).to_string_lossy().replace('\\', "/");
-            let detail = if place.is_empty() { "assets".to_string() } else { place };
+            let detail = if place.is_empty() { tr!("asset_browser.root").to_string() } else { place };
             cards.extend(asset_card(entry, detail, expanded));
         }
         return cards;
@@ -287,7 +310,7 @@ pub fn cards(
             .count();
         cards.push(Card {
             label: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-            detail: if inside == 0 { "empty".into() } else { plural(inside, "asset", "assets") },
+            detail: if inside == 0 { tr!("asset_browser.empty_folder").into() } else { count_of(inside, "asset") },
             kind: CardKind::Folder(path),
             icon: icons::FOLDER_OPEN,
             parts: 0,
@@ -300,7 +323,7 @@ pub fn cards(
         .collect();
     sort_entries(&mut here);
     for entry in here {
-        cards.extend(asset_card(entry, entry.meta.kind.label().to_string(), expanded));
+        cards.extend(asset_card(entry, kind_label(&entry.meta.kind).to_string(), expanded));
     }
     cards
 }
@@ -308,7 +331,7 @@ pub fn cards(
 /// The folders from the asset root down to `folder`, for the path bar:
 /// `(name, path)`, the root named "assets".
 pub fn crumbs(root: &Path, folder: &Path) -> Vec<(String, PathBuf)> {
-    let mut crumbs = vec![("assets".to_string(), root.to_path_buf())];
+    let mut crumbs = vec![(tr!("asset_browser.root").to_string(), root.to_path_buf())];
     if let Ok(rest) = folder.strip_prefix(root) {
         let mut path = root.to_path_buf();
         for part in rest.components() {

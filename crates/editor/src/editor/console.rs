@@ -118,10 +118,10 @@ fn level_icon(level: Level) -> &'static str {
 
 fn level_name(level: Level) -> &'static str {
     match level {
-        Level::Error => "errors",
-        Level::Warn => "warnings",
-        Level::Info => "info messages",
-        Level::Debug | Level::Trace => "debug messages",
+        Level::Error => tr!("console.show_errors"),
+        Level::Warn => tr!("console.show_warnings"),
+        Level::Info => tr!("console.show_info"),
+        Level::Debug | Level::Trace => tr!("console.show_debug"),
     }
 }
 
@@ -497,7 +497,7 @@ impl LogView {
                 let first_line = message_lines.next().unwrap_or("");
                 let more = message_lines.count();
                 let text = if more > 0 && !selected {
-                    format!("{first_line}  (+{more} lines)")
+                    tr!("console.more_lines", line = first_line, count = more)
                 } else {
                     first_line.to_owned()
                 };
@@ -520,9 +520,9 @@ impl LogView {
 
         let empty = if self.lines.is_empty() {
             if self.entries.is_empty() {
-                "No messages yet"
+                tr!("console.empty")
             } else {
-                "No messages match the filter"
+                tr!("console.empty_filtered")
             }
         } else {
             ""
@@ -633,7 +633,7 @@ pub struct ConsolePanel {
 
 impl ConsolePanel {
     pub fn new(state: Shared) -> Self {
-        let mut panel = Panel::new("Console".into(), Position::default(), Size::new(600.0, 200.0));
+        let mut panel = Panel::new(tr!("console.title").into(), Position::default(), Size::new(600.0, 200.0));
         panel.set_movable(false);
         panel.set_fixed_size(true);
         panel.set_flat(true);
@@ -645,7 +645,7 @@ impl ConsolePanel {
                 let mut button = chip(
                     level_icon(level),
                     "0",
-                    &format!("Show {}", level_name(level)),
+                    level_name(level),
                     Box::new(move |_| {
                         let mut state = state.borrow_mut();
                         let shown = state.console.level_mut(level);
@@ -659,8 +659,8 @@ impl ConsolePanel {
         let engine_state = state.clone();
         let engine = chip(
             icons::CPU,
-            "Engine",
-            "Show messages from the engine and the editor",
+            tr!("console.engine"),
+            tr!("console.engine_tooltip"),
             Box::new(move |_| {
                 let mut state = engine_state.borrow_mut();
                 state.console.engine = !state.console.engine;
@@ -669,8 +669,8 @@ impl ConsolePanel {
         let scripts_state = state.clone();
         let scripts = chip(
             icons::FILE_CODE,
-            "Scripts",
-            "Show messages from the game's scripts",
+            tr!("console.scripts"),
+            tr!("console.scripts_tooltip"),
             Box::new(move |_| {
                 let mut state = scripts_state.borrow_mut();
                 state.console.scripts = !state.console.scripts;
@@ -689,14 +689,14 @@ impl ConsolePanel {
         let follow_flag = follow_requested.clone();
         let follow = icon_button(
             icons::ARROW_DOWN_TO_LINE,
-            "Follow new messages",
+            tr!("console.follow"),
             Box::new(move |_| follow_flag.write(true)),
         );
         let clear_requested = DataSource::new(false);
         let clear_flag = clear_requested.clone();
         let mut clear = icon_button(
             icons::TRASH,
-            "Clear the console",
+            tr!("console.clear"),
             Box::new(move |_| clear_flag.write(true)),
         );
         clear.set_style(ButtonStyle::Danger);
@@ -711,7 +711,7 @@ impl ConsolePanel {
             scripts,
             search,
             search_text,
-            search_hint: theme::text("Search", FONT_SIZE, theme::TEXT_DIM),
+            search_hint: theme::text(tr!("console.search"), FONT_SIZE, theme::TEXT_DIM),
             search_icon: theme::icon(icons::SEARCH, 13.0, theme::TEXT_DIM),
             search_shown: true,
             sources_named_w,
@@ -790,7 +790,7 @@ impl ConsolePanel {
         } else {
             (false, false)
         };
-        for (button, label) in [(&mut self.engine, "Engine"), (&mut self.scripts, "Scripts")] {
+        for (button, label) in [(&mut self.engine, tr!("console.engine")), (&mut self.scripts, tr!("console.scripts"))] {
             if named {
                 button.set_label(label);
                 button.fit(BUTTON_HEIGHT);
@@ -834,7 +834,7 @@ impl ConsolePanel {
         match self.view.selected_entry() {
             Some(entry) => {
                 window.set_clipboard_string(&entry_text(entry));
-                self.state.borrow_mut().set_status("Copied the message");
+                self.state.borrow_mut().set_status(tr!("console.copied"));
                 true
             }
             None => false,

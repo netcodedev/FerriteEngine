@@ -1,7 +1,10 @@
 //! How the user arranged the editor, kept in the project file: which
 //! windows are shown, how large the panels are, how large the window is.
 
-use ferrite::serde::{Deserialize, Serialize};
+use ferrite::{
+    core::utils::DataSource,
+    serde::{Deserialize, Serialize},
+};
 
 use super::{layout::PanelSizes, EditorState};
 
@@ -19,8 +22,11 @@ pub struct EditorSettings {
     /// (below the asset root, `/`-separated).
     pub asset_category: String,
     pub asset_folder: String,
-    /// The sections of the Performance panel that are folded, by title.
+    /// The sections of the Performance panel that are folded, by id (the
+    /// English title they had before the editor spoke German).
     pub closed_stats_sections: Vec<String>,
+    /// The groups of graphics settings that are folded, by group id.
+    pub closed_graphics_groups: Vec<String>,
     /// Window size in pixels; `None` keeps the default.
     pub window: Option<(u32, u32)>,
     pub maximized: bool,
@@ -38,6 +44,7 @@ impl Default for EditorSettings {
             asset_category: String::new(),
             asset_folder: String::new(),
             closed_stats_sections: Vec::new(),
+            closed_graphics_groups: Vec::new(),
             window: None,
             maximized: false,
         }
@@ -90,6 +97,12 @@ impl EditorSettings {
                 .filter(|(_, open)| !open.read())
                 .map(|(title, _)| title.to_string())
                 .collect(),
+            closed_graphics_groups: state
+                .graphics_groups_open
+                .iter()
+                .filter(|(_, open)| !open.read())
+                .map(|(group, _)| group.clone())
+                .collect(),
             window,
             maximized,
         }
@@ -106,6 +119,13 @@ impl EditorSettings {
         state.asset_view = (self.asset_category.clone(), self.asset_folder.clone());
         for (title, open) in super::stats::section_titles().zip(&state.stats_open) {
             open.write(!self.closed_stats_sections.iter().any(|closed| closed == title));
+        }
+        for group in &self.closed_graphics_groups {
+            state
+                .graphics_groups_open
+                .entry(group.clone())
+                .or_insert_with(|| DataSource::new(false))
+                .write(false);
         }
     }
 }

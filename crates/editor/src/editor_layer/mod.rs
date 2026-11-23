@@ -70,6 +70,9 @@ const COLLIDER_MESH_DISTANCE: f32 = 96.0;
 pub(crate) struct EditorLayer {
     scene: Scene,
     ui: UI,
+    /// The `i18n::generation` the panels were built for: a language change
+    /// builds them again.
+    ui_language: u64,
     state: Shared,
     viewport: Viewport,
     outline: Outline,
@@ -123,17 +126,53 @@ impl EditorLayer {
             _ => Ok(()),
         });
         if let Err(e) = loaded {
-            state.borrow_mut().set_status(format!("Scripts: {e}"));
+            state.borrow_mut().set_status(tr!("layer.scripts_error", error = e));
         }
         let (scene, path) = Self::startup_scene(&state, &project);
         Self::report_scene_problems(&state, &scene);
         if registered > 0 && state.borrow().status().is_none() {
             state
                 .borrow_mut()
-                .set_status(format!("Registered {registered} new assets"));
+                .set_status(tr!("layer.registered", count = registered));
         }
         state.borrow_mut().scene_path = path;
 
+        let ui = Self::build_ui(&state);
+        let ui_language = crate::i18n::generation();
+
+        // MCP bridge: let an external AI tool see and change this editor.
+        match mcp_bridge::start(project.dir()) {
+            Ok(port) => log::info!("MCP bridge listening on 127.0.0.1:{port}"),
+            Err(e) => log::warn!("MCP bridge: {e}"),
+        }
+
+        Self {
+            scene,
+            ui,
+            ui_language,
+            state,
+            viewport: Viewport::new(),
+            outline: Outline::new(),
+            gpu_timer: None,
+            frame_count: 0,
+            play_snapshot: None,
+            dirty_before_play: false,
+            pending_cursor: None,
+            pending_quit: false,
+            pending_screenshots: Vec::new(),
+            cursor_initialised: false,
+            scripts,
+            exporter: Exporter::default(),
+            project,
+            saved_settings: settings,
+            settings_checked: Instant::now(),
+            window_state: None,
+            window_restored: false,
+        }
+    }
+
+    /// The editor's panels, built in the current language.
+    fn build_ui(state: &Shared) -> UI {
         let mut ui = UI::new();
         let add = |ui: &mut UI, mut element: Box<dyn UIElement>| {
             element.set_z_index(0.0);
@@ -220,35 +259,7 @@ impl EditorLayer {
         add(&mut ui, widgets);
         add(&mut ui, Box::new(ToggleWindow::new(show_widgets, widgets_popup)));
         add(&mut ui, Box::new(ModalHost::new(state.clone())));
-
-        // MCP bridge: let an external AI tool see and change this editor.
-        match mcp_bridge::start(project.dir()) {
-            Ok(port) => log::info!("MCP bridge listening on 127.0.0.1:{port}"),
-            Err(e) => log::warn!("MCP bridge: {e}"),
-        }
-
-        Self {
-            scene,
-            ui,
-            state,
-            viewport: Viewport::new(),
-            outline: Outline::new(),
-            gpu_timer: None,
-            frame_count: 0,
-            play_snapshot: None,
-            dirty_before_play: false,
-            pending_cursor: None,
-            pending_quit: false,
-            pending_screenshots: Vec::new(),
-            cursor_initialised: false,
-            scripts,
-            exporter: Exporter::default(),
-            project,
-            saved_settings: settings,
-            settings_checked: Instant::now(),
-            window_state: None,
-            window_restored: false,
-        }
+        ui
     }
 
     /// Keep the project file up to date with how the editor is arranged.
@@ -303,11 +314,11 @@ impl EditorLayer {
         let message = match event {
             ScriptEvent::Building => {
                 log::info!("Building scripts...");
-                "Building scripts...".to_string()
+                tr!("layer.scripts_building").to_string()
             }
             ScriptEvent::Failed(e) => {
                 log::error!("Scripts: {e}");
-                format!("Scripts: {e}")
+                tr!("layer.scripts_error", error = e)
             }
             ScriptEvent::Loaded { count } => {
                 let problems = self.scene.rebuild_scripts();
@@ -315,8 +326,8 @@ impl EditorLayer {
                 // The scene the editor returns to after play mode is rebuilt
                 // from data on stop anyway.
                 match problems.first() {
-                    Some(first) => format!("Scripts reloaded, but: {first}"),
-                    None => format!("Scripts reloaded ({count})"),
+                    Some(first) => tr!("layer.scripts_reloaded_but", problem = first),
+                    None => tr!("layer.scripts_reloaded", count = count),
                 }
             }
         };
@@ -336,7 +347,7 @@ impl EditorLayer {
             Err(e) => {
                 state
                     .borrow_mut()
-                    .set_status(format!("Could not load {}: {e}", path.display()));
+                    .set_status(tr!("layer.scene_load_failed", path = path.display(), error = e));
                 (Scene::new(), None)
             }
         }
@@ -348,11 +359,11 @@ impl EditorLayer {
         if let Some(first) = problems.first() {
             let more = match problems.len() - 1 {
                 0 => String::new(),
-                n => format!(" (and {n} more)"),
+                n => tr!("layer.problems_more", count = n),
             };
             state
                 .borrow_mut()
-                .set_status(format!("Not loaded: {first}{more}"));
+                .set_status(tr!("layer.not_loaded", problem = first, more = more));
         }
     }
 
@@ -458,9 +469,10 @@ impl EditorLayer {
                     Ok(id) => {
                         if let Some(entry) = database.get(id) {
                             let name = match entry.meta.as_model() {
-                                Some(model) if model.scale != 1.0 => format!(
-                                    "{} (scale {} from the file's unit)",
-                                    entry.meta.name, model.scale
+                                Some(model) if model.scale != 1.0 => tr!(
+                                    "layer.import_scaled",
+                                    name = entry.meta.name,
+                                    scale = model.scale
                                 ),
                                 _ => entry.meta.name.clone(),
                             };
@@ -472,11 +484,11 @@ impl EditorLayer {
             }
         }
         let message = match (imported.as_slice(), failed.first()) {
-            (_, Some(error)) if imported.is_empty() => format!("Import failed: {error}"),
+            (_, Some(error)) if imported.is_empty() => tr!("layer.import_failed", error = error),
             (names, Some(error)) => {
-                format!("Imported {}, but: {error}", names.join(", "))
+                tr!("layer.import_but", names = names.join(", "), error = error)
             }
-            (names, None) => format!("Imported {}", names.join(", ")),
+            (names, None) => tr!("layer.imported", names = names.join(", ")),
         };
         self.state.borrow_mut().set_status(message);
     }
@@ -545,7 +557,7 @@ impl EditorLayer {
             Ok(()) => {
                 self.remember_scene(&path);
                 let mut state = self.state.borrow_mut();
-                state.set_status(format!("Saved {}", path.display()));
+                state.set_status(tr!("layer.saved", path = path.display()));
                 state.scene_path = Some(path);
                 state.dirty = false;
                 true
@@ -553,7 +565,7 @@ impl EditorLayer {
             Err(e) => {
                 self.state
                     .borrow_mut()
-                    .set_status(format!("Could not save {}: {e}", path.display()));
+                    .set_status(tr!("layer.save_failed", path = path.display(), error = e));
                 false
             }
         }
@@ -735,6 +747,10 @@ impl Layer for EditorLayer {
         ferrite::core::gfx::clear(ferrite::core::gfx::Planes::DEPTH, [0.0; 4], 1.0);
 
         let ui_start = Instant::now();
+        if self.ui_language != crate::i18n::generation() {
+            self.ui_language = crate::i18n::generation();
+            self.ui = Self::build_ui(&self.state);
+        }
         self.ui.update(&mut self.scene);
         // A model asset dropped on the viewport becomes an entity. Panels
         // registered their (smaller) targets during the update.

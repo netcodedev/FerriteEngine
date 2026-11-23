@@ -54,11 +54,11 @@ impl Launcher {
         };
         Self {
             scene: Scene::new(),
-            open: button("Open project...", icons::FOLDER_OPEN, ButtonStyle::Primary, Choice::Open),
-            create: button("New project...", icons::FILE_PLUS, ButtonStyle::Secondary, Choice::New),
+            open: button(tr!("launcher.open_project"), icons::FOLDER_OPEN, ButtonStyle::Primary, Choice::Open),
+            create: button(tr!("launcher.new_project"), icons::FILE_PLUS, ButtonStyle::Secondary, Choice::New),
             title: theme::heading("Ferrite", 28.0, theme::TEXT),
             subtitle: theme::text(
-                "Open a project (.fp file) or create a new one.",
+                tr!("launcher.subtitle"),
                 theme::FONT_SIZE,
                 theme::TEXT_DIM,
             ),
@@ -95,14 +95,14 @@ impl Launcher {
         let result = match choice {
             Choice::Open => {
                 let file = rfd::FileDialog::new()
-                    .set_title("Open project")
-                    .add_filter("Ferrite project", &[PROJECT_EXTENSION])
+                    .set_title(tr!("launcher.open_title"))
+                    .add_filter(tr!("launcher.project_filter"), &[PROJECT_EXTENSION])
                     .pick_file()?;
                 Project::load(&file)
             }
             Choice::New => {
                 let folder: PathBuf = rfd::FileDialog::new()
-                    .set_title("Folder for the new project (named after it)")
+                    .set_title(tr!("launcher.new_folder_title"))
                     .pick_folder()?;
                 Project::create(&folder)
             }

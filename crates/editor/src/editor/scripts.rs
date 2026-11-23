@@ -164,7 +164,7 @@ impl Scripts {
             let result = match build.try_recv() {
                 Ok(result) => result,
                 Err(mpsc::TryRecvError::Empty) => return None,
-                Err(mpsc::TryRecvError::Disconnected) => Err("the build stopped".into()),
+                Err(mpsc::TryRecvError::Disconnected) => Err(tr!("scripts.build_stopped").into()),
             };
             self.build = None;
             if std::mem::take(&mut self.rebuild_after) {
@@ -190,7 +190,7 @@ impl Scripts {
     fn load(&mut self) -> ScriptEvent {
         if engine_stamp() != self.engine {
             return ScriptEvent::Failed(
-                "the engine was rebuilt; restart the editor to load the new scripts".into(),
+                tr!("scripts.engine_rebuilt").into(),
             );
         }
         match load_library(&self.scripts.library_path()) {

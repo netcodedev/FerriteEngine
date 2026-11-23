@@ -178,7 +178,7 @@ fn respond(request: BridgeRequest, cx: Context) -> BridgeResponse {
                 let since = state.agent.as_ref().map_or(now, |a| a.since);
                 state.agent = Some(super::AgentControl { note: note.filter(|n| !n.trim().is_empty()), since, last_seen: now });
             } else if state.agent.take().is_some() {
-                state.set_status("The agent gave the controls back");
+                state.set_status(tr!("toolbar.agent_gave_back"));
             }
             Ok(agent_json(state))
         }
