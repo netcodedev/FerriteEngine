@@ -486,7 +486,7 @@ pub fn catalog() -> Vec<Tool> {
              shows the sun's shadow cascades along the bottom; lamp_shadows shows the ray traced \
              lamp shadows (the share of the shadow casting lamps' light that arrives, per colour; \
              white where none reaches) instead of the scene; ground_maps shows the ground's colour \
-             from above that reflections read (near and far level) along the bottom. Returns the switches; \
+             from above that reflections read (near, far and horizon level) along the bottom. Returns the switches; \
              editor_status reports them (debug_views) and what culling drew (performance.culling).",
             json!({
                 "vsync": {"type": "boolean"},

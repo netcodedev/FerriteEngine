@@ -1253,6 +1253,16 @@ impl Component for Terrain {
                     chunk.collect_for_ray_tracing(&(transform * child.local_transform()), distance);
                 }
             }
+            // The horizon for the reflections, where it is drawn: sunk as
+            // drawn (`horizon::SINK`), left out where the chunks stand.
+            if let (Some(geometry), Some(eye)) = (self.horizon.mesh().and_then(ChunkMesh::tested_blas_geometry), eye) {
+                use crate::core::renderer::raytracing;
+                let load = StreamRadius::current().load as f32;
+                raytracing::set_far_hole(eye.x, eye.z, load);
+                let look = raytracing::Look::far_ground(std::mem::offset_of!(super::mesher::TerrainVertex, color) as u32);
+                let sunk = Matrix4::from_translation(cgmath::Vector3::new(0.0, -super::horizon::SINK, 0.0));
+                raytracing::add_mesh(geometry, None, &look, &sunk);
+            }
             return;
         }
         // Depth alone: no textures, no light.
@@ -1310,8 +1320,10 @@ impl Component for Terrain {
                 chunk.draw(shader, &(transform * child.local_transform()), distance);
             }
         }
-        // The horizon beyond them; it casts no shadow worth its cost.
-        if let (Some(mesh), Some(eye), true) = (self.horizon.mesh(), eye, hdr::draws_to_view()) {
+        // The horizon beyond them; it casts no shadow worth its cost. Drawn
+        // into the ground's colour maps too, for mirrors that see it.
+        let baking = crate::core::renderer::raytracing::baking_ground();
+        if let (Some(mesh), Some(eye), true) = (self.horizon.mesh(), eye, hdr::draws_to_view() || baking) {
             let depth_only = !std::ptr::eq(shader, &look.shader);
             let shader = if depth_only { &look.horizon_depth_shader } else { shader };
             gfx::set_pipeline(shader.pipeline(&ground));
@@ -1332,7 +1344,7 @@ impl Component for Terrain {
             mesh.render(shader, &Matrix4::from_scale(1.0), None);
             shader.set_uniform_1i("isHorizon", 0);
             // The models standing on it.
-            if !depth_pass::is_active() && !ssao::in_depth_pass() && !under {
+            if !depth_pass::is_active() && !ssao::in_depth_pass() && !under && !baking {
                 if let Some(lighting) = Lighting::from_scene(scene) {
                     self.far_scatter.draw(view_projection, &lighting, eye);
                 }
@@ -1397,6 +1409,12 @@ impl<T: VertexAttributes + Clone> ChunkMesh<T> {
     /// Its triangles for ray tracing (`None` until buffered).
     pub fn blas_geometry(&self) -> Option<gfx::BlasGeometry> {
         self.vertex_array.as_ref()?.blas_geometry(true)
+    }
+
+    /// The same, with each hit tested by the rays (see
+    /// `raytracing::Look::far_ground`).
+    pub fn tested_blas_geometry(&self) -> Option<gfx::BlasGeometry> {
+        self.vertex_array.as_ref()?.blas_geometry(false)
     }
 
     pub fn buffer_data(&mut self) {

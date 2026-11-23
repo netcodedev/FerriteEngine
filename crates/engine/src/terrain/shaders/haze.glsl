@@ -7,8 +7,13 @@
 const float TERRAIN_HAZE_START = 600.0;
 const float TERRAIN_HAZE_DISTANCE = 9000.0;
 
-// `color` (linear) as the air between the camera and `p` hazes it.
+// `color` (linear) as the air between the camera and `p` hazes it; not
+// while the ground is drawn for its colour (`albedoBake`: the reflections'
+// ground maps, kilometres from the camera, would turn to the sky's light).
 vec3 terrainHaze(vec3 color, vec3 p) {
+    if (albedoBake == 1) {
+        return color;
+    }
     vec3 toPoint = p - cameraPosition;
     float far = length(toPoint);
     vec3 along = normalize(vec3(toPoint.x, max(toPoint.y, 0.0) * 0.3, toPoint.z));

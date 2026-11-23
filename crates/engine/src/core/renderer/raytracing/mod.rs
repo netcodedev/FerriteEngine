@@ -81,6 +81,10 @@ const KEEP_FRAMES: u64 = 120;
 /// Instance masks: opaque meshes, and cut-outs (leaves).
 pub const MASK_OPAQUE: u8 = 1;
 pub const MASK_CUTOUT: u8 = 2;
+/// The far ground (`Look::far`): reflections only. It lies a few metres
+/// under the chunks' ground and coarser; shadow and occlusion rays from a
+/// valley or a tunnel would meet it.
+pub const MASK_FAR: u8 = 4;
 /// Share of the light a cut-out stops whose texture the rays cannot test
 /// (none found, not loaded yet, or the atlas full): about the share of a
 /// leaf card that is leaf.
@@ -105,8 +109,10 @@ pub const LIT_ALBEDO_UNIT: u32 = 28;
 /// trace rays, and for the lit shaders.
 const GROUND_NEAR_UNIT: u32 = 6;
 const GROUND_FAR_UNIT: u32 = 7;
+const GROUND_HORIZON_UNIT: u32 = 4;
 pub const LIT_GROUND_NEAR_UNIT: u32 = 29;
 pub const LIT_GROUND_FAR_UNIT: u32 = 30;
+pub const LIT_GROUND_HORIZON_UNIT: u32 = 31;
 /// An instance's custom index without a surface record.
 const NO_RECORD: u32 = 0xFF_FFFF;
 /// A record field without a value (no layer, no offset).
@@ -245,6 +251,9 @@ pub struct Look<'a> {
     /// The ground: where in each vertex its colour (three `f32`, display
     /// space) starts, in bytes.
     pub color_offset: Option<u32>,
+    /// The far ground (the horizon): met by reflections only (`MASK_FAR`),
+    /// and only beyond the chunks (`set_far_hole`).
+    pub far: bool,
 }
 
 impl<'a> Look<'a> {
@@ -256,6 +265,7 @@ impl<'a> Look<'a> {
         uv_transform: [1.0, 1.0, 0.0, 0.0],
         uv_offset: None,
         color_offset: None,
+        far: false,
     };
 
     /// The look of `material` (Standard PBR's parameters by name; other
@@ -284,6 +294,7 @@ impl<'a> Look<'a> {
             uv_transform: [scale[0], scale[1], offset[0], offset[1]],
             uv_offset,
             color_offset: None,
+            far: false,
         }
     }
 
@@ -292,6 +303,13 @@ impl<'a> Look<'a> {
     /// `color_offset`.
     pub fn ground(color_offset: u32) -> Look<'static> {
         Look { base_color: [1.0; 4], color_offset: Some(color_offset), ..Look::PLAIN }
+    }
+
+    /// The far ground beyond the chunks (the horizon), coloured as
+    /// `ground`; its geometry must be tested (`BlasGeometry::opaque`
+    /// false), so the rays can leave it out where the chunks are.
+    pub fn far_ground(color_offset: u32) -> Look<'static> {
+        Look { far: true, ..Look::ground(color_offset) }
     }
 }
 
@@ -448,7 +466,7 @@ impl Surfaces {
             f(sv),
             f(ou),
             f(ov),
-            0,
+            look.far as u32,
         ];
         if let Some(&index) = self.by_key.get(&record) {
             return index;
@@ -563,7 +581,7 @@ pub fn add_instances(
     let Some(blas) = CACHE.with(|c| c.borrow_mut().get(&[geometry], frame)) else {
         return;
     };
-    let mask = mask(geometry.opaque);
+    let mask = if look.far { MASK_FAR } else { mask(geometry.opaque) };
     let custom = SURFACES.with(|c| c.borrow_mut().record(&geometry, cutout.as_ref(), look));
     INSTANCES.with(|instances| {
         let mut instances = instances.borrow_mut();
@@ -1025,6 +1043,7 @@ impl RayTracedShadows {
         set_ray_uniforms(shader, ATLAS_UNIT, ALBEDO_UNIT, None);
         shader.set_uniform_1i("groundNear", GROUND_NEAR_UNIT as i32);
         shader.set_uniform_1i("groundFar", GROUND_FAR_UNIT as i32);
+        shader.set_uniform_1i("groundHorizon", GROUND_HORIZON_UNIT as i32);
         self.bind_scene(ATLAS_UNIT, ALBEDO_UNIT);
     }
 
@@ -1037,7 +1056,7 @@ impl RayTracedShadows {
     }
 
     /// Raw ids of the ground's colour maps (near, far), for debug views.
-    pub fn ground_textures(&self) -> Option<[gfx::RawId; 2]> {
+    pub fn ground_textures(&self) -> Option<[gfx::RawId; 3]> {
         self.ground.borrow().as_ref().map(ground::GroundMaps::textures)
     }
 
@@ -1051,12 +1070,12 @@ impl RayTracedShadows {
     fn bind_scene(&self, atlas_unit: u32, albedo_unit: u32) {
         // The ground maps, made here at the latest: `rays.glsl` declares
         // them, so every program that traces has them bound.
-        let (near, far) = if atlas_unit == LIT_ATLAS_UNIT {
-            (LIT_GROUND_NEAR_UNIT, LIT_GROUND_FAR_UNIT)
+        let units = if atlas_unit == LIT_ATLAS_UNIT {
+            [LIT_GROUND_NEAR_UNIT, LIT_GROUND_FAR_UNIT, LIT_GROUND_HORIZON_UNIT]
         } else {
-            (GROUND_NEAR_UNIT, GROUND_FAR_UNIT)
+            [GROUND_NEAR_UNIT, GROUND_FAR_UNIT, GROUND_HORIZON_UNIT]
         };
-        self.ground.borrow_mut().get_or_insert_with(ground::GroundMaps::new).bind(near, far);
+        self.ground.borrow_mut().get_or_insert_with(ground::GroundMaps::new).bind(units);
         gfx::bind_accel(SCENE_SLOT, &self.tlas);
         ATLAS.with(|atlas| {
             let mut atlas = atlas.borrow_mut();
@@ -1134,16 +1153,30 @@ impl RayTracedShadows {
     }
 }
 
+thread_local! {
+    static FAR_HOLE: Cell<[f32; 3]> = const { Cell::new([0.0, 0.0, f32::MAX]) };
+}
+
+/// Where the chunks stand this frame: around `(x, z)`, `radius` metres.
+/// Rays leave the far ground out there (it lies under the chunks').
+pub fn set_far_hole(x: f32, z: f32, radius: f32) {
+    FAR_HOLE.with(|h| h.set([x, z, radius]));
+}
+
 /// Set the uniforms `rays.glsl` reads for `shader` (bound), the atlases on
 /// `atlas_unit` and `albedo_unit`, the ground's colour maps where `ground`
 /// says (on the lit shaders' units).
 pub fn set_ray_uniforms(shader: &Shader, atlas_unit: u32, albedo_unit: u32, ground: Option<GroundMapPlaces>) {
+    let [x, z, radius] = FAR_HOLE.with(Cell::get);
+    shader.set_uniform_3f("farGroundHole", x, z, radius);
     shader.set_uniform_1i("groundNear", LIT_GROUND_NEAR_UNIT as i32);
     shader.set_uniform_1i("groundFar", LIT_GROUND_FAR_UNIT as i32);
+    shader.set_uniform_1i("groundHorizon", LIT_GROUND_HORIZON_UNIT as i32);
     shader.set_uniform_1i("useGroundMaps", ground.is_some() as i32);
     if let Some(ground) = ground {
         shader.set_uniform_mat4("groundNearMatrix", &ground.near);
         shader.set_uniform_mat4("groundFarMatrix", &ground.far);
+        shader.set_uniform_mat4("groundHorizonMatrix", &ground.horizon);
     }
     shader.set_uniform_1f("cutoutCoverage", CUTOUT_COVERAGE);
     let (direction, strength) = crate::core::material::wind::WIND;

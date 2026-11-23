@@ -26,7 +26,7 @@ use super::{
 /// `MACRO_STEP`, so samples fall on the large shape's grid).
 pub const FINEST_STEP: f64 = 32.0;
 /// Cells from the centre to the edge of each grid.
-const HALF_CELLS: i32 = 64;
+pub const HALF_CELLS: i32 = 64;
 /// Grids, each twice as coarse and twice as wide as the one inside it.
 pub const LEVELS: usize = 4;
 /// The centre moves in steps of this many metres (twice the coarsest

@@ -6,6 +6,18 @@
 // Farthest a reflection looks (metres); past it, the sky.
 const float REFLECTION_DISTANCE = 300.0;
 
+// The air between a mirror and what it shows, `t` metres away: as the
+// terrain's haze thickens with the distance from the camera
+// (`terrain/shaders/haze.glsl`, same numbers), toward the sky's light.
+const float REFLECTION_HAZE_START = 600.0;
+const float REFLECTION_HAZE_DISTANCE = 9000.0;
+
+vec3 reflectionHaze(vec3 color, vec3 R, float t) {
+    vec3 along = normalize(vec3(R.x, max(R.y, 0.0) * 0.3, R.z));
+    float haze = 1.0 - exp(-max(t - REFLECTION_HAZE_START, 0.0) / REFLECTION_HAZE_DISTANCE);
+    return mix(color, skyLight(along), haze);
+}
+
 // Light leaving the hit toward the ray's origin: its emission, the sun (or
 // the moon) past what is in the way (a second ray), the sky and the
 // scene's lamps (without shadows), all on a rough, non-metal surface.
@@ -72,5 +84,5 @@ vec4 traceReflection(vec3 origin, vec3 R, float maxDistance) {
     if (!traceClosest(origin, R, maxDistance, hit)) {
         return vec4(0.0);
     }
-    return vec4(shadeHit(hit, -R), 1.0);
+    return vec4(reflectionHaze(shadeHit(hit, -R), R, length(hit.position - origin)), 1.0);
 }

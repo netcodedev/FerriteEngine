@@ -10,12 +10,15 @@ uniform float cutoutCoverage;
 uniform sampler2DArray opacityAtlas;
 uniform sampler2DArray albedoAtlas;
 // The ground's colour seen from above (`raytracing::ground`), sRGB: a near
-// level and one over the loaded ground, with the matrices they were drawn
-// with. 0 in `useGroundMaps` until both are drawn.
+// level, one over the loaded ground and a coarse one over the horizon, with
+// the matrices they were drawn with. 0 in `useGroundMaps` until all are
+// drawn.
 uniform sampler2D groundNear;
 uniform sampler2D groundFar;
+uniform sampler2D groundHorizon;
 uniform mat4 groundNearMatrix;
 uniform mat4 groundFarMatrix;
+uniform mat4 groundHorizonMatrix;
 uniform int useGroundMaps;
 // The wind as materials sway in it (`material::wind`): direction (xy),
 // strength (z), time (w).
@@ -45,13 +48,22 @@ struct Cutout {
     uint baseColor[4];
     uint emissive[3];
     uint uvTransform[4];
-    uint pad;
+    uint far;           // 1: the far ground, met only outside `farGroundHole`
 };
 layout(std430, binding = 5) readonly buffer Cutouts {
     Cutout cutouts[];
 };
 
 const uint NO_CUTOUT = 0xFFFFFFu;
+
+// Instance masks (`raytracing::MASK_*`): shadows and occlusion leave the
+// far ground out, reflections see it.
+const uint MASK_NEAR = 3u;
+const uint MASK_ALL = 7u;
+
+// Where the chunks stand: around xy (world x, z), z metres. The far ground
+// is left out there.
+uniform vec3 farGroundHole;
 const uint NONE = 0xFFFFFFFFu;
 
 vec2 uvOf(Cutout c, uint vertex) {
@@ -142,7 +154,7 @@ bool solidAt(rayQueryEXT query, Cutout c, vec3 origin, vec3 direction) {
 // nothing was).
 float traceShadow(vec3 origin, vec3 direction, float tMax, out float blocker) {
     rayQueryEXT query;
-    rayQueryInitializeEXT(query, scene, gl_RayFlagsTerminateOnFirstHitEXT, 0xFF, origin, 0.01, direction, tMax);
+    rayQueryInitializeEXT(query, scene, gl_RayFlagsTerminateOnFirstHitEXT, MASK_NEAR, origin, 0.01, direction, tMax);
     float light = 1.0;
     blocker = 0.0;
     while (rayQueryProceedEXT(query)) {
@@ -197,6 +209,15 @@ vec4 groundAlbedo(vec3 P, float t) {
             return vec4(far.rgb, 1.0);
         }
     }
+    // Past the loaded ground: the horizon's, coarse.
+    c = groundHorizonMatrix * vec4(P, 1.0);
+    uv = c.xy / c.w * 0.5 + 0.5;
+    if (all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0)))) {
+        vec4 horizon = textureLod(groundHorizon, uv, 0.0);
+        if (horizon.a > 0.5) {
+            return vec4(horizon.rgb, 1.0);
+        }
+    }
     return vec4(0.0);
 }
 
@@ -224,11 +245,16 @@ vec3 vec3Of(Cutout c, uint vertex, uint offset) {
 // the rays cannot test them). False when nothing is there.
 bool traceClosest(vec3 origin, vec3 direction, float tMax, out Hit hit) {
     rayQueryEXT query;
-    rayQueryInitializeEXT(query, scene, gl_RayFlagsNoneEXT, 0xFF, origin, 0.01, direction, tMax);
+    rayQueryInitializeEXT(query, scene, gl_RayFlagsNoneEXT, MASK_ALL, origin, 0.01, direction, tMax);
     while (rayQueryProceedEXT(query)) {
         if (rayQueryGetIntersectionTypeEXT(query, false) == gl_RayQueryCandidateIntersectionTriangleEXT) {
             uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, false));
-            if (record == NO_CUTOUT || cutouts[record].layer == NONE || solidAt(query, cutouts[record], origin, direction)) {
+            if (record != NO_CUTOUT && cutouts[record].far == 1u) {
+                vec3 p = origin + direction * rayQueryGetIntersectionTEXT(query, false);
+                if (length(p.xz - farGroundHole.xy) > farGroundHole.z) {
+                    rayQueryConfirmIntersectionEXT(query);
+                }
+            } else if (record == NO_CUTOUT || cutouts[record].layer == NONE || solidAt(query, cutouts[record], origin, direction)) {
                 rayQueryConfirmIntersectionEXT(query);
             }
         }

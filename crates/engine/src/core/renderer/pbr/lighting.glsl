@@ -121,6 +121,10 @@ const float REFLECTION_SHARP = 0.1;
 vec3 skyLight(vec3 dir);
 #ifdef RAY_QUERIES
 vec4 traceReflection(vec3 origin, vec3 R, float maxDistance);
+// How far reflections look (metres): mirrors (below `REFLECTION_SHARP`)
+// out to the horizon's edge, blurrier ones as far as they show anything.
+const float MIRROR_REACH = 16000.0;
+const float GLOSSY_REACH = 300.0;
 #endif
 
 // What a surface at `P` (geometric normal `Ng`) with `roughness` mirrors
@@ -133,7 +137,8 @@ vec3 environment(vec3 P, vec3 Ng, vec3 R, float roughness) {
         float under = dot(R, Ng);
         vec3 dir = under < 0.02 ? normalize(R + Ng * (0.02 - under)) : R;
         float distanceToEye = length(cameraPosition - P);
-        vec4 traced = traceReflection(P + Ng * (0.02 + distanceToEye * 0.001), dir, 300.0);
+        float reach = roughness < REFLECTION_SHARP ? MIRROR_REACH : GLOSSY_REACH;
+        vec4 traced = traceReflection(P + Ng * (0.02 + distanceToEye * 0.001), dir, reach);
         float sharp = 1.0 - smoothstep(REFLECTION_SHARP, REFLECTION_ROUGHNESS, roughness);
         return mix(sky, traced.rgb, traced.a * sharp);
     }

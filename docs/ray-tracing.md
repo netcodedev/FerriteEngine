@@ -270,7 +270,7 @@ fragment stage that asks (`#ifdef RAY_QUERIES`) where the device traces
 rays; elsewhere (OpenGL, no ray tracing) that code drops out.
 
 A reflection ray (`traceClosest`, `raytracing/rays.glsl`) finds the
-nearest opaque or solid cut-out triangle within 300 m and works out what
+nearest opaque or solid cut-out triangle and works out what
 is there from the instance's **surface record** (every instance has one
 now, `SurfaceRecord`: buffers, cut-out, look): the triangle's normal, the
 colour (a texture from the new **albedo atlas**, 128 layers of 256²
@@ -278,7 +278,19 @@ sRGB, times the material's base colour; the ground's vertex colour;
 skinned meshes their base colour) and the emission. `shadeHit`
 (`pbr/reflections.glsl`) lights it: the sun or moon past what is in the
 way (a second ray), the sky, the lamps without shadow, its emission.
-Where the ray meets nothing, the sky.
+Where the ray meets nothing, the sky. Mirrors (roughness under 0.1)
+look 16 km, out to the horizon's edge; blurrier surfaces 300 m (water
+too). Hits are hazed with their distance from the mirror as the terrain
+is with its distance from the camera (`reflectionHaze`, same numbers as
+`terrain/shaders/haze.glsl`).
+
+The **horizon** (the ground beyond the chunks) is in the rays' scene for
+reflections only: its instance has its own mask (`MASK_FAR`), which the
+shadow and occlusion rays leave out (it lies 4 m under the chunks' ground
+and is coarse, so it would shade valleys and tunnels), and its record is
+marked `far`: a reflection ray takes a hit on it only outside the loaded
+chunks' circle (`set_far_hole`, uniform `farGroundHole`), where it is
+drawn.
 
 Where a ray meets the ground, its colour comes from **ground maps**
 (`raytracing/ground.rs`): the terrain drawn from straight above with its
@@ -286,13 +298,19 @@ own program into a texture, its colour instead of its light
 (`albedoBake`: `shadeSurface` hands back the albedo; the bake counts as a
 view in linear colour). So reflections show the real ground (roads,
 paths, soil, grass, wet and snowy as it is) for any world, whatever its
-program does. Two levels of 2048² (sRGB): a near one 256 m across (12.5 cm
-a texel), used for hits within 60 m of the ray's start, and a far one
-over the loaded ground (about 0.8 m a texel). Each is drawn again when the
-camera has moved an eighth of it, and every 90 or 300 frames for the
-weather and time of day. Past them the ground's vertex colour stands in.
-Debug view: **"Boden-Karten (Reflexionen)"** (MCP `ground_maps`) shows
-both along the bottom. Vertical faces and overhangs (cliffs, caves) are
+program does. Three levels of 2048² (sRGB): a near one 256 m across
+(12.5 cm a texel), used for hits within 60 m of the ray's start, a far
+one over the loaded ground (about 0.8 m a texel) and one over the whole
+horizon (32 km across, 16 m a texel; the horizon is drawn into the maps,
+its far scatter not). The near and far ones are drawn again when the
+camera has moved an eighth of them, the horizon one every 1024 m; and
+every 90, 300 or 900 frames for the weather and time of day. Past them
+the ground's vertex colour stands in (in the demo a plain green, so it
+must not show). A world's own terrain program must leave its haze out
+while `albedoBake` is 1 (the engine's `terrainHaze` does): the far levels
+lie kilometres from the camera and would turn to the sky's light, which
+is black in the bake. Debug view: **"Boden-Karten (Reflexionen)"** (MCP
+`ground_maps`) shows the three along the bottom. Vertical faces and overhangs (cliffs, caves) are
 not in a map from above: there the colour of the ground above or below
 is used.
 
