@@ -24,4 +24,10 @@ name = "server"
 path = "src/server.rs"
 
 [dependencies]
-ferrite = { path = "../engine", default-features = false, features = ["standalone"] }
+ferrite = { path = "../engine", default-features = false, features = ["standalone", "vulkan"] }
+
+# shaderc (C++, for Vulkan) asks for libstdc++ through link-cplusplus, which on Windows
+# links the DLL's import library. The Windows export links libstdc++
+# statically itself (.cargo/config.toml), so it asks for nothing there.
+[target.'cfg(windows)'.dependencies]
+link-cplusplus = { version = "1", features = ["nothing"] }

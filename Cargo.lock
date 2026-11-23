@@ -815,6 +815,7 @@ name = "ferrite-game"
 version = "0.1.0"
 dependencies = [
  "ferrite",
+ "link-cplusplus",
 ]
 
 [[package]]

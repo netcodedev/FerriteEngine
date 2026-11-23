@@ -49,8 +49,8 @@ trees only the leaves sway), and that **terrain materials come later**.
   wires) with its own inspector, undo and MCP tools; the animation editor
   has another canvas (`editor/anim/canvas.rs`).
 - **Shaders** are GL GLSL; `gfx::glsl` rewrites them for Vulkan, SPIR-V and
-  pipelines are cached in `~/.cache/ferrite/vulkan`. Exports have GL only
-  (see the open "exports lack Vulkan" item).
+  pipelines are cached in `~/.cache/ferrite/vulkan`. Exports have Vulkan
+  too (shaderc linked in, since 2026-11-23).
 
 ## The idea
 

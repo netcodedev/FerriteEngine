@@ -111,8 +111,12 @@ An inventory of the GL use (2026-11-20):
    sources and script-supplied sources, adds defines and the stage, and
    checks interfaces. GL compiles the text as today (no SPIR-V needed,
    hot reload unchanged); Vulkan compiles it to SPIR-V with `shaderc`
-   (linked statically from `libshaderc_combined.a`, so exported games
-   need nothing extra). A test compiles every engine shader for both
+   (the system's library in the editor; exported games build shaderc
+   from its sources and link it in, `standalone` feature, so they need
+   nothing extra and run Vulkan on Linux and Windows. Which programs a
+   game compiles depends on its graphics settings and materials, so no
+   SPIR-V is shipped: the player's first run compiles and caches it, in
+   `~/.cache/ferrite/vulkan` or `%LOCALAPPDATA%\ferrite\vulkan`). A test compiles every engine shader for both
    targets, so SPIR-V breakage shows up in `cargo test` long before the
    Vulkan backend draws. Ray tracing stages (`GL_EXT_ray_tracing`) need
    only new stage kinds later.
