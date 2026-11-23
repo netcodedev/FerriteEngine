@@ -1,9 +1,9 @@
 # Ray tracing
 
-Two graphics settings, both off at every preset and independent of each
-other: the sun's shadows (below) and the lamps' shadows ("Ray traced lamp
-shadows"). They share one collected scene: one top level structure, one
-cut-out atlas.
+Three graphics settings, independent of each other: the sun's shadows
+(below), the lamps' shadows ("Ray traced lamp shadows") and the ambient
+occlusion ("Ray traced ambient occlusion"). They share one collected
+scene: one top level structure, one cut-out atlas.
 
 # Ray traced sun shadows
 
@@ -197,3 +197,48 @@ maps; with a radius of 0.4 its edges soften.
 `lampShadowRatio`); `light/light.rs` (radius, packing);
 `scene/scene.rs` (`wants_ray_traced_lamps`, the order of the passes);
 `renderer/debug_views.rs`.
+
+# Ray traced ambient occlusion
+
+Status (2026-11-23): built on branch `feat/rt-ao`, checked in the editor
+(demo, by the house and pickup at noon): the debug view "Ambient
+occlusion" shows contact darkening under the porch beams, the pickup and
+in the house's corners where SSAO shows it, plus what SSAO misses at the
+screen's edges and behind things. Cost there (2536×1390, RTX 4070 Ti):
+SSAO about 0.2 ms, RT-AO about 0.7 ms GPU.
+
+## What it does
+
+The graphics setting **"Umgebungsverdeckung"** (`effects.ao`, group
+"Licht") is a choice: `off` (preset Low), `SSAO` (Medium and up) or
+`RT-AO`. With RT-AO, where the device can trace rays, SSAO is not worked
+out; elsewhere SSAO is used. The sky light's own switch, radius and
+intensity apply to both. The samples knob `effects.ssao_samples` only sets
+SSAO's quality now (8 at Low, so SSAO picked by hand at Low works).
+
+Each frame, after the depth prepass (`raytracing/ao.rs`):
+
+1. **Trace** (`ao_trace.glsl`): 2 rays per pixel, cosine weighted into the
+   hemisphere above the surface (normal from depth), as long as the AO
+   radius; cut-outs alpha-tested as for the shadows. A hit darkens by
+   1 − (t / radius)², so what is near darkens most; the result is raised
+   to the AO intensity, as SSAO does.
+2. **Denoise** (`denoise.rs`, shared with the lamps' shadows):
+   `light_accumulate.glsl` (10 % this frame) and `light_filter.glsl`.
+3. Bound to `SSAO_UNIT` with the AO origin set: the lit shaders
+   (`screenOcclusion`) use it unchanged. The debug view "Ambient
+   occlusion" shows it while RT-AO is on.
+
+## Limits
+
+- Scatter is collected a level of detail coarser than it is drawn (far
+  trees are drawn as impostor cards): a ray starting on the drawn bark
+  met the thicker collected trunk at once (black trunks, speckled leaves
+  in the background). So each ray skips its first 0.6 % of the distance
+  to the camera, and the occlusion fades out from 80 to 150 m, as SSAO's
+  does. Close up, scatter darkens a little less than it would with
+  matching geometry.
+- Grass (detail scatter) occludes only with "Raytracing-Schatten von
+  Gras"; SSAO darkens under grass from the screen.
+- Water and particles take the occlusion of the surface behind them, as
+  with SSAO.

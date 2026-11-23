@@ -29,7 +29,7 @@ use crate::core::{
         profiler::{self, Pass},
         raytracing::{self, RayTracedShadows, ShadowView},
         sky::SkyRenderer,
-        ssao::Ssao,
+        ssao::{Ssao, SSAO_UNIT},
         texture::TextureRenderer,
         weather::{self, WeatherMaps, WeatherTargets},
         pbr::Lighting,
@@ -319,6 +319,18 @@ impl Scene {
             && self.can_ray_trace()
     }
 
+    /// Whether this frame's ambient occlusion is ray traced (instead of
+    /// SSAO): asked for in the settings, the sky light has it on, the
+    /// device can, and there is a camera.
+    fn wants_ray_traced_ao(&self) -> bool {
+        crate::core::graphics::engine().ambient_occlusion == crate::core::graphics::AoMode::RayTraced
+            && self
+                .get_component::<SkyLight>()
+                .is_some_and(|skylight| skylight.ambient_occlusion().enabled)
+            && self.get_active_camera().is_some()
+            && self.can_ray_trace()
+    }
+
     /// Whether this frame's lamp shadows are ray traced (instead of their
     /// cube maps): asked for in the settings, the device can, and there is
     /// a camera.
@@ -492,7 +504,12 @@ impl Scene {
     /// GL name of the last frame's ambient occlusion (one red channel, as big
     /// as the viewport), for debug views.
     pub fn ambient_occlusion_texture(&self) -> Option<u32> {
-        self.ssao.borrow().as_ref().and_then(Ssao::result_texture)
+        let ray_traced = (crate::core::graphics::engine().ambient_occlusion == crate::core::graphics::AoMode::RayTraced)
+            .then(|| self.ray_traced.borrow().as_ref().and_then(RayTracedShadows::ao_result_texture))
+            .flatten();
+        ray_traced
+            .map(|raw| raw as u32)
+            .or_else(|| self.ssao.borrow().as_ref().and_then(Ssao::result_texture))
     }
 
     fn apply_viewport(&self, window: &Window) {
@@ -604,7 +621,8 @@ impl Scene {
         profiler::mark(Pass::SunShadows);
         let ray_traced = self.wants_ray_traced_shadows();
         let ray_traced_lamps = self.wants_ray_traced_lamps() && self.light_count.get() > 0;
-        if ray_traced || ray_traced_lamps {
+        let ray_traced_ao = self.wants_ray_traced_ao();
+        if ray_traced || ray_traced_lamps || ray_traced_ao {
             self.collect_ray_traced_scene(window);
         }
         if ray_traced {
@@ -715,7 +733,14 @@ impl Scene {
             let ambient_occlusion = self
                 .get_component::<SkyLight>()
                 .map(|skylight| *skylight.ambient_occlusion())
-                .filter(|settings| settings.enabled && knobs.ssao_samples > 0);
+                .filter(|settings| {
+                    settings.enabled
+                        && match knobs.ambient_occlusion {
+                            crate::core::graphics::AoMode::Off => false,
+                            crate::core::graphics::AoMode::RayTraced if ray_traced_ao => true,
+                            _ => knobs.ssao_samples > 0,
+                        }
+                });
             // The ray traced shadows need the same depth.
             let depth_prepass = match (
                 ambient_occlusion.is_some() || ray_traced || ray_traced_lamps,
@@ -734,10 +759,30 @@ impl Scene {
                     self.render_snow_layer(&view_projection, false);
                     drop(depth_only);
                     ssao.take_depth(target, width, height);
-                    if let Some(settings) = ambient_occlusion {
-                        ssao.resolve(&camera.get_projection().get_matrix(), &settings);
-                        ssao.bind_result();
-                        self.ambient_occlusion_origin.set(Some([0, 0]));
+                    match (ambient_occlusion, ray_traced_ao, ssao.depth_texture()) {
+                        (Some(settings), true, Some(depth)) => {
+                            if let Some(ray_traced) = self.ray_traced.borrow_mut().as_mut() {
+                                ray_traced.trace_ao(
+                                    &ShadowView {
+                                        view_projection,
+                                        eye: camera.get_camera().get_eye_position(),
+                                        to_light: Vector3::unit_y(),
+                                        depth,
+                                        width,
+                                        height,
+                                    },
+                                    &settings,
+                                    SSAO_UNIT,
+                                );
+                                self.ambient_occlusion_origin.set(Some([0, 0]));
+                            }
+                        }
+                        (Some(settings), _, _) => {
+                            ssao.resolve(&camera.get_projection().get_matrix(), &settings);
+                            ssao.bind_result();
+                            self.ambient_occlusion_origin.set(Some([0, 0]));
+                        }
+                        _ => {}
                     }
                     if let (true, Some(depth), Some(lighting)) =
                         (ray_traced, ssao.depth_texture(), self.frame_lighting.get())

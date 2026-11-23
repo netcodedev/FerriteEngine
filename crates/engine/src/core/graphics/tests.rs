@@ -212,3 +212,23 @@ fn ray_traced_lamp_shadows_are_off_at_every_preset_and_switch_on() {
     // Independent of the sun's.
     assert!(!on.engine.ray_traced_shadows);
 }
+
+#[test]
+fn ambient_occlusion_is_a_choice_off_at_low_and_ssao_above() {
+    let mut graphics = Graphics::default();
+    for (level, mode) in [
+        (Level::Low, AoMode::Off),
+        (Level::Medium, AoMode::Ssao),
+        (Level::High, AoMode::Ssao),
+        (Level::Ultra, AoMode::Ssao),
+    ] {
+        graphics.set_preset(level);
+        assert_eq!(graphics.resolved().engine.ambient_occlusion, mode, "{level:?}");
+    }
+    graphics.set(defs::AMBIENT_OCCLUSION, SettingValue::Choice("RT-AO".into())).unwrap();
+    assert_eq!(graphics.resolved().engine.ambient_occlusion, AoMode::RayTraced);
+    // Picked by hand at Low, SSAO gets samples.
+    graphics.set_preset(Level::Low);
+    graphics.set(defs::AMBIENT_OCCLUSION, SettingValue::Choice("SSAO".into())).unwrap();
+    assert!(graphics.resolved().engine.ssao_samples > 0);
+}

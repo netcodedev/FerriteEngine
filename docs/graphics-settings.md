@@ -269,10 +269,15 @@ lower density never moves a blade, it only drops some.
 
 | Knob | L | M | H | U |
 |---|---|---|---|---|
-| `effects.ssao_samples` (0 = off) | 0 | 8 | 16 | 16 |
+| `effects.ssao_samples` | 8 | 8 | 16 | 16 |
 | `effects.bloom` | off | on | on | on |
 | `effects.cloud_downscale` | 4 | 2 | 2 | 1 |
 | `effects.precipitation` (share of max drops) | 0.3 | 0.6 | 1.0 | 1.0 |
+
+Which ambient occlusion is its own choice, **"Umgebungsverdeckung"**
+(`effects.ao`, group "Licht"): `off` (Low), `SSAO` (Medium and up) or
+`RT-AO` (ray traced, `docs/ray-tracing.md`; SSAO where the device cannot
+trace rays). The samples above only set SSAO's quality.
 
 SSAO and bloom stay switchable in the scene's look; the settings can only
 switch them *off* or lower them, never on where the scene has them off.

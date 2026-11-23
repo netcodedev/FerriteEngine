@@ -294,9 +294,22 @@ pub struct EngineKnobs {
     /// Shadows of point and spot lights ray traced (ReSTIR) instead of
     /// their cube maps, where the device can (`renderer::raytracing`).
     pub ray_traced_lights: bool,
+    /// Which ambient occlusion (`effects.ao`).
+    pub ambient_occlusion: AoMode,
     pub bloom: bool,
     pub cloud_downscale: i32,
     pub precipitation: f32,
+}
+
+/// The ambient occlusion the settings ask for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AoMode {
+    Off,
+    /// Screen space (`renderer::ssao`).
+    Ssao,
+    /// Ray traced where the device can (`renderer::raytracing`), SSAO
+    /// elsewhere.
+    RayTraced,
 }
 
 /// The settings, worked out: every setting's value and every knob.

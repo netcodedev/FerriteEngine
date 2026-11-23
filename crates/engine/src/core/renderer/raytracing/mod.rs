@@ -22,7 +22,8 @@
 //!
 //! The lamps' shadows (`shadows.raytraced_lights`) are traced through the
 //! same collected scene, with ReSTIR choosing the lamp each pixel's ray
-//! goes to (`lamps`).
+//! goes to (`lamps`), and so is the ambient occlusion instead of SSAO
+//! (`effects.raytraced_ao`, `ao`).
 
 use std::{
     cell::{Cell, RefCell},
@@ -32,6 +33,8 @@ use std::{
 
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 
+mod ao;
+mod denoise;
 mod lamps;
 
 use super::{shader::Shader, taa, texture::Texture};
@@ -525,6 +528,8 @@ pub struct RayTracedShadows {
     cutouts: gfx::Buffer,
     /// The lamps' shadows, made when first traced.
     lamps: Option<lamps::LampShadows>,
+    /// The ambient occlusion, made when first traced.
+    ao: Option<ao::RayTracedAo>,
 }
 
 /// The fullscreen strip, no depth, no blending.
@@ -636,6 +641,7 @@ impl RayTracedShadows {
                 std::mem::size_of::<CutoutRecord>(),
             ),
             lamps: None,
+            ao: None,
         })
     }
 
@@ -822,12 +828,32 @@ impl RayTracedShadows {
         self.lamps = Some(lamps);
     }
 
+    /// Trace and denoise the ambient occlusion of `view` (instead of
+    /// SSAO) with the sky light's `settings`, and bind it to `unit` for the
+    /// shading pass.
+    pub fn trace_ao(&mut self, view: &ShadowView, settings: &crate::core::renderer::ssao::AmbientOcclusionSettings, unit: u32) {
+        if !self.tlas.is_built() {
+            return;
+        }
+        let mut ao = self.ao.take().unwrap_or_else(ao::RayTracedAo::new);
+        ao.trace(self, view, settings, unit);
+        self.ao = Some(ao);
+    }
+
+    /// Raw id of the ray traced ambient occlusion (rgb), for debug views.
+    pub fn ao_result_texture(&self) -> Option<gfx::RawId> {
+        self.ao.as_ref().and_then(ao::RayTracedAo::result_texture)
+    }
+
     /// Forget the history (a cut).
     pub fn reset(&mut self) {
         self.history_valid = false;
         self.previous = None;
         if let Some(lamps) = &mut self.lamps {
             lamps.reset();
+        }
+        if let Some(ao) = &mut self.ao {
+            ao.reset();
         }
     }
 
@@ -889,6 +915,7 @@ mod tests {
             ("restir_initial", pass_source(false, true, include_str!("restir_initial.glsl"))),
             ("restir_spatial", pass_source(false, true, include_str!("restir_spatial.glsl"))),
             ("light_trace", pass_source(true, true, include_str!("light_trace.glsl"))),
+            ("ao_trace", pass_source(true, false, include_str!("ao_trace.glsl"))),
             ("light_accumulate", include_str!("light_accumulate.glsl").to_string()),
             ("light_filter", include_str!("light_filter.glsl").to_string()),
             ("accumulate", include_str!("accumulate.glsl").to_string()),

@@ -23,9 +23,13 @@
 
 use cgmath::Matrix4;
 
-use super::{bind_surface, fullscreen, RayTracedShadows, ShadowView};
+use super::{
+    bind_surface,
+    denoise::{Denoiser, Image},
+    fullscreen, RayTracedShadows, ShadowView,
+};
 use crate::core::{
-    gfx::{self, Format, SamplerDesc, TextureDesc},
+    gfx::{self, SamplerDesc},
     renderer::{shader::Shader, taa},
 };
 
@@ -45,20 +49,6 @@ const NEIGHBOUR_CAP: f32 = 4.0 * CANDIDATES as f32;
 /// (lower than the sun's: one ray among several lamps is noisier).
 const CURRENT_WEIGHT: f32 = 0.12;
 
-/// A fullscreen image and the target to draw into it.
-struct Image {
-    texture: gfx::Texture,
-    target: gfx::RenderTarget,
-}
-
-impl Image {
-    fn new(width: u32, height: u32) -> Self {
-        let texture = gfx::Texture::new(TextureDesc::d2(Format::Rgba16F, width, height));
-        let target = gfx::RenderTarget::new(&[texture.attachment(0, None)], None);
-        Self { texture, target }
-    }
-}
-
 struct Targets {
     width: i32,
     height: i32,
@@ -68,9 +58,6 @@ struct Targets {
     reservoirs: [Image; 2],
     /// The share from this frame's rays.
     raw: Image,
-    /// Blended over the frames: this frame's and last frame's.
-    history: [Image; 2],
-    filtered: Image,
 }
 
 impl Targets {
@@ -82,8 +69,6 @@ impl Targets {
             initial: Image::new(w, h),
             reservoirs: [Image::new(w, h), Image::new(w, h)],
             raw: Image::new(w, h),
-            history: [Image::new(w, h), Image::new(w, h)],
-            filtered: Image::new(w, h),
         }
     }
 }
@@ -92,14 +77,13 @@ pub struct LampShadows {
     initial_shader: Shader,
     spatial_shader: Shader,
     trace_shader: Shader,
-    accumulate_shader: Shader,
-    filter_shader: Shader,
     targets: Option<Targets>,
     frame: u32,
-    /// Which of the two reservoirs and histories is this frame's.
+    /// Which of the two reservoirs is this frame's.
     newest: usize,
     history_valid: bool,
     previous: Option<Matrix4<f32>>,
+    denoiser: Denoiser,
 }
 
 impl LampShadows {
@@ -110,23 +94,23 @@ impl LampShadows {
             initial_shader: pass(false, include_str!("restir_initial.glsl")),
             spatial_shader: pass(false, include_str!("restir_spatial.glsl")),
             trace_shader: pass(true, include_str!("light_trace.glsl")),
-            accumulate_shader: Shader::new(vertex, include_str!("light_accumulate.glsl")),
-            filter_shader: Shader::new(vertex, include_str!("light_filter.glsl")),
             targets: None,
             frame: 0,
             newest: 0,
             history_valid: false,
             previous: None,
+            denoiser: Denoiser::new(CURRENT_WEIGHT),
         }
     }
 
     pub fn reset(&mut self) {
         self.history_valid = false;
         self.previous = None;
+        self.denoiser.reset();
     }
 
     pub fn result_texture(&self) -> Option<gfx::RawId> {
-        self.targets.as_ref().map(|t| t.filtered.texture.raw())
+        self.denoiser.result()
     }
 
     /// Run the passes for `view`, tracing through `scene`'s structure, and
@@ -149,9 +133,7 @@ impl LampShadows {
         let [wx, wy, wz, ww] = taa::inverse_w(&view.view_projection);
         let next = 1 - self.newest;
         let lights = light_count.min(crate::core::renderer::light::light::MAX_LIGHTS) as i32;
-        let begin = |image: &Image| {
-            gfx::begin_pass(image.target.reference(), size, gfx::Load::Keep, gfx::Load::Keep);
-        };
+        let begin = |image: &Image| image.begin(size);
         let nearest = SamplerDesc::NEAREST_CLAMP;
 
         // 1. Candidates, and last frame's reservoirs.
@@ -199,38 +181,12 @@ impl LampShadows {
         gfx::end_pass();
         gfx::unbind_texture(2, gfx::TextureKind::D2);
 
-        // 4. Into the history.
-        begin(&targets.history[next]);
-        let shader = &self.accumulate_shader;
-        gfx::set_pipeline(shader.pipeline(&fullscreen()));
-        gfx::bind_texture(0, &targets.raw.texture, &nearest);
-        shader.set_uniform_1i("current", 0);
-        gfx::bind_texture(1, &targets.history[self.newest].texture, &nearest);
-        shader.set_uniform_1i("history", 1);
-        gfx::bind_raw_texture(2, view.depth, gfx::TextureKind::D2, &nearest);
-        shader.set_uniform_1i("sceneDepth", 2);
-        shader.set_uniform_mat4("reprojection", &reprojection);
-        shader.set_uniform_4f("inverseW", wx, wy, wz, ww);
-        shader.set_uniform_1i("historyValid", self.history_valid as i32);
-        shader.set_uniform_1f("currentWeight", CURRENT_WEIGHT);
-        scene.draw_quad();
-        gfx::end_pass();
-
-        // 5. A little blur within a surface.
-        begin(&targets.filtered);
-        let shader = &self.filter_shader;
-        gfx::set_pipeline(shader.pipeline(&fullscreen()));
-        gfx::bind_texture(0, &targets.history[next].texture, &nearest);
-        shader.set_uniform_1i("accumulated", 0);
-        scene.draw_quad();
-        gfx::end_pass();
-        for unit in 0..3 {
-            gfx::unbind_texture(unit, gfx::TextureKind::D2);
-        }
+        // 4, 5. Blended over the frames, blurred within a surface.
+        let quad = || scene.draw_quad();
+        self.denoiser.run(&targets.raw.texture, view, &quad, Some(RT_LIGHT_SHADOW_UNIT));
 
         self.newest = next;
         self.history_valid = true;
         self.previous = Some(view.view_projection);
-        gfx::bind_texture(RT_LIGHT_SHADOW_UNIT, &targets.filtered.texture, &nearest);
     }
 }

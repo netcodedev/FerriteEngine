@@ -20,6 +20,9 @@ pub const RAY_TRACED_SHADOWS: &str = "shadows.raytraced";
 pub const RAY_TRACED_GRASS: &str = "shadows.raytraced_grass";
 pub const RAY_TRACED_WIND: &str = "shadows.raytraced_wind";
 pub const RAY_TRACED_LIGHTS: &str = "shadows.raytraced_lights";
+/// Ambient occlusion: off, screen space, or ray traced.
+pub const AMBIENT_OCCLUSION: &str = "effects.ao";
+pub const AO_OPTIONS: [&str; 3] = ["off", "SSAO", "RT-AO"];
 
 pub const MSAA_OPTIONS: [&str; 4] = ["off", "2x", "4x", "8x"];
 pub const ANISOTROPY_OPTIONS: [&str; 4] = ["1x", "4x", "8x", "16x"];
@@ -50,6 +53,7 @@ pub const TODAY: EngineKnobs = EngineKnobs {
     ray_traced_grass: false,
     ray_traced_wind: false,
     ray_traced_lights: false,
+    ambient_occlusion: super::AoMode::Ssao,
     bloom: true,
     cloud_downscale: 2,
     precipitation: 1.0,
@@ -157,6 +161,21 @@ pub fn engine_definitions() -> Vec<SettingDef> {
             kind: SettingKind::Toggle { per_preset: PerLevel::all(false) },
             description: "Schatten von Lampen per Raytracing (ReSTIR) statt Schattenwürfeln: weich, für jede Lampe mit Schatten, nicht nur die acht nächsten. Nur mit Vulkan auf Grafikkarten mit Raytracing.".into(),
         },
+        SettingDef {
+            key: AMBIENT_OCCLUSION.into(),
+            label: "Umgebungsverdeckung".into(),
+            group: "Licht".into(),
+            kind: SettingKind::Choice {
+                options: AO_OPTIONS.iter().map(|o| o.to_string()).collect(),
+                per_preset: PerLevel {
+                    low: "off".into(),
+                    medium: "SSAO".into(),
+                    high: "SSAO".into(),
+                    ultra: "SSAO".into(),
+                },
+            },
+            description: "Dunkelt Ecken und Spalten ab. SSAO rechnet im Bild; RT-AO per Raytracing, auch mit dem, was außerhalb des Bildes oder dahinter liegt (nur mit Vulkan auf Grafikkarten mit Raytracing, sonst SSAO). Radius und Stärke stellt das Himmelslicht ein.".into(),
+        },
         level(EFFECTS, "Effekte", "Licht", "Umgebungsverdeckung, Bloom, Wolken und Niederschlag."),
     ]
 }
@@ -181,7 +200,7 @@ pub fn engine_knobs() -> BTreeMap<String, Param<f32>> {
         ("scatter.lod_factor", knob(VEGETATION, 0.6, 0.8, 1.0, 1.5)),
         ("scatter.detail_distance_factor", knob(VEGETATION, 0.5, 0.75, 1.0, 1.4)),
         ("scatter.detail_density", knob(VEGETATION, 0.5, 0.75, 1.0, 1.0)),
-        ("effects.ssao_samples", knob(EFFECTS, 0.0, 8.0, 16.0, 16.0)),
+        ("effects.ssao_samples", knob(EFFECTS, 8.0, 8.0, 16.0, 16.0)),
         ("effects.bloom", knob(EFFECTS, 0.0, 1.0, 1.0, 1.0)),
         ("effects.cloud_downscale", knob(EFFECTS, 4.0, 2.0, 2.0, 1.0)),
         ("effects.precipitation", knob(EFFECTS, 0.3, 0.6, 1.0, 1.0)),
@@ -230,6 +249,12 @@ pub fn engine_values(resolved: &Resolved) -> EngineKnobs {
         ray_traced_grass: resolved.toggle(RAY_TRACED_GRASS).unwrap_or(t.ray_traced_grass),
         ray_traced_wind: resolved.toggle(RAY_TRACED_WIND).unwrap_or(t.ray_traced_wind),
         ray_traced_lights: resolved.toggle(RAY_TRACED_LIGHTS).unwrap_or(t.ray_traced_lights),
+        ambient_occlusion: match resolved.choice(AMBIENT_OCCLUSION) {
+            Some("off") => super::AoMode::Off,
+            Some("RT-AO") => super::AoMode::RayTraced,
+            Some(_) => super::AoMode::Ssao,
+            None => t.ambient_occlusion,
+        },
         bloom: k("effects.bloom", 1.0) >= 0.5,
         cloud_downscale: (k("effects.cloud_downscale", 2.0).round() as i32).clamp(1, 8),
         precipitation: k("effects.precipitation", 1.0).clamp(0.0, 1.0),

@@ -148,6 +148,7 @@
     "graphics.setting.shadows.raytraced_grass": (en: "Ray-traced grass shadows", de: "Raytracing-Schatten von Gras"),
     "graphics.setting.shadows.raytraced_wind": (en: "Ray-traced shadows in wind", de: "Raytracing-Schatten im Wind"),
     "graphics.setting.shadows.raytraced_lights": (en: "Ray-traced lamp shadows", de: "Raytracing-Lampenschatten"),
+    "graphics.setting.effects.ao": (en: "Ambient occlusion", de: "Umgebungsverdeckung"),
     "graphics.setting.effects": (en: "Effects", de: "Effekte"),
 
     // ===== Dialogs, commands, launcher =====
