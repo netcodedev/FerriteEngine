@@ -234,6 +234,8 @@
     "scripts.build_stopped": (en: "the build stopped", de: "der Build wurde abgebrochen"),
     "scripts.engine_rebuilt": (en: "the engine was rebuilt; restart the editor to load the new scripts", de: "die Engine wurde neu gebaut; den Editor neu starten, um die neuen Skripte zu laden"),
     // launcher.rs
+    "launcher.recent": (en: "Recent projects", de: "Zuletzt geöffnet"),
+    "launcher.forget_recent": (en: "Remove from the list", de: "Aus der Liste entfernen"),
     "launcher.open_project": (en: "Open project...", de: "Projekt öffnen..."),
     "launcher.new_project": (en: "New project...", de: "Neues Projekt..."),
     "launcher.subtitle": (en: "Open a project (.fp file) or create a new one.", de: "Ein Projekt (.fp-Datei) öffnen oder ein neues anlegen."),

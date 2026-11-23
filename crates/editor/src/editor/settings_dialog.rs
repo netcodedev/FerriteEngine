@@ -69,6 +69,8 @@ pub fn show(state: &Shared) {
                 fly_speed: fly_speed.read(),
                 fast_factor: fast_factor.read(),
                 field_of_view: field_of_view.read(),
+                // What the dialog does not show stays.
+                ..preferences::get()
             });
             open.write(false);
         })

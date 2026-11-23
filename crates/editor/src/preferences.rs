@@ -4,7 +4,7 @@
 //! lives in the project instead (`editor::project_settings`).
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
 
@@ -28,6 +28,9 @@ pub struct Preferences {
     pub fast_factor: f32,
     /// The viewport camera's vertical field of view, in degrees.
     pub field_of_view: f32,
+    /// Project files opened lately, the latest first (the launcher lists
+    /// them).
+    pub recent_projects: Vec<PathBuf>,
 }
 
 impl Default for Preferences {
@@ -39,9 +42,13 @@ impl Default for Preferences {
             fly_speed: 20.0,
             fast_factor: 4.0,
             field_of_view: 64.0,
+            recent_projects: Vec::new(),
         }
     }
 }
+
+/// How many recent projects are kept.
+pub const RECENT_PROJECTS: usize = 10;
 
 pub const MOUSE_SENSITIVITY: (f32, f32) = (0.2, 3.0);
 pub const FLY_SPEED: (f32, f32) = (1.0, 200.0);
@@ -108,6 +115,23 @@ pub fn get() -> Preferences {
     cell().lock().unwrap().clone()
 }
 
+/// Put the project file `path` at the top of the recent projects.
+pub fn remember_project(path: &Path) {
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut preferences = get();
+    preferences.recent_projects.retain(|p| *p != path);
+    preferences.recent_projects.insert(0, path);
+    preferences.recent_projects.truncate(RECENT_PROJECTS);
+    set(preferences);
+}
+
+/// Take `path` off the recent projects.
+pub fn forget_project(path: &Path) {
+    let mut preferences = get();
+    preferences.recent_projects.retain(|p| p != path);
+    set(preferences);
+}
+
 /// Use `preferences` from now on and save them.
 pub fn set(preferences: Preferences) {
     let preferences = preferences.sanitized();
@@ -149,5 +173,6 @@ mod tests {
         let read: Preferences = ferrite::ron::from_str("(language: \"de\")").unwrap();
         assert_eq!(read.language(), Language::German);
         assert_eq!(read.fly_speed, 20.0);
+        assert!(read.recent_projects.is_empty());
     }
 }

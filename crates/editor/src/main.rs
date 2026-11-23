@@ -86,7 +86,10 @@ impl EditorApp {
     /// Start opening `project`, if no other editor has it open.
     fn open(project: Project) -> Self {
         match project_lock::hold(project.name(), project.dir()) {
-            Ok(()) => EditorApp::Loading(Loading::new(project)),
+            Ok(()) => {
+                preferences::remember_project(project.path());
+                EditorApp::Loading(Loading::new(project))
+            }
             Err(e) => {
                 log::warn!("{e}");
                 EditorApp::Launcher(Launcher::new(Some(e)))
