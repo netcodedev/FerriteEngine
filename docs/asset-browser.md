@@ -206,3 +206,15 @@ schon im kleinen Cache (vier Modelle), entfällt das, und ist es bis zum
 Zeichnen verdrängt, liest der Worker es neu. Gemessen im Demo-Projekt mit
 leerem Cache, Ordner `models/building`: 187 Bilder in 45 s, kein Frame
 über 25 ms (vorher je Bild 5–100 ms im Haupt-Thread).
+
+## Szenen (2026-11-25)
+
+Szenen sind keine Assets (sie liegen in `scenes/` neben `assets/` und haben
+keine Sidecars), zeigt der Browser aber mit: eine eigene Kategorie
+„Szenen“ mit allen `.ron` unter `scenes/`, in „Alle“ der Ordner `scenes`
+ganz vorn an der Asset-Wurzel, und die Suche in „Alle“ findet Szenen beim
+Namen. Doppelklick (oder „Öffnen“ im Kontextmenü) öffnet die Szene im
+Editor, nach der Frage nach ungespeicherten Änderungen
+(`Command::ConfirmDiscard(Open)`). Kontextmenü: Öffnen, Pfad kopieren, im
+Dateimanager zeigen. Die Liste wird bei jedem Neuaufbau frisch gelesen
+(`view::Scenes`), neue Szenendateien erscheinen also ohne „Neu einlesen“.

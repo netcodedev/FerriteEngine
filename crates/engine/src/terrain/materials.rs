@@ -212,12 +212,11 @@ pub fn load_snow() -> Option<[Texture; 2]> {
 /// `material_maps`), if it has a colour map; `needed`: say so when it has
 /// none.
 pub fn load_images(folder: &Path, needed: bool) -> Option<MaterialImages> {
-    let files: Vec<PathBuf> = std::fs::read_dir(folder)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file())
-        .collect();
+    // Loose files and those in an asset pack.
+    let files: Vec<PathBuf> = crate::core::assets::vfs::files_in(folder);
+    if files.is_empty() {
+        return None;
+    }
     let names: Vec<String> = files
         .iter()
         .filter_map(|p| p.file_name()?.to_str().map(str::to_lowercase))
@@ -229,7 +228,7 @@ pub fn load_images(folder: &Path, needed: bool) -> Option<MaterialImages> {
     let read = |kind: MapKind| {
         let (_, path) = maps.iter().find(|(k, _)| *k == kind)?;
         match decoded.borrow_mut().remove(path)? {
-            Ok(image) => Some(image),
+            Ok(image) => Some(image.into_rgba()),
             Err(e) => {
                 log::warn!("terrain: could not read {}: {e}", path.display());
                 None

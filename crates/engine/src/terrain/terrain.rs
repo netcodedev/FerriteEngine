@@ -551,7 +551,14 @@ impl Terrain {
                     generators::clear_world_cache(fingerprint);
                 }
                 self.fingerprint = Some(fingerprint);
-                entry.create(self.seed, &self.settings)
+                // Made ahead (a menu prepared this world), or now.
+                match super::prepare::take(fingerprint) {
+                    Some(source) => {
+                        log::info!("terrain: the world was prepared ahead");
+                        Ok(source)
+                    }
+                    None => entry.create(self.seed, &self.settings),
+                }
             }
             None => Err(format!("no world '{}' is loaded", self.generator)),
         };

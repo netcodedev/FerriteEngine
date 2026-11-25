@@ -25,6 +25,7 @@ pub mod dialogs;
 pub mod drag;
 pub mod export;
 pub mod field_row;
+pub mod file_dialog;
 pub mod graph_canvas;
 pub mod graphics_panel;
 pub mod hierarchy;

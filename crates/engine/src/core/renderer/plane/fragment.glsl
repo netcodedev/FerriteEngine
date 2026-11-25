@@ -10,6 +10,13 @@ flat in vec4 borderColor;
 flat in vec4 borderRadius;
 flat in float borderThickness;
 
+// Blurred planes (`Plane::blur`): the view behind, blurred, tinted by the
+// plane's colour by its alpha. `backdropRect`: the view's window origin
+// and size.
+uniform int useBackdrop;
+uniform sampler2D backdrop;
+uniform vec4 backdropRect;
+
 float RectSDF(vec2 position, vec2 halfSize, vec4 radius)
 {
     radius.xy = (position.x > 0.0) ? radius.xy : radius.zw;
@@ -28,5 +35,11 @@ void main()
         discard;
     }
 
-    FragColor = mix(borderColor, vertex_color, blend);
+    vec4 fill = vertex_color;
+    if (useBackdrop == 1) {
+        vec2 at = (gl_FragCoord.xy - backdropRect.xy) / backdropRect.zw;
+        vec3 behind = texture(backdrop, at).rgb;
+        fill = vec4(mix(behind, vertex_color.rgb, vertex_color.a), 1.0);
+    }
+    FragColor = mix(borderColor, fill, blend);
 }

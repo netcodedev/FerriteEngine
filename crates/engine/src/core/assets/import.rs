@@ -23,7 +23,7 @@ use super::{
     META_SUFFIX,
 };
 
-const MODEL_EXTENSIONS: [&str; 5] = ["gltf", "glb", "fbx", "obj", "dae"];
+pub(crate) const MODEL_EXTENSIONS: [&str; 5] = ["gltf", "glb", "fbx", "obj", "dae"];
 const TEXTURE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "tga", "bmp", "tif", "tiff"];
 
 /// Folders below the asset root that imported files are copied into.

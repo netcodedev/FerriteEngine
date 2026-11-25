@@ -33,12 +33,20 @@ rusttype = { version = "0.9.3", features = ["gpu_cache"] }
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = "1"
 base64 = "0.23"
+# BC7 decoded on the CPU, for code that works on the pixels of a packed
+# image (docs/asset-pack.md).
+bcdec_rs = "0.2"
+# BC7 encoding when cooking an asset pack: the editor only.
+intel_tex_2 = { version = "0.5", optional = true }
 trash = "5"
 
 [features]
 # The Vulkan backend (see docs/render-backends.md). On by default (editor,
 # development builds) and in exported games.
-default = ["vulkan"]
+default = ["vulkan", "cook"]
+# Cooking assets into a pack for an export (docs/asset-pack.md): the
+# editor; exported games only read packs.
+cook = ["dep:intel_tex_2"]
 vulkan = ["dep:ash", "dep:gpu-allocator", "dep:shaderc", "glfw/vulkan"]
 # Assimp and GLFW built from source and linked in, instead of the
 # system's shared libraries: for exported games, which must run where

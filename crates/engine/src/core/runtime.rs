@@ -83,6 +83,13 @@ fn open_project(given: Option<PathBuf>) -> Result<Project, String> {
     };
     let project = Project::load(&path)?;
     project.enter()?;
+    // An exported game's models and images (docs/asset-pack.md).
+    let pack = project.dir().join(assets::pack::FILE_NAME);
+    if pack.is_file() {
+        if let Err(e) = assets::pack::open(&pack) {
+            log::warn!("{e}; reading loose files");
+        }
+    }
     // Files put into the asset folder by hand become assets, as in the
     // editor.
     let (_, problems) = assets::database().register_new_files();
@@ -124,7 +131,7 @@ pub fn run_player(scripts: Scripts) {
     scripts.install(&project);
 
     let mut application = Application::new(1280, 720, project.name());
-    let startup = project.file.startup_scene.clone();
+    let startup = project.game_scene();
     let scene = load_scene(startup.as_deref());
     application.add_layer(Box::new(GameLayer { scene, startup }));
     application.start();
@@ -250,11 +257,7 @@ fn serve(scripts: Scripts) -> Result<(), String> {
     let project = open_project(options.project)?;
     scripts.install(&project);
 
-    let path = project
-        .file
-        .startup_scene
-        .clone()
-        .ok_or("the project has no startup scene")?;
+    let path = project.server_scene().ok_or("the project has no startup scene")?;
     let started = Instant::now();
     let mut scene = Scene::load_from_path(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
     for problem in scene.problems() {

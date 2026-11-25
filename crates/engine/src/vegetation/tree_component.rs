@@ -127,8 +127,8 @@ impl TreeComponent {
         };
         let read = |asset: &Option<AssetRef>| -> Option<image::RgbaImage> {
             let path = source(asset)?;
-            match image::open(&path) {
-                Ok(image) => Some(image.to_rgba8()),
+            match crate::core::renderer::texture::decode::decode_file(&path) {
+                Ok(image) => Some(image.into_rgba()),
                 Err(e) => {
                     log::warn!("tree: could not read {}: {e}", path.display());
                     None

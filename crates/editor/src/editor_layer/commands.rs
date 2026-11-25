@@ -33,6 +33,19 @@ use crate::new_script::new_script_file;
 use super::*;
 
 impl EditorLayer {
+    /// Export the game for `platform` into `out` (the folder the dialog
+    /// gave), unless it lies in a copy of the project.
+    pub(super) fn export_into(&mut self, out: std::path::PathBuf, platform: ferrite::core::export::Platform) {
+        if self.exporter.is_running() {
+            self.state.borrow_mut().set_status(tr!("commands.export_running"));
+            return;
+        }
+        match export::copied_folder_containing(self.project.dir(), &out) {
+            Some(folder) => self.state.borrow_mut().set_status(tr!("commands.export_into_copied", folder = folder)),
+            None => self.exporter.start(self.project.clone(), out, platform),
+        }
+    }
+
     pub(super) fn run_commands(&mut self) {
         loop {
             let commands = std::mem::take(&mut self.state.borrow_mut().commands);
@@ -339,11 +352,9 @@ impl EditorLayer {
             Command::ExportAnyway(platform) => {
                 if self.exporter.is_running() {
                     self.state.borrow_mut().set_status(tr!("commands.export_running"));
-                } else if let Some(out) = Exporter::pick_folder() {
-                    match export::copied_folder_containing(self.project.dir(), &out) {
-                        Some(folder) => self.state.borrow_mut().set_status(tr!("commands.export_into_copied", folder = folder)),
-                        None => self.exporter.start(self.project.clone(), out, platform),
-                    }
+                } else {
+                    // The folder is asked for on the dialog's own thread.
+                    self.open_file_dialog(move || super::DialogAnswer::ExportFolder(Exporter::pick_folder(), platform));
                 }
             }
             Command::RefreshAssets => {

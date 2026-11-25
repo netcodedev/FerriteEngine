@@ -67,6 +67,13 @@ const SETTINGS_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_se
 /// Terrain collider triangles are drawn only this close to the camera.
 const COLLIDER_MESH_DISTANCE: f32 = 96.0;
 
+/// What a system file dialog answered (see `EditorLayer::open_file_dialog`).
+pub(crate) enum DialogAnswer {
+    /// Files to import as assets (none if cancelled).
+    Import(Vec<std::path::PathBuf>),
+    /// The folder to export the game for this platform into.
+    ExportFolder(Option<std::path::PathBuf>, ferrite::core::export::Platform),
+}
 pub(crate) struct EditorLayer {
     scene: Scene,
     ui: UI,
@@ -93,6 +100,8 @@ pub(crate) struct EditorLayer {
     cursor_initialised: bool,
     scripts: Scripts,
     exporter: Exporter,
+    /// A system file dialog open on its thread (see `file_dialog`).
+    file_dialog: Option<crate::editor::file_dialog::Pending<DialogAnswer>>,
     project: Project,
     /// The arrangement last saved to the project file.
     saved_settings: EditorSettings,
@@ -163,6 +172,7 @@ impl EditorLayer {
             cursor_initialised: false,
             scripts,
             exporter: Exporter::default(),
+            file_dialog: None,
             project,
             saved_settings: settings,
             settings_checked: Instant::now(),
@@ -454,9 +464,44 @@ impl EditorLayer {
             .get_component_mut::<Terrain>()
     }
 
-    /// Ask for files and import each as an asset.
+    /// Open a system file dialog on its own thread (the editor goes on
+    /// meanwhile); its answer comes to `poll_file_dialog`. One at a time.
+    pub(super) fn open_file_dialog(&mut self, dialog: impl FnOnce() -> DialogAnswer + Send + 'static) {
+        if self.file_dialog.is_some() {
+            self.state.borrow_mut().set_status(tr!("layer.dialog_open"));
+            return;
+        }
+        self.file_dialog = Some(crate::editor::file_dialog::open(dialog));
+    }
+
+    /// Take the open file dialog's answer once it is closed.
+    fn poll_file_dialog(&mut self) {
+        use crate::editor::file_dialog::Poll;
+        let Some(pending) = &self.file_dialog else {
+            return;
+        };
+        match pending.poll() {
+            Poll::Open => {}
+            Poll::Gone => self.file_dialog = None,
+            Poll::Done(answer) => {
+                self.file_dialog = None;
+                match answer {
+                    DialogAnswer::Import(files) => self.import_files(&files),
+                    DialogAnswer::ExportFolder(Some(out), platform) => self.export_into(out, platform),
+                    DialogAnswer::ExportFolder(None, _) => {}
+                }
+            }
+        }
+    }
+
+    /// Ask for files and import each as an asset (the dialog on its own
+    /// thread).
     fn import_assets(&mut self) {
-        let files = dialogs::pick_import_files();
+        self.open_file_dialog(|| DialogAnswer::Import(dialogs::pick_import_files()));
+    }
+
+    /// Import `files` as assets.
+    fn import_files(&mut self, files: &[std::path::PathBuf]) {
         if files.is_empty() {
             return;
         }
@@ -464,7 +509,7 @@ impl EditorLayer {
         let mut failed = Vec::new();
         {
             let mut database = assets::database();
-            for file in &files {
+            for file in files {
                 match database.import(file) {
                     Ok(id) => {
                         if let Some(entry) = database.get(id) {
@@ -624,6 +669,7 @@ impl Layer for EditorLayer {
         if let Some(status) = self.exporter.poll() {
             self.state.borrow_mut().set_status(status);
         }
+        self.poll_file_dialog();
         self.handle_game_requests();
         self.save_settings_if_changed();
         let (show_stats, show_widgets, show_assets, show_console, workspace) = {

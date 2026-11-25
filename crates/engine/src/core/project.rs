@@ -39,6 +39,15 @@ pub struct ProjectFile {
     /// Scene the project opens with, relative to the project folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_scene: Option<String>,
+    /// Scene a game (played or exported) starts in, e.g. its main menu;
+    /// the startup scene when there is none. The editor opens the scene
+    /// last edited (`startup_scene`); the game always begins here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_scene: Option<String>,
+    /// Scene the dedicated server plays (the world, not the menu); the
+    /// game scene when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_scene: Option<String>,
     /// Settings of the editor (its layout), which only it understands.
     #[serde(default = "unit", skip_serializing_if = "is_unit")]
     pub editor: Value,
@@ -103,6 +112,8 @@ impl Project {
                 version: PROJECT_VERSION,
                 name,
                 startup_scene: Some(STARTER_SCENE_PATH.to_string()),
+                game_scene: None,
+                server_scene: None,
                 editor: Value::Unit,
                 graphics: Default::default(),
             },
@@ -141,6 +152,16 @@ impl Project {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The scene a game starts in (see `game_scene`).
+    pub fn game_scene(&self) -> Option<String> {
+        self.file.game_scene.clone().or_else(|| self.file.startup_scene.clone())
+    }
+
+    /// The scene a dedicated server plays (see `server_scene`).
+    pub fn server_scene(&self) -> Option<String> {
+        self.file.server_scene.clone().or_else(|| self.game_scene())
     }
 
     pub fn dir(&self) -> &Path {

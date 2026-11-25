@@ -1,9 +1,20 @@
 # Scenes
 
 A scene is a tree of entities, saved as [RON](https://docs.rs/ron) under
-`scenes/` in a project. The project's `startup_scene` names the one the
-editor, the server and an exported game open. The reader is
+`scenes/` in a project. The reader is
 `crates/engine/src/core/scene/scene_file.rs`.
+
+Which scene opens where (the project file, `core/project.rs`):
+
+| Field | Opened by | When it is not set |
+| --- | --- | --- |
+| `startup_scene` | the editor (the scene last edited) | |
+| `game_scene` | a played or exported game (its main menu, say) | `startup_scene` |
+| `server_scene` | the dedicated server (the world) | `game_scene` |
+
+A script may replace the whole scene (`Scene::replace_with`, e.g. a main
+menu loading the game's world); a world can be made ready before its scene
+loads with `terrain::prepare` (see the module).
 
 ## File format
 

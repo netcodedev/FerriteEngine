@@ -108,6 +108,34 @@ impl Texture {
         self.upload(width, height, &data, format, true, sampler);
     }
 
+    /// Upload a decoded material map (see `load_material_map`): pixels, or
+    /// an asset pack's BC7 blocks with their mips as they are.
+    pub fn load_image(&self, image: super::decode::Image, srgb: bool) {
+        match image {
+            super::decode::Image::Rgba(image) => {
+                let (width, height) = image.dimensions();
+                self.load_material_map(width, height, image.into_raw(), srgb);
+            }
+            super::decode::Image::Bc7(image) => {
+                let format = if srgb { Format::Bc7Srgb } else { Format::Bc7 };
+                let levels = image.mips.len().max(1) as u32;
+                let desc = TextureDesc::d2(format, image.width.max(1), image.height.max(1)).with_mips(levels);
+                let texture = gfx::Texture::new(desc);
+                for (level, blocks) in image.mips.iter().enumerate() {
+                    let level = level as u32;
+                    let (w, h) = ((image.width >> level).max(1), (image.height >> level).max(1));
+                    texture.write(level, Rect::sized(w, h), 0, 1, UploadFormat::Bc7, blocks);
+                }
+                let sampler = if levels > 1 {
+                    SamplerDesc::LINEAR_REPEAT.mipmapped().anisotropic(8)
+                } else {
+                    SamplerDesc::LINEAR_REPEAT.anisotropic(8)
+                };
+                self.replace(texture, sampler);
+            }
+        }
+    }
+
     fn upload(&self, width: u32, height: u32, data: &[u8], format: Format, mipmaps: bool, sampler: SamplerDesc) {
         let desc = TextureDesc::d2(format, width.max(1), height.max(1)).with_mips(if mipmaps { 0 } else { 1 });
         let texture = gfx::Texture::new(desc);

@@ -581,8 +581,7 @@ impl State {
             return;
         };
         let desc = tex.desc;
-        let texels = region.width as usize * region.height as usize * layers.max(1) as usize;
-        let data = &data[..(texels * upload.texel_size()).min(data.len())];
+        let data = &data[..upload.data_size(region.width, region.height, layers).min(data.len())];
         let converted = convert::convert_texels(data, upload, desc.format);
         let bytes = converted.as_deref().unwrap_or(data);
         self.make_room(bytes.len() as u64);

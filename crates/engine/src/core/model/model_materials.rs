@@ -344,11 +344,11 @@ pub(super) fn forget_predecoded() {
     PREDECODED.with(|p| p.borrow_mut().clear());
 }
 
-pub(super) fn read_image(path: &std::path::Path) -> Option<image::RgbaImage> {
+pub(super) fn read_image(path: &std::path::Path) -> Option<crate::core::renderer::texture::decode::Image> {
     let decoded = PREDECODED
         .with(|p| p.borrow_mut().remove(path))
         .unwrap_or_else(|| {
-            if !path.is_file() {
+            if !crate::core::assets::vfs::is_file(path) {
                 return Err("no such file".into());
             }
             crate::core::renderer::texture::decode::decode_file(path)
@@ -356,7 +356,7 @@ pub(super) fn read_image(path: &std::path::Path) -> Option<image::RgbaImage> {
     match decoded {
         Ok(image) => Some(image),
         Err(e) => {
-            if path.is_file() {
+            if crate::core::assets::vfs::is_file(path) {
                 log::warn!("model: could not read texture {}: {e}", path.display());
             }
             None
@@ -385,10 +385,9 @@ pub(super) fn files_by_name(
 }
 
 /// Upload an image as the map in `slot`; only the colour map is sRGB.
-pub(super) fn upload_map(image: image::RgbaImage, slot: &TextureType) -> Texture {
+pub(super) fn upload_map(image: crate::core::renderer::texture::decode::Image, slot: &TextureType) -> Texture {
     let texture = Texture::new();
-    let (width, height) = image.dimensions();
-    texture.load_material_map(width, height, image.into_raw(), *slot == TextureType::Diffuse);
+    texture.load_image(image, *slot == TextureType::Diffuse);
     texture
 }
 
@@ -407,6 +406,7 @@ pub(super) fn maps_by_name(
     let opacity_path = found.iter().find(|(kind, _)| *kind == MapKind::Opacity).map(|(_, path)| path.clone());
     // Read once, only if a colour map that takes it is made.
     let mut opacity: Option<Option<image::RgbaImage>> = None;
+    use crate::core::renderer::texture::decode::Image;
 
     let mut maps = Vec::new();
     for (kind, path) in &found {
@@ -421,7 +421,13 @@ pub(super) fn maps_by_name(
             ..MapKey::new(path, slot == TextureType::Diffuse)
         };
         let texture = shared_map(key, || {
-            let mut image = read_image(path)?;
+            let image = read_image(path)?;
+            // As it is unless its pixels change (packed blocks go up as
+            // they are).
+            if *kind != MapKind::Gloss && !with_opacity {
+                return Some(upload_map(image, &slot));
+            }
+            let mut image = image.into_rgba();
             if *kind == MapKind::Gloss {
                 for pixel in image.pixels_mut() {
                     for channel in &mut pixel.0[..3] {
@@ -430,7 +436,8 @@ pub(super) fn maps_by_name(
                 }
             }
             if with_opacity {
-                let opacity = opacity.get_or_insert_with(|| opacity_path.as_deref().and_then(read_image));
+                let opacity =
+                    opacity.get_or_insert_with(|| opacity_path.as_deref().and_then(read_image).map(Image::into_rgba));
                 if let Some(opacity) = opacity {
                     if opacity.dimensions() == image.dimensions() {
                         for (pixel, alpha) in image.pixels_mut().zip(opacity.pixels()) {
@@ -446,7 +453,7 @@ pub(super) fn maps_by_name(
                     }
                 }
             }
-            Some(upload_map(image, &slot))
+            Some(upload_map(Image::Rgba(image), &slot))
         });
         if let Some(texture) = texture {
             maps.push((map, texture));

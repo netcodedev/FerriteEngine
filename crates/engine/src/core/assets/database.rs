@@ -67,6 +67,17 @@ pub struct AssetDatabase {
     changes: u64,
 }
 
+/// `path` as one path for the same file: canonical when it is on disk, or
+/// (a source in the asset pack of an exported game) its pack key.
+fn same_place(path: &Path) -> Option<PathBuf> {
+    if let Ok(canonical) = fs::canonicalize(path) {
+        return Some(canonical);
+    }
+    let key = super::pack::key(path)?;
+    super::pack::entry(Path::new(&key))?;
+    std::env::current_dir().ok().map(|here| here.join(key))
+}
+
 impl AssetDatabase {
     /// An empty database for `root`. Call `scan` to fill it.
     pub fn new(root: impl Into<PathBuf>) -> Self {
@@ -198,10 +209,10 @@ impl AssetDatabase {
 
     /// The asset registered for this source file, if any.
     pub fn find_by_source(&self, source: &Path) -> Option<AssetId> {
-        let wanted = fs::canonicalize(source).ok()?;
+        let wanted = same_place(source)?;
         self.assets
             .values()
-            .find(|entry| fs::canonicalize(entry.source_path()).is_ok_and(|p| p == wanted))
+            .find(|entry| same_place(&entry.source_path()).is_some_and(|p| p == wanted))
             .map(|entry| entry.meta.id)
     }
 

@@ -329,8 +329,7 @@ pub fn texture_asset(id: AssetId, color: bool) -> Option<Texture> {
         }
     };
     let texture = Texture::new();
-    let (width, height) = image.dimensions();
-    texture.load_material_map(width, height, image.into_raw(), color);
+    texture.load_image(image, color);
     let shared = texture.share();
     TEXTURES.with(|t| t.borrow_mut().insert((id, color), (revision, texture)));
     Some(shared)

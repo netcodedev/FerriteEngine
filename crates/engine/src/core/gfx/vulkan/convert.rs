@@ -18,6 +18,8 @@ pub fn format(f: Format, depth_stencil: vk::Format) -> vk::Format {
         Format::Depth16 => vk::Format::D16_UNORM,
         Format::Depth24 | Format::Depth32F => vk::Format::D32_SFLOAT,
         Format::Depth24Stencil8 => depth_stencil,
+        Format::Bc7 => vk::Format::BC7_UNORM_BLOCK,
+        Format::Bc7Srgb => vk::Format::BC7_SRGB_BLOCK,
     }
 }
 
@@ -214,8 +216,15 @@ pub fn convert_texels(data: &[u8], upload: UploadFormat, format: Format) -> Opti
             | (UploadFormat::R16, Format::R16)
             | (UploadFormat::Rgba8, Format::Rgba8 | Format::Srgba8)
             | (UploadFormat::R32F, Format::R32F | Format::Depth32F | Format::Depth24)
+            | (UploadFormat::Bc7, Format::Bc7 | Format::Bc7Srgb)
     );
     if same {
+        return None;
+    }
+    // Blocks cannot be converted texel by texel: compressed formats only
+    // take blocks of their own (sent as they are).
+    if upload == UploadFormat::Bc7 || format.is_compressed() {
+        log::error!("Vulkan: {upload:?} data cannot be uploaded to a {format:?} texture");
         return None;
     }
     let n = upload.texel_size();
@@ -229,6 +238,7 @@ pub fn convert_texels(data: &[u8], upload: UploadFormat, format: Format) -> Opti
             UploadFormat::R32F => [f(0), 0.0, 0.0, 1.0],
             UploadFormat::Rg32F => [f(0), f(1), 0.0, 1.0],
             UploadFormat::Rgba32F => [f(0), f(1), f(2), f(3)],
+            UploadFormat::Bc7 => [0.0; 4],
         }
     };
     let unorm8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
@@ -257,6 +267,7 @@ pub fn convert_texels(data: &[u8], upload: UploadFormat, format: Format) -> Opti
                 out.extend_from_slice(&(r | (g << 11) | (b << 22)).to_le_bytes());
             }
             Format::Depth16 => out.extend_from_slice(&((v[0].clamp(0.0, 1.0) * 65535.0 + 0.5) as u16).to_le_bytes()),
+            Format::Bc7 | Format::Bc7Srgb => {}
             Format::Depth24Stencil8 => out.extend_from_slice(&v[0].to_le_bytes()),
         }
     }

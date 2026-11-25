@@ -17,6 +17,11 @@ pub struct ProjectFile {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_scene: Option<String>,
+    /// Kept as they are (see the engine's `ProjectFile`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_scene: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_scene: Option<String>,
     #[serde(default = "unit_value", skip_serializing_if = "is_unit")]
     pub editor: ron::Value,
     /// The engine's graphics section, kept as it is.

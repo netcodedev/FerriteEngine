@@ -20,6 +20,8 @@ pub struct PlaneRenderer {
     /// Planes written to the stream buffer since it was last orphaned.
     written: usize,
     scratch: Vec<PlaneVertex>,
+    /// The backdrop texture is bound (to be unbound after blurred planes).
+    backdrop_bound: bool,
 }
 
 pub struct Plane {
@@ -28,6 +30,10 @@ pub struct Plane {
     pub border_thickness: f32,
     pub border_color: (f32, f32, f32, f32),
     pub border_radius: (f32, f32, f32, f32),
+    /// Shows the view behind it blurred (frosted glass), tinted by its
+    /// colour: the colour's alpha is how much of the tint covers the
+    /// blur. See `hdr::backdrop`.
+    pub blur: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -38,6 +44,7 @@ pub struct PlaneBuilder {
     border_thickness: f32,
     border_color: (f32, f32, f32, f32),
     border_radius: (f32, f32, f32, f32),
+    blur: bool,
 }
 
 #[repr(C)]

@@ -332,6 +332,8 @@ fn internal_format(format: Format) -> GLenum {
         Format::Depth24 => gl::DEPTH_COMPONENT24,
         Format::Depth32F => gl::DEPTH_COMPONENT32F,
         Format::Depth24Stencil8 => gl::DEPTH24_STENCIL8,
+        Format::Bc7 => gl::COMPRESSED_RGBA_BPTC_UNORM,
+        Format::Bc7Srgb => gl::COMPRESSED_SRGB_ALPHA_BPTC_UNORM,
     }
 }
 
@@ -343,6 +345,8 @@ fn upload_format(format: UploadFormat) -> (GLenum, GLenum) {
         UploadFormat::R32F => (gl::RED, gl::FLOAT),
         UploadFormat::Rg32F => (gl::RG, gl::FLOAT),
         UploadFormat::Rgba32F => (gl::RGBA, gl::FLOAT),
+        // Blocks go through the compressed upload; not used.
+        UploadFormat::Bc7 => (gl::RGBA, gl::UNSIGNED_BYTE),
     }
 }
 
@@ -475,6 +479,40 @@ impl Device for GlDevice {
         format: UploadFormat,
         data: &[u8],
     ) {
+        if format == UploadFormat::Bc7 {
+            let size = format.data_size(region.width, region.height, layers) as GLsizei;
+            let internal = internal_format(desc.format);
+            unsafe {
+                let pointer = data.as_ptr() as *const GLvoid;
+                match desc.kind {
+                    TextureKind::D2 => gl::CompressedTextureSubImage2D(
+                        texture as GLuint,
+                        mip as GLint,
+                        region.x,
+                        region.y,
+                        region.width as GLsizei,
+                        region.height as GLsizei,
+                        internal,
+                        size,
+                        pointer,
+                    ),
+                    _ => gl::CompressedTextureSubImage3D(
+                        texture as GLuint,
+                        mip as GLint,
+                        region.x,
+                        region.y,
+                        layer as GLint,
+                        region.width as GLsizei,
+                        region.height as GLsizei,
+                        layers as GLsizei,
+                        internal,
+                        size,
+                        pointer,
+                    ),
+                }
+            }
+            return;
+        }
         let (pixel_format, pixel_type) = upload_format(format);
         let alignment = match format.texel_size() {
             1 => 1,
