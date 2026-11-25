@@ -441,6 +441,20 @@ pub(super) fn shadow_lod_index(distance: f32, lod_count: usize) -> usize {
     view.max((view + 1).min(coarsest))
 }
 
+/// The tier the ray traced shadows take at `distance`: the one drawn, so
+/// a tree is shadowed by its own leaves where they are drawn (a coarser
+/// tier shadowed the drawn one with cards it does not show: its crown
+/// flickered); but not the last of more than two (typically a
+/// billboard, whose shadow would not look like the tree's).
+pub(super) fn ray_lod_index(distance: f32, lod_count: usize) -> usize {
+    let view = pick_lod_index(distance, lod_count);
+    if lod_count > 2 {
+        view.min(lod_count - 2)
+    } else {
+        view
+    }
+}
+
 fn pick_lod_index(distance: f32, lod_count: usize) -> usize {
     if lod_count == 0 {
         return 0;
@@ -539,7 +553,7 @@ impl ScatterInstances {
 
     /// Hand the instances to the ray traced shadows' scene: landscape
     /// instances that cast shadows (trees, rocks), each cell at the detail
-    /// tier its shadow would take. Detail scatter (grass) only with its own
+    /// tier it is drawn at (`ray_lod_index`). Detail scatter (grass) only with its own
     /// setting, and only near the camera: many instances for what its
     /// shadows add; then it casts them whatever its layer says (its shadow
     /// maps would have been too coarse for it).
@@ -574,12 +588,12 @@ impl ScatterInstances {
                     .filter(|cell| ViewFrustum::is_sphere_visible(&planes, cell.center, cell.radius))
                     .filter(|cell| !grass || (cell.center - eye).magnitude() - cell.radius < RAY_TRACED_GRASS_DISTANCE)
                     .map(|cell| {
-                        let tier = shadow_lod_index((cell.center - eye).magnitude(), tiers);
+                        let tier = ray_lod_index((cell.center - eye).magnitude(), tiers);
                         (tier, cell.start as usize, cell.count as usize)
                     })
                     .collect(),
                 _ if grass && (self.center - eye).magnitude() > RAY_TRACED_GRASS_DISTANCE => Vec::new(),
-                _ => vec![(shadow_lod_index((self.center - eye).magnitude(), tiers), 0, placed.len())],
+                _ => vec![(ray_lod_index((self.center - eye).magnitude(), tiers), 0, placed.len())],
             };
             for (tier, start, count) in runs {
                 let Some(transforms) = placed.get(start..start + count) else {

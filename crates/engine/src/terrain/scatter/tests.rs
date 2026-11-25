@@ -17,6 +17,21 @@ fn shadows_take_a_coarser_tier_but_not_the_billboard() {
     assert_eq!(shadow_lod_index(10.0, 1), 0);
 }
 
+/// Ray traced shadows take the tier drawn (a coarser one shadowed the
+/// drawn tree with cards it does not show), the billboard excepted.
+#[test]
+fn ray_traced_shadows_take_the_drawn_tier_but_not_the_billboard() {
+    use super::instances::ray_lod_index;
+    assert_eq!(ray_lod_index(10.0, 4), 0);
+    assert_eq!(ray_lod_index(100.0, 4), 1);
+    assert_eq!(ray_lod_index(200.0, 4), 2);
+    // Where the billboard is drawn, the last mesh before it.
+    assert_eq!(ray_lod_index(280.0, 4), 2);
+    // Two tiers, both meshes.
+    assert_eq!(ray_lod_index(100.0, 2), 1);
+    assert_eq!(ray_lod_index(10.0, 1), 0);
+}
+
 #[test]
 fn instances_are_grouped_by_the_square_they_stand_in() {
     use super::instances::group_into_cells;
