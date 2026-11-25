@@ -153,6 +153,10 @@ impl Animation {
         }
     }
 
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn set_name(&mut self, name: &str) {
         self.name = name.to_string();
     }
