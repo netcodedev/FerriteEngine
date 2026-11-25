@@ -288,6 +288,48 @@ impl PhysicsEngine {
         self.nearest_hit(&ray, max_distance, keep)
     }
 
+    /// Move `shape` from `pose` along `direction` (normalized) up to
+    /// `max_distance`, turned as it is: the nearest non-sensor collider
+    /// `keep` accepts that it runs into, and how far it got before it
+    /// touched (0 if it overlaps one already at `pose`).
+    pub fn cast_shape(
+        &mut self,
+        shape: &dyn Shape,
+        pose: &Pose,
+        direction: Vector,
+        max_distance: f32,
+        keep: impl Fn(ColliderHandle, &Collider) -> bool,
+    ) -> Option<(ColliderHandle, f32)> {
+        use rapier3d::parry::{
+            bounding_volume::BoundingVolume,
+            query::{cast_shapes, ShapeCastOptions},
+        };
+        self.prepare_queries();
+        let end = Pose::from_parts(pose.translation + direction * max_distance, pose.rotation);
+        let swept = shape.compute_aabb(pose).merged(&shape.compute_aabb(&end));
+        let options = ShapeCastOptions {
+            max_time_of_impact: max_distance,
+            target_distance: 0.0,
+            stop_at_penetration: true,
+            compute_impact_geometry_on_penetration: false,
+        };
+        let colliders = &self.colliders;
+        let mut best: Option<(ColliderHandle, f32)> = None;
+        for handle in self.index.in_box(&swept) {
+            let Some(collider) = colliders.get(handle) else { continue };
+            if collider.is_sensor() || !collider.compute_aabb().intersects(&swept) || !keep(handle, collider) {
+                continue;
+            }
+            let hit = cast_shapes(pose, direction, shape, collider.position(), Vector::ZERO, collider.shape(), options);
+            if let Ok(Some(hit)) = hit {
+                if best.is_none_or(|(_, toi)| hit.time_of_impact < toi) {
+                    best = Some((handle, hit.time_of_impact));
+                }
+            }
+        }
+        best
+    }
+
     /// Every non-sensor collider `keep` accepts that `shape` at `pose`
     /// overlaps.
     pub fn intersecting(
@@ -566,5 +608,25 @@ mod tests {
         for r in &rays { physics.cast_ray_where(*r, [std::f32::consts::FRAC_1_SQRT_2, 0.0, std::f32::consts::FRAC_1_SQRT_2], 60.0, |_, _| true); }
         let level = t.elapsed().as_secs_f64() * 1e6 / rays.len() as f64;
         println!("per ray: every collider {brute:.1} us, indexed down {indexed:.2} us, indexed level 60 m {level:.2} us");
+    }
+
+    /// A box moved towards a wall stops where it touches it; one already
+    /// in it gets nowhere; what is left out is gone through.
+    #[test]
+    fn a_shape_cast_stops_at_the_wall() {
+        let mut physics = PhysicsEngine::new();
+        // A wall 0.2 thick from x = 2 on.
+        let wall = physics.add_rigid_body(RigidBodyBuilder::fixed().translation(Vector::new(2.1, 0.0, 0.0)).build());
+        physics.add_collider(ColliderBuilder::cuboid(0.1, 2.0, 2.0).build(), Some(wall));
+        let cube = rapier3d::parry::shape::Cuboid::new(Vector::new(0.25, 0.25, 0.25));
+        let from = Pose::from_translation(Vector::new(0.0, 0.0, 0.0));
+        let (_, got) = physics.cast_shape(&cube, &from, Vector::new(1.0, 0.0, 0.0), 5.0, |_, _| true).unwrap();
+        assert!((got - 1.75).abs() < 1e-3, "{got}");
+        // Not as far as the wall: nothing.
+        assert!(physics.cast_shape(&cube, &from, Vector::new(1.0, 0.0, 0.0), 1.5, |_, _| true).is_none());
+        let inside = Pose::from_translation(Vector::new(2.0, 0.0, 0.0));
+        let (_, got) = physics.cast_shape(&cube, &inside, Vector::new(1.0, 0.0, 0.0), 5.0, |_, _| true).unwrap();
+        assert_eq!(got, 0.0);
+        assert!(physics.cast_shape(&cube, &from, Vector::new(1.0, 0.0, 0.0), 5.0, |_, c| c.parent() != Some(wall)).is_none());
     }
 }
