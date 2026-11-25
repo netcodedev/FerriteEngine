@@ -54,15 +54,19 @@ pub struct PdResult {
 }
 
 /// Push `body` towards `position` and `rotation` (`rotation`: `None`
-/// leaves it free to turn) for a step of `dt` seconds. `velocity`: the
-/// target's own (it moves with the carrier). The weight hangs on the
-/// spring: a body comes to rest `mass × g / stiffness` below the target.
+/// leaves it free to turn) for a step of `dt` seconds. `velocity` and
+/// `spin` (angular velocity, radians per second about each axis): the
+/// target's own (it moves and turns with the carrier), so a body keeps up
+/// with a moving target instead of being pulled after it. The weight hangs
+/// on the spring: a body comes to rest `mass × g / stiffness` below the
+/// target.
 pub fn drive(
     physics: &mut PhysicsEngine,
     body: RigidBodyHandle,
     position: Point3<f32>,
     rotation: Option<Quaternion<f32>>,
     velocity: Vector3<f32>,
+    spin: Vector3<f32>,
     gains: &PdGains,
     dt: f32,
 ) -> PdResult {
@@ -83,7 +87,7 @@ pub fn drive(
         let r = rb.rotation();
         let now = Quaternion::new(r.w, r.x, r.y, r.z);
         let w = rb.angvel();
-        let spin = Vector3::new(w.x, w.y, w.z);
+        let now_spin = Vector3::new(w.x, w.y, w.z);
         // The turn from now to the target, the short way, as axis × angle.
         let mut delta = target * now.invert();
         if delta.s < 0.0 {
@@ -93,7 +97,7 @@ pub fn drive(
         let error = if sin > 1e-6 { delta.v / sin * (2.0 * sin.atan2(delta.s)) } else { Vector3::new(0.0, 0.0, 0.0) };
         let inertia = rb.mass_properties().local_mprops.principal_inertia();
         let inertia = ((inertia.x + inertia.y + inertia.z) / 3.0).max(1e-4);
-        let torque = (error * gains.angular_stiffness - spin * gains.angular_damping) * inertia;
+        let torque = (error * gains.angular_stiffness + (spin - now_spin) * gains.angular_damping) * inertia;
         let (torque, _) = clamp(torque, gains.max_torque);
         if dt > 0.0 {
             rb.apply_torque_impulse(rapier3d::math::Vector::new(torque.x * dt, torque.y * dt, torque.z * dt), true);
@@ -135,7 +139,7 @@ mod tests {
         let dt = 1.0 / 60.0;
         for _ in 0..(seconds / dt) as usize {
             for _ in 0..drives {
-                drive(&mut physics, body, Point3::new(0.0, 1.5, 0.0), None, Vector3::new(0.0, 0.0, 0.0), &PdGains::default(), dt);
+                drive(&mut physics, body, Point3::new(0.0, 1.5, 0.0), None, Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0), &PdGains::default(), dt);
             }
             physics.update(dt);
         }
@@ -170,11 +174,45 @@ mod tests {
         let target = Quaternion::from(cgmath::Euler::new(cgmath::Rad(0.0), cgmath::Rad(1.2), cgmath::Rad(0.0)));
         let dt = 1.0 / 60.0;
         for _ in 0..240 {
-            drive(&mut physics, body, Point3::new(0.0, 1.0, 0.0), Some(target), Vector3::new(0.0, 0.0, 0.0), &PdGains::default(), dt);
+            drive(&mut physics, body, Point3::new(0.0, 1.0, 0.0), Some(target), Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0), &PdGains::default(), dt);
             physics.update(dt);
         }
         let r = physics.rigid_bodies[body].rotation();
         let now = Quaternion::new(r.w, r.x, r.y, r.z);
         assert!(now.dot(target).abs() > 0.995, "{now:?}");
+    }
+
+    /// A target swung round in a circle (a carrier turning on the spot)
+    /// with its velocity and spin given: the body keeps up, close to it
+    /// and turned as it is.
+    #[test]
+    fn a_body_keeps_up_with_a_target_turning_round() {
+        let mut physics = PhysicsEngine::new();
+        let body = crate_of(&mut physics, 15.0);
+        let (radius, rate, dt) = (0.6_f32, 4.0_f32, 1.0 / 60.0);
+        let at = |t: f32| Point3::new(radius * t.cos(), 1.0, radius * t.sin());
+        let turn = |t: f32| Quaternion::from(cgmath::Euler::new(cgmath::Rad(0.0), cgmath::Rad(-t), cgmath::Rad(0.0)));
+        // Start where the target starts.
+        physics.rigid_bodies[body].set_translation(rapier3d::math::Vector::new(radius, 1.0, 0.0), true);
+        let mut worst = (0.0_f32, 0.0_f32);
+        for step in 0..240 {
+            let angle = rate * dt * step as f32;
+            let velocity = Vector3::new(-angle.sin(), 0.0, angle.cos()) * (radius * rate);
+            let spin = Vector3::new(0.0, -rate, 0.0);
+            drive(&mut physics, body, at(angle), Some(turn(angle)), velocity, spin, &PdGains::default(), dt);
+            physics.update(dt);
+            if step > 60 {
+                let t = physics.rigid_bodies[body].translation();
+                let r = physics.rigid_bodies[body].rotation();
+                let now = Quaternion::new(r.w, r.x, r.y, r.z);
+                let after = at(angle + rate * dt);
+                let off = (Point3::new(t.x, t.y, t.z) - after).magnitude();
+                let twist = 2.0 * now.dot(turn(angle + rate * dt)).abs().min(1.0).acos();
+                worst = (worst.0.max(off), worst.1.max(twist));
+            }
+        }
+        // Its weight hangs it ~7 cm low; turning adds little to that.
+        assert!(worst.0 < 0.12, "{} m off", worst.0);
+        assert!(worst.1.to_degrees() < 8.0, "{}° off", worst.1.to_degrees());
     }
 }
