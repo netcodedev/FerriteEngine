@@ -35,7 +35,7 @@ pub struct PhysicsEngine {
 
     physics_pipeline: PhysicsPipeline,
 
-    gravity: Vector,
+    pub gravity: Vector,
     integration_parameters: IntegrationParameters,
     island_manager: IslandManager,
     broad_phase: DefaultBroadPhase,

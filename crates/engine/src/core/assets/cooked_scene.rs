@@ -764,3 +764,28 @@ mod tests {
         assert!(read(b"nope").is_err());
     }
 }
+
+#[cfg(test)]
+mod measure {
+    /// Bounds of the model files in FERRITE_MEASURE (comma separated), as
+    /// the model loader reads them, times FERRITE_MEASURE_SCALE.
+    #[test]
+    #[ignore]
+    fn measure_models() {
+        let files = std::env::var("FERRITE_MEASURE").unwrap_or_default();
+        let scale: f32 = std::env::var("FERRITE_MEASURE_SCALE").ok().and_then(|s| s.parse().ok()).unwrap_or(1.0);
+        for file in files.split(',').filter(|f| !f.is_empty()) {
+            let scene = crate::core::model::read_scene(file).unwrap();
+            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+            for mesh in &scene.meshes {
+                for v in &mesh.vertices {
+                    for (i, c) in [v.x, v.y, v.z].into_iter().enumerate() {
+                        lo[i] = lo[i].min(c * scale);
+                        hi[i] = hi[i].max(c * scale);
+                    }
+                }
+            }
+            eprintln!("{file}: min {lo:?} max {hi:?}");
+        }
+    }
+}
