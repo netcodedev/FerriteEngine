@@ -41,7 +41,7 @@ use super::{
     send, Command, Shared,
 };
 use thumbnails::Thumbnails;
-use view::{Card, CardKind, Category};
+use view::{Card, CardKind, Category, Scenes};
 pub use view::kind_label;
 
 const SIDEBAR_WIDTH: f32 = 170.0;
@@ -163,6 +163,8 @@ pub struct AssetBrowser {
 
     category: Category,
     folder: PathBuf,
+    /// The project's scene files, as last listed.
+    scenes: Scenes,
     expanded: HashSet<AssetId>,
     /// `Card::key` of the selected card.
     selected: Option<String>,
@@ -172,7 +174,7 @@ pub struct AssetBrowser {
     hover: Option<usize>,
     /// What the cards were made for: database changes, category, folder,
     /// search, unfolded assets.
-    built_for: Option<(u64, Category, PathBuf, String, Vec<AssetId>)>,
+    built_for: Option<(u64, Category, PathBuf, String, Vec<AssetId>, Scenes)>,
     details_for: Option<(Option<String>, u64, Category)>,
     counts: Vec<usize>,
     /// Restored from the project file once.
@@ -264,6 +266,7 @@ impl AssetBrowser {
             project,
             category: Category::All,
             folder: root,
+            scenes: Scenes::default(),
             expanded: HashSet::new(),
             selected: None,
             scroll: 0.0,
@@ -435,7 +438,9 @@ impl AssetBrowser {
         let search = self.search_query();
         let mut expanded: Vec<AssetId> = self.expanded.iter().copied().collect();
         expanded.sort();
-        let wanted = (database.changes(), self.category, self.folder.clone(), search.clone(), expanded);
+        // Scene files are no assets: listed again each time (a few files).
+        self.scenes = Scenes::of(database);
+        let wanted = (database.changes(), self.category, self.folder.clone(), search.clone(), expanded, self.scenes.clone());
         if self.built_for.as_ref() == Some(&wanted) {
             return;
         }
@@ -443,25 +448,27 @@ impl AssetBrowser {
         // one still there.
         while !self.folder.is_dir() && self.folder != database.root() {
             match self.folder.parent() {
-                Some(parent) if parent.starts_with(database.root()) => self.folder = parent.to_path_buf(),
+                Some(parent) if parent.starts_with(database.root()) || self.scenes.holds(parent) => {
+                    self.folder = parent.to_path_buf()
+                }
                 _ => self.folder = database.root().to_path_buf(),
             }
         }
-        if !self.folder.starts_with(database.root()) {
+        if !self.folder.starts_with(database.root()) && !self.scenes.holds(&self.folder) {
             self.folder = database.root().to_path_buf();
         }
-        self.cards = view::cards(database, self.category, &self.folder, &search, &self.expanded);
+        self.cards = view::cards(database, self.category, &self.folder, &search, &self.expanded, &self.scenes);
         while self.views.len() < self.cards.len() {
             self.views.push(CardView::new());
         }
-        self.counts = view::counts(database);
+        self.counts = view::counts(database, &self.scenes);
         self.built_for = Some(wanted);
         // The selected card may be gone.
         if self.selected.is_some() && self.selected_card().is_none() {
             self.selected = None;
             self.state.borrow_mut().asset_selection = None;
         }
-        self.crumbs = view::crumbs(database.root(), &self.folder)
+        self.crumbs = view::crumbs(database.root(), &self.folder, &self.scenes)
             .into_iter()
             .map(|(name, path)| (theme::text(&name, theme::FONT_SIZE, theme::TEXT_MUTED), Region::default(), path))
             .collect();
@@ -489,13 +496,21 @@ impl AssetBrowser {
                 let lods = entry.meta.as_model().and_then(|m| m.variant(part)).map_or(0, |v| v.lods.len());
                 tr!("asset_browser.details.variant", part = part, name = entry.meta.name, lods = view::count_of(lods, "lod"))
             }
+            Some(CardKind::Scene(path)) => {
+                tr!("asset_browser.details.scene", name = file_name(path), path = relative(&self.project, path))
+            }
+            Some(CardKind::Folder(path)) if self.scenes.holds(path) => {
+                let n = self.scenes.files.iter().filter(|f| f.starts_with(path)).count();
+                tr!("asset_browser.details.folder", name = file_name(path), assets = view::count_of(n, "scene"), path = relative(&self.project, path))
+            }
             Some(CardKind::Folder(path)) => {
                 let n = database.assets_in(path).len();
                 tr!("asset_browser.details.folder", name = file_name(path), assets = view::count_of(n, "asset"), path = relative(&self.project, path))
             }
             None => {
                 let index = Category::ALL.iter().position(|c| *c == self.category).unwrap_or(0);
-                tr!("asset_browser.details.category", category = self.category.label(), assets = view::count_of(self.counts.get(index).copied().unwrap_or(0), "asset"))
+                let noun = if self.category == Category::Scenes { "scene" } else { "asset" };
+                tr!("asset_browser.details.category", category = self.category.label(), assets = view::count_of(self.counts.get(index).copied().unwrap_or(0), noun))
             }
         }
     }
@@ -671,6 +686,11 @@ impl AssetBrowser {
                 let source = path_of(asset.id).unwrap_or_default();
                 vec![open, (ContextEntry::item(icons::COPY, tr!("asset_browser.menu.copy_path")), MenuAction::CopyPath(source))]
             }
+            CardKind::Scene(path) => vec![
+                open,
+                (ContextEntry::item(icons::COPY, tr!("asset_browser.menu.copy_path")), MenuAction::CopyPath(path.clone())),
+                (ContextEntry::item(icons::FOLDER_OPEN, tr!("asset_browser.menu.reveal")), MenuAction::Reveal(path.clone())),
+            ],
         }
     }
 
@@ -714,6 +734,8 @@ impl AssetBrowser {
             CardKind::Folder(path) => self.open_folder(path.clone()),
             CardKind::Asset(id) => send(&self.state, Command::EditAsset { id: *id, variant: None }),
             CardKind::Part(asset) => send(&self.state, Command::EditAsset { id: asset.id, variant: asset.part.clone() }),
+            // Unsaved edits of the open scene are asked about first.
+            CardKind::Scene(path) => send(&self.state, Command::ConfirmDiscard(Box::new(Command::Open(path.clone())))),
         }
     }
 
@@ -771,8 +793,14 @@ impl AssetBrowser {
             return true;
         }
         if hits(&self.up, x, y) && self.up.is_enabled() {
-            if let Some(parent) = self.folder.parent() {
-                self.open_folder(parent.to_path_buf());
+            // Up from the scenes' folder is the asset root (where it shows).
+            let up = if self.folder == self.scenes.dir {
+                Some(assets::database().root().to_path_buf())
+            } else {
+                self.folder.parent().map(Path::to_path_buf)
+            };
+            if let Some(parent) = up {
+                self.open_folder(parent);
             }
             return true;
         }

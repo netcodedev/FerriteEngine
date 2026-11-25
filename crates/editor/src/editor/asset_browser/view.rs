@@ -22,10 +22,12 @@ pub enum Category {
     MaterialGraphs,
     Animations,
     ScatterGraphs,
+    /// The project's scenes (`scenes/`, beside the assets).
+    Scenes,
 }
 
 impl Category {
-    pub const ALL: [Category; 7] = [
+    pub const ALL: [Category; 8] = [
         Category::All,
         Category::Models,
         Category::Textures,
@@ -33,6 +35,7 @@ impl Category {
         Category::MaterialGraphs,
         Category::Animations,
         Category::ScatterGraphs,
+        Category::Scenes,
     ];
 
     pub fn label(self) -> &'static str {
@@ -44,6 +47,7 @@ impl Category {
             Category::MaterialGraphs => tr!("asset_browser.category.material_graphs"),
             Category::Animations => tr!("asset_browser.category.animations"),
             Category::ScatterGraphs => tr!("asset_browser.category.scatter_graphs"),
+            Category::Scenes => tr!("asset_browser.category.scenes"),
         }
     }
 
@@ -57,6 +61,7 @@ impl Category {
             Category::MaterialGraphs => "material_graphs",
             Category::Animations => "animations",
             Category::ScatterGraphs => "scatter_graphs",
+            Category::Scenes => "scenes",
         }
     }
 
@@ -73,6 +78,7 @@ impl Category {
             Category::MaterialGraphs => icons::COMPONENT,
             Category::Animations => icons::ACTIVITY,
             Category::ScatterGraphs => icons::LIST_TREE,
+            Category::Scenes => icons::MOUNTAIN,
         }
     }
 
@@ -85,6 +91,7 @@ impl Category {
             Category::MaterialGraphs => matches!(kind, AssetKind::MaterialGraph(_)),
             Category::Animations => matches!(kind, AssetKind::Animation(_)),
             Category::ScatterGraphs => matches!(kind, AssetKind::ScatterGraph(_)),
+            Category::Scenes => false,
         }
     }
 
@@ -99,12 +106,67 @@ impl Category {
     }
 }
 
-/// How many assets each category holds, in `Category::ALL`'s order.
-pub fn counts(database: &AssetDatabase) -> Vec<usize> {
+/// How many assets (scenes) each category holds, in `Category::ALL`'s
+/// order.
+pub fn counts(database: &AssetDatabase, scenes: &Scenes) -> Vec<usize> {
     Category::ALL
         .iter()
-        .map(|c| database.iter().filter(|e| c.contains(&e.meta.kind)).count())
+        .map(|c| match c {
+            Category::Scenes => scenes.files.len(),
+            _ => database.iter().filter(|e| c.contains(&e.meta.kind)).count(),
+        })
         .collect()
+}
+
+/// The project's scene files: `scenes/` beside the asset root, and every
+/// `.ron` in it (and below), sorted.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Scenes {
+    pub dir: PathBuf,
+    pub files: Vec<PathBuf>,
+}
+
+impl Scenes {
+    /// The scenes of the project whose assets `database` holds.
+    pub fn of(database: &AssetDatabase) -> Self {
+        let project = database.project_root();
+        let dir = if project == Path::new(".") { PathBuf::from("scenes") } else { project.join("scenes") };
+        let mut files = Vec::new();
+        let mut pending = vec![dir.clone()];
+        while let Some(folder) = pending.pop() {
+            let Ok(entries) = std::fs::read_dir(&folder) else { continue };
+            for path in entries.flatten().map(|e| e.path()) {
+                let hidden = path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.'));
+                if hidden {
+                    continue;
+                }
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|e| e == "ron") {
+                    files.push(path);
+                }
+            }
+        }
+        files.sort_by_key(|p| p.to_string_lossy().to_lowercase());
+        Self { dir, files }
+    }
+
+    /// Whether `folder` is the scenes' folder (or one below it).
+    pub fn holds(&self, folder: &Path) -> bool {
+        !self.dir.as_os_str().is_empty() && folder.starts_with(&self.dir)
+    }
+
+    fn card(&self, file: &Path) -> Card {
+        let place = file.parent().and_then(|p| p.strip_prefix(&self.dir).ok()).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+        Card {
+            kind: CardKind::Scene(file.to_path_buf()),
+            label: file.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            detail: if place.is_empty() { tr!("asset_browser.kind.scene").to_string() } else { place },
+            icon: icons::MOUNTAIN,
+            parts: 0,
+            expanded: false,
+        }
+    }
 }
 
 /// What a card stands for.
@@ -114,6 +176,8 @@ pub enum CardKind {
     Asset(AssetId),
     /// A variant of a model pack or a clip of an animation file.
     Part(AssetRef),
+    /// A scene file (opened in the editor, not an asset).
+    Scene(PathBuf),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -135,7 +199,7 @@ impl Card {
         match &self.kind {
             CardKind::Asset(id) => Some(AssetRef::whole(*id)),
             CardKind::Part(asset) => Some(asset.clone()),
-            CardKind::Folder(_) => None,
+            CardKind::Folder(_) | CardKind::Scene(_) => None,
         }
     }
 
@@ -145,6 +209,7 @@ impl Card {
             CardKind::Folder(path) => format!("folder:{}", path.display()),
             CardKind::Asset(id) => format!("asset:{id}"),
             CardKind::Part(asset) => format!("part:{}:{}", asset.id, asset.part.as_deref().unwrap_or("")),
+            CardKind::Scene(path) => format!("scene:{}", path.display()),
         }
     }
 }
@@ -187,6 +252,8 @@ pub fn count_of(n: usize, noun: &str) -> String {
         ("lod", true) => tr!("asset_browser.count.lod.one", n = n),
         ("lod", false) => tr!("asset_browser.count.lod.other", n = n),
         ("material", true) => tr!("asset_browser.count.material.one", n = n),
+        ("scene", true) => tr!("asset_browser.count.scene.one", n = n),
+        ("scene", false) => tr!("asset_browser.count.scene.other", n = n),
         _ => tr!("asset_browser.count.material.other", n = n),
     }
 }
@@ -280,16 +347,33 @@ fn asset_card(entry: &AssetEntry, detail: String, expanded: &HashSet<AssetId>) -
 /// by name; an expanded asset followed by its parts. With a `search`, the
 /// assets of the category anywhere below the asset root whose name or file
 /// name contains it (case blind) instead, each with its folder as detail.
+///
+/// Scenes: the "Scenes" category lists every scene; "All" shows the
+/// scenes' folder at the asset root and the scenes in it; a search in
+/// either finds scenes by name too.
 pub fn cards(
     database: &AssetDatabase,
     category: Category,
     folder: &Path,
     search: &str,
     expanded: &HashSet<AssetId>,
+    scenes: &Scenes,
 ) -> Vec<Card> {
     let search = search.trim().to_lowercase();
     let mut cards = Vec::new();
+    let scene_matches = |file: &&PathBuf| {
+        file.file_stem().is_some_and(|n| n.to_string_lossy().to_lowercase().contains(&search))
+    };
+    if category == Category::Scenes {
+        return scenes.files.iter().filter(|f| search.is_empty() || scene_matches(f)).map(|f| scenes.card(f)).collect();
+    }
+    if category == Category::All && search.is_empty() && scenes.holds(folder) {
+        return scenes.files.iter().filter(|f| f.parent() == Some(folder)).map(|f| scenes.card(f)).collect();
+    }
     if !search.is_empty() {
+        if category == Category::All {
+            cards.extend(scenes.files.iter().filter(scene_matches).map(|f| scenes.card(f)));
+        }
         let mut hits: Vec<&AssetEntry> = database
             .iter()
             .filter(|e| category.contains(&e.meta.kind))
@@ -302,6 +386,17 @@ pub fn cards(
             cards.extend(asset_card(entry, detail, expanded));
         }
         return cards;
+    }
+    // The scenes' folder, beside the assets, shown at their root.
+    if category == Category::All && folder == database.root() && scenes.dir.is_dir() {
+        cards.push(Card {
+            label: scenes.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            detail: count_of(scenes.files.len(), "scene"),
+            kind: CardKind::Folder(scenes.dir.clone()),
+            icon: icons::FOLDER_OPEN,
+            parts: 0,
+            expanded: false,
+        });
     }
     for path in subfolders(database, category, folder) {
         let inside = database
@@ -330,8 +425,18 @@ pub fn cards(
 
 /// The folders from the asset root down to `folder`, for the path bar:
 /// `(name, path)`, the root named "assets".
-pub fn crumbs(root: &Path, folder: &Path) -> Vec<(String, PathBuf)> {
+pub fn crumbs(root: &Path, folder: &Path, scenes: &Scenes) -> Vec<(String, PathBuf)> {
     let mut crumbs = vec![(tr!("asset_browser.root").to_string(), root.to_path_buf())];
+    // The scenes lie beside the assets: reached from their root.
+    if let Some(rest) = scenes.holds(folder).then(|| folder.strip_prefix(&scenes.dir).ok()).flatten() {
+        let mut path = scenes.dir.clone();
+        crumbs.push((scenes.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), path.clone()));
+        for part in rest.components() {
+            path.push(part.as_os_str());
+            crumbs.push((part.as_os_str().to_string_lossy().into_owned(), path.clone()));
+        }
+        return crumbs;
+    }
     if let Ok(rest) = folder.strip_prefix(root) {
         let mut path = root.to_path_buf();
         for part in rest.components() {
@@ -364,6 +469,7 @@ mod tests {
         root: PathBuf,
         database: AssetDatabase,
         pack: AssetId,
+        scenes: Scenes,
     }
 
     impl Drop for Fixture {
@@ -393,7 +499,13 @@ mod tests {
         database
             .register(meta("Stone", "Stone.material.ron", AssetKind::Material(MaterialAssetSettings {})), &root)
             .unwrap();
-        Fixture { root, database, pack }
+        let scenes_dir = project.join("scenes");
+        std::fs::create_dir_all(scenes_dir.join("levels")).unwrap();
+        for file in ["menu.ron", "levels/cave.ron", "notes.txt"] {
+            std::fs::write(scenes_dir.join(file), "()").unwrap();
+        }
+        let scenes = Scenes::of(&database);
+        Fixture { root, database, pack, scenes }
     }
 
     fn labels(cards: &[Card]) -> Vec<(&str, &str)> {
@@ -403,10 +515,11 @@ mod tests {
     #[test]
     fn folders_come_first_and_all_shows_empty_ones_but_not_hidden_ones() {
         let f = fixture();
-        let cards = cards(&f.database, Category::All, &f.root, "", &HashSet::new());
+        let cards = cards(&f.database, Category::All, &f.root, "", &HashSet::new(), &f.scenes);
         assert_eq!(
             labels(&cards),
             vec![
+                ("scenes", "2 scenes"),
                 ("empty", "empty"),
                 ("materials", "1 asset"),
                 ("models", "2 assets"),
@@ -419,19 +532,19 @@ mod tests {
     #[test]
     fn a_category_shows_only_folders_holding_its_kind() {
         let f = fixture();
-        let cards = cards(&f.database, Category::Materials, &f.root, "", &HashSet::new());
+        let cards = cards(&f.database, Category::Materials, &f.root, "", &HashSet::new(), &f.scenes);
         assert_eq!(labels(&cards), vec![("materials", "1 asset"), ("Stone", "Material")]);
-        assert_eq!(counts(&f.database), vec![5, 2, 1, 2, 0, 0, 0]);
+        assert_eq!(counts(&f.database, &f.scenes), vec![5, 2, 1, 2, 0, 0, 0, 2]);
     }
 
     #[test]
     fn packs_unfold_into_their_variants() {
         let f = fixture();
         let trees = f.root.join("models").join("trees");
-        let folded = cards(&f.database, Category::Models, &trees, "", &HashSet::new());
+        let folded = cards(&f.database, Category::Models, &trees, "", &HashSet::new(), &f.scenes);
         assert_eq!(labels(&folded), vec![("birch", "Model"), ("Tree pack", "2 variants")]);
         assert_eq!(folded[1].parts, 2);
-        let open = cards(&f.database, Category::Models, &trees, "", &HashSet::from([f.pack]));
+        let open = cards(&f.database, Category::Models, &trees, "", &HashSet::from([f.pack]), &f.scenes);
         assert_eq!(
             labels(&open),
             vec![
@@ -447,22 +560,42 @@ mod tests {
     #[test]
     fn a_search_lists_matches_of_the_category_from_everywhere() {
         let f = fixture();
-        let all = cards(&f.database, Category::All, &f.root.join("empty"), "BARK", &HashSet::new());
+        let all = cards(&f.database, Category::All, &f.root.join("empty"), "BARK", &HashSet::new(), &f.scenes);
         // Two assets named "Bark": their order follows their (random) ids.
         let mut found = labels(&all);
         found.sort();
         assert_eq!(found, vec![("Bark", "materials"), ("Bark", "textures")]);
-        let materials = cards(&f.database, Category::Materials, &f.root, "bark", &HashSet::new());
+        let materials = cards(&f.database, Category::Materials, &f.root, "bark", &HashSet::new(), &f.scenes);
         assert_eq!(labels(&materials), vec![("Bark", "materials")]);
         // The file name counts too.
-        let by_file = cards(&f.database, Category::All, &f.root, "pack.fbx", &HashSet::new());
+        let by_file = cards(&f.database, Category::All, &f.root, "pack.fbx", &HashSet::new(), &f.scenes);
         assert_eq!(by_file.len(), 1);
+    }
+
+    #[test]
+    fn scenes_show_in_their_category_their_folder_and_searches() {
+        let f = fixture();
+        assert_eq!(f.scenes.files.len(), 2);
+        let all = cards(&f.database, Category::Scenes, &f.root, "", &HashSet::new(), &f.scenes);
+        assert_eq!(labels(&all), vec![("cave", "levels"), ("menu", "Scene")]);
+        assert!(matches!(&all[1].kind, CardKind::Scene(p) if p.ends_with("scenes/menu.ron")));
+        // At the asset root, the scenes' folder comes first.
+        let root = cards(&f.database, Category::All, &f.root, "", &HashSet::new(), &f.scenes);
+        assert_eq!(labels(&root)[0], ("scenes", "2 scenes"));
+        // In it, its own scenes (and its subfolder's by searching).
+        let inside = cards(&f.database, Category::All, &f.scenes.dir, "", &HashSet::new(), &f.scenes);
+        assert_eq!(labels(&inside), vec![("menu", "Scene")]);
+        let found = cards(&f.database, Category::All, &f.root, "cav", &HashSet::new(), &f.scenes);
+        assert_eq!(labels(&found), vec![("cave", "levels")]);
+        let crumbs = crumbs(&f.root, &f.scenes.dir.join("levels"), &f.scenes);
+        let names: Vec<&str> = crumbs.iter().map(|c| c.0.as_str()).collect();
+        assert_eq!(names, vec!["assets", "scenes", "levels"]);
     }
 
     #[test]
     fn crumbs_lead_from_the_root() {
         let root = PathBuf::from("assets");
-        let crumbs = crumbs(&root, &root.join("models").join("trees"));
+        let crumbs = crumbs(&root, &root.join("models").join("trees"), &Scenes::default());
         let names: Vec<&str> = crumbs.iter().map(|c| c.0.as_str()).collect();
         assert_eq!(names, vec!["assets", "models", "trees"]);
         assert_eq!(crumbs[2].1, PathBuf::from("assets/models/trees"));
