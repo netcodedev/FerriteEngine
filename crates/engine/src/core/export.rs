@@ -9,7 +9,8 @@
 //!     <name>[.exe]              the player
 //!     <name>-server[.exe]       the dedicated server (no window or GPU)
 //!     <name>.fp                 the project file, without editor settings
-//!     assets/ animations/ scenes/
+//!     assets.pack               models and images, cooked (docs/asset-pack.md)
+//!     assets/ animations/ scenes/   the other files, loose
 //!     saves/                    what the game saved; kept by a new export
 //! ```
 //!
@@ -138,13 +139,7 @@ fn copy_game(
         &target.join(platform.exe(&format!("{name}-server"))),
     )?;
 
-    progress("Copying assets and scenes...");
-    for folder in GAME_FOLDERS {
-        let from = project.dir().join(folder);
-        if from.is_dir() {
-            copy_dir(&from, &target.join(folder))?;
-        }
-    }
+    copy_folders(project, target, progress)?;
     let mut file = project.file.clone();
     file.editor = Value::Unit;
     let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default())
@@ -268,12 +263,62 @@ fn build(project: &Project, platform: Platform) -> Result<(), String> {
     Err(first_error(&stderr, Some(project.scripts().sources())))
 }
 
+/// The project's folders: models and images cooked into the asset pack,
+/// the rest copied loose. Without the `cook` feature, all of it loose.
+#[cfg(feature = "cook")]
+fn copy_folders(project: &Project, target: &Path, progress: &dyn Fn(&str)) -> Result<(), String> {
+    progress("Cooking assets...");
+    let last = std::sync::Mutex::new(std::time::Instant::now());
+    let report = |what: &str, done: usize, of: usize| {
+        // A line now and then: the export dialog shows the last one.
+        let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
+        if done == of || last.elapsed().as_millis() > 250 {
+            *last = std::time::Instant::now();
+            log::info!("cooking {done}/{of}: {what}");
+        }
+    };
+    let pack = target.join(super::assets::pack::FILE_NAME);
+    let cooked = super::assets::cook::cook_project(project.dir(), &GAME_FOLDERS, &pack, &report)?;
+    for (path, why) in &cooked.failed {
+        log::warn!("export: {path} not cooked ({why}); copied as it is");
+    }
+    log::info!(
+        "export: {} files in the pack ({} cooked anew, {:.1} MB), {} loose",
+        cooked.packed.len(),
+        cooked.cooked,
+        cooked.pack_size as f64 / 1e6,
+        cooked.loose.len()
+    );
+    progress("Copying the other files...");
+    for relative in &cooked.loose {
+        let to = target.join(relative);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        copy_file(&project.dir().join(relative), &to)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "cook"))]
+fn copy_folders(project: &Project, target: &Path, progress: &dyn Fn(&str)) -> Result<(), String> {
+    progress("Copying assets and scenes...");
+    for folder in GAME_FOLDERS {
+        let from = project.dir().join(folder);
+        if from.is_dir() {
+            copy_dir(&from, &target.join(folder))?;
+        }
+    }
+    Ok(())
+}
+
 fn copy_file(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::copy(from, to)
         .map(|_| ())
         .map_err(|e| format!("could not copy {}: {e}", from.display()))
 }
 
+#[cfg_attr(feature = "cook", allow(dead_code))]
 fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
     let entries = std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))?;
@@ -293,6 +338,23 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Export the project in FERRITE_EXPORT_PROJECT into FERRITE_EXPORT_OUT
+    /// for Linux (a release build: minutes). For trying exports by hand.
+    #[test]
+    #[ignore]
+    fn export_a_project_by_hand() {
+        let (Ok(project), Ok(out)) = (std::env::var("FERRITE_EXPORT_PROJECT"), std::env::var("FERRITE_EXPORT_OUT")) else {
+            eprintln!("set FERRITE_EXPORT_PROJECT and FERRITE_EXPORT_OUT");
+            return;
+        };
+        let _ = env_logger::builder().is_test(true).filter_level(log::LevelFilter::Info).try_init();
+        let path = Project::find_in(Path::new(&project)).expect("a project file");
+        let project = Project::load(&path).expect("the project");
+        project.enter().expect("into the project");
+        let folder = export(&project, Path::new(&out), Platform::Linux, &|step| eprintln!("{step}")).unwrap();
+        eprintln!("exported to {}", folder.display());
+    }
 
     #[test]
     fn names_become_file_names() {

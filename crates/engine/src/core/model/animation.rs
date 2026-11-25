@@ -1,7 +1,7 @@
 use std::{collections::HashMap, f32::consts::PI, path::Path, rc::Rc};
 
 use cgmath::{Quaternion, Rad, Rotation, Rotation3, Vector3};
-use russimp_ng::{node::Node, scene::Scene};
+use russimp_ng::node::Node;
 
 use super::{outline, Animation, Channel, Pose};
 
@@ -70,7 +70,7 @@ impl Animation {
         if super::clip_file::is_clip_file(source) {
             return Ok(super::clip_file::ClipFile::load(source)?.to_animation(name));
         }
-        let scene = Scene::from_file(&source.to_string_lossy(), vec![])?;
+        let scene = crate::core::assets::vfs::read_scene(source, vec![])?;
         if scene.animations.is_empty() {
             return Err("No animations found".into());
         }

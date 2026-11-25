@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::core::assets::MaterialMap;
 
-const IMAGE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "tga", "bmp", "tif", "tiff"];
+pub(crate) const IMAGE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "tga", "bmp", "tif", "tiff"];
 
 /// What a texture file holds, judged by its name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -129,12 +129,9 @@ pub fn find_maps(files: &[PathBuf], prefixes: &[String]) -> Vec<(MapKind, PathBu
 /// Every image file in `dir` whose name starts with one of `prefixes`
 /// (case-insensitive), sorted.
 pub fn images_with_prefix(dir: &Path, prefixes: &[String]) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut found: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
+    // Loose files and those in an asset pack.
+    let mut found: Vec<PathBuf> = crate::core::assets::vfs::files_in(dir)
+        .into_iter()
         .filter(|path| {
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 return false;
@@ -144,7 +141,7 @@ pub fn images_with_prefix(dir: &Path, prefixes: &[String]) -> Vec<PathBuf> {
                 .extension()
                 .and_then(|e| e.to_str())
                 .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e));
-            path.is_file() && is_image && prefixes.iter().any(|p| lower.starts_with(p.as_str()))
+            is_image && prefixes.iter().any(|p| lower.starts_with(p.as_str()))
         })
         .collect();
     found.sort();

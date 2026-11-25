@@ -4,7 +4,12 @@
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+#[cfg(feature = "cook")]
+pub mod cook;
+pub mod cooked_scene;
 pub mod create;
+pub mod pack;
+pub mod vfs;
 pub(crate) mod database;
 mod id;
 mod import;

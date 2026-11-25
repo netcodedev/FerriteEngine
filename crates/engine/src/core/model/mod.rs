@@ -32,6 +32,24 @@ pub mod background;
 mod prepared;
 pub use prepared::PreparedModel;
 
+/// Assimp's post-processing for models: what `read_scene` asks for, and
+/// what an asset pack's cooked scenes were read with.
+pub fn model_post_process() -> Vec<russimp_ng::scene::PostProcess> {
+    use russimp_ng::scene::PostProcess;
+    vec![
+        PostProcess::Triangulate,
+        // PostProcess::JoinIdenticalVertices,
+        PostProcess::GenerateSmoothNormals,
+        PostProcess::FlipUVs,
+    ]
+}
+
+/// The model file at `path` (relative to the working folder) as the model
+/// loader reads it: from the asset pack when it has it, else with Assimp.
+pub fn read_scene(path: &str) -> Result<Scene, String> {
+    crate::core::assets::vfs::read_scene(std::path::Path::new(path), model_post_process())
+}
+
 pub struct Model {
     model: Scene,
     /// By name, in file order. Names need not be unique (a glTF mesh with

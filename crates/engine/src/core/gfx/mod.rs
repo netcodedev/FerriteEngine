@@ -568,8 +568,7 @@ impl Texture {
     }
 
     pub fn write(&self, mip: u32, region: Rect, layer: u32, layers: u32, format: UploadFormat, data: &[u8]) {
-        let texels = region.width as usize * region.height as usize * layers as usize;
-        if data.len() < texels * format.texel_size() {
+        if data.len() < format.data_size(region.width, region.height, layers) {
             log::error!(
                 "texture upload of {} bytes is short of {}×{}×{} texels",
                 data.len(),

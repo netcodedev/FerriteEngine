@@ -316,7 +316,7 @@ pub fn default_variant_name(path: &Path) -> String {
 
 /// Read a model file's outline. Needs no GL context.
 pub fn inspect(path: &Path) -> Result<ModelOutline, String> {
-    let scene = Scene::from_file(&path.to_string_lossy(), vec![]).map_err(|e| e.to_string())?;
+    let scene = crate::core::assets::vfs::read_scene(path, vec![])?;
     let groups = match &scene.root {
         Some(root) => group_nodes(root, &default_variant_name(path)),
         None => Vec::new(),

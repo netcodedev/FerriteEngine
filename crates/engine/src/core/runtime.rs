@@ -83,6 +83,13 @@ fn open_project(given: Option<PathBuf>) -> Result<Project, String> {
     };
     let project = Project::load(&path)?;
     project.enter()?;
+    // An exported game's models and images (docs/asset-pack.md).
+    let pack = project.dir().join(assets::pack::FILE_NAME);
+    if pack.is_file() {
+        if let Err(e) = assets::pack::open(&pack) {
+            log::warn!("{e}; reading loose files");
+        }
+    }
     // Files put into the asset folder by hand become assets, as in the
     // editor.
     let (_, problems) = assets::database().register_new_files();

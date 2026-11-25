@@ -69,6 +69,18 @@ impl PreparedModel {
         self
     }
 
+    /// Bytes of the maps it decoded, as they go to the GPU (tests).
+    #[cfg(test)]
+    pub(crate) fn decoded_bytes(&self) -> usize {
+        use crate::core::renderer::texture::decode::Image;
+        let size = |d: &crate::core::renderer::texture::decode::Decoded| match d {
+            Ok(Image::Rgba(image)) => image.as_raw().len(),
+            Ok(Image::Bc7(image)) => image.mips.iter().map(Vec::len).sum(),
+            Err(_) => 0,
+        };
+        self.maps.files.values().map(size).sum::<usize>() + self.maps.embedded.values().map(size).sum::<usize>()
+    }
+
     pub(super) fn into_parts(self) -> (Scene, String, String, DecodedMaps) {
         // Kept for the render thread to hand on (see `ModelBuilder`).
         if !self.material_textures.is_empty() {
@@ -116,7 +128,7 @@ pub(crate) fn decode_maps(scene: &Scene, name: &str, model_dir: &str, skip: &dyn
             let PropertyTypeInfo::String(raw_path) = &property.data else {
                 continue;
             };
-            let found = texture_candidates(raw_path, model_dir).into_iter().find(|c| Path::new(c).is_file());
+            let found = texture_candidates(raw_path, model_dir).into_iter().find(|c| crate::core::assets::vfs::is_file(Path::new(c)));
             if let Some(path) = found {
                 files.push(PathBuf::from(path));
                 slots.push(slot);

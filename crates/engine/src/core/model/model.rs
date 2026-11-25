@@ -6,7 +6,7 @@ use std::{
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 use russimp_ng::{
     material::{DataContent, PropertyTypeInfo, TextureType},
-    scene::{PostProcess, Scene},
+    scene::Scene,
 };
 
 use crate::core::{
@@ -76,15 +76,7 @@ impl Model {
     /// file holding one, and the folder its maps are looked for in. Needs
     /// no GPU (see `PreparedModel`).
     pub(super) fn read_file(full_path: &str) -> Result<(Scene, String, String), Box<dyn std::error::Error>> {
-        let scene = Scene::from_file(
-            full_path,
-            vec![
-                PostProcess::Triangulate,
-                // PostProcess::JoinIdenticalVertices,
-                PostProcess::GenerateSmoothNormals,
-                PostProcess::FlipUVs,
-            ],
-        )?;
+        let scene = super::read_scene(full_path)?;
         let model_dir = std::path::Path::new(full_path)
             .parent()
             .and_then(|p| p.to_str())
@@ -364,7 +356,7 @@ impl Model {
                 return Some(owners[index].clone());
             }
             let path = std::path::Path::new(&key.0);
-            if !path.is_file() {
+            if !crate::core::assets::vfs::is_file(path) {
                 return None;
             }
             // Shared with the other models using this file (see `shared_map`).
