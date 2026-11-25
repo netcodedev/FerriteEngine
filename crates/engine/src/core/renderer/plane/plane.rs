@@ -15,6 +15,8 @@ lazy_static! {
 /// Planes the stream buffer holds before it is orphaned and refilled.
 const STREAM_PLANES: usize = 4096;
 const QUAD: [u32; 6] = [0, 1, 2, 2, 3, 0];
+/// Texture unit of the blurred backdrop.
+const BACKDROP_UNIT: u32 = 0;
 
 impl PlaneRenderer {
     fn new(width: f32, height: f32) -> Self {
@@ -26,6 +28,7 @@ impl PlaneRenderer {
             buffers: None,
             written: 0,
             scratch: Vec::new(),
+            backdrop_bound: false,
         }
     }
 
@@ -43,16 +46,65 @@ impl PlaneRenderer {
         let renderer = &mut *renderer;
         let mut vertices = std::mem::take(&mut renderer.scratch);
         vertices.clear();
+        // Runs of planes with and without blur, in their order.
+        let mut runs: Vec<(bool, usize)> = Vec::new();
         for plane in planes {
             vertices.extend_from_slice(&plane.get_vertices());
+            match runs.last_mut() {
+                Some((blur, count)) if *blur == plane.blur => *count += 1,
+                _ => runs.push((plane.blur, 1)),
+            }
         }
         if !vertices.is_empty() {
             renderer.bind();
-            for chunk in vertices.chunks(STREAM_PLANES * 4) {
-                renderer.draw(chunk);
+            let mut at = 0;
+            for (blur, count) in runs {
+                renderer.set_backdrop(blur);
+                let run = &vertices[at * 4..(at + count) * 4];
+                for chunk in run.chunks(STREAM_PLANES * 4) {
+                    renderer.draw(chunk);
+                }
+                at += count;
             }
+            renderer.set_backdrop(false);
         }
         renderer.scratch = vertices;
+    }
+
+    /// Blurred planes from now on (`blur`), or plain ones.
+    fn set_backdrop(&mut self, blur: bool) {
+        use crate::core::renderer::hdr;
+        if blur {
+            hdr::want_backdrop();
+        }
+        let backdrop = if blur { hdr::backdrop() } else { None };
+        match backdrop {
+            Some(backdrop) => {
+                gfx::bind_raw_texture(
+                    BACKDROP_UNIT,
+                    backdrop.texture as gfx::RawId,
+                    gfx::TextureKind::D2,
+                    &gfx::SamplerDesc::LINEAR_CLAMP,
+                );
+                self.shader.set_uniform_1i("backdrop", BACKDROP_UNIT as i32);
+                self.shader.set_uniform_4f(
+                    "backdropRect",
+                    backdrop.origin.0 as f32,
+                    backdrop.origin.1 as f32,
+                    backdrop.size.0.max(1) as f32,
+                    backdrop.size.1.max(1) as f32,
+                );
+                self.shader.set_uniform_1i("useBackdrop", 1);
+                self.backdrop_bound = true;
+            }
+            None => {
+                self.shader.set_uniform_1i("useBackdrop", 0);
+                if self.backdrop_bound {
+                    gfx::unbind_texture(BACKDROP_UNIT, gfx::TextureKind::D2);
+                    self.backdrop_bound = false;
+                }
+            }
+        }
     }
 
     fn bind(&mut self) {
@@ -138,7 +190,14 @@ impl PlaneBuilder {
             // left a dark outline around borderless planes.
             border_color: (0.0, 0.0, 0.0, 0.0),
             border_radius: (0.0, 0.0, 0.0, 0.0),
+            blur: false,
         }
+    }
+    /// Show the view behind it blurred, tinted by its colour (see
+    /// `Plane::blur`).
+    pub fn blur(mut self, blur: bool) -> Self {
+        self.blur = blur;
+        self
     }
     pub fn position(mut self, position: Position) -> Self {
         self.position = position;
@@ -174,14 +233,16 @@ impl PlaneBuilder {
         self
     }
     pub fn build(self) -> Plane {
-        Plane::new(
+        let mut plane = Plane::new(
             self.position,
             self.size,
             self.color,
             self.border_thickness,
             self.border_color,
             self.border_radius,
-        )
+        );
+        plane.blur = self.blur;
+        plane
     }
 }
 
@@ -200,6 +261,7 @@ impl Plane {
             border_thickness,
             border_color,
             border_radius,
+            blur: false,
         }
     }
 
@@ -220,7 +282,11 @@ impl Plane {
 
     fn is_visible(&self) -> bool {
         let border_visible = self.border_thickness > 0.0 && self.border_color.3 > 0.0;
-        self.color.3 > 0.0 || border_visible
+        self.blur || self.color.3 > 0.0 || border_visible
+    }
+
+    pub fn set_blur(&mut self, blur: bool) {
+        self.blur = blur;
     }
 
     pub fn get_region(&self) -> &Region {

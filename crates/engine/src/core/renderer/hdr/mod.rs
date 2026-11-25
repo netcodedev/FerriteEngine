@@ -93,6 +93,44 @@ fn drawing_into() -> Option<TargetRef> {
 /// scene, while a transparent pass draws over it (see `capture_opaque`),
 /// 0 otherwise.
 static OPAQUE_COLOR: AtomicU32 = AtomicU32::new(0);
+
+/// When blurred UI panels last asked for the backdrop (ms since the
+/// process started; 0: never).
+static BACKDROP_WANTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The blurred picture of the view drawn last, for UI panels.
+static BACKDROP: std::sync::Mutex<Option<Backdrop>> = std::sync::Mutex::new(None);
+
+/// A blurred copy of the camera's view as it is on screen: what UI panels
+/// with `Plane::blur` show through them. `gl_FragCoord.xy - origin` over
+/// `size` is the place in it.
+#[derive(Clone, Copy, Debug)]
+pub struct Backdrop {
+    /// Raw id of the texture (display colour, RGBA8).
+    pub texture: u32,
+    pub origin: (i32, i32),
+    pub size: (u32, u32),
+}
+
+fn process_millis() -> u64 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
+}
+
+/// A blurred panel is being drawn: keep the backdrop coming. Asked every
+/// frame it is drawn; the backdrop stops a moment after it is not.
+pub fn want_backdrop() {
+    BACKDROP_WANTED.store(process_millis(), Ordering::Relaxed);
+}
+
+/// The backdrop of the view drawn last, if a panel asked for it lately.
+pub fn backdrop() -> Option<Backdrop> {
+    *BACKDROP.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn backdrop_wanted() -> bool {
+    let at = BACKDROP_WANTED.load(Ordering::Relaxed);
+    at != 0 && process_millis().saturating_sub(at) < 500
+}
 static OPAQUE_DEPTH: AtomicU32 = AtomicU32::new(0);
 
 /// A copy of the camera's view as it was before the transparent pass:
@@ -403,6 +441,11 @@ pub struct Hdr {
     destination: Option<Destination>,
     /// Temporal anti-aliasing's state, while it is on.
     taa: Option<Taa>,
+    backdrop_shader: Shader,
+    blur_shader: Shader,
+    /// Quarter size ping-pong targets of the backdrop, for the view size
+    /// they were made for.
+    backdrop: Option<((i32, i32), [Target; 2])>,
 }
 
 /// The state the post passes draw with: the fullscreen strip, no depth,
@@ -427,6 +470,14 @@ impl Hdr {
         let upsample_shader = Shader::new(vertex, include_str!("upsample.glsl"));
         let luminance_shader = Shader::new(vertex, include_str!("luminance.glsl"));
         let adapt_shader = Shader::new(vertex, include_str!("adapt.glsl"));
+        let backdrop_shader = Shader::new(
+            vertex,
+            &format!(
+                "#version 330 core\n{TONEMAP_GLSL}\n{EXPOSURE_GLSL}\n{}",
+                include_str!("backdrop.glsl")
+            ),
+        );
+        let blur_shader = Shader::new(vertex, include_str!("blur.glsl"));
         let composite_shader = Shader::new(
             vertex,
             &format!(
@@ -456,6 +507,9 @@ impl Hdr {
             luminance_shader,
             adapt_shader,
             composite_shader,
+            backdrop_shader,
+            blur_shader,
+            backdrop: None,
             quad,
             view: None,
             luminance,
@@ -589,6 +643,17 @@ impl Hdr {
 
         view.resolve();
 
+        let wants_backdrop = backdrop_wanted();
+        if wants_backdrop {
+            let size = ((view.width / 4).max(1), (view.height / 4).max(1));
+            if self.backdrop.as_ref().is_none_or(|(made, _)| *made != size) {
+                let make = || Target::new(size.0, size.1, Format::Rgba8, false, SamplerDesc::LINEAR_CLAMP);
+                self.backdrop = Some((size, [make(), make()]));
+            }
+        } else if self.backdrop.take().is_some() {
+            *BACKDROP.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+
         // With TAA, this frame blended into the ones before is what the
         // rest works with.
         let quad = &self.quad;
@@ -623,9 +688,13 @@ impl Hdr {
             self.render_bloom(view, color, settings, &bind_exposure);
         }
 
+        let viewport = destination.viewport;
+        if wants_backdrop {
+            self.render_backdrop(view, color, settings, &bind_exposure, viewport);
+        }
+
         // Back in the pass the view was begun in, at its viewport. The
         // depth goes along, whatever is in the target already.
-        let viewport = destination.viewport;
         gfx::set_viewport(viewport);
         let desc = gfx::PipelineDesc {
             depth: gfx::DepthState::LESS.func(gfx::CompareFunc::Always),
@@ -702,6 +771,52 @@ impl Hdr {
 
     /// Downsample the bright parts of the scene through the bloom chain and
     /// add them back up again; the result ends up in the first level.
+    /// The view blurred at a quarter of its size, for UI panels (see
+    /// `want_backdrop`).
+    fn render_backdrop(
+        &self,
+        view: &ViewTargets,
+        color: &gfx::Texture,
+        settings: &HdrSettings,
+        bind_exposure: &dyn Fn(&Shader),
+        viewport: Rect,
+    ) {
+        let Some((size, targets)) = self.backdrop.as_ref() else {
+            return;
+        };
+        let size = *size;
+        let shader = &self.backdrop_shader;
+        targets[0].begin();
+        gfx::set_pipeline(shader.pipeline(&post_pipeline(None)));
+        gfx::bind_texture(SCENE_UNIT, color, &SamplerDesc::LINEAR_CLAMP);
+        shader.set_uniform_1i("source", SCENE_UNIT as i32);
+        shader.set_uniform_2f("sourceTexel", 1.0 / view.width.max(1) as f32, 1.0 / view.height.max(1) as f32);
+        shader.set_uniform_1i("tonemapper", settings.tonemapper.index());
+        bind_exposure(shader);
+        self.draw_quad();
+        gfx::end_pass();
+        // Twice across and down, the second time spread wider.
+        let shader = &self.blur_shader;
+        let texel = (1.0 / size.0 as f32, 1.0 / size.1 as f32);
+        for spread in [1.0f32, 2.0] {
+            for (from, to, direction) in [(0, 1, (texel.0 * spread, 0.0)), (1, 0, (0.0, texel.1 * spread))] {
+                targets[to].begin();
+                gfx::set_pipeline(shader.pipeline(&post_pipeline(None)));
+                targets[from].bind_to(SCENE_UNIT);
+                shader.set_uniform_1i("source", SCENE_UNIT as i32);
+                shader.set_uniform_2f("direction", direction.0, direction.1);
+                self.draw_quad();
+                gfx::end_pass();
+            }
+        }
+        gfx::unbind_texture(SCENE_UNIT, gfx::TextureKind::D2);
+        *BACKDROP.lock().unwrap_or_else(|e| e.into_inner()) = Some(Backdrop {
+            texture: targets[0].texture.raw() as u32,
+            origin: (viewport.x, viewport.y),
+            size: (viewport.width, viewport.height),
+        });
+    }
+
     fn render_bloom(
         &self,
         view: &ViewTargets,

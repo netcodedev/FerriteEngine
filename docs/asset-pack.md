@@ -1,6 +1,6 @@
 # Asset pack: plan
 
-Status: planned 2026-11-25.
+Status: built 2026-11-25 on `feat/asset-pack`; see "As built" at the end.
 
 ## Why
 
@@ -88,3 +88,28 @@ positioned reads from any thread.
   the same as with loose files (screenshots side by side), time from start
   to the menu and to the world before and after, video memory before and
   after (RAM map / diagnostics).
+
+## As built
+
+- `assets::cooked_scene` (write/read, every field of the Assimp scene,
+  shared embedded textures, parents of nodes), `assets::pack` (format,
+  reader with positioned reads, `PackWriter`), `assets::vfs` (`is_file`,
+  `files_in`, `read`, `read_scene`), `assets::cook` (feature `cook`:
+  parallel cooking, cache in `.ferrite-cache/cook/`, BC7 with Intel's
+  ISPC encoder, basic quality, triangle-filtered mips).
+- `gfx`: `Format::Bc7`/`Bc7Srgb`, `UploadFormat::Bc7` (GL
+  `glCompressedTextureSubImage*`, Vulkan `BC7_*_BLOCK`).
+- `decode::Image` (`Rgba` or `Bc7`), `Texture::load_image`; pixel work
+  (opacity, gloss, terrain, bridges, procedural trees) asks `into_rgba`.
+- The asset database finds packed sources by their pack key
+  (`find_by_source` canonicalised only files on disk: the demo's building
+  parts were "not an asset" in the first export).
+- Terrain textures stay loose (`cook::LOOSE_IMAGE_FOLDERS`).
+- An OBJ's `.mtl`, a glTF's `.bin` and `.blend` files are left out unless
+  their model could not be cooked.
+
+Measured (demo, 2026-11-25, 140 models with their maps, CPU side, release
+build, `cook::tests::loose_files_against_the_pack`): loose files 3.22 s and
+8.3 GB of pixels for the GPU (without mips); pack 0.53 s and 3.0 GB (with
+every mip). Export: 215 files cooked (~25 s the first time, then from the
+cache), pack 234 MB, 482 small files loose.

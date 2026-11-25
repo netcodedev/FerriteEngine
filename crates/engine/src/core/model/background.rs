@@ -28,10 +28,27 @@ static PENDING: AtomicUsize = AtomicUsize::new(0);
 /// e.g. a scatter graph changed meanwhile).
 const KEEP_UNTAKEN: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Model files asked for and read since `reset_progress` (for "37/98" on
+/// a loading screen).
+static ASKED: AtomicUsize = AtomicUsize::new(0);
+static READ: AtomicUsize = AtomicUsize::new(0);
+
 /// Model files being read now: a loading screen waits while this is above
 /// zero (what is read is taken and uploaded by its loader the next frame).
 pub fn pending() -> usize {
     PENDING.load(Ordering::Relaxed)
+}
+
+/// (read, asked for) since `reset_progress`.
+pub fn progress() -> (usize, usize) {
+    (READ.load(Ordering::Relaxed), ASKED.load(Ordering::Relaxed))
+}
+
+/// Count from zero (a loading screen begins): what is being read now
+/// counts as asked for.
+pub fn reset_progress() {
+    READ.store(0, Ordering::Relaxed);
+    ASKED.store(PENDING.load(Ordering::Relaxed), Ordering::Relaxed);
 }
 
 /// What `poll` says about a model.
@@ -95,6 +112,7 @@ pub fn poll(key: &str, path: &str, materials: &[AssetId]) -> Poll {
         while let Ok((key, result)) = state.done.try_recv() {
             if state.waiting.remove(&key) {
                 PENDING.fetch_sub(1, Ordering::Relaxed);
+                READ.fetch_add(1, Ordering::Relaxed);
                 state.ready.insert(key, (std::time::Instant::now(), result));
             }
         }
@@ -107,6 +125,7 @@ pub fn poll(key: &str, path: &str, materials: &[AssetId]) -> Poll {
         }
         if state.waiting.insert(key.to_string()) {
             PENDING.fetch_add(1, Ordering::Relaxed);
+            ASKED.fetch_add(1, Ordering::Relaxed);
             let job = Job { key: key.to_string(), path: path.to_string(), materials: materials.to_vec() };
             if state.jobs.send(job).is_err() {
                 state.waiting.remove(key);

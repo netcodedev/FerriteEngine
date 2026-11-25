@@ -21,6 +21,7 @@ pub mod materials;
 pub mod dual_contouring;
 pub mod mesher;
 pub mod noise;
+pub mod prepare;
 mod planting;
 pub mod scatter;
 pub mod shaders;
