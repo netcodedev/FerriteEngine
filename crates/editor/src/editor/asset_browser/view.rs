@@ -23,11 +23,12 @@ pub enum Category {
     Animations,
     ScatterGraphs,
     /// The project's scenes (`scenes/`, beside the assets).
+    Sounds,
     Scenes,
 }
 
 impl Category {
-    pub const ALL: [Category; 8] = [
+    pub const ALL: [Category; 9] = [
         Category::All,
         Category::Models,
         Category::Textures,
@@ -35,6 +36,7 @@ impl Category {
         Category::MaterialGraphs,
         Category::Animations,
         Category::ScatterGraphs,
+        Category::Sounds,
         Category::Scenes,
     ];
 
@@ -47,6 +49,7 @@ impl Category {
             Category::MaterialGraphs => tr!("asset_browser.category.material_graphs"),
             Category::Animations => tr!("asset_browser.category.animations"),
             Category::ScatterGraphs => tr!("asset_browser.category.scatter_graphs"),
+            Category::Sounds => tr!("asset_browser.category.sounds"),
             Category::Scenes => tr!("asset_browser.category.scenes"),
         }
     }
@@ -61,6 +64,7 @@ impl Category {
             Category::MaterialGraphs => "material_graphs",
             Category::Animations => "animations",
             Category::ScatterGraphs => "scatter_graphs",
+            Category::Sounds => "sounds",
             Category::Scenes => "scenes",
         }
     }
@@ -78,6 +82,7 @@ impl Category {
             Category::MaterialGraphs => icons::COMPONENT,
             Category::Animations => icons::ACTIVITY,
             Category::ScatterGraphs => icons::LIST_TREE,
+            Category::Sounds => icons::AUDIO_LINES,
             Category::Scenes => icons::MOUNTAIN,
         }
     }
@@ -91,6 +96,7 @@ impl Category {
             Category::MaterialGraphs => matches!(kind, AssetKind::MaterialGraph(_)),
             Category::Animations => matches!(kind, AssetKind::Animation(_)),
             Category::ScatterGraphs => matches!(kind, AssetKind::ScatterGraph(_)),
+            Category::Sounds => matches!(kind, AssetKind::Sound(_)),
             Category::Scenes => false,
         }
     }
@@ -224,6 +230,7 @@ pub fn kind_icon(kind: &AssetKind) -> &'static str {
         AssetKind::ScatterGraph(_) => icons::LIST_TREE,
         AssetKind::Material(_) => icons::SPARKLES,
         AssetKind::MaterialGraph(_) => icons::COMPONENT,
+        AssetKind::Sound(_) => icons::AUDIO_LINES,
     }
 }
 
@@ -267,6 +274,7 @@ pub fn kind_label(kind: &AssetKind) -> &'static str {
         AssetKind::ScatterGraph(_) => tr!("asset_browser.kind.scatter_graph"),
         AssetKind::Material(_) => tr!("asset_browser.kind.material"),
         AssetKind::MaterialGraph(_) => tr!("asset_browser.kind.material_graph"),
+        AssetKind::Sound(_) => tr!("asset_browser.kind.sound"),
     }
 }
 

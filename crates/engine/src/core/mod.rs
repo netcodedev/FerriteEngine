@@ -1,5 +1,6 @@
 pub mod application;
 pub mod assets;
+pub mod audio;
 pub mod camera;
 pub mod diagnostics;
 pub mod entity;

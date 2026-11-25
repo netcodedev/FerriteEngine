@@ -5,6 +5,8 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
+mint = "0.5"
+kira = { version = "0.12", default-features = false, features = ["cpal", "wav", "pcm", "ogg", "vorbis", "flac", "mp3"] }
 as-any = "0.3.2"
 bincode = "1"
 cgmath = "0.18.0"

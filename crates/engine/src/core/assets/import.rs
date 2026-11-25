@@ -19,12 +19,16 @@ use crate::{
 
 use super::{
     AnimationSettings, AssetDatabase, AssetError, AssetId, AssetKind, AssetMeta, ClipInfo,
-    MaterialAssetSettings, MaterialGraphSettings, MaterialSettings, ModelSettings, ScatterGraphSettings, TextureSettings, VariantInfo, ASSET_META_VERSION,
+    MaterialAssetSettings, MaterialGraphSettings, MaterialSettings, ModelSettings, ScatterGraphSettings, SoundSettings, TextureSettings, VariantInfo, ASSET_META_VERSION,
     META_SUFFIX,
 };
 
 pub(crate) const MODEL_EXTENSIONS: [&str; 5] = ["gltf", "glb", "fbx", "obj", "dae"];
 const TEXTURE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "tga", "bmp", "tif", "tiff"];
+/// Sound files (played by `audio`), as they are.
+pub const SOUND_EXTENSIONS: [&str; 4] = ["ogg", "wav", "flac", "mp3"];
+/// Where sound files from outside the project are copied.
+const SOUND_FOLDER: &str = "sounds";
 
 /// Folders below the asset root that imported files are copied into.
 const MODEL_FOLDER: &str = "models";
@@ -45,6 +49,7 @@ enum FileKind {
     Material,
     /// A material graph (`*.matgraph.ron`).
     MaterialGraph,
+    Sound,
 }
 
 fn file_kind(path: &Path) -> Option<FileKind> {
@@ -65,6 +70,8 @@ fn file_kind(path: &Path) -> Option<FileKind> {
         Some(FileKind::Model)
     } else if TEXTURE_EXTENSIONS.contains(&extension.as_str()) {
         Some(FileKind::Texture)
+    } else if SOUND_EXTENSIONS.contains(&extension.as_str()) {
+        Some(FileKind::Sound)
     } else {
         None
     }
@@ -76,6 +83,7 @@ impl AssetDatabase {
         MODEL_EXTENSIONS
             .iter()
             .chain(TEXTURE_EXTENSIONS.iter())
+            .chain(SOUND_EXTENSIONS.iter())
             .copied()
             .collect()
     }
@@ -115,7 +123,26 @@ impl AssetDatabase {
             FileKind::Clip => self.import_clip(file),
             FileKind::ScatterGraph => self.import_scatter_graph(file),
             FileKind::Material | FileKind::MaterialGraph => self.import_material_file(file, kind),
+            FileKind::Sound => self.import_sound(file),
         }
+    }
+
+    /// Register a sound file where it is in the project, or copied into
+    /// `sounds/`.
+    fn import_sound(&mut self, file: &Path) -> Result<AssetId, AssetError> {
+        let source = match self.path_in_root(file) {
+            Some(inside) => inside,
+            None => copy_into(file, &self.root().join(SOUND_FOLDER), true)?,
+        };
+        let name = source.file_stem().and_then(|n| n.to_str()).unwrap_or("sound").to_string();
+        let meta = AssetMeta {
+            version: ASSET_META_VERSION,
+            id: AssetId::new(),
+            name,
+            source: file_name_of(&source),
+            kind: AssetKind::Sound(SoundSettings {}),
+        };
+        self.register(meta, source.parent().unwrap_or(Path::new(".")))
     }
 
     /// Register a material or material graph file (checked to be one).

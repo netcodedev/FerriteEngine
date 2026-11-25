@@ -319,6 +319,7 @@ fn status(scene: &Scene, state: &EditorState) -> serde_json::Value {
         "has_camera": has_camera,
         "performance": state.stats.to_json(),
         "debug_views": state.debug.to_json(),
+        "audio": serde_json::to_value(ferrite::core::audio::status()).unwrap_or_default(),
         "agent_control": agent_json(state),
         "recent_logs": recent_logs(),
     })

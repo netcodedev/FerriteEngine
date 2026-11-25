@@ -640,6 +640,13 @@ impl Scene {
             self.update_roots(|entity, scene| entity.late_update(scene, delta_time));
         }
         self.run_deferred();
+        // The listener where the camera is.
+        if let Some(camera) = self.get_component::<crate::core::entity::component::camera_component::CameraComponent>() {
+            let camera = camera.get_camera();
+            let (yaw, pitch) = (camera.get_yaw().0, camera.get_pitch().0);
+            let look = cgmath::Vector3::new(yaw.cos() * pitch.cos(), pitch.sin(), yaw.sin() * pitch.cos());
+            crate::core::audio::set_listener(camera.get_eye_position(), look);
+        }
     }
 
     pub fn render(&self, window: &Window) {

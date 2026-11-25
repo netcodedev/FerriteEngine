@@ -3,6 +3,7 @@
 //! glyph cache and cost the same as a character of text.
 
 pub const ACTIVITY: &str = "\u{e038}";
+pub const AUDIO_LINES: &str = "\u{e55a}";
 pub const ALERT: &str = "\u{e193}";
 pub const APP_WINDOW: &str = "\u{e426}";
 pub const BOX: &str = "\u{e061}";

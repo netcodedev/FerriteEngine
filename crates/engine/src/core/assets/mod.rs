@@ -21,7 +21,7 @@ pub use database::{remove_path, split_file_name, AssetDatabase, AssetEntry, Asse
 pub use create::NewAsset;
 pub use id::{AssetId, AssetRef};
 pub use meta::{
-    AnimationSettings, AssetKind, AssetMeta, ClipInfo, MaterialAssetSettings, MaterialGraphSettings, MaterialMap,
+    AnimationSettings, AssetKind, AssetMeta, ClipInfo, MaterialAssetSettings, MaterialGraphSettings, MaterialMap, SoundSettings,
     MaterialSettings, ModelSettings,
     ScatterGraphSettings, TextureSettings, VariantInfo, ASSET_META_VERSION, META_SUFFIX,
 };

@@ -776,7 +776,7 @@ impl AssetBrowser {
             AssetKind::Animation(_) => DragKind::Animation,
             AssetKind::Material(_) => DragKind::Material,
             // Nothing takes a graph by dragging yet.
-            AssetKind::ScatterGraph(_) | AssetKind::MaterialGraph(_) => return None,
+            AssetKind::ScatterGraph(_) | AssetKind::MaterialGraph(_) | AssetKind::Sound(_) => return None,
         };
         Some(AssetDrag { label: database.display_name(&asset)?, kind, asset, origin: (x, y), position: (x, y), active: false })
     }

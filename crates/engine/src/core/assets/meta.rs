@@ -33,6 +33,8 @@ pub enum AssetKind {
     Material(MaterialAssetSettings),
     /// A material graph (`*.matgraph.ron`, see `material::graph`).
     MaterialGraph(MaterialGraphSettings),
+    /// A sound file (.ogg, .wav, .flac, .mp3; see `audio`).
+    Sound(SoundSettings),
 }
 
 impl AssetKind {
@@ -45,6 +47,7 @@ impl AssetKind {
             AssetKind::ScatterGraph(_) => "Scatter graph",
             AssetKind::Material(_) => "Material",
             AssetKind::MaterialGraph(_) => "Material graph",
+            AssetKind::Sound(_) => "Sound",
         }
     }
 }
@@ -214,6 +217,10 @@ pub struct ScatterGraphSettings {}
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct MaterialAssetSettings {}
 
+/// A sound asset. The sound is the file, played as it is.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct SoundSettings {}
+
 /// A material graph asset. The graph itself is the file.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct MaterialGraphSettings {}
@@ -266,7 +273,8 @@ impl AssetMeta {
             AssetKind::Texture(_)
             | AssetKind::ScatterGraph(_)
             | AssetKind::Material(_)
-            | AssetKind::MaterialGraph(_) => &[],
+            | AssetKind::MaterialGraph(_)
+            | AssetKind::Sound(_) => &[],
         }
     }
 }

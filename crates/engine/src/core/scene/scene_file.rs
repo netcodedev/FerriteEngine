@@ -152,6 +152,11 @@ pub enum ComponentData {
         #[serde(default = "light_default::radius")]
         radius: f32,
     },
+    /// A sound playing where the entity is (see `audio`).
+    AudioSource {
+        #[serde(default)]
+        settings: crate::core::entity::component::audio_source_component::AudioSourceSettings,
+    },
     /// Particles (fire, smoke, dust, ...); every field of the effect may be
     /// left out (see `ParticleEffect`).
     Particles {
@@ -254,6 +259,7 @@ impl ComponentData {
             ComponentData::SkyLight { .. } => "Sky light",
             ComponentData::Light { .. } => "Light",
             ComponentData::Particles { .. } => "Particles",
+            ComponentData::AudioSource { .. } => "Audio source",
             ComponentData::Terrain { .. } => "Terrain",
             ComponentData::DebugController => "Debug controller",
             ComponentData::Player => "Player",
@@ -322,6 +328,7 @@ impl ComponentData {
             ("Terrain".into(), ComponentData::bare_terrain(2)),
             ("Debug controller".into(), ComponentData::DebugController),
             ("Shape".into(), ComponentData::default_shape()),
+            ("Audio source".into(), ComponentData::AudioSource { settings: Default::default() }),
         ])
         .collect()
     }
@@ -490,6 +497,9 @@ impl ComponentData {
             }
             ComponentData::Particles { effect } => {
                 entity.add_component(ParticleEmitter::new(*effect));
+            }
+            ComponentData::AudioSource { settings } => {
+                entity.add_component(crate::core::entity::component::audio_source_component::AudioSource::new(settings.clone()));
             }
             ComponentData::Terrain {
                 seed,

@@ -340,6 +340,11 @@ impl AssetPreview {
                 }
             }
             AssetKind::ScatterGraph(_) => Shown::Note(tr!("asset_editor.preview.note_scatter").into()),
+            AssetKind::Sound(_) => {
+                // Heard once on opening.
+                ferrite::core::audio::play(edit.source_path(), ferrite::core::audio::Play::default());
+                Shown::Note(tr!("asset_editor.preview.note_sound").into())
+            }
             AssetKind::Material(_) | AssetKind::MaterialGraph(_) => {
                 Shown::Note(tr!("asset_editor.preview.note_material").into())
             }
