@@ -219,7 +219,9 @@ fn newest_change(dir: &Path) -> Option<SystemTime> {
         // Not followed into linked folders: a link back up would never end.
         let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
         let time = if is_dir {
-            if path.file_name().is_some_and(|n| n == "target") {
+            // Not the build's output, nor hidden folders (tools keep their
+            // own files there, sometimes many).
+            if path.file_name().is_some_and(|n| n == "target" || n.to_string_lossy().starts_with('.')) {
                 continue;
             }
             newest_change(&path)
