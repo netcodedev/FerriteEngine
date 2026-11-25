@@ -24,6 +24,14 @@ use super::{
 /// in metres) each level but the last is drawn.
 const LOD_DISTANCES: [f32; LODS - 1] = [160.0, 320.0, 560.0];
 
+/// From how far (metres from the camera, horizontally) the ground is
+/// meshed at each coarser level, as the graphics settings have it now:
+/// 2, 4 and 8 metres apart (1 nearer).
+pub fn ground_steps_from() -> [f32; LODS - 1] {
+    let factor = crate::core::graphics::engine().terrain_lod_factor;
+    LOD_DISTANCES.map(|d| d * factor)
+}
+
 pub struct TerrainChunk {
     coord: ChunkCoord,
     /// The ground at each level of detail, finest first (see

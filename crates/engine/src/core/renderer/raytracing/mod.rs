@@ -972,6 +972,8 @@ impl RayTracedShadows {
         shader.set_uniform_3f("toLight", l.x, l.y, l.z);
         shader.set_uniform_1f("lightRadius", SUN_RADIUS);
         shader.set_uniform_1f("maxDistance", MAX_DISTANCE);
+        let [a, b, c] = crate::terrain::chunk::ground_steps_from();
+        shader.set_uniform_3f("groundStepsFrom", a, b, c);
         self.draw_quad();
         gfx::end_pass();
 

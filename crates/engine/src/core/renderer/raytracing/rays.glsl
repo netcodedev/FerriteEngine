@@ -152,7 +152,10 @@ bool solidAt(rayQueryEXT query, Cutout c, vec3 origin, vec3 direction) {
 // where their opacity texture is solid, or by `cutoutCoverage` without a
 // record. `blocker`: how far along the first thing in the way was (0 when
 // nothing was).
-float traceShadow(vec3 origin, vec3 direction, float tMax, out float blocker) {
+// `groundAt`: how far along the ground stopped it (-1 when something
+// else did, or nothing).
+float traceShadowHit(vec3 origin, vec3 direction, float tMax, out float blocker, out float groundAt) {
+    groundAt = -1.0;
     rayQueryEXT query;
     rayQueryInitializeEXT(query, scene, gl_RayFlagsTerminateOnFirstHitEXT, MASK_NEAR, origin, 0.01, direction, tMax);
     float light = 1.0;
@@ -182,6 +185,39 @@ float traceShadow(vec3 origin, vec3 direction, float tMax, out float blocker) {
         light = 0.0;
         float t = rayQueryGetIntersectionTEXT(query, true);
         blocker = blocker == 0.0 ? t : min(blocker, t);
+        uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, true));
+        if (record != NO_CUTOUT && cutouts[record].colorOffset != NONE) {
+            groundAt = t;
+        }
+    }
+    return light;
+}
+
+float traceShadow(vec3 origin, vec3 direction, float tMax, out float blocker) {
+    float groundAt;
+    return traceShadowHit(origin, direction, tMax, blocker, groundAt);
+}
+
+// As `traceShadow`, but the ground nearer than `groundSkip` along the ray
+// is passed by: drawn smooth (its normals blended), its facets would
+// shadow each other in sharp-edged patches where the sun is low over
+// rough ground (the "shadow terminator"). Things standing on it, and the
+// ground further off (a hill), still cast their shadows.
+float traceShadowPastGround(vec3 origin, vec3 direction, float tMax, float groundSkip, out float blocker) {
+    float travelled = 0.0;
+    float light = 1.0;
+    for (int i = 0; i < 3; i++) {
+        float groundAt;
+        float b;
+        light = traceShadowHit(origin, direction, tMax - travelled, b, groundAt);
+        blocker = b > 0.0 ? b + travelled : 0.0;
+        if (light > 0.0 || groundAt < 0.0 || travelled + groundAt >= groundSkip) {
+            return light;
+        }
+        // On past it.
+        float step = groundAt + 0.05;
+        origin += direction * step;
+        travelled += step;
     }
     return light;
 }

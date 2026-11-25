@@ -60,6 +60,15 @@ Each frame:
    normal from the triangle), moves the point back to where the swayed
    leaf would be met, and looks up the opacity at that point's UV in the
    leaf's plane. In the demo about 0.1 ms on an RTX 4070 Ti.
+   The ground does not shadow itself within 2.5 of its grid steps along
+   the ray (the step it is meshed at there: 1, 2, 4 or 8 m by distance,
+   `terrain::chunk::ground_steps_from`): a ray that meets it that close
+   goes on past it (`traceShadowPastGround`, at most three times). It is
+   drawn smooth, with blended normals, but its facets are flat; where the
+   sun is low over rough ground they shadowed each other in sharp-edged
+   patches (the "shadow terminator", found on the rocky hills far from
+   the origin). Things standing on the ground, and ground further off (a
+   hill, a ridge), still cast their shadows.
 4. **Denoise**: blended into the frames before, moved with the camera
    (`accumulate.glsl`, history dropped where it showed another surface,
    clamped to the neighbourhood), then a blur within a surface

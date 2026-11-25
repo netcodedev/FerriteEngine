@@ -17,6 +17,9 @@ uniform vec3 toLight;
 // Angular radius of the light's disc (radians).
 uniform float lightRadius;
 uniform float maxDistance;
+// From these distances (metres from the camera, horizontally) on, the
+// ground is meshed 2, 4 and 8 metres apart (1 nearer; `terrain::chunk`).
+uniform vec3 groundStepsFrom;
 
 void main() {
     ivec2 texel = ivec2(gl_FragCoord.xy);
@@ -41,7 +44,10 @@ void main() {
     float distanceToEye = length(position);
     vec3 origin = eye + position + normal * (0.02 + distanceToEye * 0.002);
 
+    // The ground does not shadow itself within a few of its facets.
+    float across = length(position.xz);
+    float step = across < groundStepsFrom.x ? 1.0 : across < groundStepsFrom.y ? 2.0 : across < groundStepsFrom.z ? 4.0 : 8.0;
     float blocker;
-    float light = traceShadow(origin, direction, maxDistance, blocker);
+    float light = traceShadowPastGround(origin, direction, maxDistance, 2.5 * step, blocker);
     FragColor = vec4(light, blocker, 0.0, 1.0);
 }
