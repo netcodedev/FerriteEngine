@@ -124,11 +124,21 @@ impl ScriptCrate {
     /// Compile the scripts. Returns the first compiler error.
     pub fn build(&self) -> Result<(), String> {
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let mut command = Command::new(cargo);
+        // Gently: the editor (and the desktop) stay responsive while it
+        // builds, also when the engine is built anew with the scripts (all
+        // cores and many gigabytes otherwise, and the system stalls).
+        let mut command = match nice() {
+            Some(nice) => {
+                let mut command = Command::new(nice);
+                command.args(["-n", "10"]).arg(cargo);
+                command
+            }
+            None => Command::new(cargo),
+        };
         clean_cargo_env(&mut command);
         command
             .current_dir(engine_workspace())
-            .args(["build", "-p", SCRIPTS_PACKAGE, "--message-format=short"])
+            .args(["build", "-p", SCRIPTS_PACKAGE, "--message-format=short", "-j", &build_jobs().to_string()])
             .env("FERRITE_SCRIPTS", &self.sources);
         if !cfg!(debug_assertions) {
             command.arg("--release");
@@ -142,6 +152,21 @@ impl ScriptCrate {
         let stderr = String::from_utf8_lossy(&output.stderr);
         Err(first_error(&stderr, Some(&self.sources)))
     }
+}
+
+/// How many jobs a scripts build runs at once: `FERRITE_SCRIPT_JOBS`, or
+/// half of the processor's threads (at least two).
+fn build_jobs() -> usize {
+    std::env::var("FERRITE_SCRIPT_JOBS")
+        .ok()
+        .and_then(|jobs| jobs.parse().ok())
+        .filter(|&jobs: &usize| jobs > 0)
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| (n.get() / 2).max(2)))
+}
+
+/// `nice`, to run the build at a lower priority, where there is one.
+fn nice() -> Option<&'static str> {
+    ["/usr/bin/nice", "/bin/nice"].into_iter().find(|path| cfg!(unix) && Path::new(path).exists())
 }
 
 /// The library's file name on this platform: `libferrite_scripts.so`,

@@ -1033,10 +1033,15 @@ impl Terrain {
     }
 
     /// Whether the camera at `eye` is under the ground (a tunnel, a cave).
+    /// Not asked of a source still preparing (planning its world, after
+    /// the scripts were loaded again, say): its ground may wait for that,
+    /// and this is asked while drawing (the editor stood still for seconds).
     fn under_ground(&self, eye: Point3<f32>) -> bool {
-        self.source
-            .as_ref()
-            .is_some_and(|source| eye.y < source.surface_height(eye.x as f64, eye.z as f64) - 0.5)
+        !self.preparing
+            && self
+                .source
+                .as_ref()
+                .is_some_and(|source| eye.y < source.surface_height(eye.x as f64, eye.z as f64) - 0.5)
     }
 }
 
