@@ -278,6 +278,13 @@ impl Scene {
         self.physics_enabled = enabled;
     }
 
+    /// Whether the scene runs (a game, the editor's play mode) rather than
+    /// being edited: scripts' `render` is called in both, `update` only
+    /// while it runs.
+    pub fn is_running(&self) -> bool {
+        self.physics_enabled
+    }
+
     pub fn set_viewport(&mut self, viewport: Option<[i32; 4]>) {
         self.viewport = viewport;
     }
