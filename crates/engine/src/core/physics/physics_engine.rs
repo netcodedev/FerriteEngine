@@ -201,13 +201,14 @@ impl PhysicsEngine {
 
         self.prepare_queries();
         let colliders = &self.colliders;
+        let bodies = &self.rigid_bodies;
         let mut best: Option<RayHit> = None;
         self.index.on_ray(ray, max_distance, |handle| {
             let limit = best.as_ref().map_or(max_distance, |hit| hit.distance);
             let Some(collider) = colliders.get(handle) else {
                 return limit;
             };
-            if collider.is_sensor() || !keep(handle, collider) {
+            if !solid(collider, bodies) || !keep(handle, collider) {
                 return limit;
             }
             if collider.compute_aabb().cast_local_ray(ray, limit, true).is_none() {
@@ -314,10 +315,11 @@ impl PhysicsEngine {
             compute_impact_geometry_on_penetration: false,
         };
         let colliders = &self.colliders;
+        let bodies = &self.rigid_bodies;
         let mut best: Option<(ColliderHandle, f32)> = None;
         for handle in self.index.in_box(&swept) {
             let Some(collider) = colliders.get(handle) else { continue };
-            if collider.is_sensor() || !collider.compute_aabb().intersects(&swept) || !keep(handle, collider) {
+            if !solid(collider, bodies) || !collider.compute_aabb().intersects(&swept) || !keep(handle, collider) {
                 continue;
             }
             let hit = cast_shapes(pose, direction, shape, collider.position(), Vector::ZERO, collider.shape(), options);
@@ -341,12 +343,13 @@ impl PhysicsEngine {
         self.prepare_queries();
         let aabb = shape.compute_aabb(pose);
         let colliders = &self.colliders;
+        let bodies = &self.rigid_bodies;
         self.index
             .in_box(&aabb)
             .into_iter()
             .filter_map(|handle| colliders.get(handle).map(|collider| (handle, collider)))
             .filter(|(handle, collider)| {
-                !collider.is_sensor()
+                solid(collider, bodies)
                     && collider.compute_aabb().intersects(&aabb)
                     && keep(*handle, collider)
                     && rapier3d::parry::query::intersection_test(
@@ -409,6 +412,16 @@ impl PhysicsEngine {
             self.colliders.insert(collider)
         }
     }
+}
+
+/// Whether the queries (rays, shapes) find `collider`: not a sensor, and
+/// neither it nor its body switched off (rapier marks a switched-off
+/// body's colliders only in its next step; a query before that would
+/// still hit them).
+fn solid(collider: &Collider, bodies: &RigidBodySet) -> bool {
+    !collider.is_sensor()
+        && collider.is_enabled()
+        && collider.parent().is_none_or(|body| bodies.get(body).is_none_or(|rb| rb.is_enabled()))
 }
 
 #[cfg(test)]
@@ -628,5 +641,25 @@ mod tests {
         let (_, got) = physics.cast_shape(&cube, &inside, Vector::new(1.0, 0.0, 0.0), 5.0, |_, _| true).unwrap();
         assert_eq!(got, 0.0);
         assert!(physics.cast_shape(&cube, &from, Vector::new(1.0, 0.0, 0.0), 5.0, |_, c| c.parent() != Some(wall)).is_none());
+    }
+
+    /// What is switched off is not found: not by rays, nor by shapes.
+    #[test]
+    fn queries_go_through_switched_off_bodies() {
+        let mut physics = PhysicsEngine::new();
+        let body = physics.add_rigid_body(RigidBodyBuilder::kinematic_position_based().translation(Vector::new(0.0, 0.0, 5.0)).build());
+        physics.add_collider(ColliderBuilder::cuboid(1.0, 1.0, 1.0).build(), Some(body));
+        fn physics_ray(physics: &mut PhysicsEngine) -> bool {
+            physics.cast_ray([0.0, 0.0, 0.0], [0.0, 0.0, 1.0], 10.0, &[]).is_some()
+        }
+        assert!(physics_ray(&mut physics));
+        physics.rigid_bodies[body].set_enabled(false);
+        // At once, before any step.
+        assert!(!physics_ray(&mut physics));
+        let cube = rapier3d::parry::shape::Cuboid::new(Vector::new(0.2, 0.2, 0.2));
+        let at = Pose::from_translation(Vector::new(0.0, 0.0, 5.0));
+        assert!(physics.intersecting(&cube, &at, |_, _| true).is_empty());
+        physics.rigid_bodies[body].set_enabled(true);
+        assert!(physics_ray(&mut physics));
     }
 }
