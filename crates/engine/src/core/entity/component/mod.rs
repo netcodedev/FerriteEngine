@@ -14,6 +14,8 @@ pub use property::{Property, PropertyValue};
 
 pub trait Component: AsAny {
     fn update(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64);
+    /// After every entity's `update` this frame (see `Behaviour::late_update`).
+    fn late_update(&mut self, _scene: &mut Scene, _entity: &mut Entity, _delta_time: f64) {}
     fn render(
         &self,
         _scene: &Scene,

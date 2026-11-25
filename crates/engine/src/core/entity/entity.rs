@@ -208,6 +208,15 @@ impl Entity {
         }
     }
 
+    /// After every entity's `update`: the components' `late_update`.
+    pub fn late_update(&mut self, scene: &mut Scene, delta_time: f64) {
+        self.update_components(|component, entity| component.late_update(scene, entity, delta_time));
+
+        for child in self.children.iter_mut() {
+            child.late_update(scene, delta_time);
+        }
+    }
+
     pub fn render(
         &self,
         scene: &Scene,

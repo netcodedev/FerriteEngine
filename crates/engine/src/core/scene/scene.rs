@@ -631,7 +631,14 @@ impl Scene {
         } else {
             self.physics_engine.paused_frame();
         }
+        let generation = self.generation;
         self.update_roots(|entity, scene| entity.update(scene, delta_time));
+        // Then what has to come after everything's update (another
+        // player's character put in a seat after its animation), unless
+        // the scene was replaced meanwhile.
+        if self.generation == generation {
+            self.update_roots(|entity, scene| entity.late_update(scene, delta_time));
+        }
         self.run_deferred();
     }
 

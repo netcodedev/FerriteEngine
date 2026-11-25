@@ -50,6 +50,11 @@ pub(crate) use library::first_error;
 pub trait Behaviour: 'static {
     /// Every frame of the game (play mode).
     fn update(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {}
+    /// Every frame of the game, once everything in the scene has had its
+    /// `update` (the animations of the other players' copies included):
+    /// for what has to come after them, such as putting another player's
+    /// character in a seat or their hands on what they hold.
+    fn late_update(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {}
     /// Every frame while a scene is edited and not played.
     fn update_in_editor(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {}
     /// The graphics settings changed (and once before the first update):
@@ -146,6 +151,10 @@ impl<S: Script> Component for ScriptComponent<S> {
     fn update(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {
         self.follow_graphics(scene, entity);
         self.script.update(scene, entity, delta_time);
+    }
+
+    fn late_update(&mut self, scene: &mut Scene, entity: &mut Entity, delta_time: f64) {
+        self.script.late_update(scene, entity, delta_time);
     }
 
     fn raycast(&self, transform: &Matrix4<f32>, origin: Point3<f32>, dir: Vector3<f32>) -> Option<f32> {
