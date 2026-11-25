@@ -60,6 +60,9 @@ pub struct Launcher {
     recent_title: Text,
     recent: Vec<RecentRow>,
     choice: Rc<Cell<Option<Choice>>>,
+    /// A system file dialog open on its thread: what it was opened for
+    /// and its answer to come (see `editor::file_dialog`).
+    dialog: Option<(Choice, crate::editor::file_dialog::Pending<Option<PathBuf>>)>,
 }
 
 /// `path` with the home folder as `~`, cut at the front to `max` characters.
@@ -145,6 +148,7 @@ impl Launcher {
             recent_title: theme::heading(tr!("launcher.recent"), theme::FONT_SIZE, theme::TEXT_DIM),
             recent: recent_rows(&choice),
             choice,
+            dialog: None,
         }
     }
 
@@ -185,20 +189,47 @@ impl Launcher {
         self.open.update(&mut self.scene);
         self.create.update(&mut self.scene);
 
+        // A dialog's answer (the dialogs run on their own thread, so the
+        // window keeps answering meanwhile).
+        if let Some((kind, pending)) = &self.dialog {
+            use crate::editor::file_dialog::Poll;
+            let kind = *kind;
+            let path = match pending.poll() {
+                Poll::Open => return None,
+                Poll::Gone | Poll::Done(None) => {
+                    self.dialog = None;
+                    return None;
+                }
+                Poll::Done(Some(path)) => path,
+            };
+            self.dialog = None;
+            let result = match kind {
+                Choice::New => Project::create(&path),
+                _ => Project::load(&path),
+            };
+            return match result {
+                Ok(project) => Some(project),
+                Err(e) => {
+                    self.set_message(&e);
+                    None
+                }
+            };
+        }
         let choice = self.choice.take()?;
         let result = match choice {
             Choice::Open => {
-                let file = rfd::FileDialog::new()
-                    .set_title(tr!("launcher.open_title"))
-                    .add_filter(tr!("launcher.project_filter"), &[PROJECT_EXTENSION])
-                    .pick_file()?;
-                Project::load(&file)
+                let (title, filter) = (tr!("launcher.open_title").to_string(), tr!("launcher.project_filter").to_string());
+                let pending = crate::editor::file_dialog::open(move || {
+                    rfd::FileDialog::new().set_title(title).add_filter(filter, &[PROJECT_EXTENSION]).pick_file()
+                });
+                self.dialog = Some((choice, pending));
+                return None;
             }
             Choice::New => {
-                let folder: PathBuf = rfd::FileDialog::new()
-                    .set_title(tr!("launcher.new_folder_title"))
-                    .pick_folder()?;
-                Project::create(&folder)
+                let title = tr!("launcher.new_folder_title").to_string();
+                let pending = crate::editor::file_dialog::open(move || rfd::FileDialog::new().set_title(title).pick_folder());
+                self.dialog = Some((choice, pending));
+                return None;
             }
             Choice::Recent(index) => {
                 let path = self.recent.get(index)?.path.clone();

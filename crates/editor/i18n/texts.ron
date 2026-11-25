@@ -339,6 +339,7 @@
     "layer.import_scaled": (en: "{name} (scale {scale} from the file's unit)", de: "{name} (Skalierung {scale} aus der Einheit der Datei)"),
     "layer.import_failed": (en: "Import failed: {error}", de: "Import fehlgeschlagen: {error}"),
     "layer.import_but": (en: "Imported {names}, but: {error}", de: "{names} importiert, aber: {error}"),
+    "layer.dialog_open": (en: "A file dialog is open already", de: "Ein Dateidialog ist schon offen"),
     "layer.imported": (en: "Imported {names}", de: "{names} importiert"),
     "layer.saved": (en: "Saved {path}", de: "{path} gespeichert"),
     "layer.save_failed": (en: "Could not save {path}: {error}", de: "{path} konnte nicht gespeichert werden: {error}"),
